@@ -1,0 +1,65 @@
+{
+    // See https://go.microsoft.com/fwlink/?LinkId=733558
+    // for the documentation about the tasks.json format
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Install virtual environments and dependencies",
+            "type": "shell",
+            "command": "pwsh",
+            "args": [
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                "${workspaceFolder}/InteractRed.ps1",
+                "-InstallRequirements"
+            ],
+            "problemMatcher": []
+        },
+        {
+            "label": "Add Cog",
+            "type": "shell",
+            "command": "pwsh",
+            "args": [
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                "${workspaceFolder}/InteractRed.ps1",
+                "-AddCog"
+            ],
+            "problemMatcher": []
+        },
+        {
+            "label": "Start Discord Bot",
+            "type": "shell",
+            "command": "pwsh",
+            "args": [
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                "${workspaceFolder}/InteractRed.ps1",
+                "-StartBot"
+            ],
+            "problemMatcher": [],
+            "isBackground": true
+        },
+        {
+            "label": "Start Dashboard",
+            "type": "shell",
+            "command": "pwsh",
+            "args": [
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                "${workspaceFolder}/InteractRed.ps1",
+                "-StartDashboard"
+            ],
+            "problemMatcher": [],
+            "isBackground": true
+        }
+    ]
+}

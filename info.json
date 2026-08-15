@@ -1,0 +1,7 @@
+{
+    "AUTHOR" : "Pixel Agents HQ Contributors",
+    "INSTALL_MSG" : "**Thank you for using office-cogs.** Be aware you are installing a security nightmare. The cogs in this package are in early development and are not (yet) secure.",
+    "NAME" : "office-cogs",
+    "SHORT" : "Cogs for Pixel Agents",
+    "DESCRIPTION" : "Brings Pixel Agents to Redbot. This is a collection of cogs that are used to manage Pixel Agents."
+}

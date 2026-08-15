@@ -1,0 +1,31 @@
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+extend-exclude = [
+    # Legacy modules remain gated by tests while they are split into typed layers.
+    "pixelagents/pixelagents.py",
+    "pixelagents/conftest.py",
+    "pixelagents/tests/conftest.py",
+    "pixelagents/tests/test_pixelagents.py",
+]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I", "B", "UP", "ASYNC"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+ignore_missing_imports = true
+follow_imports = "silent"
+# The runtime contract is the first typed core module. New refactor modules
+# automatically join the strict gate unless they are one of the named legacy
+# adapters below.
+files = ["pixelagents"]
+exclude = [
+    "^pixelagents/(?:__init__|conftest|pixelagents)\\.py$",
+    "^pixelagents/tests/",
+]

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Fail if pixelagents.py reads a field from a Pixel Index response model
+"""Fail if PixelAgents reads a field from a Pixel Index response model
 that doesn't exist on it — the field-level counterpart to lint_endpoints.py.
 
-pixelagents.py parses Pixel Index responses into the pydantic models in
-pixelagents/models.py and accesses them by attribute (entry.furniture,
+The PixelAgents package parses Pixel Index responses into the pydantic models
+in pixelagents/models.py and accesses them by attribute (entry.furniture,
 d.author.displayName, ...). That means a typo, a renamed field, or reading a
 field nobody added to the model shows up to mypy as a plain attr-defined
 error ("LayoutSummary has no attribute ...") — no bespoke schema-drift
@@ -32,7 +32,7 @@ from pixelagents import models as _models
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 MYPY_CONFIG = Path(__file__).with_name("mypy.ini")
-TARGET = REPO_ROOT / "pixelagents" / "pixelagents.py"
+TARGET = REPO_ROOT / "pixelagents"
 
 # Only fail on mypy errors that mention one of our contract models by name —
 # that's the signal that a field read doesn't exist on the modeled response
@@ -47,7 +47,16 @@ _MODEL_NAMES = tuple(
 
 def main() -> int:
     result = subprocess.run(
-        [sys.executable, "-m", "mypy", "--config-file", str(MYPY_CONFIG), str(TARGET)],
+        [
+            sys.executable,
+            "-m",
+            "mypy",
+            "--config-file",
+            str(MYPY_CONFIG),
+            "--exclude",
+            r"pixelagents/(?:tests|conftest\.py)",
+            str(TARGET),
+        ],
         capture_output=True,
         text=True,
     )
@@ -59,16 +68,19 @@ def main() -> int:
     ]
 
     if model_errors:
-        print("\nContract model field drift detected (pixelagents.py reads a field its model doesn't declare):")
+        print(
+            "\nContract model field drift detected "
+            "(PixelAgents reads a field its model doesn't declare):"
+        )
         for line in model_errors:
             print(f"  {line}")
         print(
-            "\nEither pixelagents.py has a typo, or pixelagents/models.py needs the field added — "
+            "\nEither PixelAgents has a typo, or pixelagents/models.py needs the field added — "
             "see docs/contract-testing.md."
         )
         return 1
 
-    print("No field-level drift between pixelagents.py and pixelagents/models.py.")
+    print("No field-level drift between PixelAgents and pixelagents/models.py.")
     return 0
 
 

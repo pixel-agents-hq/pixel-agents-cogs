@@ -8,7 +8,7 @@ on:
   pull_request:
     paths:
       - "contracts/pixel_index/**"
-      - "pixelagents/models.py"
+      - "pixelagents/**/*.py"
       - ".github/workflows/pixel-index-contract.yml"
 
 permissions:

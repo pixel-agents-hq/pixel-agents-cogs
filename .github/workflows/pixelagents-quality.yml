@@ -1,0 +1,64 @@
+name: "PixelAgents Quality"
+
+on:
+  push:
+    paths:
+      - "pixelagents/**/*.py"
+      - "contracts/pixel_index/**"
+      - "pyproject.toml"
+      - ".github/workflows/pixelagents-quality.yml"
+  pull_request:
+    paths:
+      - "pixelagents/**/*.py"
+      - "contracts/pixel_index/**"
+      - "pyproject.toml"
+      - ".github/workflows/pixelagents-quality.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pixelagents-quality-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Tests, lint, and typed core
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r contracts/pixel_index/requirements.txt
+          python -m pip install aiohttp pytest ruff
+
+      - name: Run PixelAgents tests
+        run: python -m pytest -q pixelagents/tests
+
+      - name: Check formatting
+        run: ruff format --check pixelagents
+
+      - name: Run Ruff
+        run: ruff check pixelagents
+
+      - name: Check typed core
+        run: python -m mypy
+
+      - name: Check Pixel Index endpoint registration
+        run: python -m contracts.pixel_index.lint_endpoints
+
+      - name: Check Pixel Index model usage
+        run: python -m contracts.pixel_index.lint_model_usage
+
+      - name: Test contract reporting
+        run: python -m unittest discover -s contracts/pixel_index/tests

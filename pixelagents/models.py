@@ -13,9 +13,10 @@ optional, matching that tolerance; fields it depends on unconditionally are
 required. Keep this in sync with pixelagents.py's actual field access when
 either changes.
 """
+
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -23,15 +24,15 @@ from pydantic import BaseModel, ConfigDict, Field
 class PublicAuthor(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
-    displayName: Optional[str] = None
+    displayName: str | None = None
 
 
 class LayoutFiles(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
-    thumbnail: Optional[str] = None
-    preview: Optional[str] = None
-    layout: Optional[str] = None
+    thumbnail: str | None = None
+    preview: str | None = None
+    layout: str | None = None
 
 
 class LayoutSummary(BaseModel):
@@ -42,25 +43,25 @@ class LayoutSummary(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     slug: str
-    title: Optional[str] = None
-    description: Optional[str] = None
-    tags: List[str] = Field(default_factory=list)
-    author: Optional[PublicAuthor] = None
-    files: Optional[LayoutFiles] = None
-    visibleCols: Optional[int] = None
-    visibleRows: Optional[int] = None
-    furniture: Optional[int] = None
-    areas: Optional[int] = None
-    pets: Optional[int] = None
-    seats: Optional[int] = None
+    title: str | None = None
+    description: str | None = None
+    tags: list[str] = Field(default_factory=list)
+    author: PublicAuthor | None = None
+    files: LayoutFiles | None = None
+    visibleCols: int | None = None
+    visibleRows: int | None = None
+    furniture: int | None = None
+    areas: int | None = None
+    pets: int | None = None
+    seats: int | None = None
 
 
 class LayoutListResponse(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
-    layouts: List[LayoutSummary] = Field(default_factory=list)
-    total: Optional[int] = None
-    nextCursor: Optional[str] = None
+    layouts: list[LayoutSummary] = Field(default_factory=list)
+    total: int | None = None
+    nextCursor: str | None = None
 
 
 class LayoutDetail(LayoutSummary):
@@ -69,4 +70,4 @@ class LayoutDetail(LayoutSummary):
     — _validate_layout() in pixelagents.py enforces its own required shape,
     so it's kept untyped here rather than duplicating that structure."""
 
-    layout: Dict[str, Any]
+    layout: dict[str, Any]

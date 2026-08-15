@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Fail if pixelagents.py calls a Pixel Index endpoint that isn't registered
+"""Fail if PixelAgents calls a Pixel Index endpoint that isn't registered
 in contracts/pixel_index/endpoints.py.
 
-Every JSON endpoint pixelagents.py hits goes through the single
-`self._pixel_index_get(path)` chokepoint, so this walks pixelagents.py's AST
-for those call sites, extracts the literal path (including f-string
+Every JSON endpoint PixelAgents hits goes through the single
+`self._pixel_index_get(path)` chokepoint, so this walks the package's AST for
+those call sites, extracts the literal path (including f-string
 templates like f"/api/v1/layouts/{slug}"), and diffs against ENDPOINTS.
 `/health` is checked directly by `_check_pixel_index_health` instead of
 `_pixel_index_get` (it's a plain status check, no JSON body), so it's
@@ -28,7 +28,7 @@ from pathlib import Path
 
 from contracts.pixel_index.endpoints import ENDPOINTS
 
-PIXELAGENTS_PATH = Path(__file__).resolve().parents[2] / "pixelagents" / "pixelagents.py"
+PIXELAGENTS_PACKAGE = Path(__file__).resolve().parents[2] / "pixelagents"
 
 _HAND_REGISTERED_PATHS = {"/health"}
 
@@ -71,15 +71,26 @@ def find_called_paths(source: str) -> set[str]:
     return found
 
 
+def production_sources() -> list[Path]:
+    """Return every production module, including modules added by the refactor."""
+    return sorted(
+        path
+        for path in PIXELAGENTS_PACKAGE.rglob("*.py")
+        if "tests" not in path.relative_to(PIXELAGENTS_PACKAGE).parts
+        and path.name != "conftest.py"
+    )
+
+
 def main() -> int:
-    source = PIXELAGENTS_PATH.read_text(encoding="utf-8")
-    called = find_called_paths(source) | _HAND_REGISTERED_PATHS
+    called = set(_HAND_REGISTERED_PATHS)
+    for path in production_sources():
+        called.update(find_called_paths(path.read_text(encoding="utf-8")))
     registered = {_shape(ep.path) for ep in ENDPOINTS}
 
     missing = called - registered
     if missing:
         print(
-            "Pixel Index endpoint(s) called by pixelagents.py but not "
+            "Pixel Index endpoint(s) called by the pixelagents package but not "
             "registered in contracts/pixel_index/endpoints.py:"
         )
         for path in sorted(missing):
@@ -87,7 +98,7 @@ def main() -> int:
         print("\nAdd an EndpointContract entry for each in contracts/pixel_index/endpoints.py.")
         return 1
 
-    print("All Pixel Index endpoints called by pixelagents.py are registered.")
+    print("All Pixel Index endpoints called by the pixelagents package are registered.")
     return 0
 
 

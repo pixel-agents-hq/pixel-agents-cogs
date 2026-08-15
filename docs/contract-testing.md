@@ -67,21 +67,21 @@ and both the bot and the CI check read it.
 The generated contract only covers what's registered in `endpoints.py` and
 modeled in `models.py` — it can't warn about a call site or a field that was
 never added there in the first place. Two lint checks close that gap, run on
-every PR that touches `pixelagents/pixelagents.py`, `pixelagents/models.py`,
-or `contracts/pixel_index/` (see
+every PR that touches Python code under `pixelagents/` or anything under
+`contracts/pixel_index/` (see
 [`.github/workflows/pixel-index-contract-lint.yml`](../.github/workflows/pixel-index-contract-lint.yml)):
 
 - [`contracts/pixel_index/lint_endpoints.py`](../contracts/pixel_index/lint_endpoints.py)
   — **new endpoint, not registered.** Every JSON endpoint is called through
-  the single `self._pixel_index_get(path)` chokepoint in `pixelagents.py`,
-  so this walks its AST for those call sites (including f-string path
+  the single `self._pixel_index_get(path)` chokepoint, so this walks every
+  production module in the package for those call sites (including f-string path
   templates like `f"/api/v1/layouts/{slug}"`), and fails if a called path
   isn't in `endpoints.py`'s `ENDPOINTS` list. (`/health` is checked directly
   by `_check_pixel_index_health` rather than through `_pixel_index_get`, so
   it's hand-registered as a known exception rather than generalizing the
   walk for a call site unlikely to grow siblings.)
 - [`contracts/pixel_index/lint_model_usage.py`](../contracts/pixel_index/lint_model_usage.py)
-  — **new field read, not modeled.** Since `pixelagents.py`'s views read
+  — **new field read, not modeled.** Since PixelAgents views read
   parsed responses via attribute access on the pydantic models (`entry.slug`,
   `d.author.displayName`, …) rather than raw dict `.get()`, an unmodeled or
   mistyped field is a plain mypy `attr-defined` error — no bespoke schema
@@ -90,8 +90,8 @@ or `contracts/pixel_index/` (see
   `ignore_missing_imports` so discord.py/redbot — not installed for this
   lightweight check — resolve to `Any` instead of erroring) and fails CI
   only on errors that name one of the models in `pixelagents/models.py`.
-  Everything else mypy finds in this dynamically-typed, discord.py-heavy
-  file is treated as informational, since fixing the rest of the file's
+  Everything else mypy finds in the dynamically-typed Discord/Red adapters
+  is treated as informational, since fixing all of the legacy adapter
   typing is a separate, larger effort than this check's job.
 
 Together: `lint_endpoints.py` guards *which endpoints* the contract knows

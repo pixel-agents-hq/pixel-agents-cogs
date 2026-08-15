@@ -7,8 +7,10 @@ except Exception:
     def get_end_user_data_statement_or_raise(_: str) -> str:  # type: ignore[override]
         return ""
 
+
 try:
     from .pixelagents import pixelagents
+
     __all__ = ["pixelagents"]
 except Exception:
     pixelagents = None  # type: ignore[assignment]

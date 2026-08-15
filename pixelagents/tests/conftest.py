@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import sys
 import types
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 
 def _make_stub_module(name: str, **attrs) -> types.ModuleType:
@@ -246,8 +246,9 @@ class _FakeGuildConfigAttr:
 
 
 class _FakeGuildConfig:
-    def __init__(self, guild_id):
-        self._data = {"enabled": False, "include_bots": True}
+    def __init__(self, guild_id, data=None):
+        self.guild_id = guild_id
+        self._data = data if data is not None else {"enabled": False, "include_bots": True}
 
     def __getattr__(self, name):
         return _FakeGuildConfigAttr(self._data, name)
@@ -266,28 +267,43 @@ class _FakeConfig:
 
     def __init__(self):
         self._global = {}
+        self._guild_defaults = {}
+        self._guilds = {}
         self._user_defaults = {}
         self._users = {}
+        self.identifier = None
+        self.force_registration = False
 
     @classmethod
     def get_conf(cls, cog, identifier=0, force_registration=False):
-        return cls()
+        config = cls()
+        config.identifier = identifier
+        config.force_registration = force_registration
+        return config
 
     def register_global(self, **defaults):
         for k, v in defaults.items():
             self._global.setdefault(k, v)
 
     def register_guild(self, **defaults):
-        pass
+        self._guild_defaults.update(defaults)
 
     def register_user(self, **defaults):
         self._user_defaults.update(defaults)
 
     def guild(self, guild):
-        return _FakeGuildConfig(guild.id if hasattr(guild, "id") else guild)
+        guild_id = guild.id if hasattr(guild, "id") else guild
+        return self.guild_from_id(guild_id)
 
     def guild_from_id(self, guild_id):
-        return _FakeGuildConfig(guild_id)
+        data = self._guilds.setdefault(
+            guild_id,
+            {
+                key: (value.copy() if isinstance(value, dict) else value)
+                for key, value in self._guild_defaults.items()
+            },
+        )
+        return _FakeGuildConfig(guild_id, data)
 
     def user(self, user):
         user_id = user.id if hasattr(user, "id") else int(user)
@@ -311,22 +327,31 @@ class _FakeConfig:
 class _FakeGroup:
     """Stub for a Red command Group — supports `.command()` sub-decorator."""
 
-    def __init__(self, func):
+    def __init__(self, func, **metadata):
         self.__wrapped__ = func
         self.__name__ = getattr(func, "__name__", "group")
         self.__doc__ = getattr(func, "__doc__", "")
+        self.command_metadata = metadata
+        self.subcommands = {}
 
     def __call__(self, *args, **kwargs):
         return self.__wrapped__(*args, **kwargs)
 
     def command(self, **kw):
         def deco(f):
+            name = kw.get("name", getattr(f, "__name__", "command"))
+            f.__command_metadata__ = {**kw, "name": name}
+            self.subcommands[name] = f
             return f
         return deco
 
     def group(self, **kw):
         def deco(f):
-            return _FakeGroup(f)
+            name = kw.get("name", getattr(f, "__name__", "group"))
+            metadata = {**kw, "name": name}
+            group = _FakeGroup(f, **metadata)
+            self.subcommands[name] = group
+            return group
         return deco
 
 
@@ -357,29 +382,35 @@ class _FakeCommands:
 
     @staticmethod
     def admin_or_permissions(**kw):
-        def deco(f): return f
+        def deco(f):
+            f.__permissions__ = kw
+            return f
         return deco
 
     @staticmethod
     def guild_only():
-        def deco(f): return f
+        def deco(f):
+            f.__guild_only__ = True
+            return f
         return deco
 
     @staticmethod
     def group(**kw):
         def deco(f):
-            return _FakeGroup(f)
+            return _FakeGroup(f, **kw)
         return deco
 
     @staticmethod
     def hybrid_group(**kw):
         def deco(f):
-            return _FakeGroup(f)
+            return _FakeGroup(f, **kw)
         return deco
 
     @staticmethod
     def command(**kw):
-        def deco(f): return f
+        def deco(f):
+            f.__command_metadata__ = kw
+            return f
         return deco
 
 

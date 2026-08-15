@@ -4,9 +4,8 @@ Stubs for discord / redbot / aiohttp are installed by conftest.py.
 """
 from __future__ import annotations
 
-import json
-import asyncio
 import base64
+import json
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -22,12 +21,9 @@ from pixelagents.pixelagents import (
     pixelagents as PixelAgentsCog,
 )
 from pixelagents.tests.conftest import (
+    _FakeClientWebSocketResponse,
     _FakeConfig,
     _FakeInteraction,
-    _FakeInteractionResponse,
-    _FakeClientWebSocketResponse,
-    _FakeWSMessage,
-    _WSMsgType,
 )
 
 import discord  # stubbed by conftest

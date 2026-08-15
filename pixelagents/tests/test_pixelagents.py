@@ -1125,6 +1125,39 @@ class TestPixelIndexGet(unittest.IsolatedAsyncioTestCase):
             {"sort": "furniture", "limit": 5, "q": "cozy", "tags": "pets", "cursor": "abc"},
         )
 
+    async def test_search_accepts_well_shaped_response(self):
+        page = {"layouts": [_layout_summary("office")], "total": 1, "nextCursor": None}
+        session = _FakeHttpSession(response=_FakeHttpResponse(200, page))
+        with patch.object(aiohttp, "ClientSession", return_value=session):
+            ok, data = await self.cog._pixel_index_search(query=None, tag=None, sort="newest")
+        self.assertTrue(ok)
+        self.assertEqual(data, page)
+
+    async def test_search_rejects_response_missing_slug(self):
+        page = {"layouts": [{"title": "Office"}], "total": 1}
+        session = _FakeHttpSession(response=_FakeHttpResponse(200, page))
+        with patch.object(aiohttp, "ClientSession", return_value=session):
+            ok, message = await self.cog._pixel_index_search(query=None, tag=None, sort="newest")
+        self.assertFalse(ok)
+        self.assertIn("unexpected response", message)
+
+    async def test_layout_accepts_well_shaped_response(self):
+        detail = _layout_detail("office")
+        session = _FakeHttpSession(response=_FakeHttpResponse(200, detail))
+        with patch.object(aiohttp, "ClientSession", return_value=session):
+            ok, data = await self.cog._pixel_index_layout("office")
+        self.assertTrue(ok)
+        self.assertEqual(data, detail)
+
+    async def test_layout_rejects_response_missing_layout_blob(self):
+        detail = _layout_detail("office")
+        del detail["layout"]
+        session = _FakeHttpSession(response=_FakeHttpResponse(200, detail))
+        with patch.object(aiohttp, "ClientSession", return_value=session):
+            ok, message = await self.cog._pixel_index_layout("office")
+        self.assertFalse(ok)
+        self.assertIn("unexpected response", message)
+
 
 class TestLoadPixelIndexLayout(unittest.IsolatedAsyncioTestCase):
     def setUp(self):

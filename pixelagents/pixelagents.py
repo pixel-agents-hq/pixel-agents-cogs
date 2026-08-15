@@ -17,8 +17,11 @@ import aiohttp
 from aiohttp import WSMsgType, web
 import discord
 from discord import app_commands
+from pydantic import ValidationError
 from redbot.core import Config, commands
 from redbot.core.bot import Red
+
+from .models import LayoutDetail, LayoutListResponse
 
 log = logging.getLogger("red.d_cogs.pixelagents")
 
@@ -1388,10 +1391,26 @@ class pixelagents(commands.Cog):
             params["tags"] = tag
         if cursor:
             params["cursor"] = cursor
-        return await self._pixel_index_get("/api/v1/layouts", params)
+        ok, data = await self._pixel_index_get("/api/v1/layouts", params)
+        if not ok:
+            return False, data
+        try:
+            LayoutListResponse.model_validate(data)
+        except ValidationError as exc:
+            log.warning("pixelagents: Pixel Index layout list response failed validation: %s", exc)
+            return False, "Pixel Index returned an unexpected response. Try again later."
+        return True, data
 
     async def _pixel_index_layout(self, slug: str) -> Tuple[bool, Any]:
-        return await self._pixel_index_get(f"/api/v1/layouts/{slug}")
+        ok, data = await self._pixel_index_get(f"/api/v1/layouts/{slug}")
+        if not ok:
+            return False, data
+        try:
+            LayoutDetail.model_validate(data)
+        except ValidationError as exc:
+            log.warning("pixelagents: Pixel Index layout detail response failed validation: %s", exc)
+            return False, "Pixel Index returned an unexpected response. Try again later."
+        return True, data
 
     async def _load_pixel_index_layout(self, user_id: int, slug: str) -> Tuple[bool, str]:
         """Fetch a layout from Pixel Index and push it into the shared office."""

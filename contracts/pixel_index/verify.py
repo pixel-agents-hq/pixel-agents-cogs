@@ -1,10 +1,16 @@
 #!/usr/bin/env python3
-"""Verify contract.yaml against a live Pixel Index environment.
+"""Verify the office-cogs -> Pixel Index contract against a live environment.
 
 Consumer-driven contract check: this only exercises the endpoints/fields
-office-cogs actually depends on (see contract.yaml), so a pass here means
-"safe for pixelagents.py to point at this environment" — not "this
-environment's full API is unchanged." See docs/contract-testing.md.
+office-cogs actually depends on, so a pass here means "safe for pixelagents.py
+to point at this environment" — not "this environment's full API is
+unchanged." See docs/contract-testing.md.
+
+The contract itself (contract.yaml) is generated from pixelagents/models.py +
+endpoints.py on every run — see generate_contract.py — rather than hand
+maintained, so it can't drift from what pixelagents.py actually parses.
+
+Run: python -m contracts.pixel_index.verify --base-url https://pixel-index-api-staging.nntin.xyz
 """
 from __future__ import annotations
 
@@ -17,6 +23,8 @@ from typing import Any, Optional
 import requests
 import yaml
 from jsonschema import Draft7Validator
+
+from contracts.pixel_index.generate_contract import main as generate_contract
 
 _TOKEN_RE = re.compile(r"[^.\[\]]+|\[\d+\]")
 
@@ -97,14 +105,20 @@ def run(contract: dict, base_url: str, timeout: float) -> tuple[bool, list[dict]
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base-url", required=True, help="Pixel Index API base URL, e.g. https://pixel-index-api.nntin.xyz")
-    parser.add_argument("--contract", default=os.path.join(os.path.dirname(__file__), "contract.yaml"))
+    parser.add_argument(
+        "--contract",
+        default=None,
+        help="Path to a pre-generated contract.yaml. Default: regenerate it from "
+        "pixelagents/models.py + endpoints.py before checking.",
+    )
     parser.add_argument("--env-name", default=None, help="Label for output, defaults to --base-url")
     parser.add_argument("--timeout", type=float, default=10.0)
     args = parser.parse_args()
 
     env_name = args.env_name or args.base_url
+    contract_path = args.contract or str(generate_contract())
 
-    with open(args.contract, "r", encoding="utf-8") as fh:
+    with open(contract_path, "r", encoding="utf-8") as fh:
         contract = yaml.safe_load(fh)
 
     ok, results = run(contract, args.base_url, args.timeout)

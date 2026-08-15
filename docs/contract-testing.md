@@ -12,27 +12,55 @@ can't gate its own releases on our needs alone).
 ## The model
 
 This is consumer-driven contract testing: **office-cogs owns the contract**,
-not pixel-index.
+not pixel-index. And within office-cogs, the contract isn't hand-written —
+it's generated from the same models the bot uses to parse responses, so it
+can't drift from what the code actually depends on.
 
-- [`contracts/pixel-index/contract.yaml`](../contracts/pixel-index/contract.yaml)
-  describes only the endpoints, fields, and types `pixelagents.py` actually
-  reads — not pixel-index's full API. It's hand-curated, not generated from
-  pixel-index's OpenAPI spec, on purpose: if we diffed the full spec, every
-  unrelated endpoint or field pixel-index adds would show up as "drift" even
-  though we never touch it. Scoping the contract to only what we consume
-  means a check failure always means something office-cogs actually cares
-  about changed.
-- [`contracts/pixel-index/verify.py`](../contracts/pixel-index/verify.py)
-  takes the contract and a target base URL, calls each endpoint for real, and
-  validates the live response against the contract's JSON Schema fragments.
-  It also chains requests where needed — e.g. `list_layouts` derives a real
-  `slug` from its response so `layout_detail` can be checked against actual
-  data instead of a hardcoded slug that might not exist in a given
-  environment.
-- A pass means "this environment is safe for office-cogs to consume right
-  now." A fail means something office-cogs reads has changed shape, and the
-  bot should not be pointed at that environment until the contract (and the
-  corresponding code in `pixelagents.py`) is reconciled with reality.
+- [`pixelagents/models.py`](../pixelagents/models.py) — pydantic models
+  describing only the fields `pixelagents.py` reads from Pixel Index's
+  layout list/detail responses. This is the real source of truth: fields
+  the bot reads defensively (`entry.get("furniture", 0)`) are optional here;
+  fields it depends on unconditionally (`slug`) are required. It's imported
+  by two things:
+  1. **`pixelagents.py` at runtime** — `_pixel_index_search` and
+     `_pixel_index_layout` validate every real response against these
+     models before returning it, so a shape change surfaces as a clear log
+     warning and a graceful error instead of a `KeyError`/`AttributeError`
+     deep in a Discord view.
+  2. **The contract generator at CI time** — same models, same meaning,
+     used to build the JSON Schema that gets checked against a live
+     environment.
+- [`contracts/pixel_index/endpoints.py`](../contracts/pixel_index/endpoints.py)
+  — the part that genuinely can't be derived from code: which endpoints get
+  called, what query params, and how they chain (`list_layouts` derives a
+  real slug for `layout_detail` to use, so we're never testing against
+  hardcoded fixture data). Each entry points at the model that describes its
+  response, if any.
+- [`contracts/pixel_index/generate_contract.py`](../contracts/pixel_index/generate_contract.py)
+  — combines the two into `contract.yaml` by calling `.model_json_schema()`
+  on each endpoint's model. **`contract.yaml` is a build artifact: gitignored,
+  regenerated on every run, never hand-edited.** Run it directly to inspect
+  the generated schema: `python -m contracts.pixel_index.generate_contract`.
+- [`contracts/pixel_index/verify.py`](../contracts/pixel_index/verify.py) —
+  regenerates the contract, then calls each endpoint for real against a
+  target base URL and validates the live response against the generated
+  schema.
+
+A pass means "this environment is safe for office-cogs to consume right
+now." A fail means something office-cogs reads has changed shape, and the
+bot should not be pointed at that environment until `pixelagents.py` (and
+the models it relies on) is reconciled with reality.
+
+### Why generate instead of hand-write the schema
+
+An earlier version of this hand-wrote `contract.yaml`. It missed fields
+`pixelagents.py` actually reads (`furniture`, `visibleCols`, `areas`, `pets`,
+`seats` were absent from the first draft) simply because nobody re-read the
+whole file top-to-bottom while writing the YAML by hand. Generating the
+schema from the same models that parse the response at runtime means the
+contract can't fall out of sync with the code the way hand-maintained
+duplication can — there's exactly one description of "what we depend on,"
+and both the bot and the CI check read it.
 
 ## What this is not
 
@@ -48,8 +76,8 @@ isn't needed for one consumer.
 
 [`.github/workflows/pixel-index-contract.yml`](../.github/workflows/pixel-index-contract.yml)
 runs the check on a schedule (every 8 hours), on `workflow_dispatch`, and on
-any PR touching the contract itself. It runs as a matrix over known
-environments:
+any PR touching `pixelagents/models.py` or `contracts/pixel_index/`. It runs
+as a matrix over known environments:
 
 | Environment | Base URL |
 |---|---|
@@ -66,7 +94,7 @@ Add a new environment (e.g. a preview deploy) by adding a row to the
   and/or for office-cogs to point at staging directly.
 - **Staging fails** → don't promote yet. Either pixel-index's change is
   breaking (fix it there) or office-cogs' usage needs to change first
-  (update `pixelagents.py` and the contract together).
+  (update `pixelagents.py` and `pixelagents/models.py` together).
 - **Production fails** (e.g. after a promotion, or the scheduled run catches
   something) → office-cogs is currently pointed at a broken contract; treat
   as an incident, not routine drift.
@@ -77,7 +105,11 @@ workflow uses, tagged with which environment broke.
 ## Updating the contract
 
 Whenever `pixelagents.py` starts reading a new field, stops using one, or
-changes how it calls an endpoint, update `contract.yaml` in the same PR. The
-contract and the code it protects should never drift from each other — the
-contract is a description of the code's assumptions, not an independent
-spec.
+changes how it calls an endpoint:
+
+1. Update `pixelagents/models.py` to match — this is also what validates
+   responses at runtime, so it should already reflect reality.
+2. If a new endpoint is called, or params/chaining change, update
+   `contracts/pixel_index/endpoints.py` too.
+3. Don't touch `contract.yaml` — it regenerates from the two files above the
+   next time `verify.py` (or `generate_contract.py`) runs.

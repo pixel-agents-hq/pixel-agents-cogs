@@ -1,12 +1,14 @@
 name: "Pixel Index Contract Check"
 
 on:
+  push:
   schedule:
     - cron: "0 */8 * * *"
   workflow_dispatch:
   pull_request:
     paths:
-      - "contracts/pixel-index/**"
+      - "contracts/pixel_index/**"
+      - "pixelagents/models.py"
       - ".github/workflows/pixel-index-contract.yml"
 
 jobs:
@@ -33,12 +35,13 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: pip install -r contracts/pixel-index/requirements.txt
+        run: pip install -r contracts/pixel_index/requirements.txt
 
       - name: Run contract check
+        # Regenerates contract.yaml from pixelagents/models.py + endpoints.py
+        # before checking — see contracts/pixel_index/generate_contract.py.
         run: |
-          python contracts/pixel-index/verify.py \
-            --contract contracts/pixel-index/contract.yaml \
+          python -m contracts.pixel_index.verify \
             --base-url "${{ matrix.base_url }}" \
             --env-name "${{ matrix.name }}"
 

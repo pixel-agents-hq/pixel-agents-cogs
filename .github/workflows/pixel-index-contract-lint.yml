@@ -35,3 +35,6 @@ jobs:
 
       - name: Check every read field exists on its model
         run: python -m contracts.pixel_index.lint_model_usage
+
+      - name: Test contract reporting
+        run: python -m unittest discover -s contracts/pixel_index/tests

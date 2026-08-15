@@ -141,6 +141,43 @@ Add a new environment (e.g. a preview deploy) by adding a row to the
 A Discord notification fires on failure via the same webhook the cog test
 workflow uses, tagged with which environment broke.
 
+### Current status page and API
+
+Completed checks of the repository's current default branch publish an atomic
+snapshot to [the Pixel Index contract status page](https://nntin.xyz/office-cogs/).
+Pull requests and runs from other branches never publish. The site is deployed
+directly from a GitHub Pages artifact, so it does not create or maintain a
+`gh-pages` branch or any Git history.
+
+The human-readable page, complete API document, per-environment documents, and
+badge documents are all generated from the same production/staging result
+files by
+[`contracts/pixel_index/generate_status_site.py`](../contracts/pixel_index/generate_status_site.py).
+The stable endpoints are:
+
+| Resource | URL |
+|---|---|
+| Complete status | `https://nntin.xyz/office-cogs/api/v1/status.json` |
+| Production | `https://nntin.xyz/office-cogs/api/v1/environments/production.json` |
+| Staging | `https://nntin.xyz/office-cogs/api/v1/environments/staging.json` |
+| Overall badge | `https://nntin.xyz/office-cogs/api/v1/badges/overall.json` |
+| Production badge | `https://nntin.xyz/office-cogs/api/v1/badges/production.json` |
+| Staging badge | `https://nntin.xyz/office-cogs/api/v1/badges/staging.json` |
+
+The badge documents implement Shields.io's endpoint schema and can be used as,
+for example:
+
+```markdown
+![Pixel Index production](https://img.shields.io/endpoint?url=https%3A%2F%2Fnntin.xyz%2Foffice-cogs%2Fapi%2Fv1%2Fbadges%2Fproduction.json)
+```
+
+Each snapshot names the checked branch and commit, links to the workflow run,
+and includes `generated_at` and `valid_until`. The page warns after the
+12-hour validity window passes. If checkout, Python setup, dependency
+installation, or the verifier itself fails, the environment is published as
+`unknown`, never as compatible. A total GitHub Actions or Pages outage cannot
+publish a replacement, so API consumers should also enforce `valid_until`.
+
 ## Updating the contract
 
 Whenever `pixelagents.py` starts reading a new field, stops using one, or

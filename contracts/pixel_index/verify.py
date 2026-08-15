@@ -15,9 +15,12 @@ Run: python -m contracts.pixel_index.verify --base-url https://pixel-index-api-s
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import sys
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Optional
 
 import requests
@@ -27,6 +30,36 @@ from jsonschema import Draft7Validator
 from contracts.pixel_index.generate_contract import main as generate_contract
 
 _TOKEN_RE = re.compile(r"[^.\[\]]+|\[\d+\]")
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def build_result_document(env_name: str, base_url: str, ok: bool, results: list[dict]) -> dict:
+    """Build the stable, machine-readable result consumed by the status page."""
+    counts = {
+        status: sum(result["status"] == status for result in results)
+        for status in ("pass", "fail", "skipped")
+    }
+    return {
+        "schema_version": 1,
+        "environment": env_name,
+        "base_url": base_url,
+        "status": "pass" if ok else "fail",
+        "checked_at": _utc_now(),
+        "counts": counts,
+        "endpoints": results,
+    }
+
+
+def write_result_document(path: str, document: dict) -> None:
+    """Atomically replace a placeholder result with the completed result."""
+    destination = Path(path)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = destination.with_name(destination.name + ".tmp")
+    temporary.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
+    temporary.replace(destination)
 
 
 def extract(data: Any, path: str) -> Optional[Any]:
@@ -112,6 +145,11 @@ def main() -> int:
         "pixelagents/models.py + endpoints.py before checking.",
     )
     parser.add_argument("--env-name", default=None, help="Label for output, defaults to --base-url")
+    parser.add_argument(
+        "--output-json",
+        default=None,
+        help="Write a structured result for the status site. The file is written before returning a failing exit code.",
+    )
     parser.add_argument("--timeout", type=float, default=10.0)
     args = parser.parse_args()
 
@@ -122,6 +160,9 @@ def main() -> int:
         contract = yaml.safe_load(fh)
 
     ok, results = run(contract, args.base_url, args.timeout)
+
+    if args.output_json:
+        write_result_document(args.output_json, build_result_document(env_name, args.base_url, ok, results))
 
     lines = [f"## Pixel Index contract check — {env_name}", "", "| Endpoint | Result | Detail |", "|---|---|---|"]
     icon = {"pass": "✅", "fail": "❌", "skipped": "⚠️"}

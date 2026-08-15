@@ -11,6 +11,13 @@ on:
       - "pixelagents/models.py"
       - ".github/workflows/pixel-index-contract.yml"
 
+permissions:
+  contents: read
+
+concurrency:
+  group: pixel-index-contract-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   verify-contract:
     name: Verify (${{ matrix.name }})
@@ -26,6 +33,27 @@ jobs:
           # Add more environments here as they come online.
 
     steps:
+      - name: Initialize contract result
+        env:
+          ENVIRONMENT_NAME: ${{ matrix.name }}
+          BASE_URL: ${{ matrix.base_url }}
+          RESULT_PATH: ${{ runner.temp }}/pixel-index-contract-results/${{ matrix.name }}.json
+        run: |
+          mkdir -p "$(dirname "$RESULT_PATH")"
+          jq -n \
+            --arg environment "$ENVIRONMENT_NAME" \
+            --arg base_url "$BASE_URL" \
+            '{
+              schema_version: 1,
+              environment: $environment,
+              base_url: $base_url,
+              status: "unknown",
+              checked_at: null,
+              counts: {pass: 0, fail: 0, skipped: 0},
+              endpoints: [],
+              detail: "The contract check did not complete. Inspect the workflow run for an infrastructure or setup failure."
+            }' > "$RESULT_PATH"
+
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -43,7 +71,17 @@ jobs:
         run: |
           python -m contracts.pixel_index.verify \
             --base-url "${{ matrix.base_url }}" \
-            --env-name "${{ matrix.name }}"
+            --env-name "${{ matrix.name }}" \
+            --output-json "${{ runner.temp }}/pixel-index-contract-results/${{ matrix.name }}.json"
+
+      - name: Upload contract result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pixel-index-contract-result-${{ matrix.name }}
+          path: ${{ runner.temp }}/pixel-index-contract-results/${{ matrix.name }}.json
+          if-no-files-found: error
+          retention-days: 1
 
       - name: Notify on failure
         if: failure()
@@ -60,3 +98,66 @@ jobs:
           fields: >-
             [{"name": "Environment", "value": "${{ matrix.name }}", "inline": true},
              {"name": "Run", "value": "[View run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})", "inline": true}]
+
+  build-status-site:
+    name: Build current status site
+    needs: verify-contract
+    if: ${{ always() && github.ref_name == github.event.repository.default_branch }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Download contract results
+        uses: actions/download-artifact@v5
+        with:
+          pattern: pixel-index-contract-result-*
+          path: ${{ runner.temp }}/pixel-index-contract-results
+          merge-multiple: true
+
+      - name: Generate status site
+        env:
+          RESULTS_DIR: ${{ runner.temp }}/pixel-index-contract-results
+          OUTPUT_DIR: ${{ runner.temp }}/pixel-index-contract-site
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          python -m contracts.pixel_index.generate_status_site \
+            --results-dir "$RESULTS_DIR" \
+            --output-dir "$OUTPUT_DIR" \
+            --repository "${{ github.repository }}" \
+            --branch "$DEFAULT_BRANCH" \
+            --commit "${{ github.sha }}" \
+            --run-id "${{ github.run_id }}" \
+            --run-url "$RUN_URL" \
+            --event "${{ github.event_name }}"
+
+      - name: Upload GitHub Pages artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: ${{ runner.temp }}/pixel-index-contract-site
+
+  deploy-status-site:
+    name: Deploy current status site
+    needs: build-status-site
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    concurrency:
+      group: github-pages
+      cancel-in-progress: false
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

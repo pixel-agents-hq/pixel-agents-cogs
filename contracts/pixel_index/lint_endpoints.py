@@ -15,7 +15,7 @@ This catches "a new endpoint was added but nobody registered it" — it does
 NOT catch "an existing endpoint's response now has a field we read but
 never modeled." That's a separate, harder static-analysis problem; see
 contracts/pixel_index/mypy.ini and docs/contract-testing.md for how that one
-is handled instead (via pixelagents/models.py + mypy).
+is handled instead (via pixelagents/contracts/pixel_index.py + mypy).
 
 Run: python -m contracts.pixel_index.lint_endpoints
 """

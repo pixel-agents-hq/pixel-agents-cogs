@@ -3,7 +3,7 @@
 that doesn't exist on it — the field-level counterpart to lint_endpoints.py.
 
 The PixelAgents package parses Pixel Index responses into the pydantic models
-in pixelagents/models.py and accesses them by attribute (entry.furniture,
+in pixelagents/contracts/pixel_index.py and accesses them by attribute (entry.furniture,
 d.author.displayName, ...). That means a typo, a renamed field, or reading a
 field nobody added to the model shows up to mypy as a plain attr-defined
 error ("LayoutSummary has no attribute ...") — no bespoke schema-drift
@@ -28,7 +28,9 @@ import subprocess
 import sys
 from pathlib import Path
 
-from pixelagents import models as _models
+from pydantic import BaseModel
+
+from pixelagents.contracts import pixel_index as _models
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 MYPY_CONFIG = Path(__file__).with_name("mypy.ini")
@@ -41,7 +43,8 @@ TARGET = REPO_ROOT / "pixelagents"
 _MODEL_NAMES = tuple(
     name
     for name in dir(_models)
-    if isinstance(getattr(_models, name), type) and issubclass(getattr(_models, name), _models.BaseModel)
+    if isinstance(getattr(_models, name), type)
+    and issubclass(getattr(_models, name), BaseModel)
 )
 
 
@@ -75,12 +78,16 @@ def main() -> int:
         for line in model_errors:
             print(f"  {line}")
         print(
-            "\nEither PixelAgents has a typo, or pixelagents/models.py needs the field added — "
+            "\nEither PixelAgents has a typo, or pixelagents/contracts/pixel_index.py needs "
+            "the field added — "
             "see docs/contract-testing.md."
         )
         return 1
 
-    print("No field-level drift between PixelAgents and pixelagents/models.py.")
+    print(
+        "No field-level drift between PixelAgents and "
+        "pixelagents/contracts/pixel_index.py."
+    )
     return 0
 
 

@@ -16,7 +16,8 @@ not pixel-index. And within office-cogs, the contract isn't hand-written —
 it's generated from the same models the bot uses to parse responses, so it
 can't drift from what the code actually depends on.
 
-- [`pixelagents/models.py`](../pixelagents/models.py) — pydantic models
+- [`pixelagents/contracts/pixel_index.py`](../pixelagents/contracts/pixel_index.py) —
+  pydantic models
   describing only the fields `pixelagents.py` reads from Pixel Index's
   layout list/detail responses. This is the real source of truth: fields
   the bot reads defensively (`entry.get("furniture", 0)`) are optional here;
@@ -65,8 +66,8 @@ and both the bot and the CI check read it.
 ## Catching drift before it reaches contract.yaml
 
 The generated contract only covers what's registered in `endpoints.py` and
-modeled in `models.py` — it can't warn about a call site or a field that was
-never added there in the first place. Two lint checks close that gap, run on
+modeled in `contracts/pixel_index.py` — it can't warn about a call site or a
+field that was never added there in the first place. Two lint checks close that gap, run on
 every PR that touches Python code under `pixelagents/` or anything under
 `contracts/pixel_index/` (see
 [`.github/workflows/pixel-index-contract-lint.yml`](../.github/workflows/pixel-index-contract-lint.yml)):
@@ -89,7 +90,7 @@ every PR that touches Python code under `pixelagents/` or anything under
   [`contracts/pixel_index/mypy.ini`](../contracts/pixel_index/mypy.ini),
   `ignore_missing_imports` so discord.py/redbot — not installed for this
   lightweight check — resolve to `Any` instead of erroring) and fails CI
-  only on errors that name one of the models in `pixelagents/models.py`.
+  only on errors that name one of the canonical Pixel Index contract models.
   Everything else mypy finds in the dynamically-typed Discord/Red adapters
   is treated as informational, since fixing all of the legacy adapter
   typing is a separate, larger effort than this check's job.
@@ -115,7 +116,7 @@ isn't needed for one consumer.
 
 [`.github/workflows/pixel-index-contract.yml`](../.github/workflows/pixel-index-contract.yml)
 runs the check on a schedule (every 8 hours), on `workflow_dispatch`, and on
-any PR touching `pixelagents/models.py` or `contracts/pixel_index/`. It runs
+any PR touching Python under `pixelagents/` or `contracts/pixel_index/`. It runs
 as a matrix over known environments:
 
 | Environment | Base URL |
@@ -133,7 +134,7 @@ Add a new environment (e.g. a preview deploy) by adding a row to the
   and/or for office-cogs to point at staging directly.
 - **Staging fails** → don't promote yet. Either pixel-index's change is
   breaking (fix it there) or office-cogs' usage needs to change first
-  (update `pixelagents.py` and `pixelagents/models.py` together).
+  (update `pixelagents.py` and `pixelagents/contracts/pixel_index.py` together).
 - **Production fails** (e.g. after a promotion, or the scheduled run catches
   something) → office-cogs is currently pointed at a broken contract; treat
   as an incident, not routine drift.
@@ -183,7 +184,7 @@ publish a replacement, so API consumers should also enforce `valid_until`.
 Whenever `pixelagents.py` starts reading a new field, stops using one, or
 changes how it calls an endpoint:
 
-1. Update `pixelagents/models.py` to match — this is also what validates
+1. Update `pixelagents/contracts/pixel_index.py` to match — this is also what validates
    responses at runtime, so it should already reflect reality.
 2. If a new endpoint is called, or params/chaining change, update
    `contracts/pixel_index/endpoints.py` too.

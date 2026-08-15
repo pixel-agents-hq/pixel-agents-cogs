@@ -1,7 +1,7 @@
 """Endpoint metadata for the office-cogs -> Pixel Index contract.
 
 Pairs each endpoint pixelagents.py actually calls with the pydantic model
-(if any, from pixelagents/models.py) that describes the response shape it
+(if any, from pixelagents/contracts/pixel_index.py) that describes the response shape it
 depends on. Only this bit — which endpoints, what params, how they chain —
 is hand-maintained; the response schemas themselves are generated from the
 models at build time by generate_contract.py, so they can't drift from what
@@ -17,7 +17,7 @@ from typing import Optional, Type
 
 from pydantic import BaseModel
 
-from pixelagents.models import LayoutDetail, LayoutListResponse
+from pixelagents.contracts.pixel_index import LayoutDetail, LayoutListResponse
 
 
 @dataclass

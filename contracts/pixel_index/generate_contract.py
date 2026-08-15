@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Generate contract.yaml from ENDPOINTS (contracts/pixel_index/endpoints.py)
-and the pydantic models they reference (pixelagents/models.py).
+and the pydantic models they reference (pixelagents/contracts/pixel_index.py).
 
 contract.yaml is a build artifact: gitignored, regenerated on every run of
-verify.py. Never hand-edit it — edit pixelagents/models.py (what fields we
-depend on) or endpoints.py (which endpoints, params, chaining) instead, and
-this file falls out of those automatically.
+verify.py. Never hand-edit it — edit pixelagents/contracts/pixel_index.py
+(what fields we depend on) or endpoints.py (which endpoints, params,
+chaining) instead, and this file falls out of those automatically.
 
 Run directly for inspection: python -m contracts.pixel_index.generate_contract
 """
@@ -21,7 +21,8 @@ CONTRACT_PATH = Path(__file__).with_name("contract.yaml")
 
 _HEADER = (
     "# AUTO-GENERATED - do not edit by hand, do not commit (see .gitignore).\n"
-    "# Source of truth: pixelagents/models.py + contracts/pixel_index/endpoints.py\n"
+    "# Source of truth: pixelagents/contracts/pixel_index.py + "
+    "contracts/pixel_index/endpoints.py\n"
     "# Regenerate: python -m contracts.pixel_index.generate_contract\n"
 )
 

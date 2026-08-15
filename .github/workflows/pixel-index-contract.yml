@@ -66,7 +66,7 @@ jobs:
         run: pip install -r contracts/pixel_index/requirements.txt
 
       - name: Run contract check
-        # Regenerates contract.yaml from pixelagents/models.py + endpoints.py
+        # Regenerates contract.yaml from pixelagents/contracts/pixel_index.py + endpoints.py
         # before checking — see contracts/pixel_index/generate_contract.py.
         run: |
           python -m contracts.pixel_index.verify \

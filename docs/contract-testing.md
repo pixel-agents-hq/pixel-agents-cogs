@@ -1,8 +1,9 @@
 # Consumer-driven contract testing against Pixel Index
 
-`pixelagents.py` talks to the [Pixel Index](https://github.com/pixel-agents-hq/index)
-API over plain HTTP — there's no shared package between the two repos, just a
-configurable base URL (`[p]pixelagents pixelindex set`). That's deliberate:
+The Pixel Agents catalogue integration talks to the
+[Pixel Index](https://github.com/pixel-agents-hq/index) API over plain HTTP —
+there's no shared package between the two repos, just a configurable base URL
+(`[p]pixelagents index set`). That's deliberate:
 office-cogs shouldn't hard-depend on pixel-index's code, but it does
 hard-depend on pixel-index's API *shape*. This doc explains how we catch a
 breaking shape change before it breaks the bot, without needing pixel-index
@@ -18,16 +19,15 @@ can't drift from what the code actually depends on.
 
 - [`pixelagents/contracts/pixel_index.py`](../pixelagents/contracts/pixel_index.py) —
   pydantic models
-  describing only the fields `pixelagents.py` reads from Pixel Index's
+  describing only the fields the catalogue service and Discord views read from Pixel Index's
   layout list/detail responses. This is the real source of truth: fields
   the bot reads defensively (`entry.get("furniture", 0)`) are optional here;
   fields it depends on unconditionally (`slug`) are required. It's imported
   by two things:
-  1. **`pixelagents.py` at runtime** — `_pixel_index_search` and
-     `_pixel_index_layout` validate every real response against these
-     models before returning it, so a shape change surfaces as a clear log
-     warning and a graceful error instead of a `KeyError`/`AttributeError`
-     deep in a Discord view.
+  1. **The catalogue runtime** — `PixelIndexClient` validates every real
+     search/detail response against these models before returning it, so a
+     shape change becomes a classified, user-safe error instead of a
+     `KeyError`/`AttributeError` deep in a Discord view.
   2. **The contract generator at CI time** — same models, same meaning,
      used to build the JSON Schema that gets checked against a live
      environment.
@@ -49,13 +49,13 @@ can't drift from what the code actually depends on.
 
 A pass means "this environment is safe for office-cogs to consume right
 now." A fail means something office-cogs reads has changed shape, and the
-bot should not be pointed at that environment until `pixelagents.py` (and
-the models it relies on) is reconciled with reality.
+bot should not be pointed at that environment until the catalogue client,
+service, and models are reconciled with reality.
 
 ### Why generate instead of hand-write the schema
 
 An earlier version of this hand-wrote `contract.yaml`. It missed fields
-`pixelagents.py` actually reads (`furniture`, `visibleCols`, `areas`, `pets`,
+the integration actually reads (`furniture`, `visibleCols`, `areas`, `pets`,
 `seats` were absent from the first draft) simply because nobody re-read the
 whole file top-to-bottom while writing the YAML by hand. Generating the
 schema from the same models that parse the response at runtime means the
@@ -88,12 +88,12 @@ every PR that touches Python code under `pixelagents/` or anything under
   mistyped field is a plain mypy `attr-defined` error — no bespoke schema
   extraction needed for this half. This script runs mypy (config:
   [`contracts/pixel_index/mypy.ini`](../contracts/pixel_index/mypy.ini),
-  `ignore_missing_imports` so discord.py/redbot — not installed for this
-  lightweight check — resolve to `Any` instead of erroring) and fails CI
+  `ignore_missing_imports` so Red — not installed for this lightweight check —
+  resolves to `Any` instead of erroring) and fails CI
   only on errors that name one of the canonical Pixel Index contract models.
-  Everything else mypy finds in the dynamically-typed Discord/Red adapters
-  is treated as informational, since fixing all of the legacy adapter
-  typing is a separate, larger effort than this check's job.
+  Everything else is outside this focused field-drift check; the separate
+  PixelAgents quality workflow runs strict mypy across every production
+  module.
 
 Together: `lint_endpoints.py` guards *which endpoints* the contract knows
 about, `lint_model_usage.py` guards *which fields* it knows about for each
@@ -134,7 +134,8 @@ Add a new environment (e.g. a preview deploy) by adding a row to the
   and/or for office-cogs to point at staging directly.
 - **Staging fails** → don't promote yet. Either pixel-index's change is
   breaking (fix it there) or office-cogs' usage needs to change first
-  (update `pixelagents.py` and `pixelagents/contracts/pixel_index.py` together).
+  (update the catalogue implementation and
+  `pixelagents/contracts/pixel_index.py` together).
 - **Production fails** (e.g. after a promotion, or the scheduled run catches
   something) → office-cogs is currently pointed at a broken contract; treat
   as an incident, not routine drift.
@@ -181,8 +182,8 @@ publish a replacement, so API consumers should also enforce `valid_until`.
 
 ## Updating the contract
 
-Whenever `pixelagents.py` starts reading a new field, stops using one, or
-changes how it calls an endpoint:
+Whenever the catalogue integration starts reading a new field, stops using
+one, or changes how it calls an endpoint:
 
 1. Update `pixelagents/contracts/pixel_index.py` to match — this is also what validates
    responses at runtime, so it should already reflect reality.

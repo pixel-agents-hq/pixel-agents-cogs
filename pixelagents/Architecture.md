@@ -14,6 +14,41 @@ The cog is the Pixel Agents runtime adapter for Red: it serves the browser
 bundle and implements the office WebSocket protocol directly. It does not
 depend on a separate producer-ingress service.
 
+## Internal structure
+
+`pixelagents.py` is deliberately only the stable composition and compatibility
+entrypoint. Runtime behavior is organized by responsibility:
+
+| Area | Responsibility |
+|---|---|
+| `domain/` | Immutable, framework-free agent, activity, message, seat, and settings snapshots |
+| `contracts/` | Validated WebSocket ingress, outbound message builders, layout schema, and Pixel Index response models |
+| `application/` | Office reconciliation, presence projection, settings side effects, catalogue use cases, and supervised tasks |
+| `infrastructure/` | Red Config, Discord normalization, aiohttp/WebSocket lifecycle, connected clients, tickets, Pixel Index HTTP, and webview assets |
+| `adapters/` | Red commands, Discord listeners, Dashboard routes, Discord views, WebSocket application dispatch, and response policy |
+| `pixelagents.py` | The `PixelAgents` Cog composition plus historical import aliases |
+
+`adapters/cog_base.py` is the composition root. It constructs each long-lived
+service once and coordinates `cog_load`/`cog_unload`; the other adapter mixins
+contain only their framework-facing surface. The lowercase historical class
+name remains an alias of the canonical `PixelAgents` class, so Red and existing
+integrations see the same Cog.
+
+Resource ownership is intentionally singular:
+
+| Resource | Owner |
+|---|---|
+| Red `Config` | `RedSettingsRepository` |
+| Pixel Index `ClientSession` | `PixelIndexClient` |
+| Office listener and connected sockets | `WebSocketServer` and `ClientHub` |
+| Delayed clears and initial synchronization | `TaskSupervisor` |
+| Decoded bundle assets | `WebviewAssetProvider` |
+| Editor session tickets | `TicketStore` |
+
+Shutdown first prevents new sends, then cancels and awaits supervised tasks,
+closes the office listener and sockets, and finally closes the shared Pixel
+Index client. This keeps reloads from leaking sessions, ports, or delayed work.
+
 ## Ecosystem integration
 
 ```mermaid
@@ -250,7 +285,8 @@ Global:
 | `pixel_index_api_url` | `https://pixel-index-api-staging.nntin.xyz` | Pixel Index API used for health checks, search, and layout retrieval |
 | `pixel_index_web_url` | `https://pixel-index.vercel.app` | Pixel Index frontend used for layout links |
 
-Guild: `enabled` (`False`), `include_bots` (`True`). User: `layouts`.
+Guild: `enabled` (`False`), `include_bots` (`True`). No user-scoped values are
+registered.
 
 ## Agent identity
 
@@ -286,6 +322,7 @@ randomly among the least-used, and hue-shift once all six are taken.
 | Command | Description |
 |---|---|
 | `[p]pixelagents status` | Configuration, client count, asset state |
+| `[p]pixelagents settings` | Components V2 administration panel for all settings and runtime status |
 | `[p]pixelagents enable` / `disable` | Guild mirroring on/off |
 | `[p]pixelagents sync` / `despawnall` | Reconcile / clear agents |
 | `[p]pixelagents includebots <bool>` | Mirror bot users |
@@ -302,11 +339,33 @@ randomly among the least-used, and hue-shift once all six are taken.
 Loading a Pixel Index layout writes it to the shared configuration and
 broadcasts `layoutLoaded` to every open tab.
 
+The settings panel and individual settings commands call the same
+`SettingsService`; neither writes Config directly. Changes that affect live
+state are applied immediately: guild enable/disable synchronizes or despawns,
+editor authorization is refreshed, and disabling rich presence clears visible
+and cached activity.
+
+## Validation
+
+The architecture tests enforce the thin composition entrypoint, adapter line
+budgets, one owner for each long-lived resource, command/listener discovery,
+public aliases, and the Config repository boundary. The local quality gate is:
+
+```sh
+python -m pytest -q pixelagents/tests
+python -m ruff format --check pixelagents
+python -m ruff check pixelagents
+python -m mypy
+python -m contracts.pixel_index.lint_endpoints
+python -m contracts.pixel_index.lint_model_usage
+python -m unittest discover -s contracts/pixel_index/tests -v
+```
+
 ## Rebuilding after changes
 
 | What changed | Action |
 |---|---|
-| `pixelagents.py` or `webview_dist/` | None — `/cogs` is bind-mounted; hot-reload or `[p]reload pixelagents` |
+| Python under `pixelagents/` or `webview_dist/` | None — `/cogs` is bind-mounted; hot-reload or `[p]reload pixelagents` |
 | `vendor/pixel-agents` (webview source) | `./scripts/build-webview`, then reload the cog |
 | `vendor/red-web-dashboard` (routes patch) | `docker compose build red-dashboard-pico && docker compose up -d red-dashboard-pico` |
 | Traefik labels / instance env | `./scripts/update-compose && docker compose up -d` |

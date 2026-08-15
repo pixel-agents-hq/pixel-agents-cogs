@@ -92,7 +92,7 @@ jobs:
           title: "❌ Pixel Index contract check failed (${{ matrix.name }})"
           description: >-
             office-cogs' contract against ${{ matrix.base_url }} failed. Do not
-            switch `[p]pixelagents pixelindex set` to this environment until this
+            switch `[p]pixelagents index set` to this environment until this
             is resolved — see the run for which endpoint/field broke.
           color: "15158332"
           fields: >-

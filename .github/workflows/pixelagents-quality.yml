@@ -23,7 +23,7 @@ concurrency:
 
 jobs:
   quality:
-    name: Tests, lint, and typed core
+    name: Tests, lint, and types
     runs-on: ubuntu-latest
 
     steps:
@@ -51,7 +51,7 @@ jobs:
       - name: Run Ruff
         run: ruff check pixelagents
 
-      - name: Check typed core
+      - name: Check production typing
         run: python -m mypy
 
       - name: Check Pixel Index endpoint registration

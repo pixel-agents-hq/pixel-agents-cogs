@@ -49,6 +49,105 @@ Shutdown first prevents new sends, then cancels and awaits supervised tasks,
 closes the office listener and sockets, and finally closes the shared Pixel
 Index client. This keeps reloads from leaking sessions, ports, or delayed work.
 
+### Layer boundaries
+
+```mermaid
+flowchart TB
+    domain["domain/<br/><small>pure value objects</small>"]
+    contracts["contracts/<br/><small>wire schemas</small>"]
+    application["application/<br/><small>use cases</small>"]
+    infrastructure["infrastructure/<br/><small>I/O adapters</small>"]
+    adapters["adapters/<br/><small>Cog mixins</small>"]
+    entry["pixelagents.py<br/><small>composition root, &lt;200 lines</small>"]
+
+    contracts --> domain
+    application --> domain
+    application --> contracts
+    infrastructure --> domain
+    infrastructure --> contracts
+    adapters --> application
+    adapters --> infrastructure
+    adapters --> contracts
+    adapters --> domain
+    entry --> adapters
+    entry --> application
+
+    infrastructure -. "infrastructure/pixel_index.py reaches up to<br/>application/catalogue.py for its error<br/>vocabulary — allowed, not enforced" .-> application
+```
+
+`pixelagents/tests/test_architecture.py::test_application_layer_does_not_import_infrastructure_or_adapters`
+enforces the one rule that actually matters for keeping this acyclic: it
+AST-walks every file directly under `application/` and fails if any has a
+two-level relative import (`from ..infrastructure ...` / `from ..adapters
+...`) reaching outward into a layer meant to depend on it, not the other way
+around. Nothing currently checks the reverse direction, which is why
+`infrastructure/pixel_index.py` importing `CatalogueError`,
+`CatalogueErrorCode`, and `CatalogueResult` from `application/catalogue.py`
+(reusing application's result vocabulary as its own return type, rather than
+defining its own and letting application translate) is allowed today — it's
+a known, deliberate asymmetry, not an oversight to silently "fix" without
+also updating the test's intent.
+
+## pixelagents/ and the repo-root `contracts/`
+
+There are two differently-scoped things named "contracts" in this repo, and
+they are not the same thing:
+
+- **`pixelagents/contracts/`** — the in-package wire-schema layer described
+  above (`layout.py`, `outbound.py`, `pixel_index.py`, `websocket.py`): part
+  of the cog's own runtime, deployed with it.
+- **`contracts/`** (repo root) — a separate top-level package that exists
+  purely for CI: it generates and checks a consumer-driven contract for the
+  Pixel Index HTTP API. It ships in this repo but is never loaded by Red —
+  `contracts/info.json` declares `"type": "SHARED_LIBRARY"` specifically so
+  Red's Downloader excludes it from cog discovery. Without that marker, Red's
+  Downloader treats any top-level package with no `info.json` type as a cog
+  by default, tries `bot.load_extension("contracts")`, and fails since it has
+  no `setup()`.
+
+```mermaid
+flowchart LR
+    subgraph root["contracts/ (repo root) — CI only"]
+        EP["endpoints.py"]
+        LE["lint_endpoints.py"]
+        LM["lint_model_usage.py"]
+        GC["generate_contract.py"]
+        VER["verify.py"]
+        GS["generate_status_site.py"]
+    end
+
+    subgraph pa["pixelagents/ — the Red cog"]
+        PICM["contracts/pixel_index.py<br/><small>canonical pydantic models</small>"]
+        INFRA["infrastructure/pixel_index.py<br/><small>PixelIndexClient</small>"]
+        SHIM["models.py<br/><small>legacy re-export shim</small>"]
+        SRC["every *.py under pixelagents/"]
+    end
+
+    EP -- "imports LayoutDetail,<br/>LayoutListResponse" --> PICM
+    GC --> EP
+    VER --> GC
+    GS -. "reads verify.py's JSON<br/>results only" .-> VER
+    LE -- "AST-scans source text for<br/>_pixel_index_get(...) call sites" --> SRC
+    LM -- "introspects model class names" --> PICM
+    LM -- "runs mypy over pixelagents/,<br/>filters errors by model name" --> SRC
+    INFRA -- "imports" --> PICM
+    SHIM -- "re-exports" --> PICM
+```
+
+The dependency runs one way: the repo-root `contracts/` package imports and
+inspects `pixelagents/`, but nothing under `pixelagents/` imports from
+`contracts/`. That's possible without an install step because both are
+plain top-level Python packages in the same checkout — CI runs
+`python -m contracts.pixel_index.X` from the repo root, and the repo root
+being on `sys.path` is enough for `contracts/*` to resolve
+`pixelagents.contracts.pixel_index` directly. `pixelagents/models.py` is a
+legacy compatibility shim that re-exports the same models under the old
+`pixelagents.models` path; current CI tooling imports
+`pixelagents.contracts.pixel_index` directly instead, but the shim stays for
+older callers. See [`docs/contract-testing.md`](../docs/contract-testing.md)
+for how the contract-testing methodology itself works — this section is
+only about the structural dependency between the two packages.
+
 ## Ecosystem integration
 
 ```mermaid
@@ -345,11 +444,25 @@ state are applied immediately: guild enable/disable synchronizes or despawns,
 editor authorization is refreshed, and disabling rich presence clears visible
 and cached activity.
 
-## Validation
+## Boundary enforcement and validation
 
-The architecture tests enforce the thin composition entrypoint, adapter line
-budgets, one owner for each long-lived resource, command/listener discovery,
-public aliases, and the Config repository boundary. The local quality gate is:
+[`.github/workflows/pixelagents-quality.yml`](../.github/workflows/pixelagents-quality.yml)
+runs on every push/PR touching `pixelagents/**/*.py`, `contracts/pixel_index/**`,
+or `pyproject.toml`. It is the CI check that verifies the boundaries described
+above — `check-cogs.yml` is a separate Red-downloader load smoke test and does
+not run any of this.
+
+| Rule (in `pixelagents/tests/test_architecture.py`) | Checks | Mechanism |
+|---|---|---|
+| `test_composition_entrypoint_is_genuinely_thin` | `pixelagents.py` stays under 200 lines | line count |
+| `test_split_did_not_create_a_replacement_adapter_monolith` | no file under `adapters/` exceeds 260 lines | line count |
+| `test_framework_resources_have_one_owner` | `Config.get_conf(`, `aiohttp.ClientSession`, and `asyncio.create_task(` are each constructed in exactly one file | source-text scan |
+| `test_application_layer_does_not_import_infrastructure_or_adapters` | `application/*.py` never reaches into `infrastructure/` or `adapters/` | AST (`ast.ImportFrom.level == 2`) |
+| `test_production_config_access_does_not_bypass_repository` | no file outside `infrastructure/settings.py` calls `something.config.xxx(...)` directly | AST (`ast.Call` on a `.config` attribute) |
+| `test_pascalcase_and_lowercase_public_classes_are_identical` | `PixelAgents`/`pixelagents` aliases are the same object, `PixelAgents.__init__` is inherited unmodified | object identity |
+| `test_discord_cogmeta_reverse_mro_scan_finds_each_listener_once` / `test_command_root_and_dashboard_routes_are_inherited_once` | each listener/command-tree root/dashboard route is owned exactly once across the mixin MRO | MRO reflection |
+
+The local quality gate is:
 
 ```sh
 python -m pytest -q pixelagents/tests

@@ -4,16 +4,12 @@ import asyncio
 import base64
 import json
 import logging
-import mimetypes
 from pathlib import Path
 import random
-import re
-import secrets
-import time
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 import aiohttp
-from aiohttp import WSMsgType, web
+from aiohttp import web
 import discord
 from discord import app_commands
 from pydantic import ValidationError
@@ -21,13 +17,24 @@ from redbot.core import commands
 from redbot.core.bot import Red
 
 from .application import SettingsService
+from .contracts.websocket import (
+    ClientMessage,
+    ImportLayoutMessage,
+    RequestDiagnosticsMessage,
+    SaveAgentSeatsMessage,
+    SaveLayoutMessage,
+    WebviewReadyMessage,
+)
+from .infrastructure.client_hub import ClientHub, ClientState
 from .infrastructure.settings import RedSettingsRepository, normalize_http_url
+from .infrastructure.tickets import TicketStore
+from .infrastructure.websocket import WebSocketServer
+from .infrastructure.webview import WebviewAssetProvider
 from .models import LayoutDetail, LayoutListResponse
 
 log = logging.getLogger("red.d_cogs.pixelagents")
 
 _VISIBLE_STATUSES = {"online", "idle", "dnd"}
-_WEBVIEW_CACHE_CONTROL = "public, max-age=3600"
 _PIXEL_INDEX_HEALTH_TIMEOUT = 5.0
 _PIXEL_INDEX_REQUEST_TIMEOUT = 10.0
 _LAYOUT_SEARCH_PAGE_SIZE = 5
@@ -36,89 +43,14 @@ _LAYOUT_SORT_CHOICES = ("newest", "furniture", "largest", "title")
 # JavaScript Number.MAX_SAFE_INTEGER = 2^53 - 1 = 9007199254740991
 _JS_MAX_SAFE = (1 << 53) - 1
 
-# How long an editor ticket minted by the dashboard page stays valid. Long
-# enough to survive a reconnect or a page left open; short enough that a leaked
-# URL fragment stops working the same day.
-_TICKET_TTL = 8 * 60 * 60
-
 # Bundled character palettes (char_0.png .. char_5.png).
 _PALETTE_COUNT = 6
-
-# Keys the AsyncAPI FurnitureAssetMessage allows. buildFurnitureCatalog emits
-# `furniturePath` on top of these for its own PNG loading; the contract sets
-# additionalProperties: false, so it is stripped before broadcast.
-_FURNITURE_KEYS = frozenset({
-    "id", "name", "label", "category", "file", "width", "height",
-    "footprintW", "footprintH", "isDesk", "canPlaceOnWalls", "groupId",
-    "canPlaceOnSurfaces", "backgroundTiles", "orientation", "state",
-    "mirrorSide", "rotationScheme", "animationGroup", "frame",
-})
-
-# Mutating client messages. Everything else a viewer sends is harmless, but
-# these change shared state and are dropped unless the socket is authorized.
-_EDITOR_MESSAGES = frozenset({"saveLayout", "saveAgentSeats", "importLayout"})
 
 # Upstream's Claude provider capabilities. The office uses these to pick the
 # reading vs typing animation; Discord activity labels are rendered the same
 # way, so we mirror the reference implementation's sets.
 _READING_TOOLS = ["Read", "Grep", "Glob", "WebFetch", "WebSearch"]
 _SUBAGENT_TOOL_NAMES = ["Task", "Agent"]
-
-# Injected ahead of the bundle so the office's WebSocket can be upgraded to an
-# editor session without the webview page itself requiring a dashboard login.
-# The webview is public (anonymous visitors connect as read-only viewers); this
-# shim opens the socket immediately and, in parallel, asks the `session` page
-# (which *does* require login) for a ticket. Logged-in visitors get one and the
-# shim sends it over the already-open socket; anonymous visitors get a failed
-# fetch, swallowed silently, and stay viewers. Upstream builds its socket URL
-# as `<origin>/ws` with no room for a credential, and Traefik routes /ws past
-# the dashboard, so the session cookie never reaches the socket either way.
-# Wrapping the constructor keeps the vendored bundle byte-identical to what
-# upstream builds.
-_TICKET_SHIM = """<script>
-(function () {
-  var Native = window.WebSocket;
-  var ticketPromise = fetch(location.pathname + '/session', {
-    credentials: 'same-origin',
-    headers: { Accept: 'application/json' },
-  })
-    .then(function (r) { return r.ok ? r.json() : null; })
-    .then(function (data) { return (data && data.ticket) || null; })
-    .catch(function () { return null; });
-
-  function authorize(socket) {
-    ticketPromise.then(function (ticket) {
-      if (!ticket) { return; }
-      var payload = JSON.stringify({ type: 'authorize', ticket: ticket });
-      if (socket.readyState === Native.OPEN) {
-        socket.send(payload);
-        return;
-      }
-      if (socket.readyState === Native.CONNECTING) {
-        socket.addEventListener('open', function once() {
-          socket.removeEventListener('open', once);
-          socket.send(payload);
-        });
-      }
-    });
-  }
-
-  function Patched(url, protocols) {
-    var socket = protocols === undefined ? new Native(url) : new Native(url, protocols);
-    if (typeof url === 'string' && url.indexOf('/ws') !== -1) {
-      authorize(socket);
-    }
-    return socket;
-  }
-  Patched.prototype = Native.prototype;
-  Patched.CONNECTING = Native.CONNECTING;
-  Patched.OPEN = Native.OPEN;
-  Patched.CLOSING = Native.CLOSING;
-  Patched.CLOSED = Native.CLOSED;
-  window.WebSocket = Patched;
-})();
-</script>"""
-
 
 def dashboard_page(*args, **kwargs):
     def decorator(func: Callable):
@@ -162,13 +94,25 @@ class pixelagents(commands.Cog):
         self._presence_cache: Dict[Tuple[int, int], str] = {}
         # Known collisions (agent_id) already logged
         self._logged_collisions: Set[int] = set()
-        # Office WebSocket server state
-        self._runner: Optional[web.AppRunner] = None
-        self._clients: Dict[web.WebSocketResponse, bool] = {}  # socket -> authorized
-        # Editor tickets minted by the dashboard page: ticket -> (user_id, expiry)
-        self._tickets: Dict[str, Tuple[int, float]] = {}
-        # Decoded sprite payloads, loaded once from webview_dist/assets/decoded/
-        self._assets: Dict[str, Any] = {}
+        self._webview_assets = WebviewAssetProvider(
+            Path(__file__).with_name("webview_dist"), logger=log
+        )
+        # This alias remains during the service extraction so bootstrap and
+        # presence code can consume the provider-owned immutable snapshot.
+        self._assets = self._webview_assets.assets
+        self._ticket_store = TicketStore()
+        self._client_hub = ClientHub(logger=log)
+        # `_clients` now contains identity-aware ClientState values. Keep the
+        # alias temporarily for adapters/tests that inspect connected sockets.
+        self._clients: Dict[web.WebSocketResponse, ClientState] = self._client_hub.clients
+        self._websocket_server = WebSocketServer(
+            clients=self._client_hub,
+            tickets=self._ticket_store,
+            authorize=self._authorize_office_client,
+            handle_application_message=self._handle_application_message,
+            health_snapshot=self._health_snapshot,
+            logger=log,
+        )
         self._closing = False
 
     async def _clear_rich_presence_bubbles(self) -> None:
@@ -179,7 +123,9 @@ class pixelagents(commands.Cog):
             await self._send({"type": "agentToolsClear", "id": self._agent_id(user_id)})
 
     async def _reauthorize_editors_after_settings_change(self) -> None:
-        """Hook for the identity-aware client hub introduced in the next phase."""
+        """Immediately refresh every identified socket after auth settings change."""
+
+        await self._client_hub.reauthorize(self._check_auth)
 
     async def _sync_guild_from_settings(self, guild_id: int) -> str:
         guild = self.bot.get_guild(guild_id)
@@ -206,58 +152,29 @@ class pixelagents(commands.Cog):
         third_parties.add_third_party(self, overwrite=True)
 
     def _webview_dist_root(self) -> Path:
-        return Path(__file__).with_name("webview_dist")
+        """Compatibility wrapper for the provider-owned asset root."""
+
+        return self._webview_assets.root
 
     def _resolve_webview_asset(self, asset_path: str) -> Optional[Path]:
-        clean_path = asset_path.strip().lstrip("/")
-        if not clean_path or "\x00" in clean_path:
-            return None
+        """Compatibility wrapper for traversal-safe asset resolution."""
 
-        root = self._webview_dist_root().resolve()
-        candidate = (root / clean_path).resolve()
-        try:
-            candidate.relative_to(root)
-        except ValueError:
-            return None
-        return candidate if candidate.is_file() else None
+        return self._webview_assets.resolve(asset_path)
 
     def _content_type_for_asset(self, asset_path: str) -> str:
-        if asset_path.endswith(".js"):
-            return "text/javascript; charset=utf-8"
-        if asset_path.endswith(".css"):
-            return "text/css; charset=utf-8"
-        if asset_path.endswith(".json") or asset_path.endswith(".webmanifest"):
-            return "application/json; charset=utf-8"
-        if asset_path.endswith(".svg"):
-            return "image/svg+xml"
-        if asset_path.endswith(".ico"):
-            return "image/x-icon"
-        if asset_path.endswith(".ttf"):
-            return "font/ttf"
-        guessed, _ = mimetypes.guess_type(asset_path)
-        return guessed or "application/octet-stream"
+        """Compatibility wrapper for provider MIME detection."""
+
+        return self._webview_assets.content_type(asset_path)
 
     def _mint_ticket(self, user_id: int) -> str:
-        """Issue a short-lived editor ticket bound to a Discord user ID."""
-        now = time.time()
-        # Opportunistically drop expired tickets so the dict cannot grow without
-        # bound on a long-lived bot process.
-        for value, (_, expiry) in list(self._tickets.items()):
-            if expiry <= now:
-                del self._tickets[value]
-        ticket = secrets.token_urlsafe(32)
-        self._tickets[ticket] = (user_id, now + _TICKET_TTL)
-        return ticket
+        """Compatibility wrapper for editor-ticket minting."""
+
+        return self._ticket_store.mint(user_id)
 
     def _resolve_ticket(self, ticket: str) -> Optional[int]:
-        entry = self._tickets.get(ticket)
-        if entry is None:
-            return None
-        user_id, expiry = entry
-        if expiry <= time.time():
-            del self._tickets[ticket]
-            return None
-        return user_id
+        """Compatibility wrapper for reusable ticket resolution."""
+
+        return self._ticket_store.resolve(ticket)
 
     # No `user_id` (or any other context-id-shaped name) in this signature —
     # that's what keeps this page public. `dashboard_page` infers context_ids
@@ -269,31 +186,8 @@ class pixelagents(commands.Cog):
     # authorization is handled out-of-band by `dashboard_session` below.
     @dashboard_page(name=None, description="Pixel Agents webview.", methods=("GET",))
     async def dashboard_webview(self, **kwargs) -> dict:
-        index_path = self._resolve_webview_asset("index.html")
-        if index_path is None:
-            return {
-                "status": 1,
-                "error_code": 503,
-                "error_message": "Pixel Agents webview assets are not installed.",
-            }
-
-        source = index_path.read_text(encoding="utf-8")
-        # Immediately after <head>, i.e. ahead of the bundle's own <script>.
-        # The bundle is a deferred module so a later inline script would still
-        # win, but relying on that is a trap for whoever edits this next.
-        match = re.search(r"<head[^>]*>", source, re.IGNORECASE)
-        if match:
-            source = source[: match.end()] + "\n" + _TICKET_SHIM + source[match.end():]
-        else:
-            source = _TICKET_SHIM + source
-
-        return {
-            "status": 0,
-            "web_content": {
-                "standalone": True,
-                "source": source,
-            },
-        }
+        del kwargs
+        return self._webview_assets.dashboard_webview_response()
 
     # Unlike `dashboard_webview`, `user_id` here has no default, so the
     # dashboard *does* require login for this one page and hands us the
@@ -320,26 +214,9 @@ class pixelagents(commands.Cog):
 
     @dashboard_page(name="static", description="Pixel Agents static asset.", methods=("GET", "HEAD"))
     async def dashboard_static(self, asset_path: str, **kwargs) -> dict:
-        resolved = self._resolve_webview_asset(asset_path)
-        if resolved is None:
-            return {
-                "status": 1,
-                "error_code": 404,
-                "error_message": "Pixel Agents asset not found.",
-            }
-
-        body = b"" if kwargs.get("method") == "HEAD" else resolved.read_bytes()
-        return {
-            "status": 0,
-            "raw_response": {
-                "status": 200,
-                "content_type": self._content_type_for_asset(asset_path),
-                "body_base64": base64.b64encode(body).decode("ascii"),
-                "headers": {
-                    "Cache-Control": _WEBVIEW_CACHE_CONTROL,
-                },
-            },
-        }
+        return self._webview_assets.dashboard_static_response(
+            asset_path, head_only=kwargs.get("method") == "HEAD"
+        )
 
     # ------------------------------------------------------------------
     # ID helpers
@@ -365,31 +242,13 @@ class pixelagents(commands.Cog):
     # ------------------------------------------------------------------
 
     async def _send_to(self, socket: web.WebSocketResponse, message: dict) -> None:
-        try:
-            await socket.send_str(json.dumps(message))
-        except Exception as exc:
-            log.debug("pixelagents: send error: %s", exc)
+        """Compatibility wrapper for targeted hub delivery."""
+
+        await self._client_hub.send_to(socket, message)
 
     async def _send(self, message: dict) -> None:
         """Broadcast a ServerMessage to every connected office client."""
-        if not self._clients:
-            return
-        try:
-            payload = json.dumps(message)
-        except TypeError as exc:
-            # A malformed message must not take down the presence update that
-            # produced it; drop it loudly instead.
-            log.error("pixelagents: refusing to broadcast unserializable %s: %s",
-                      message.get("type"), exc)
-            return
-        for socket in list(self._clients):
-            if socket.closed:
-                self._clients.pop(socket, None)
-                continue
-            try:
-                await socket.send_str(payload)
-            except Exception as exc:
-                log.debug("pixelagents: broadcast error: %s", exc)
+        await self._client_hub.broadcast(message)
 
     def _tracked_user_ids(self) -> List[int]:
         """Distinct tracked users, ordered stably so agent lists don't churn."""
@@ -475,24 +334,7 @@ class pixelagents(commands.Cog):
 
     def _default_layout(self) -> Optional[dict]:
         """The layout bundled with the webview build, used until one is saved."""
-        index_path = self._resolve_webview_asset("assets/asset-index.json")
-        if index_path is None:
-            return None
-        try:
-            index = json.loads(index_path.read_text(encoding="utf-8"))
-        except Exception:
-            return None
-        name = index.get("defaultLayout")
-        if not name:
-            return None
-        layout_path = self._resolve_webview_asset(f"assets/{name}")
-        if layout_path is None:
-            return None
-        try:
-            return json.loads(layout_path.read_text(encoding="utf-8"))
-        except Exception as exc:
-            log.warning("pixelagents: could not read bundled default layout: %s", exc)
-            return None
+        return self._webview_assets.default_layout()
 
     async def _current_layout(self) -> Optional[dict]:
         return await self._settings_repository.layout() or self._default_layout()
@@ -524,51 +366,17 @@ class pixelagents(commands.Cog):
     # ------------------------------------------------------------------
 
     def _load_assets(self) -> None:
-        """Read the decoded sprite payloads emitted by scripts/build-webview.
+        """Compatibility wrapper for one-time decoded asset loading."""
 
-        Blocking file reads, but they happen once at cog load and total a few
-        hundred kB of JSON. The webview cannot render without them: the
-        production bundle decodes nothing itself.
-        """
-        assets: Dict[str, Any] = {}
-        for name in ("characters", "floors", "walls", "carpets", "furniture"):
-            path = self._resolve_webview_asset(f"assets/decoded/{name}.json")
-            if path is None:
-                log.warning(
-                    "pixelagents: missing assets/decoded/%s.json — run scripts/build-webview", name
-                )
-                continue
-            try:
-                assets[name] = json.loads(path.read_text(encoding="utf-8"))
-            except Exception as exc:
-                log.error("pixelagents: could not read decoded %s: %s", name, exc)
-
-        catalog_path = self._resolve_webview_asset("assets/furniture-catalog.json")
-        if catalog_path is not None:
-            try:
-                raw = json.loads(catalog_path.read_text(encoding="utf-8"))
-                assets["catalog"] = [
-                    {k: v for k, v in entry.items() if k in _FURNITURE_KEYS} for entry in raw
-                ]
-            except Exception as exc:
-                log.error("pixelagents: could not read furniture catalog: %s", exc)
-
-        self._assets = assets
-        log.info(
-            "pixelagents: loaded assets — %d palettes, %d floors, %d wall sets, %d furniture sprites",
-            len(assets.get("characters", [])),
-            len(assets.get("floors", [])),
-            len(assets.get("walls", [])),
-            len(assets.get("furniture", {})),
-        )
+        self._webview_assets.load_assets()
 
     async def cog_load(self) -> None:
         self._closing = False
-        await asyncio.get_event_loop().run_in_executor(None, self._load_assets)
+        await asyncio.to_thread(self._load_assets)
         await self._start_server()
         # The producer client used to sync on connect. Nothing dials out now, so
         # seed the agent set once the gateway cache is populated instead.
-        self._sync_task = asyncio.get_event_loop().create_task(self._initial_sync())
+        self._sync_task = asyncio.create_task(self._initial_sync())
 
     async def _initial_sync(self) -> None:
         try:
@@ -584,106 +392,74 @@ class pixelagents(commands.Cog):
         task = getattr(self, "_sync_task", None)
         if task is not None:
             task.cancel()
-        for socket in list(self._clients):
             try:
-                await socket.close()
-            except Exception:
+                await task
+            except asyncio.CancelledError:
                 pass
-        self._clients.clear()
-        if self._runner is not None:
-            await self._runner.cleanup()
-            self._runner = None
+            self._sync_task = None
+        await self._websocket_server.stop()
 
     async def _start_server(self) -> None:
+        """Compatibility wrapper around the lifecycle-managed aiohttp server."""
+
         host = await self._settings_repository.ws_host()
         port = await self._settings_repository.ws_port()
-        app = web.Application()
-        app.router.add_get("/ws", self._handle_ws)
-        app.router.add_get("/api/health", self._handle_health)
-        runner = web.AppRunner(app)
-        await runner.setup()
-        site = web.TCPSite(runner, host, port)
-        try:
-            await site.start()
-        except OSError as exc:
-            await runner.cleanup()
-            log.error("pixelagents: could not bind office server to %s:%s — %s", host, port, exc)
-            return
-        self._runner = runner
-        log.info("pixelagents: office server listening on %s:%s/ws", host, port)
+        await self._websocket_server.start(host, port)
 
-    async def _handle_health(self, request: web.Request) -> web.Response:
-        return web.json_response({
+    def _health_snapshot(self) -> dict[str, object]:
+        return {
             "status": "ok",
-            "clients": len(self._clients),
+            "clients": self._client_hub.client_count,
             "agents": len(self._tracked_user_ids()),
             "assets": sorted(self._assets),
-        })
+        }
+
+    async def _handle_health(self, request: web.Request) -> web.Response:
+        """Compatibility wrapper for the server-owned health route."""
+
+        return await self._websocket_server.handle_health(request)
 
     async def _handle_ws(self, request: web.Request) -> web.WebSocketResponse:
-        socket = web.WebSocketResponse(heartbeat=30.0, max_msg_size=0)
-        await socket.prepare(request)
+        """Compatibility wrapper for the server-owned WebSocket route."""
 
-        ticket = request.query.get("ticket", "")
-        user_id = self._resolve_ticket(ticket) if ticket else None
-        authorized = bool(user_id) and await self._check_auth(user_id)
-        self._clients[socket] = authorized
-        log.info(
-            "pixelagents: office client connected (%s, %d total)",
-            "editor" if authorized else "viewer",
-            len(self._clients),
-        )
+        return await self._websocket_server.handle_ws(request)
 
-        try:
-            async for msg in socket:
-                if msg.type != WSMsgType.TEXT:
-                    if msg.type in (WSMsgType.CLOSE, WSMsgType.CLOSED, WSMsgType.ERROR):
-                        break
-                    continue
-                try:
-                    await self._handle_client_message(socket, json.loads(msg.data))
-                except Exception as exc:
-                    log.error("pixelagents: client message error: %s", exc, exc_info=True)
-        finally:
-            self._clients.pop(socket, None)
-            log.info("pixelagents: office client disconnected (%d left)", len(self._clients))
-        return socket
+    async def _authorize_office_client(self, user_id: int) -> bool:
+        """Indirection keeps authorization patchable and out of the transport."""
 
-    async def _handle_client_message(self, socket: web.WebSocketResponse, data: dict) -> None:
-        msg_type = data.get("type")
+        return await self._check_auth(user_id)
 
-        if msg_type in _EDITOR_MESSAGES and not self._clients.get(socket, False):
-            log.info("pixelagents: dropped %s from an unauthorized office client", msg_type)
-            return
+    async def _handle_client_message(self, socket: web.WebSocketResponse, data: object) -> None:
+        """Temporary adapter from legacy decoded dictionaries to wire models."""
 
-        if msg_type == "authorize":
-            # Sent out-of-band by the injected shim once its background
-            # fetch of the `session` page resolves. The webview page itself
-            # is public, so a socket starts as an unauthorized viewer and is
-            # only upgraded here, after the ticket is independently validated
-            # (mint + authz check), never trusted from the client alone.
-            ticket = data.get("ticket")
-            user_id = self._resolve_ticket(ticket) if ticket else None
-            if user_id and await self._check_auth(user_id):
-                self._clients[socket] = True
-                log.info("pixelagents: office client upgraded to editor")
-        elif msg_type == "webviewReady":
+        await self._websocket_server.handle_payload(socket, data)
+
+    async def _handle_application_message(
+        self, socket: web.WebSocketResponse, message: ClientMessage
+    ) -> None:
+        """Handle validated non-authorization messages using existing services."""
+
+        if isinstance(message, WebviewReadyMessage):
             await self._send_bootstrap(socket)
-        elif msg_type == "saveLayout":
-            layout = data.get("layout")
-            if self._validate_layout(layout):
-                await self._settings_repository.set_layout(layout)
-                # Mirror the new layout to every other open tab. The saving
-                # client already has it applied locally.
-                for other in list(self._clients):
-                    if other is not socket and not other.closed:
-                        await self._send_to(other, {"type": "layoutLoaded", "layout": layout})
-            else:
-                log.warning("pixelagents: rejected an invalid layout from an office client")
-        elif msg_type == "saveAgentSeats":
-            await self._save_seats(data.get("seats") or {})
-        elif msg_type == "requestDiagnostics":
+        elif isinstance(message, SaveLayoutMessage):
+            layout = message.layout.to_raw()
+            await self._settings_repository.set_layout(layout)
+            # The saving client already applied it locally; mirror to other tabs.
+            await self._client_hub.broadcast(
+                {"type": "layoutLoaded", "layout": layout}, exclude=socket
+            )
+        elif isinstance(message, SaveAgentSeatsMessage):
+            incoming = {
+                agent_id: patch.model_dump(by_alias=True, exclude_none=True)
+                for agent_id, patch in message.seats.items()
+            }
+            await self._save_seats(incoming)
+        elif isinstance(message, RequestDiagnosticsMessage):
             await self._send_to(socket, {"type": "agentDiagnostics", "agents": []})
+        elif isinstance(message, ImportLayoutMessage):
+            # Protected for forward compatibility. The bundled UI imports a
+            # local file, then sends saveLayout; there is no server-side action.
+            return
 
     async def _save_seats(self, incoming: dict) -> None:
         palette_count = max(len(self._assets.get("characters", [])), _PALETTE_COUNT)
@@ -1150,8 +926,8 @@ class pixelagents(commands.Cog):
         global_settings = await self._settings_service.global_settings()
         guild_settings = await self._settings_service.guild_settings(ctx.guild.id)
         tracked = sum(1 for (gid, _) in self._agents if gid == ctx.guild.id)
-        serving = self._runner is not None
-        editors = sum(1 for authorized in self._clients.values() if authorized)
+        serving = self._websocket_server.running
+        editors = self._client_hub.editor_count
 
         def yn(value: bool) -> str:
             return "✅" if value else "🛑"
@@ -1165,7 +941,7 @@ class pixelagents(commands.Cog):
         embed.add_field(name="Serving", value=yn(serving), inline=True)
         embed.add_field(
             name="Office Clients",
-            value=f"{len(self._clients)} ({editors} editor)",
+            value=f"{self._client_hub.client_count} ({editors} editor)",
             inline=True,
         )
         embed.add_field(

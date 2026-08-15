@@ -230,7 +230,7 @@ class TestRichPresenceDisableBehavior(unittest.IsolatedAsyncioTestCase):
         cog._agents[(1, 10)] = ("online", "Agent")
         cog._presence_cache[(1, 10)] = "Listening to music"
         connected_socket = _FakeClientWebSocketResponse()
-        cog._clients[connected_socket] = False
+        cog._client_hub.add(connected_socket, is_editor=False)
         ctx = TestSettingsCommandParity.context()
 
         await cog.cmd_richpresence(ctx, False)

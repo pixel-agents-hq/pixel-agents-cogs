@@ -163,15 +163,19 @@ class TestServerContract(unittest.IsolatedAsyncioTestCase):
         ):
             await cog._start_server()
 
-        assert routes == [("/ws", cog._handle_ws), ("/api/health", cog._handle_health)]
+        assert routes == [
+            ("/ws", cog._websocket_server.handle_ws),
+            ("/api/health", cog._websocket_server.handle_health),
+        ]
         tcp_site.assert_called_once_with(runner, "0.0.0.0", 3210)
         runner.setup.assert_awaited_once_with()
         site.start.assert_awaited_once_with()
-        assert cog._runner is runner
+        assert cog._websocket_server.runner is runner
 
     async def test_health_response_shape_is_stable(self):
         cog = make_cog()
-        cog._clients = {MagicMock(): False, MagicMock(): True}
+        cog._client_hub.add(MagicMock(), is_editor=False)
+        cog._client_hub.add(MagicMock(), user_id=42, is_editor=True)
         cog._agents = {(1, 10): ("online", "One"), (2, 10): ("idle", "One")}
         cog._assets = {"walls": [], "characters": []}
 
@@ -258,12 +262,12 @@ class TestWebSocketBootstrapContract(unittest.IsolatedAsyncioTestCase):
     async def test_unknown_client_messages_remain_ignored(self):
         cog = make_cog()
         socket = _FakeClientWebSocketResponse()
-        cog._clients[socket] = False
+        cog._client_hub.add(socket, is_editor=False)
 
         await cog._handle_client_message(socket, {"type": "futureMessage", "value": 1})
 
         assert socket._sent == []
-        assert cog._clients[socket] is False
+        assert cog._clients[socket].is_editor is False
 
 
 class TestCommandContract:

@@ -20,11 +20,10 @@ from pixelagents.pixelagents import (
     _LayoutDetailView,
     pixelagents as PixelAgentsCog,
 )
-from pixelagents.application import SettingsService
-from pixelagents.infrastructure.settings import GUILD_DEFAULTS, RedSettingsRepository
+from pixelagents.infrastructure.tickets import TicketStore
+from pixelagents.infrastructure.webview import WebviewAssetProvider
 from pixelagents.tests.conftest import (
     _FakeClientWebSocketResponse,
-    _FakeConfig,
     _FakeInteraction,
 )
 
@@ -61,47 +60,13 @@ def _make_cog():
     bot = MagicMock()
     bot.guilds = []
     bot.is_owner = AsyncMock(return_value=False)
-    cog = PixelAgentsCog.__new__(PixelAgentsCog)
-    cog.bot = bot
-    cfg = _FakeConfig()
-    cfg._global = {
-        "ws_host": "0.0.0.0",
-        "ws_port": 3210,
-        "message_tool_clear_delay": 2.0,
-        "editor_role_id": None,
-        "broadcast_rich_presence": True,
-        "broadcast_messages": True,
-        "layout": None,
-        "seats": {},
-        "pixel_index_api_url": "https://pixel-index-api-staging.nntin.xyz",
-        "pixel_index_web_url": "https://pixel-index.vercel.app",
-    }
-    cfg.register_guild(**GUILD_DEFAULTS)
-    cog.config = cfg
-    cog._settings_repository = RedSettingsRepository(cfg)
-    cog._settings_service = SettingsService(
-        cog._settings_repository,
-        clear_rich_presence=cog._clear_rich_presence_bubbles,
-        reauthorize_editors=cog._reauthorize_editors_after_settings_change,
-        sync_guild=cog._sync_guild_from_settings,
-        despawn_guild=cog._despawn_guild_from_settings,
-    )
-    cog._agents = {}
-    cog._sync_task = None
-    cog._presence_cache = {}
-    cog._logged_collisions = set()
-    cog._runner = None
-    cog._clients = {}
-    cog._tickets = {}
-    cog._assets = {}
-    cog._closing = False
-    return cog
+    return PixelAgentsCog(bot)
 
 
 def _connect(cog, authorized=False):
     """Attach a fake office client to the cog and return it."""
     socket = _FakeClientWebSocketResponse()
-    cog._clients[socket] = authorized
+    cog._client_hub.add(socket, is_editor=authorized)
     return socket
 
 
@@ -256,7 +221,7 @@ class TestSend(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(other._sent), 1)
 
     async def test_send_noop_when_no_clients(self):
-        self.cog._clients = {}
+        self.cog._clients.clear()
         await self.cog._send({"type": "test"})
 
     async def test_send_drops_closed_clients(self):
@@ -325,7 +290,7 @@ class TestDashboardWebviewHosting(unittest.IsolatedAsyncioTestCase):
             root = Path(tmp)
             (root / "assets").mkdir()
             (root / "assets" / "index-test.js").write_text("console.log('ok');", encoding="utf-8")
-            cog._webview_dist_root = lambda: root
+            cog._webview_assets = WebviewAssetProvider(root)
 
             result = await cog.dashboard_static("assets/index-test.js")
 
@@ -340,7 +305,7 @@ class TestDashboardWebviewHosting(unittest.IsolatedAsyncioTestCase):
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "index.html").write_text("ok", encoding="utf-8")
-            cog._webview_dist_root = lambda: root
+            cog._webview_assets = WebviewAssetProvider(root)
 
             result = await cog.dashboard_static("../index.html")
 
@@ -352,7 +317,7 @@ class TestDashboardWebviewHosting(unittest.IsolatedAsyncioTestCase):
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "index.html").write_text("<!doctype html><div id=\"root\"></div>", encoding="utf-8")
-            cog._webview_dist_root = lambda: root
+            cog._webview_assets = WebviewAssetProvider(root)
 
             result = await cog.dashboard_webview()
 
@@ -724,17 +689,21 @@ class TestHandleClientMessage(unittest.IsolatedAsyncioTestCase):
         self.cog._check_auth = AsyncMock(return_value=True)
         ticket = self.cog._mint_ticket(4242)
         await self.cog._handle_client_message(self.viewer, {"type": "authorize", "ticket": ticket})
-        self.assertTrue(self.cog._clients[self.viewer])
+        state = self.cog._clients[self.viewer]
+        self.assertTrue(state.is_editor)
+        self.assertEqual(state.user_id, 4242)
 
     async def test_authorize_with_unknown_ticket_stays_viewer(self):
         await self.cog._handle_client_message(self.viewer, {"type": "authorize", "ticket": "nope"})
-        self.assertFalse(self.cog._clients[self.viewer])
+        self.assertFalse(self.cog._clients[self.viewer].is_editor)
 
     async def test_authorize_with_valid_ticket_but_failed_authz_stays_viewer(self):
         self.cog._check_auth = AsyncMock(return_value=False)
         ticket = self.cog._mint_ticket(4242)
         await self.cog._handle_client_message(self.viewer, {"type": "authorize", "ticket": ticket})
-        self.assertFalse(self.cog._clients[self.viewer])
+        state = self.cog._clients[self.viewer]
+        self.assertFalse(state.is_editor)
+        self.assertEqual(state.user_id, 4242)
 
 
 class TestTicketInjection(unittest.IsolatedAsyncioTestCase):
@@ -743,7 +712,7 @@ class TestTicketInjection(unittest.IsolatedAsyncioTestCase):
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "index.html").write_text(html, encoding="utf-8")
-            cog._webview_dist_root = lambda: root
+            cog._webview_assets = WebviewAssetProvider(root)
             result = await cog.dashboard_webview()
         return cog, result["web_content"]["source"]
 
@@ -758,7 +727,7 @@ class TestTicketInjection(unittest.IsolatedAsyncioTestCase):
         # The webview page is public and must not know the visitor's Discord
         # ID; tickets are only minted by the login-gated `session` page.
         cog, _source = await self._render("<!doctype html><head></head><body></body>")
-        self.assertEqual(cog._tickets, {})
+        self.assertEqual(cog._ticket_store.tickets, {})
 
     async def test_shim_fetches_the_session_page(self):
         _, source = await self._render("<!doctype html><head></head><body></body>")
@@ -791,17 +760,21 @@ class TestEditorTickets(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(self.cog._resolve_ticket("nope"))
 
     def test_expired_ticket_is_rejected_and_dropped(self):
-        ticket = self.cog._mint_ticket(1)
-        user_id, _ = self.cog._tickets[ticket]
-        self.cog._tickets[ticket] = (user_id, 0.0)
-        self.assertIsNone(self.cog._resolve_ticket(ticket))
-        self.assertNotIn(ticket, self.cog._tickets)
+        now = [0.0]
+        store = TicketStore(clock=lambda: now[0], token_factory=lambda: "ticket")
+        ticket = store.mint(1)
+        now[0] = 8 * 60 * 60
+        self.assertIsNone(store.resolve(ticket))
+        self.assertNotIn(ticket, store.tickets)
 
     def test_minting_evicts_expired_tickets(self):
-        stale = self.cog._mint_ticket(1)
-        self.cog._tickets[stale] = (1, 0.0)
-        self.cog._mint_ticket(2)
-        self.assertNotIn(stale, self.cog._tickets)
+        now = [0.0]
+        tokens = iter(("stale", "fresh"))
+        store = TicketStore(clock=lambda: now[0], token_factory=lambda: next(tokens))
+        stale = store.mint(1)
+        now[0] = 8 * 60 * 60
+        store.mint(2)
+        self.assertNotIn(stale, store.tickets)
 
 
 class TestLayoutOwnership(unittest.IsolatedAsyncioTestCase):

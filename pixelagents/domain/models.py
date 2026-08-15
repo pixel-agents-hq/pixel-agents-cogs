@@ -9,14 +9,14 @@ long-running reconciliation operation.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from typing import TypeAlias
 
 SnowflakeId: TypeAlias = int
 AgentId: TypeAlias = int
 
 
-class PresenceStatus(str, Enum):
+class PresenceStatus(StrEnum):
     """Discord presence states that produce a visible office agent."""
 
     ONLINE = "online"
@@ -24,7 +24,7 @@ class PresenceStatus(str, Enum):
     DO_NOT_DISTURB = "dnd"
 
 
-class ActivityKind(str, Enum):
+class ActivityKind(StrEnum):
     """Normalized Discord activity categories."""
 
     PLAYING = "playing"

@@ -8,6 +8,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    field_validator,
     model_validator,
 )
 from pydantic import (
@@ -35,6 +36,20 @@ class OfficeLayout(BaseModel):
     tiles: list[JsonValue]
     furniture: list[JsonValue]
     tile_colors: list[JsonValue] | None = Field(default=None, alias="tileColors")
+
+    @field_validator("version", mode="before")
+    @classmethod
+    def validate_version_type(cls, value: object) -> Literal[1]:
+        """Reject numeric lookalikes such as ``1.0`` and ``True``.
+
+        Pydantic's handling of ``Literal[1]`` changed across v2 releases and
+        can accept values that compare equal to ``1`` even in strict mode.
+        The wire contract requires the JSON integer used by upstream.
+        """
+
+        if type(value) is not int or value != 1:
+            raise ValueError("version must be the integer 1")
+        return cast(Literal[1], value)
 
     @model_validator(mode="after")
     def validate_grid_lengths(self) -> OfficeLayout:

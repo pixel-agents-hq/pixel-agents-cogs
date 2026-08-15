@@ -67,6 +67,15 @@ class AgentSnapshot:
 
 
 @dataclass(frozen=True, slots=True)
+class MessageSnapshot:
+    """The Discord message fields used by the office activity projection."""
+
+    key: AgentKey
+    message_id: SnowflakeId
+    content: str
+
+
+@dataclass(frozen=True, slots=True)
 class TrackedAgent:
     """The minimal state retained after a member enters the office."""
 

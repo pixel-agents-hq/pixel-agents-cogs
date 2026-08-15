@@ -4,9 +4,9 @@ import asyncio
 import base64
 import json
 import logging
+from collections.abc import Mapping
 from pathlib import Path
-import random
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import aiohttp
 from aiohttp import web
@@ -16,7 +16,8 @@ from pydantic import ValidationError
 from redbot.core import commands
 from redbot.core.bot import Red
 
-from .application import SettingsService
+from .application import OfficeService, PresenceService, SettingsService, TaskSupervisor
+from .application.office import DEFAULT_PALETTE_COUNT, JS_MAX_SAFE, discord_id_to_agent_id
 from .contracts.websocket import (
     ClientMessage,
     ImportLayoutMessage,
@@ -25,7 +26,9 @@ from .contracts.websocket import (
     SaveLayoutMessage,
     WebviewReadyMessage,
 )
+from .domain import AgentKey, AgentSnapshot, PresenceStatus
 from .infrastructure.client_hub import ClientHub, ClientState
+from .infrastructure.discord import member_snapshot, message_snapshot
 from .infrastructure.settings import RedSettingsRepository, normalize_http_url
 from .infrastructure.tickets import TicketStore
 from .infrastructure.websocket import WebSocketServer
@@ -41,20 +44,14 @@ _LAYOUT_SEARCH_PAGE_SIZE = 5
 _LAYOUT_SORT_CHOICES = ("newest", "furniture", "largest", "title")
 
 # JavaScript Number.MAX_SAFE_INTEGER = 2^53 - 1 = 9007199254740991
-_JS_MAX_SAFE = (1 << 53) - 1
+_JS_MAX_SAFE = JS_MAX_SAFE
 
 # Bundled character palettes (char_0.png .. char_5.png).
-_PALETTE_COUNT = 6
-
-# Upstream's Claude provider capabilities. The office uses these to pick the
-# reading vs typing animation; Discord activity labels are rendered the same
-# way, so we mirror the reference implementation's sets.
-_READING_TOOLS = ["Read", "Grep", "Glob", "WebFetch", "WebSearch"]
-_SUBAGENT_TOOL_NAMES = ["Task", "Agent"]
+_PALETTE_COUNT = DEFAULT_PALETTE_COUNT
 
 def dashboard_page(*args, **kwargs):
     def decorator(func: Callable):
-        func.__dashboard_decorator_params__ = (args, kwargs)
+        setattr(func, "__dashboard_decorator_params__", (args, kwargs))
         return func
 
     return decorator
@@ -67,8 +64,7 @@ def _discord_id_to_agent_id(user_id: int) -> int:
     and negate. If the result is 0 (user_id is a multiple of JS_MAX_SAFE),
     we use -JS_MAX_SAFE to guarantee negativity.
     """
-    mapped = user_id % _JS_MAX_SAFE
-    return -(mapped if mapped != 0 else _JS_MAX_SAFE)
+    return discord_id_to_agent_id(user_id)
 
 
 class pixelagents(commands.Cog):
@@ -76,6 +72,8 @@ class pixelagents(commands.Cog):
 
     def __init__(self, bot: Red) -> None:
         self.bot = bot
+        self._closing = False
+        self._task_supervisor = TaskSupervisor(logger=log)
         self._settings_repository = RedSettingsRepository.create(self)
         # Keep the raw Config attribute public until all legacy adapters have
         # moved behind typed services; third-party integrations may inspect it.
@@ -87,13 +85,14 @@ class pixelagents(commands.Cog):
             sync_guild=self._sync_guild_from_settings,
             despawn_guild=self._despawn_guild_from_settings,
         )
-        # Active agents: (guild_id, user_id) -> (folder_name, display_name)
-        self._agents: Dict[Tuple[int, int], Tuple[str, str]] = {}
+        self._presence_service = PresenceService(self._send)
+        self._office_service = OfficeService(
+            self._settings_repository,
+            self._send,
+            presence=self._presence_service,
+            logger=log,
+        )
         self._sync_task: Optional[asyncio.Task] = None
-        # Current rich presence label per agent, absent when no presence
-        self._presence_cache: Dict[Tuple[int, int], str] = {}
-        # Known collisions (agent_id) already logged
-        self._logged_collisions: Set[int] = set()
         self._webview_assets = WebviewAssetProvider(
             Path(__file__).with_name("webview_dist"), logger=log
         )
@@ -113,14 +112,35 @@ class pixelagents(commands.Cog):
             health_snapshot=self._health_snapshot,
             logger=log,
         )
-        self._closing = False
+
+    @property
+    def _agents(self) -> Dict[Tuple[int, int], Tuple[str, str]]:
+        """Compatibility view of service-owned active agents."""
+
+        return self._office_service.active_agents
+
+    @_agents.setter
+    def _agents(self, value: Dict[Tuple[int, int], Tuple[str, str]]) -> None:
+        self._office_service.replace_active_agents(value)
+
+    @property
+    def _presence_cache(self) -> Dict[Tuple[int, int], str]:
+        """Compatibility view of the presence service's transition cache."""
+
+        return self._presence_service.cache
+
+    @_presence_cache.setter
+    def _presence_cache(self, value: Dict[Tuple[int, int], str]) -> None:
+        self._presence_service.replace_cache(value)
+
+    @property
+    def _logged_collisions(self) -> set[int]:
+        return self._office_service.logged_collisions
 
     async def _clear_rich_presence_bubbles(self) -> None:
         """Clear cached activity and every visible tool stack immediately."""
 
-        self._presence_cache.clear()
-        for user_id in self._tracked_user_ids():
-            await self._send({"type": "agentToolsClear", "id": self._agent_id(user_id)})
+        await self._office_service.clear_presence()
 
     async def _reauthorize_editors_after_settings_change(self) -> None:
         """Immediately refresh every identified socket after auth settings change."""
@@ -212,7 +232,9 @@ class pixelagents(commands.Cog):
             },
         }
 
-    @dashboard_page(name="static", description="Pixel Agents static asset.", methods=("GET", "HEAD"))
+    @dashboard_page(
+        name="static", description="Pixel Agents static asset.", methods=("GET", "HEAD")
+    )
     async def dashboard_static(self, asset_path: str, **kwargs) -> dict:
         return self._webview_assets.dashboard_static_response(
             asset_path, head_only=kwargs.get("method") == "HEAD"
@@ -223,110 +245,49 @@ class pixelagents(commands.Cog):
     # ------------------------------------------------------------------
 
     def _agent_id(self, user_id: int) -> int:
-        return _discord_id_to_agent_id(user_id)
+        return self._office_service.agent_id(user_id)
 
     def _detect_collision(self, user_id: int) -> None:
-        agent_id = self._agent_id(user_id)
-        for (_, uid) in self._agents:
-            if uid != user_id and self._agent_id(uid) == agent_id:
-                if agent_id not in self._logged_collisions:
-                    self._logged_collisions.add(agent_id)
-                    log.warning(
-                        "pixelagents: agent ID collision — user %d and user %d both map to %d",
-                        user_id, uid, agent_id,
-                    )
-                break
+        self._office_service.detect_collision(user_id)
 
     # ------------------------------------------------------------------
     # Broadcast helpers
     # ------------------------------------------------------------------
 
-    async def _send_to(self, socket: web.WebSocketResponse, message: dict) -> None:
+    async def _send_to(self, socket: web.WebSocketResponse, message: Mapping[str, object]) -> None:
         """Compatibility wrapper for targeted hub delivery."""
 
+        if self._closing:
+            return
         await self._client_hub.send_to(socket, message)
 
-    async def _send(self, message: dict) -> None:
+    async def _send(self, message: Mapping[str, object]) -> None:
         """Broadcast a ServerMessage to every connected office client."""
+
+        if self._closing:
+            return
         await self._client_hub.broadcast(message)
 
     def _tracked_user_ids(self) -> List[int]:
         """Distinct tracked users, ordered stably so agent lists don't churn."""
-        seen: List[int] = []
-        for (_, uid) in sorted(self._agents):
-            if uid not in seen:
-                seen.append(uid)
-        return seen
+
+        return self._office_service.tracked_user_ids()
 
     def _existing_agents_message(self, seats: dict) -> dict:
-        agent_ids: List[int] = []
-        folder_names: Dict[str, str] = {}
-        agent_meta: Dict[str, dict] = {}
-        for uid in self._tracked_user_ids():
-            aid = self._agent_id(uid)
-            agent_ids.append(aid)
-            folder = next(
-                (f for (_, u), (f, _) in sorted(self._agents.items()) if u == uid),
-                None,
-            )
-            if folder:
-                folder_names[str(aid)] = folder
-            agent_meta[str(aid)] = self._seat_meta(aid, seats)
-        return {
-            "type": "existingAgents",
-            "agents": agent_ids,
-            "agentMeta": agent_meta,
-            "folderNames": folder_names,
-            "externalAgents": {},
-        }
+        return self._office_service.existing_agents_message(seats)
 
     async def _send_existing_agents(self) -> None:
-        await self._send(self._existing_agents_message(await self._settings_repository.seats()))
+        await self._office_service.send_existing_agents()
 
     # ------------------------------------------------------------------
     # Seats and palettes
     # ------------------------------------------------------------------
 
     def _seat_meta(self, agent_id: int, seats: Optional[dict]) -> dict:
-        record = (seats or {}).get(str(agent_id)) or {}
-        meta: Dict[str, Any] = {}
-        for key in ("palette", "hueShift", "seatId"):
-            if record.get(key) is not None:
-                meta[key] = record[key]
-        return meta
+        return self._office_service.seat_meta(agent_id, seats)
 
     async def _assign_palette(self, agent_id: int) -> Tuple[int, int]:
-        """Pick a palette for a new agent, mirroring upstream's diverse assignment.
-
-        Counts palettes already in use and picks randomly among the least-used
-        ones, so the first six characters each look different. Beyond that,
-        palettes repeat with a random hue shift.
-        """
-        live = {str(self._agent_id(uid)) for uid in self._tracked_user_ids()}
-
-        def assign(seats: dict) -> Tuple[int, int]:
-            record = seats.get(str(agent_id))
-            if record and record.get("palette") is not None:
-                return int(record["palette"]), int(record.get("hueShift") or 0)
-
-            counts = [0] * _PALETTE_COUNT
-            for key, value in seats.items():
-                if key in live and value.get("palette") is not None:
-                    index = int(value["palette"])
-                    if 0 <= index < _PALETTE_COUNT:
-                        counts[index] += 1
-
-            fewest = min(counts)
-            palette = random.choice([i for i, count in enumerate(counts) if count == fewest])
-            hue_shift = 0 if fewest == 0 else random.randint(45, 315)
-            seats[str(agent_id)] = {
-                **(record or {}),
-                "palette": palette,
-                "hueShift": hue_shift,
-            }
-            return palette, hue_shift
-
-        return await self._settings_repository.mutate_seats(assign)
+        return await self._office_service.assign_palette(agent_id)
 
     # ------------------------------------------------------------------
     # Layout ownership
@@ -357,7 +318,9 @@ class pixelagents(commands.Cog):
         if not isinstance(furniture, list):
             return False
         tile_colors = layout.get("tileColors")
-        if tile_colors is not None and (not isinstance(tile_colors, list) or len(tile_colors) != cols * rows):
+        if tile_colors is not None and (
+            not isinstance(tile_colors, list) or len(tile_colors) != cols * rows
+        ):
             return False
         return True
 
@@ -372,31 +335,23 @@ class pixelagents(commands.Cog):
 
     async def cog_load(self) -> None:
         self._closing = False
+        self._task_supervisor.open()
         await asyncio.to_thread(self._load_assets)
         await self._start_server()
         # The producer client used to sync on connect. Nothing dials out now, so
         # seed the agent set once the gateway cache is populated instead.
-        self._sync_task = asyncio.create_task(self._initial_sync())
+        self._sync_task = self._task_supervisor.create(
+            self._initial_sync(), name="pixelagents-initial-sync"
+        )
 
     async def _initial_sync(self) -> None:
-        try:
-            await self.bot.wait_until_red_ready()
-            await self._sync_all_guilds()
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            log.error("pixelagents: initial sync failed: %s", exc)
+        await self.bot.wait_until_red_ready()
+        await self._sync_all_guilds()
 
     async def cog_unload(self) -> None:
         self._closing = True
-        task = getattr(self, "_sync_task", None)
-        if task is not None:
-            task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
-            self._sync_task = None
+        await self._task_supervisor.shutdown()
+        self._sync_task = None
         await self._websocket_server.stop()
 
     async def _start_server(self) -> None:
@@ -462,7 +417,11 @@ class pixelagents(commands.Cog):
             return
 
     async def _save_seats(self, incoming: dict) -> None:
-        palette_count = max(len(self._assets.get("characters", [])), _PALETTE_COUNT)
+        characters = self._assets.get("characters")
+        palette_count = max(
+            len(characters) if isinstance(characters, (list, tuple)) else 0,
+            _PALETTE_COUNT,
+        )
 
         def merge(seats: dict) -> None:
             for agent_id, value in incoming.items():
@@ -492,77 +451,14 @@ class pixelagents(commands.Cog):
         buffers `existingAgents` and only materializes characters when the
         layout arrives, so a layout-first bootstrap leaves an empty office.
         """
-        await self._send_to(socket, {
-            "type": "providerCapabilities",
-            "readingTools": _READING_TOOLS,
-            "subagentToolNames": _SUBAGENT_TOOL_NAMES,
-        })
-
-        if "characters" in self._assets:
-            await self._send_to(socket, {
-                "type": "characterSpritesLoaded",
-                "characters": self._assets["characters"],
-            })
-        if "floors" in self._assets:
-            await self._send_to(socket, {
-                "type": "floorTilesLoaded",
-                "sprites": self._assets["floors"],
-            })
-        if "walls" in self._assets:
-            await self._send_to(socket, {"type": "wallTilesLoaded", "sets": self._assets["walls"]})
-        if "carpets" in self._assets:
-            await self._send_to(socket, {
-                "type": "carpetTilesLoaded",
-                "sets": self._assets["carpets"],
-            })
-        if "catalog" in self._assets and "furniture" in self._assets:
-            await self._send_to(socket, {
-                "type": "furnitureAssetsLoaded",
-                "catalog": self._assets["catalog"],
-                "sprites": self._assets["furniture"],
-            })
-
-        await self._send_to(socket, {
-            "type": "settingsLoaded",
-            "soundEnabled": False,
-            "lastSeenVersion": "",
-            "extensionVersion": "",
-            "watchAllSessions": False,
-            "alwaysShowLabels": False,
-            "ghostHeadlessAgents": False,
-            "hooksEnabled": False,
-            "hooksInfoShown": True,
-            "externalAssetDirectories": [],
-            "showAreas": False,
-        })
-        await self._send_to(socket, {"type": "areaMappingsLoaded", "mappings": {}})
-
         seats = await self._settings_repository.seats()
-        await self._send_to(socket, self._existing_agents_message(seats))
-        for uid in self._tracked_user_ids():
-            aid = self._agent_id(uid)
-            name = next(
-                (n for (_, u), (_, n) in sorted(self._agents.items()) if u == uid),
-                None,
-            )
-            if name:
-                await self._send_to(socket, {
-                    "type": "agentTeamInfo", "id": aid, "agentName": name,
-                })
-
-        await self._send_to(socket, {"type": "layoutLoaded", "layout": await self._current_layout()})
-
-        # Activity bubbles reference characters that only exist after the
-        # layout flush above, so replay them last.
-        for (guild_id, user_id), label in self._presence_cache.items():
-            if (guild_id, user_id) in self._agents:
-                await self._send_to(socket, {
-                    "type": "agentToolStart",
-                    "id": self._agent_id(user_id),
-                    "toolId": f"rp-{self._agent_id(user_id)}",
-                    "toolName": "Activity",
-                    "status": label,
-                })
+        messages = self._office_service.bootstrap_messages(
+            assets=self._assets,
+            seats=seats,
+            layout=await self._current_layout(),
+        )
+        for message in messages:
+            await self._send_to(socket, message)
 
     # ------------------------------------------------------------------
     # Editor authorization
@@ -627,22 +523,19 @@ class pixelagents(commands.Cog):
                     log.error("pixelagents: sync error for guild %s: %s", guild.id, exc)
 
     async def _full_sync(self, guild: discord.Guild) -> str:
-        include_bots = (await self._settings_repository.guild_settings(guild)).include_bots
-        errors = 0
-        current_user_ids = {m.id for m in guild.members}
+        guild_settings = await self._settings_repository.guild_settings(guild)
+        rich_presence_enabled = await self._settings_repository.broadcast_rich_presence()
+        snapshots = tuple(self._member_snapshot(member) for member in guild.members)
+        return await self._office_service.sync_guild(
+            guild.id,
+            snapshots,
+            include_bots=guild_settings.include_bots,
+            rich_presence_enabled=rich_presence_enabled,
+        )
 
-        # Close agents that are no longer in the guild
-        stale = [(gid, uid) for (gid, uid) in list(self._agents) if gid == guild.id and uid not in current_user_ids]
-        for key in stale:
-            await self._close_agent(*key)
-
-        for member in guild.members:
-            try:
-                await self._reconcile_member(member, include_bots)
-            except Exception as exc:
-                log.error("pixelagents: reconcile error for %s: %s", member.id, exc)
-                errors += 1
-        return f"Sync complete. Errors: {errors}." if errors else "Sync complete."
+    def _member_snapshot(self, member: discord.Member) -> AgentSnapshot:
+        bot_user_id = self.bot.user.id if self.bot.user is not None else None
+        return member_snapshot(member, bot_user_id=bot_user_id)
 
     def _pick_presence_activity(self, member: discord.Member) -> Optional[discord.Activity]:
         activities = [a for a in member.activities if a.type != discord.ActivityType.custom]
@@ -652,157 +545,84 @@ class pixelagents(commands.Cog):
         return activities[0] if activities else None
 
     def _build_presence_label(self, member: discord.Member) -> Optional[str]:
-        activity = self._pick_presence_activity(member)
-        if activity is None:
-            return None
-        if activity.type == discord.ActivityType.listening:
-            if isinstance(activity, discord.Spotify) and activity.title and activity.artist:
-                return f"{activity.title} — {activity.artist}"
-            details = getattr(activity, "details", None)
-            state = getattr(activity, "state", None)
-            if details and state:
-                return f"{details} — {state}"
-            return activity.name or None
-        return activity.name or None
+        return self._presence_service.label(self._member_snapshot(member))
 
     def _status_str(self, member: discord.Member) -> Optional[str]:
-        # Discord never sends PRESENCE_UPDATE for the bot's own user, so member.status
-        # stays at its default ("offline"). Treat the bot itself as always "online".
-        if self.bot.user is not None and member.id == self.bot.user.id:
-            return "online"
-        s = str(member.status)
-        return s if s in _VISIBLE_STATUSES else None
+        status = self._member_snapshot(member).status
+        return status.value if status is not None else None
 
     def _is_included(self, member: discord.Member, include_bots: bool) -> bool:
-        return not (member.bot and not include_bots)
+        return not (self._member_snapshot(member).is_bot and not include_bots)
 
     def _has_rich_presence(self, member: discord.Member) -> bool:
-        return any(a.type != discord.ActivityType.custom for a in member.activities)
+        return self._presence_service.agent_status(self._member_snapshot(member)) == "active"
 
     def _agent_status(self, member: discord.Member) -> str:
-        return "active" if self._has_rich_presence(member) else "waiting"
+        return self._presence_service.agent_status(self._member_snapshot(member))
 
     async def _reconcile_member(self, member: discord.Member, include_bots: bool) -> None:
-        guild_id = member.guild.id
-        user_id = member.id
-        folder = self._status_str(member)
-
-        if folder is None or not self._is_included(member, include_bots):
-            if (guild_id, user_id) in self._agents:
-                await self._close_agent(guild_id, user_id)
-            return
-
-        name = member.display_name
-        cached = self._agents.get((guild_id, user_id))
-
-        if cached is None:
-            await self._spawn_agent(guild_id, user_id, name, folder, member)
-            return
-
-        cached_folder, cached_name = cached
-        if folder != cached_folder:
-            self._agents[(guild_id, user_id)] = (folder, name)
-            agent_id = self._agent_id(user_id)
-            palette, hue_shift = await self._assign_palette(agent_id)
-            await self._send({"type": "agentClosed", "id": agent_id})
-            await self._send({
-                "type": "agentCreated",
-                "id": agent_id,
-                "folderName": folder,
-                "palette": palette,
-                "hueShift": hue_shift,
-            })
-            if name != cached_name:
-                await self._send({"type": "agentTeamInfo", "id": agent_id, "agentName": name})
-            await self._send_existing_agents()
-        elif name != cached_name:
-            self._agents[(guild_id, user_id)] = (folder, name)
-            await self._send({"type": "agentTeamInfo", "id": self._agent_id(user_id), "agentName": name})
-        await self._update_presence_tool(guild_id, user_id, member)
+        await self._office_service.reconcile(
+            self._member_snapshot(member),
+            include_bots=include_bots,
+            rich_presence_enabled=await self._settings_repository.broadcast_rich_presence(),
+        )
 
     def _is_user_active_in_other_guild(self, guild_id: int, user_id: int) -> bool:
-        return any(gid != guild_id and uid == user_id for (gid, uid) in self._agents)
+        return self._office_service.is_user_active_in_other_guild(guild_id, user_id)
 
     async def _spawn_agent(
         self, guild_id: int, user_id: int, name: str, folder: str, member: discord.Member
     ) -> None:
-        self._detect_collision(user_id)
-        agent_id = self._agent_id(user_id)
-        already_active = self._is_user_active_in_other_guild(guild_id, user_id)
-        self._agents[(guild_id, user_id)] = (folder, name)
-
-        if not already_active:
-            palette, hue_shift = await self._assign_palette(agent_id)
-            await self._send({
-                "type": "agentCreated",
-                "id": agent_id,
-                "folderName": folder,
-                "palette": palette,
-                "hueShift": hue_shift,
-            })
-            await self._send({"type": "agentTeamInfo", "id": agent_id, "agentName": name})
-            status = self._agent_status(member)
-            await self._send({"type": "agentStatus", "id": agent_id, "status": status})
-        await self._send_existing_agents()
-        if await self._settings_repository.broadcast_rich_presence():
-            label = self._build_presence_label(member)
-            if label:
-                self._presence_cache[(guild_id, user_id)] = label
-                await self._send_presence_tool(agent_id, label)
+        snapshot = self._member_snapshot(member)
+        snapshot = AgentSnapshot(
+            key=AgentKey(guild_id, user_id),
+            display_name=name,
+            status=PresenceStatus(folder),
+            is_bot=snapshot.is_bot,
+            activities=snapshot.activities,
+        )
+        await self._office_service.spawn(
+            snapshot,
+            rich_presence_enabled=await self._settings_repository.broadcast_rich_presence(),
+        )
 
     async def _close_agent(self, guild_id: int, user_id: int) -> None:
-        if (guild_id, user_id) not in self._agents:
-            return
-        agent_id = self._agent_id(user_id)
-        del self._agents[(guild_id, user_id)]
-        self._presence_cache.pop((guild_id, user_id), None)
-        if not self._is_user_active_in_other_guild(guild_id, user_id):
-            await self._send({"type": "agentClosed", "id": agent_id})
-        await self._send_existing_agents()
+        await self._office_service.close(AgentKey(guild_id, user_id))
 
     async def _despawn_guild(self, guild: discord.Guild) -> None:
-        keys = [(gid, uid) for (gid, uid) in list(self._agents) if gid == guild.id]
-        for key in keys:
-            await self._close_agent(*key)
+        await self._office_service.despawn_guild(guild.id)
 
     async def _send_presence_tool(self, agent_id: int, label: str) -> None:
-        await self._send({
-            "type": "agentToolStart",
-            "id": agent_id,
-            "toolId": f"rp-{agent_id}",
-            "toolName": "Activity",
-            "status": label,
-        })
+        await self._presence_service.send_tool(agent_id, label)
 
     async def _update_presence_tool(
         self, guild_id: int, user_id: int, member: discord.Member
     ) -> None:
-        if not await self._settings_repository.broadcast_rich_presence():
-            return
-        agent_id = self._agent_id(user_id)
-        label = self._build_presence_label(member)
-        cached = self._presence_cache.get((guild_id, user_id))
-        if label == cached:
-            return
-        if label:
-            self._presence_cache[(guild_id, user_id)] = label
-            if cached is not None:
-                # Same stable toolId — webview deduplicates on toolId so clear first
-                await self._send({"type": "agentToolsClear", "id": agent_id})
-            await self._send_presence_tool(agent_id, label)
-        else:
-            self._presence_cache.pop((guild_id, user_id), None)
-            await self._send({"type": "agentToolsClear", "id": agent_id})
+        snapshot = self._member_snapshot(member)
+        if snapshot.key != AgentKey(guild_id, user_id):
+            snapshot = AgentSnapshot(
+                key=AgentKey(guild_id, user_id),
+                display_name=snapshot.display_name,
+                status=snapshot.status,
+                is_bot=snapshot.is_bot,
+                activities=snapshot.activities,
+            )
+        await self._presence_service.update(
+            snapshot,
+            self._agent_id(user_id),
+            enabled=await self._settings_repository.broadcast_rich_presence(),
+        )
 
     async def _clear_tool_after_delay(
         self, agent_id: int, delay: float, guild_id: int = 0, user_id: int = 0
     ) -> None:
         await asyncio.sleep(delay)
-        await self._send({"type": "agentToolsClear", "id": agent_id})
+        if self._closing:
+            return
         if guild_id and user_id:
-            label = self._presence_cache.get((guild_id, user_id))
-            if label:
-                await self._send_presence_tool(agent_id, label)
+            await self._office_service.clear_message_activity(AgentKey(guild_id, user_id))
+            return
+        await self._send({"type": "agentToolsClear", "id": agent_id})
 
     # ------------------------------------------------------------------
     # Reply helper
@@ -882,31 +702,27 @@ class pixelagents(commands.Cog):
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message) -> None:
-        if message.guild is None:
+        if self._closing:
+            return
+        snapshot = message_snapshot(message)
+        if snapshot is None:
             return
         if not await self._settings_repository.guild_enabled(message.guild):
             return
-        guild_id = message.guild.id
-        user_id = message.author.id
-        if (guild_id, user_id) not in self._agents:
+        if not self._office_service.is_tracked(snapshot.key):
             return
         if not await self._settings_repository.broadcast_messages():
             return
-        agent_id = self._agent_id(user_id)
-        content = message.content or ""
-        if len(content) > 40:
-            content = content[:40] + "…"
-        tool_id = f"msg-{message.id}"
-        await self._send({
-            "type": "agentToolStart",
-            "id": agent_id,
-            "toolId": tool_id,
-            "toolName": "Message",
-            "status": content,
-        })
+        await self._office_service.send_message_activity(snapshot)
         delay = await self._settings_repository.message_tool_clear_delay()
-        asyncio.get_event_loop().create_task(
-            self._clear_tool_after_delay(agent_id, delay, guild_id, user_id)
+        self._task_supervisor.create(
+            self._clear_tool_after_delay(
+                self._agent_id(snapshot.key.user_id),
+                delay,
+                snapshot.key.guild_id,
+                snapshot.key.user_id,
+            ),
+            name=f"pixelagents-message-clear-{snapshot.message_id}",
         )
 
     # ------------------------------------------------------------------
@@ -1023,7 +839,9 @@ class pixelagents(commands.Cog):
 
     @pixelagents_group.command(name="richpresence")
     @commands.admin_or_permissions(administrator=True)
-    @app_commands.describe(value="Whether rich presence (Spotify, games, etc.) is shown in the webview")
+    @app_commands.describe(
+        value="Whether rich presence (Spotify, games, etc.) is shown in the webview"
+    )
     async def cmd_richpresence(self, ctx: commands.Context, value: bool) -> None:
         """Set whether rich presence activity is broadcast to the webview (true/false)."""
         await self._settings_service.set_broadcast_rich_presence(value)
@@ -1031,7 +849,9 @@ class pixelagents(commands.Cog):
 
     @pixelagents_group.command(name="messages")
     @commands.admin_or_permissions(administrator=True)
-    @app_commands.describe(value="Whether Discord messages are shown as tool bubbles in the webview")
+    @app_commands.describe(
+        value="Whether Discord messages are shown as tool bubbles in the webview"
+    )
     async def cmd_messages(self, ctx: commands.Context, value: bool) -> None:
         """Set whether Discord messages are broadcast as tool bubbles to the webview (true/false)."""
         await self._settings_service.set_broadcast_messages(value)
@@ -1040,7 +860,9 @@ class pixelagents(commands.Cog):
     @pixelagents_group.command(name="editorrole")
     @commands.admin_or_permissions(administrator=True)
     @app_commands.describe(role="Discord role that grants webview editor access (omit to clear)")
-    async def cmd_editorrole(self, ctx: commands.Context, role: Optional[discord.Role] = None) -> None:
+    async def cmd_editorrole(
+        self, ctx: commands.Context, role: Optional[discord.Role] = None
+    ) -> None:
         """Set the Discord role that grants webview editor access. Omit to clear."""
         if role is None:
             await self._settings_service.set_editor_role_id(None)
@@ -1150,7 +972,9 @@ class pixelagents(commands.Cog):
         try:
             clean = await self._settings_service.set_pixel_index_api_url(url)
         except ValueError:
-            await self._reply(ctx, "Please provide a valid URL, e.g. `https://pixel-index-api.nntin.xyz`.")
+            await self._reply(
+                ctx, "Please provide a valid URL, e.g. `https://pixel-index-api.nntin.xyz`."
+            )
             return
         ok, detail = await self._check_pixel_index_health(clean)
         await self._reply(
@@ -1160,13 +984,17 @@ class pixelagents(commands.Cog):
 
     @pixelagents_pixelindex_group.command(name="setweb")
     @commands.admin_or_permissions(administrator=True)
-    @app_commands.describe(url="Pixel Index web frontend base URL, e.g. https://pixel-index.vercel.app")
+    @app_commands.describe(
+        url="Pixel Index web frontend base URL, e.g. https://pixel-index.vercel.app"
+    )
     async def cmd_pixelindex_setweb(self, ctx: commands.Context, url: str) -> None:
         """Set the Pixel Index web frontend base URL, used for "View on site" links."""
         try:
             clean = await self._settings_service.set_pixel_index_web_url(url)
         except ValueError:
-            await self._reply(ctx, "Please provide a valid URL, e.g. `https://pixel-index.vercel.app`.")
+            await self._reply(
+                ctx, "Please provide a valid URL, e.g. `https://pixel-index.vercel.app`."
+            )
             return
         await self._reply(ctx, f"Pixel Index web frontend set to `{clean}`.")
 
@@ -1219,7 +1047,9 @@ class pixelagents(commands.Cog):
         try:
             detail = LayoutDetail.model_validate(data)
         except ValidationError as exc:
-            log.warning("pixelagents: Pixel Index layout detail response failed validation: %s", exc)
+            log.warning(
+                "pixelagents: Pixel Index layout detail response failed validation: %s", exc
+            )
             return False, "Pixel Index returned an unexpected response. Try again later."
         return True, detail
 

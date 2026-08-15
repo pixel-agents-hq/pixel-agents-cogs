@@ -12,6 +12,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from pixelagents.models import LayoutDetail, LayoutListResponse
 from pixelagents.pixelagents import (
     _discord_id_to_agent_id,
     _JS_MAX_SAFE,
@@ -1131,7 +1132,7 @@ class TestPixelIndexGet(unittest.IsolatedAsyncioTestCase):
         with patch.object(aiohttp, "ClientSession", return_value=session):
             ok, data = await self.cog._pixel_index_search(query=None, tag=None, sort="newest")
         self.assertTrue(ok)
-        self.assertEqual(data, page)
+        self.assertEqual(data, LayoutListResponse.model_validate(page))
 
     async def test_search_rejects_response_missing_slug(self):
         page = {"layouts": [{"title": "Office"}], "total": 1}
@@ -1147,7 +1148,7 @@ class TestPixelIndexGet(unittest.IsolatedAsyncioTestCase):
         with patch.object(aiohttp, "ClientSession", return_value=session):
             ok, data = await self.cog._pixel_index_layout("office")
         self.assertTrue(ok)
-        self.assertEqual(data, detail)
+        self.assertEqual(data, LayoutDetail.model_validate(detail))
 
     async def test_layout_rejects_response_missing_layout_blob(self):
         detail = _layout_detail("office")
@@ -1173,7 +1174,7 @@ class TestLoadPixelIndexLayout(unittest.IsolatedAsyncioTestCase):
         self.cog.bot.is_owner = AsyncMock(return_value=True)
         detail = _layout_detail("office")
         detail["layout"] = {"not": "valid"}
-        self.cog._pixel_index_layout = AsyncMock(return_value=(True, detail))
+        self.cog._pixel_index_layout = AsyncMock(return_value=(True, LayoutDetail.model_validate(detail)))
         ok, message = await self.cog._load_pixel_index_layout(12345, "office")
         self.assertFalse(ok)
         self.assertIn("invalid", message)
@@ -1181,25 +1182,25 @@ class TestLoadPixelIndexLayout(unittest.IsolatedAsyncioTestCase):
     async def test_loads_valid_layout_and_broadcasts(self):
         self.cog.bot.is_owner = AsyncMock(return_value=True)
         detail = _layout_detail("office")
-        self.cog._pixel_index_layout = AsyncMock(return_value=(True, detail))
+        model = LayoutDetail.model_validate(detail)
+        self.cog._pixel_index_layout = AsyncMock(return_value=(True, model))
         client = _connect(self.cog)
 
         ok, message = await self.cog._load_pixel_index_layout(12345, "office")
 
         self.assertTrue(ok)
-        self.assertEqual(await self.cog.config.layout(), detail["layout"])
+        self.assertEqual(await self.cog.config.layout(), model.layout)
         self.assertIn("layoutLoaded", _sent_types(client))
 
 
 class TestLayoutBrowseView(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.cog = _make_cog()
-        self.page = {
-            "schemaVersion": 1,
+        self.page = LayoutListResponse.model_validate({
             "total": 1,
             "layouts": [_layout_summary("office", "Office")],
             "nextCursor": "next-cursor",
-        }
+        })
 
     def _view(self, page_index=0, pages=None):
         return _LayoutBrowseView(
@@ -1220,7 +1221,9 @@ class TestLayoutBrowseView(unittest.IsolatedAsyncioTestCase):
 
     async def test_next_fetches_and_advances(self):
         view = self._view()
-        second_page = {"schemaVersion": 1, "total": 1, "layouts": [_layout_summary("second")], "nextCursor": None}
+        second_page = LayoutListResponse.model_validate(
+            {"total": 1, "layouts": [_layout_summary("second")], "nextCursor": None}
+        )
         self.cog._pixel_index_search = AsyncMock(return_value=(True, second_page))
         interaction = _FakeInteraction()
         interaction.response.edit_message = AsyncMock()
@@ -1244,8 +1247,10 @@ class TestLayoutBrowseView(unittest.IsolatedAsyncioTestCase):
         interaction.response.defer.assert_awaited()
 
     async def test_prev_returns_to_cached_page(self):
-        first_page = dict(self.page)
-        second_page = {"schemaVersion": 1, "total": 1, "layouts": [_layout_summary("second")], "nextCursor": None}
+        first_page = self.page.model_copy()
+        second_page = LayoutListResponse.model_validate(
+            {"total": 1, "layouts": [_layout_summary("second")], "nextCursor": None}
+        )
         view = self._view(page_index=1, pages=[first_page, second_page])
         interaction = _FakeInteraction()
         interaction.response.edit_message = AsyncMock()
@@ -1259,7 +1264,7 @@ class TestLayoutBrowseView(unittest.IsolatedAsyncioTestCase):
 class TestLayoutDetailView(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.cog = _make_cog()
-        self.detail = _layout_detail("office", title="Office")
+        self.detail = LayoutDetail.model_validate(_layout_detail("office", title="Office"))
 
     def _view(self, back=None):
         return _LayoutDetailView(
@@ -1273,7 +1278,7 @@ class TestLayoutDetailView(unittest.IsolatedAsyncioTestCase):
 
     def test_builds_without_error(self):
         view = self._view()
-        self.assertEqual(view.detail["slug"], "office")
+        self.assertEqual(view.detail.slug, "office")
 
     async def test_load_button_delegates_to_cog(self):
         view = self._view()

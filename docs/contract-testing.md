@@ -62,6 +62,45 @@ contract can't fall out of sync with the code the way hand-maintained
 duplication can — there's exactly one description of "what we depend on,"
 and both the bot and the CI check read it.
 
+## Catching drift before it reaches contract.yaml
+
+The generated contract only covers what's registered in `endpoints.py` and
+modeled in `models.py` — it can't warn about a call site or a field that was
+never added there in the first place. Two lint checks close that gap, run on
+every PR that touches `pixelagents/pixelagents.py`, `pixelagents/models.py`,
+or `contracts/pixel_index/` (see
+[`.github/workflows/pixel-index-contract-lint.yml`](../.github/workflows/pixel-index-contract-lint.yml)):
+
+- [`contracts/pixel_index/lint_endpoints.py`](../contracts/pixel_index/lint_endpoints.py)
+  — **new endpoint, not registered.** Every JSON endpoint is called through
+  the single `self._pixel_index_get(path)` chokepoint in `pixelagents.py`,
+  so this walks its AST for those call sites (including f-string path
+  templates like `f"/api/v1/layouts/{slug}"`), and fails if a called path
+  isn't in `endpoints.py`'s `ENDPOINTS` list. (`/health` is checked directly
+  by `_check_pixel_index_health` rather than through `_pixel_index_get`, so
+  it's hand-registered as a known exception rather than generalizing the
+  walk for a call site unlikely to grow siblings.)
+- [`contracts/pixel_index/lint_model_usage.py`](../contracts/pixel_index/lint_model_usage.py)
+  — **new field read, not modeled.** Since `pixelagents.py`'s views read
+  parsed responses via attribute access on the pydantic models (`entry.slug`,
+  `d.author.displayName`, …) rather than raw dict `.get()`, an unmodeled or
+  mistyped field is a plain mypy `attr-defined` error — no bespoke schema
+  extraction needed for this half. This script runs mypy (config:
+  [`contracts/pixel_index/mypy.ini`](../contracts/pixel_index/mypy.ini),
+  `ignore_missing_imports` so discord.py/redbot — not installed for this
+  lightweight check — resolve to `Any` instead of erroring) and fails CI
+  only on errors that name one of the models in `pixelagents/models.py`.
+  Everything else mypy finds in this dynamically-typed, discord.py-heavy
+  file is treated as informational, since fixing the rest of the file's
+  typing is a separate, larger effort than this check's job.
+
+Together: `lint_endpoints.py` guards *which endpoints* the contract knows
+about, `lint_model_usage.py` guards *which fields* it knows about for each
+one. Both are static and run in seconds with no network access, so they gate
+every PR; the live check against staging/production
+(`pixel-index-contract.yml`) is what confirms the environment itself still
+matches what's registered.
+
 ## What this is not
 
 It's not a general OpenAPI/AsyncAPI diff against pixel-index's whole spec,

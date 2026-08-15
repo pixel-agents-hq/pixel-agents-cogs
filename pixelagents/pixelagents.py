@@ -1395,36 +1395,36 @@ class pixelagents(commands.Cog):
         if not ok:
             return False, data
         try:
-            LayoutListResponse.model_validate(data)
+            page = LayoutListResponse.model_validate(data)
         except ValidationError as exc:
             log.warning("pixelagents: Pixel Index layout list response failed validation: %s", exc)
             return False, "Pixel Index returned an unexpected response. Try again later."
-        return True, data
+        return True, page
 
     async def _pixel_index_layout(self, slug: str) -> Tuple[bool, Any]:
         ok, data = await self._pixel_index_get(f"/api/v1/layouts/{slug}")
         if not ok:
             return False, data
         try:
-            LayoutDetail.model_validate(data)
+            detail = LayoutDetail.model_validate(data)
         except ValidationError as exc:
             log.warning("pixelagents: Pixel Index layout detail response failed validation: %s", exc)
             return False, "Pixel Index returned an unexpected response. Try again later."
-        return True, data
+        return True, detail
 
     async def _load_pixel_index_layout(self, user_id: int, slug: str) -> Tuple[bool, str]:
         """Fetch a layout from Pixel Index and push it into the shared office."""
         if not await self._can_edit_layout_user(user_id):
             return False, "You are not authorized to manage Pixel Agents layouts."
-        ok, data = await self._pixel_index_layout(slug)
+        ok, detail = await self._pixel_index_layout(slug)
         if not ok:
-            return False, str(data)
-        layout = data.get("layout")
+            return False, str(detail)
+        layout = detail.layout
         if not self._validate_layout(layout):
             return False, "That layout is invalid and cannot be loaded."
         await self.config.layout.set(layout)
         await self._send({"type": "layoutLoaded", "layout": layout})
-        return True, f"Loaded `{data.get('title', slug)}` into the office."
+        return True, f"Loaded `{detail.title or slug}` into the office."
 
     # ------------------------------------------------------------------
     # Pixel Index layout browsing
@@ -1460,7 +1460,7 @@ class pixelagents(commands.Cog):
         if not ok:
             await self._send_public(ctx, str(page))
             return
-        if not page.get("layouts"):
+        if not page.layouts:
             await self._send_public(ctx, "No layouts found on Pixel Index.")
             return
         api_base = await self.config.pixel_index_api_url()
@@ -1511,7 +1511,7 @@ class _LayoutBrowseView(discord.ui.LayoutView):
         query: Optional[str],
         tag: Optional[str],
         sort: str,
-        pages: List[dict],
+        pages: List[LayoutListResponse],
         page_index: int,
         api_base: str,
         web_base: str,
@@ -1538,8 +1538,8 @@ class _LayoutBrowseView(discord.ui.LayoutView):
 
     def _build(self) -> None:
         page = self.pages[self.page_index]
-        layouts = page.get("layouts") or []
-        total = page.get("total", len(layouts))
+        layouts = page.layouts
+        total = page.total if page.total is not None else len(layouts)
 
         header_bits = [f"**Pixel Index layouts** — {total} match(es)"]
         if self.query:
@@ -1549,16 +1549,18 @@ class _LayoutBrowseView(discord.ui.LayoutView):
         container = discord.ui.Container(discord.ui.TextDisplay(" ".join(header_bits)))
 
         for entry in layouts:
-            author = entry.get("author") or {}
+            display_name = entry.author.displayName if entry.author else None
+            visible_cols = entry.visibleCols if entry.visibleCols is not None else "?"
+            visible_rows = entry.visibleRows if entry.visibleRows is not None else "?"
             stats = (
-                f"{entry.get('visibleCols', '?')}×{entry.get('visibleRows', '?')} · "
-                f"{entry.get('furniture', 0)} furniture · by {author.get('displayName') or 'unknown'}"
+                f"{visible_cols}×{visible_rows} · "
+                f"{entry.furniture or 0} furniture · by {display_name or 'unknown'}"
             )
-            tags = entry.get("tags") or []
-            lines = [f"**{entry.get('title') or entry['slug']}**", stats]
+            tags = entry.tags
+            lines = [f"**{entry.title or entry.slug}**", stats]
             if tags:
                 lines.append("_" + ", ".join(tags) + "_")
-            thumbnail_path = (entry.get("files") or {}).get("thumbnail")
+            thumbnail_path = entry.files.thumbnail if entry.files else None
             accessory = (
                 discord.ui.Thumbnail(_abs_url(self.api_base, thumbnail_path))
                 if thumbnail_path
@@ -1573,9 +1575,9 @@ class _LayoutBrowseView(discord.ui.LayoutView):
             placeholder="View a layout…",
             options=[
                 discord.SelectOption(
-                    label=(entry.get("title") or entry["slug"])[:100],
-                    value=entry["slug"],
-                    description=(entry.get("description") or "")[:100] or None,
+                    label=(entry.title or entry.slug)[:100],
+                    value=entry.slug,
+                    description=(entry.description or "")[:100] or None,
                 )
                 for entry in layouts
             ],
@@ -1593,7 +1595,7 @@ class _LayoutBrowseView(discord.ui.LayoutView):
         next_button = discord.ui.Button(
             label="Next ▶",
             style=discord.ButtonStyle.secondary,
-            disabled=at_last_known_page and page.get("nextCursor") is None,
+            disabled=at_last_known_page and page.nextCursor is None,
         )
         next_button.callback = self._on_next
         nav_row.add_item(prev_button)
@@ -1643,7 +1645,7 @@ class _LayoutBrowseView(discord.ui.LayoutView):
             new_pages = self.pages
             new_index = self.page_index + 1
         else:
-            cursor = self.pages[self.page_index].get("nextCursor")
+            cursor = self.pages[self.page_index].nextCursor
             if not cursor:
                 await interaction.response.defer()
                 return
@@ -1676,7 +1678,7 @@ class _LayoutDetailView(discord.ui.LayoutView):
         self,
         cog: "pixelagents",
         owner_id: int,
-        detail: dict,
+        detail: LayoutDetail,
         *,
         api_base: str,
         web_base: str,
@@ -1701,23 +1703,25 @@ class _LayoutDetailView(discord.ui.LayoutView):
 
     def _build(self) -> None:
         d = self.detail
-        author = d.get("author") or {}
-        lines = [f"**{d.get('title') or d.get('slug')}**"]
-        if d.get("description"):
-            lines.append(d["description"])
+        display_name = d.author.displayName if d.author else None
+        lines = [f"**{d.title or d.slug}**"]
+        if d.description:
+            lines.append(d.description)
+        visible_cols = d.visibleCols if d.visibleCols is not None else "?"
+        visible_rows = d.visibleRows if d.visibleRows is not None else "?"
         lines.append(
-            f"{d.get('visibleCols', '?')}×{d.get('visibleRows', '?')} · "
-            f"{d.get('furniture', 0)} furniture · {d.get('areas', 0)} areas · "
-            f"{d.get('pets', 0)} pets · {d.get('seats', 0)} seats"
+            f"{visible_cols}×{visible_rows} · "
+            f"{d.furniture or 0} furniture · {d.areas or 0} areas · "
+            f"{d.pets or 0} pets · {d.seats or 0} seats"
         )
-        lines.append(f"By {author.get('displayName') or 'unknown'}")
-        tags = d.get("tags") or []
+        lines.append(f"By {display_name or 'unknown'}")
+        tags = d.tags
         if tags:
             lines.append("Tags: " + ", ".join(tags))
 
         container = discord.ui.Container(discord.ui.TextDisplay("\n".join(lines)))
 
-        preview_path = (d.get("files") or {}).get("preview")
+        preview_path = d.files.preview if d.files else None
         if preview_path:
             container.add_item(
                 discord.ui.MediaGallery(
@@ -1726,12 +1730,12 @@ class _LayoutDetailView(discord.ui.LayoutView):
             )
 
         actions = discord.ui.ActionRow()
-        download_path = (d.get("files") or {}).get("layout")
+        download_path = d.files.layout if d.files else None
         if download_path:
             actions.add_item(
                 discord.ui.Button(label="Download JSON", url=_abs_url(self.api_base, download_path))
             )
-        slug = d.get("slug")
+        slug = d.slug
         if slug:
             actions.add_item(
                 discord.ui.Button(
@@ -1750,7 +1754,7 @@ class _LayoutDetailView(discord.ui.LayoutView):
         self.add_item(container)
 
     async def _on_load(self, interaction: discord.Interaction) -> None:
-        slug = self.detail.get("slug")
+        slug = self.detail.slug
         ok, message = await self.cog._load_pixel_index_layout(interaction.user.id, slug)
         await interaction.response.send_message(message, ephemeral=True)
 

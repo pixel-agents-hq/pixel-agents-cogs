@@ -1,0 +1,37 @@
+name: "Pixel Index Contract Lint"
+
+on:
+  push:
+    paths:
+      - "pixelagents/pixelagents.py"
+      - "pixelagents/models.py"
+      - "contracts/pixel_index/**"
+      - ".github/workflows/pixel-index-contract-lint.yml"
+  pull_request:
+    paths:
+      - "pixelagents/pixelagents.py"
+      - "pixelagents/models.py"
+      - "contracts/pixel_index/**"
+      - ".github/workflows/pixel-index-contract-lint.yml"
+
+jobs:
+  lint:
+    name: Static contract checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r contracts/pixel_index/requirements.txt
+
+      - name: Check every called endpoint is registered
+        run: python -m contracts.pixel_index.lint_endpoints
+
+      - name: Check every read field exists on its model
+        run: python -m contracts.pixel_index.lint_model_usage

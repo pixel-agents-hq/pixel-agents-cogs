@@ -1,0 +1,59 @@
+name: "Pixel Index Contract Check"
+
+on:
+  schedule:
+    - cron: "0 */8 * * *"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "contracts/pixel-index/**"
+      - ".github/workflows/pixel-index-contract.yml"
+
+jobs:
+  verify-contract:
+    name: Verify (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: production
+            base_url: https://pixel-index-api.nntin.xyz
+          - name: staging
+            base_url: https://pixel-index-api-staging.nntin.xyz
+          # Add more environments here as they come online.
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r contracts/pixel-index/requirements.txt
+
+      - name: Run contract check
+        run: |
+          python contracts/pixel-index/verify.py \
+            --contract contracts/pixel-index/contract.yaml \
+            --base-url "${{ matrix.base_url }}" \
+            --env-name "${{ matrix.name }}"
+
+      - name: Notify on failure
+        if: failure()
+        uses: nntin/d-flows/actions/discord-notify@v1
+        with:
+          webhook_url: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          message_type: "embed"
+          title: "❌ Pixel Index contract check failed (${{ matrix.name }})"
+          description: >-
+            office-cogs' contract against ${{ matrix.base_url }} failed. Do not
+            switch `[p]pixelagents pixelindex set` to this environment until this
+            is resolved — see the run for which endpoint/field broke.
+          color: "15158332"
+          fields: >-
+            [{"name": "Environment", "value": "${{ matrix.name }}", "inline": true},
+             {"name": "Run", "value": "[View run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})", "inline": true}]

@@ -1235,7 +1235,7 @@ class pixelagents(commands.Cog):
     @pixelagents_group.command(name="enable")
     @commands.admin_or_permissions(administrator=True)
     async def cmd_enable(self, ctx: commands.Context) -> None:
-        """Enable Pixelpipes presence mirroring for this guild and run a full sync."""
+        """Enable Pixel Agents office presence mirroring for this guild and run a full sync."""
         if ctx.interaction:
             await ctx.interaction.response.defer(ephemeral=True)
         await self.config.guild(ctx.guild).enabled.set(True)
@@ -1246,7 +1246,7 @@ class pixelagents(commands.Cog):
     @pixelagents_group.command(name="disable")
     @commands.admin_or_permissions(administrator=True)
     async def cmd_disable(self, ctx: commands.Context) -> None:
-        """Disable Pixelpipes presence mirroring for this guild and despawn all agents."""
+        """Disable Pixel Agents office presence mirroring for this guild and despawn all agents."""
         if ctx.interaction:
             await ctx.interaction.response.defer(ephemeral=True)
         await self.config.guild(ctx.guild).enabled.set(False)
@@ -1737,4 +1737,3 @@ class _LayoutDetailView(discord.ui.LayoutView):
 
     async def _on_back(self, interaction: discord.Interaction) -> None:
         await interaction.response.edit_message(view=self.back)
-

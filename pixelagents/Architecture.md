@@ -1,17 +1,66 @@
 # Pixelagents Architecture
 
-`pixelagents` is a Red DiscordBot cog that does two things:
+`pixelagents` is a Red DiscordBot cog that does three things:
 
 1. **Serves the Pixel Agents office** — hosts the pre-built browser bundle
    through the Red Web Dashboard third-party page system, and serves the office
    WebSocket protocol itself.
 2. **Mirrors Discord presence** — turns guild presence, activity, and message
    events into the office's `ServerMessage` protocol.
+3. **Integrates with Pixel Index** — browses the public layout catalogue from
+   Discord and loads selected layouts into the shared office.
 
-The cog *is* the Pixel Agents server. There is no standalone host: upstream
-`pixel-agents` exposes only `POST /api/hooks/:providerId`, `/api/health`, and
-`/ws`, and has no producer ingress. The `/ws/producer` socket this cog used to
-dial is gone along with the pixelpipes fork.
+The cog is the Pixel Agents runtime adapter for Red: it serves the browser
+bundle and implements the office WebSocket protocol directly. It does not
+depend on a separate producer-ingress service.
+
+## Ecosystem integration
+
+```mermaid
+flowchart TD
+    PA["pixel agents<br/><small>core product</small>"]
+    IDX["index<br/><small>layout index</small>"]
+    RED["Red-DiscordBot<br/><small>bot framework</small>"]
+    OC["office-cogs<br/><small>red cogs for pixel agents</small>"]
+    DOCS["docs<br/><small>doc page of pixel agents</small>"]
+
+    IDX -->|git submodule for UI rendering| PA
+    OC -->|public HTTP API| IDX
+    OC -->|Downloader cog package| RED
+```
+
+Pixel Agents supplies the office UI and WebSocket message contract. Pixel
+Index pins that UI as a git submodule so its gallery can render layouts with
+the same code as the core product. The docs site describes the core product
+but is not part of the office-cogs runtime path.
+
+office-cogs itself currently has no git submodules. Red's Downloader can clone
+a cog repository containing submodules, but it does not recursively update
+them on every revision checkout and it copies only the selected cog directory
+to Red's install path. The exact behavior and its build implications are
+documented in [Downloader and Git submodules](../docs/red-downloader-submodules.md).
+
+At runtime, office-cogs integrates with Pixel Index over its public HTTP API;
+it does not connect to the index database or renderer directly:
+
+```text
+[p]pixelagents layout search
+  -> GET <pixel_index_api_url>/api/v1/layouts
+
+[p]pixelagents layout view <slug>
+  -> GET <pixel_index_api_url>/api/v1/layouts/<slug>
+  -> use <pixel_index_web_url>/layouts/<slug> for "View on site"
+
+authorized "Load layout"
+  -> validate the layout returned by Pixel Index
+  -> persist it in Red's cog configuration
+  -> broadcast layoutLoaded to every connected office client
+```
+
+Browsing is public. Loading a layout uses the same editor authorization as
+local layout changes. The API and web origins are separate configuration keys,
+so deployments can point the cog at production, staging, or a self-hosted
+Pixel Index without rebuilding it.
 
 One public entry point:
 
@@ -198,6 +247,8 @@ Global:
 | `broadcast_messages` | `True` | Send messages as bubbles |
 | `layout` | `None` | The office layout; falls back to the bundled default |
 | `seats` | `{}` | agent ID → `{palette, hueShift, seatId}` |
+| `pixel_index_api_url` | `https://pixel-index-api-staging.nntin.xyz` | Pixel Index API used for health checks, search, and layout retrieval |
+| `pixel_index_web_url` | `https://pixel-index.vercel.app` | Pixel Index frontend used for layout links |
 
 Guild: `enabled` (`False`), `include_bots` (`True`). User: `layouts`.
 
@@ -243,9 +294,13 @@ randomly among the least-used, and hue-shift once all six are taken.
 | `[p]pixelagents richpresence <bool>` | Activity bubbles |
 | `[p]pixelagents messages <bool>` | Message bubbles |
 | `[p]pixelagents editorrole [role]` | Editor role |
-| `[p]pixelagents layout save/load/delete/list/share` | Saved layouts |
+| `[p]pixelagents index` | Pixel Index endpoints and API health |
+| `[p]pixelagents index set <url>` / `setweb <url>` | Configure the Pixel Index API/frontend |
+| `[p]pixelagents layout search [query] [tag] [sort]` | Browse Pixel Index layouts |
+| `[p]pixelagents layout view <slug>` | View and optionally load a Pixel Index layout |
 
-`layout load` writes the layout and broadcasts `layoutLoaded` to every open tab.
+Loading a Pixel Index layout writes it to the shared configuration and
+broadcasts `layoutLoaded` to every open tab.
 
 ## Rebuilding after changes
 

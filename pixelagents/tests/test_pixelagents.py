@@ -20,6 +20,8 @@ from pixelagents.pixelagents import (
     _LayoutDetailView,
     pixelagents as PixelAgentsCog,
 )
+from pixelagents.application import SettingsService
+from pixelagents.infrastructure.settings import GUILD_DEFAULTS, RedSettingsRepository
 from pixelagents.tests.conftest import (
     _FakeClientWebSocketResponse,
     _FakeConfig,
@@ -74,7 +76,16 @@ def _make_cog():
         "pixel_index_api_url": "https://pixel-index-api-staging.nntin.xyz",
         "pixel_index_web_url": "https://pixel-index.vercel.app",
     }
+    cfg.register_guild(**GUILD_DEFAULTS)
     cog.config = cfg
+    cog._settings_repository = RedSettingsRepository(cfg)
+    cog._settings_service = SettingsService(
+        cog._settings_repository,
+        clear_rich_presence=cog._clear_rich_presence_bubbles,
+        reauthorize_editors=cog._reauthorize_editors_after_settings_change,
+        sync_guild=cog._sync_guild_from_settings,
+        despawn_guild=cog._despawn_guild_from_settings,
+    )
     cog._agents = {}
     cog._sync_task = None
     cog._presence_cache = {}

@@ -11,24 +11,23 @@ import re
 import secrets
 import time
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
-from urllib.parse import urlparse
 
 import aiohttp
 from aiohttp import WSMsgType, web
 import discord
 from discord import app_commands
 from pydantic import ValidationError
-from redbot.core import Config, commands
+from redbot.core import commands
 from redbot.core.bot import Red
 
+from .application import SettingsService
+from .infrastructure.settings import RedSettingsRepository, normalize_http_url
 from .models import LayoutDetail, LayoutListResponse
 
 log = logging.getLogger("red.d_cogs.pixelagents")
 
 _VISIBLE_STATUSES = {"online", "idle", "dnd"}
 _WEBVIEW_CACHE_CONTROL = "public, max-age=3600"
-_DEFAULT_PIXEL_INDEX_API_URL = "https://pixel-index-api-staging.nntin.xyz"
-_DEFAULT_PIXEL_INDEX_WEB_URL = "https://pixel-index.vercel.app"
 _PIXEL_INDEX_HEALTH_TIMEOUT = 5.0
 _PIXEL_INDEX_REQUEST_TIMEOUT = 10.0
 _LAYOUT_SEARCH_PAGE_SIZE = 5
@@ -145,25 +144,16 @@ class pixelagents(commands.Cog):
 
     def __init__(self, bot: Red) -> None:
         self.bot = bot
-        self.config = Config.get_conf(self, identifier=0x706978656C61, force_registration=True)
-        self.config.register_global(
-            ws_host="0.0.0.0",
-            ws_port=3210,
-            message_tool_clear_delay=2.0,
-            editor_role_id=None,
-            broadcast_rich_presence=True,
-            broadcast_messages=True,
-            # The office layout is owned by this cog now that there is no
-            # standalone host to hold it. None falls back to the bundled default.
-            layout=None,
-            # agent_id (as str) -> {palette, hueShift, seatId}
-            seats={},
-            pixel_index_api_url=_DEFAULT_PIXEL_INDEX_API_URL,
-            pixel_index_web_url=_DEFAULT_PIXEL_INDEX_WEB_URL,
-        )
-        self.config.register_guild(
-            enabled=False,
-            include_bots=True,
+        self._settings_repository = RedSettingsRepository.create(self)
+        # Keep the raw Config attribute public until all legacy adapters have
+        # moved behind typed services; third-party integrations may inspect it.
+        self.config = self._settings_repository.config
+        self._settings_service = SettingsService(
+            self._settings_repository,
+            clear_rich_presence=self._clear_rich_presence_bubbles,
+            reauthorize_editors=self._reauthorize_editors_after_settings_change,
+            sync_guild=self._sync_guild_from_settings,
+            despawn_guild=self._despawn_guild_from_settings,
         )
         # Active agents: (guild_id, user_id) -> (folder_name, display_name)
         self._agents: Dict[Tuple[int, int], Tuple[str, str]] = {}
@@ -180,6 +170,27 @@ class pixelagents(commands.Cog):
         # Decoded sprite payloads, loaded once from webview_dist/assets/decoded/
         self._assets: Dict[str, Any] = {}
         self._closing = False
+
+    async def _clear_rich_presence_bubbles(self) -> None:
+        """Clear cached activity and every visible tool stack immediately."""
+
+        self._presence_cache.clear()
+        for user_id in self._tracked_user_ids():
+            await self._send({"type": "agentToolsClear", "id": self._agent_id(user_id)})
+
+    async def _reauthorize_editors_after_settings_change(self) -> None:
+        """Hook for the identity-aware client hub introduced in the next phase."""
+
+    async def _sync_guild_from_settings(self, guild_id: int) -> str:
+        guild = self.bot.get_guild(guild_id)
+        if guild is None:
+            return "Sync skipped: guild is no longer available."
+        return await self._full_sync(guild)
+
+    async def _despawn_guild_from_settings(self, guild_id: int) -> None:
+        guild = self.bot.get_guild(guild_id)
+        if guild is not None:
+            await self._despawn_guild(guild)
 
     # ------------------------------------------------------------------
     # Dashboard webview hosting
@@ -411,7 +422,7 @@ class pixelagents(commands.Cog):
         }
 
     async def _send_existing_agents(self) -> None:
-        await self._send(self._existing_agents_message(await self.config.seats() or {}))
+        await self._send(self._existing_agents_message(await self._settings_repository.seats()))
 
     # ------------------------------------------------------------------
     # Seats and palettes
@@ -432,30 +443,31 @@ class pixelagents(commands.Cog):
         ones, so the first six characters each look different. Beyond that,
         palettes repeat with a random hue shift.
         """
-        seats = await self.config.seats() or {}
-        record = seats.get(str(agent_id))
-        if record and record.get("palette") is not None:
-            return int(record["palette"]), int(record.get("hueShift") or 0)
-
-        counts = [0] * _PALETTE_COUNT
         live = {str(self._agent_id(uid)) for uid in self._tracked_user_ids()}
-        for key, value in seats.items():
-            if key in live and value.get("palette") is not None:
-                index = int(value["palette"])
-                if 0 <= index < _PALETTE_COUNT:
-                    counts[index] += 1
 
-        fewest = min(counts)
-        palette = random.choice([i for i, c in enumerate(counts) if c == fewest])
-        hue_shift = 0 if fewest == 0 else random.randint(45, 315)
+        def assign(seats: dict) -> Tuple[int, int]:
+            record = seats.get(str(agent_id))
+            if record and record.get("palette") is not None:
+                return int(record["palette"]), int(record.get("hueShift") or 0)
 
-        seats[str(agent_id)] = {
-            **(record or {}),
-            "palette": palette,
-            "hueShift": hue_shift,
-        }
-        await self.config.seats.set(seats)
-        return palette, hue_shift
+            counts = [0] * _PALETTE_COUNT
+            for key, value in seats.items():
+                if key in live and value.get("palette") is not None:
+                    index = int(value["palette"])
+                    if 0 <= index < _PALETTE_COUNT:
+                        counts[index] += 1
+
+            fewest = min(counts)
+            palette = random.choice([i for i, count in enumerate(counts) if count == fewest])
+            hue_shift = 0 if fewest == 0 else random.randint(45, 315)
+            seats[str(agent_id)] = {
+                **(record or {}),
+                "palette": palette,
+                "hueShift": hue_shift,
+            }
+            return palette, hue_shift
+
+        return await self._settings_repository.mutate_seats(assign)
 
     # ------------------------------------------------------------------
     # Layout ownership
@@ -483,7 +495,7 @@ class pixelagents(commands.Cog):
             return None
 
     async def _current_layout(self) -> Optional[dict]:
-        return await self.config.layout() or self._default_layout()
+        return await self._settings_repository.layout() or self._default_layout()
 
     def _validate_layout(self, layout: Any) -> bool:
         if not isinstance(layout, dict):
@@ -583,8 +595,8 @@ class pixelagents(commands.Cog):
             self._runner = None
 
     async def _start_server(self) -> None:
-        host = await self.config.ws_host()
-        port = await self.config.ws_port()
+        host = await self._settings_repository.ws_host()
+        port = await self._settings_repository.ws_port()
         app = web.Application()
         app.router.add_get("/ws", self._handle_ws)
         app.router.add_get("/api/health", self._handle_health)
@@ -660,7 +672,7 @@ class pixelagents(commands.Cog):
         elif msg_type == "saveLayout":
             layout = data.get("layout")
             if self._validate_layout(layout):
-                await self.config.layout.set(layout)
+                await self._settings_repository.set_layout(layout)
                 # Mirror the new layout to every other open tab. The saving
                 # client already has it applied locally.
                 for other in list(self._clients):
@@ -674,26 +686,27 @@ class pixelagents(commands.Cog):
             await self._send_to(socket, {"type": "agentDiagnostics", "agents": []})
 
     async def _save_seats(self, incoming: dict) -> None:
-        seats = await self.config.seats() or {}
-        for agent_id, value in incoming.items():
-            if not isinstance(value, dict):
-                continue
-            record = dict(seats.get(str(agent_id)) or {})
-            palette = value.get("palette")
-            hue_shift = value.get("hueShift")
-            seat_id = value.get("seatId")
-            # Validate before storing: a hand-edited payload should not be able
-            # to persist a palette index that renders as a missing sprite.
-            if isinstance(palette, int) and 0 <= palette < max(
-                len(self._assets.get("characters", [])), _PALETTE_COUNT
-            ):
-                record["palette"] = palette
-            if isinstance(hue_shift, int) and 0 <= hue_shift <= 360:
-                record["hueShift"] = hue_shift
-            if isinstance(seat_id, str):
-                record["seatId"] = seat_id
-            seats[str(agent_id)] = record
-        await self.config.seats.set(seats)
+        palette_count = max(len(self._assets.get("characters", [])), _PALETTE_COUNT)
+
+        def merge(seats: dict) -> None:
+            for agent_id, value in incoming.items():
+                if not isinstance(value, dict):
+                    continue
+                record = dict(seats.get(str(agent_id)) or {})
+                palette = value.get("palette")
+                hue_shift = value.get("hueShift")
+                seat_id = value.get("seatId")
+                # Validate before storing: a hand-edited payload should not be able
+                # to persist a palette index that renders as a missing sprite.
+                if isinstance(palette, int) and 0 <= palette < palette_count:
+                    record["palette"] = palette
+                if isinstance(hue_shift, int) and 0 <= hue_shift <= 360:
+                    record["hueShift"] = hue_shift
+                if isinstance(seat_id, str):
+                    record["seatId"] = seat_id
+                seats[str(agent_id)] = record
+
+        await self._settings_repository.mutate_seats(merge)
 
     async def _send_bootstrap(self, socket: web.WebSocketResponse) -> None:
         """Push the whole world to a freshly connected office client.
@@ -748,7 +761,7 @@ class pixelagents(commands.Cog):
         })
         await self._send_to(socket, {"type": "areaMappingsLoaded", "mappings": {}})
 
-        seats = await self.config.seats() or {}
+        seats = await self._settings_repository.seats()
         await self._send_to(socket, self._existing_agents_message(seats))
         for uid in self._tracked_user_ids():
             aid = self._agent_id(uid)
@@ -811,9 +824,9 @@ class pixelagents(commands.Cog):
             return False
         if await self.bot.is_owner(discord.Object(id=user_id)):
             return True
-        role_id = await self.config.editor_role_id()
+        role_id = await self._settings_repository.editor_role_id()
         for guild in self.bot.guilds:
-            if not await self.config.guild(guild).enabled():
+            if not await self._settings_repository.guild_enabled(guild):
                 continue
             member = await self._get_auth_member(guild, user_id)
             if member is None:
@@ -831,14 +844,14 @@ class pixelagents(commands.Cog):
 
     async def _sync_all_guilds(self) -> None:
         for guild in self.bot.guilds:
-            if await self.config.guild(guild).enabled():
+            if await self._settings_repository.guild_enabled(guild):
                 try:
                     await self._full_sync(guild)
                 except Exception as exc:
                     log.error("pixelagents: sync error for guild %s: %s", guild.id, exc)
 
     async def _full_sync(self, guild: discord.Guild) -> str:
-        include_bots = await self.config.guild(guild).include_bots()
+        include_bots = (await self._settings_repository.guild_settings(guild)).include_bots
         errors = 0
         current_user_ids = {m.id for m in guild.members}
 
@@ -955,7 +968,7 @@ class pixelagents(commands.Cog):
             status = self._agent_status(member)
             await self._send({"type": "agentStatus", "id": agent_id, "status": status})
         await self._send_existing_agents()
-        if await self.config.broadcast_rich_presence():
+        if await self._settings_repository.broadcast_rich_presence():
             label = self._build_presence_label(member)
             if label:
                 self._presence_cache[(guild_id, user_id)] = label
@@ -988,7 +1001,7 @@ class pixelagents(commands.Cog):
     async def _update_presence_tool(
         self, guild_id: int, user_id: int, member: discord.Member
     ) -> None:
-        if not await self.config.broadcast_rich_presence():
+        if not await self._settings_repository.broadcast_rich_presence():
             return
         agent_id = self._agent_id(user_id)
         label = self._build_presence_label(member)
@@ -1045,11 +1058,12 @@ class pixelagents(commands.Cog):
 
     @commands.Cog.listener()
     async def on_member_update(self, before: discord.Member, after: discord.Member) -> None:
-        if not await self.config.guild(after.guild).enabled():
+        guild_settings = await self._settings_repository.guild_settings(after.guild)
+        if not guild_settings.enabled:
             return
         if before.display_name == after.display_name:
             return
-        include_bots = await self.config.guild(after.guild).include_bots()
+        include_bots = guild_settings.include_bots
         try:
             await self._reconcile_member(after, include_bots)
         except Exception as exc:
@@ -1057,11 +1071,12 @@ class pixelagents(commands.Cog):
 
     @commands.Cog.listener()
     async def on_presence_update(self, before: discord.Member, after: discord.Member) -> None:
-        if not await self.config.guild(after.guild).enabled():
+        guild_settings = await self._settings_repository.guild_settings(after.guild)
+        if not guild_settings.enabled:
             return
         if before.status == after.status and before.activities == after.activities:
             return
-        include_bots = await self.config.guild(after.guild).include_bots()
+        include_bots = guild_settings.include_bots
         try:
             await self._reconcile_member(after, include_bots)
         except Exception as exc:
@@ -1069,11 +1084,12 @@ class pixelagents(commands.Cog):
 
     @commands.Cog.listener()
     async def on_member_join(self, member: discord.Member) -> None:
-        if not await self.config.guild(member.guild).enabled():
+        guild_settings = await self._settings_repository.guild_settings(member.guild)
+        if not guild_settings.enabled:
             return
         if self._status_str(member) is None:
             return
-        include_bots = await self.config.guild(member.guild).include_bots()
+        include_bots = guild_settings.include_bots
         try:
             await self._reconcile_member(member, include_bots)
         except Exception as exc:
@@ -1081,7 +1097,7 @@ class pixelagents(commands.Cog):
 
     @commands.Cog.listener()
     async def on_member_remove(self, member: discord.Member) -> None:
-        if not await self.config.guild(member.guild).enabled():
+        if not await self._settings_repository.guild_enabled(member.guild):
             return
         try:
             await self._close_agent(member.guild.id, member.id)
@@ -1092,13 +1108,13 @@ class pixelagents(commands.Cog):
     async def on_message(self, message: discord.Message) -> None:
         if message.guild is None:
             return
-        if not await self.config.guild(message.guild).enabled():
+        if not await self._settings_repository.guild_enabled(message.guild):
             return
         guild_id = message.guild.id
         user_id = message.author.id
         if (guild_id, user_id) not in self._agents:
             return
-        if not await self.config.broadcast_messages():
+        if not await self._settings_repository.broadcast_messages():
             return
         agent_id = self._agent_id(user_id)
         content = message.content or ""
@@ -1112,7 +1128,7 @@ class pixelagents(commands.Cog):
             "toolName": "Message",
             "status": content,
         })
-        delay = await self.config.message_tool_clear_delay()
+        delay = await self._settings_repository.message_tool_clear_delay()
         asyncio.get_event_loop().create_task(
             self._clear_tool_after_delay(agent_id, delay, guild_id, user_id)
         )
@@ -1131,16 +1147,8 @@ class pixelagents(commands.Cog):
     @commands.admin_or_permissions(administrator=True)
     async def cmd_status(self, ctx: commands.Context) -> None:
         """Show current Pixelagents configuration and connection status."""
-        ws_host = await self.config.ws_host()
-        ws_port = await self.config.ws_port()
-        clear_delay = await self.config.message_tool_clear_delay()
-        editor_role_id = await self.config.editor_role_id()
-        broadcast_rp = await self.config.broadcast_rich_presence()
-        broadcast_msg = await self.config.broadcast_messages()
-        pixel_index_api_url = await self.config.pixel_index_api_url()
-        pixel_index_web_url = await self.config.pixel_index_web_url()
-        enabled = await self.config.guild(ctx.guild).enabled()
-        include_bots = await self.config.guild(ctx.guild).include_bots()
+        global_settings = await self._settings_service.global_settings()
+        guild_settings = await self._settings_service.guild_settings(ctx.guild.id)
         tracked = sum(1 for (gid, _) in self._agents if gid == ctx.guild.id)
         serving = self._runner is not None
         editors = sum(1 for authorized in self._clients.values() if authorized)
@@ -1149,7 +1157,11 @@ class pixelagents(commands.Cog):
             return "✅" if value else "🛑"
 
         embed = discord.Embed(title="Pixelagents Status", color=discord.Color.blurple())
-        embed.add_field(name="Office Server", value=f"{ws_host}:{ws_port}/ws", inline=False)
+        embed.add_field(
+            name="Office Server",
+            value=f"{global_settings.ws_host}:{global_settings.ws_port}/ws",
+            inline=False,
+        )
         embed.add_field(name="Serving", value=yn(serving), inline=True)
         embed.add_field(
             name="Office Clients",
@@ -1161,19 +1173,43 @@ class pixelagents(commands.Cog):
             value="✅ loaded" if self._assets.get("characters") else "⚠️ missing",
             inline=True,
         )
-        embed.add_field(name="Msg Tool Clear Delay", value=f"{clear_delay}s", inline=True)
         embed.add_field(
-            name="Editor Role ID",
-            value=str(editor_role_id) if editor_role_id else "⚠️ Not set",
+            name="Msg Tool Clear Delay",
+            value=f"{global_settings.message_tool_clear_delay}s",
             inline=True,
         )
-        embed.add_field(name="Guild Enabled", value=yn(enabled), inline=True)
-        embed.add_field(name="Include Bots", value=yn(include_bots), inline=True)
+        embed.add_field(
+            name="Editor Role ID",
+            value=(
+                str(global_settings.editor_role_id)
+                if global_settings.editor_role_id
+                else "⚠️ Not set"
+            ),
+            inline=True,
+        )
+        embed.add_field(name="Guild Enabled", value=yn(guild_settings.enabled), inline=True)
+        embed.add_field(name="Include Bots", value=yn(guild_settings.include_bots), inline=True)
         embed.add_field(name="Tracked Agents", value=str(tracked), inline=True)
-        embed.add_field(name="Broadcast Rich Presence", value=yn(broadcast_rp), inline=True)
-        embed.add_field(name="Broadcast Messages", value=yn(broadcast_msg), inline=True)
-        embed.add_field(name="Pixel Index API", value=pixel_index_api_url, inline=False)
-        embed.add_field(name="Pixel Index Web", value=pixel_index_web_url, inline=False)
+        embed.add_field(
+            name="Broadcast Rich Presence",
+            value=yn(global_settings.broadcast_rich_presence),
+            inline=True,
+        )
+        embed.add_field(
+            name="Broadcast Messages",
+            value=yn(global_settings.broadcast_messages),
+            inline=True,
+        )
+        embed.add_field(
+            name="Pixel Index API",
+            value=global_settings.pixel_index_api_url,
+            inline=False,
+        )
+        embed.add_field(
+            name="Pixel Index Web",
+            value=global_settings.pixel_index_web_url,
+            inline=False,
+        )
 
         await self._reply(ctx, embed=embed)
 
@@ -1186,10 +1222,11 @@ class pixelagents(commands.Cog):
         Traefik routes `/ws` on the dashboard host to this port, so changing it
         means updating the Traefik label in redstack too.
         """
-        if not 1 <= port <= 65535:
+        try:
+            await self._settings_service.set_ws_port(port)
+        except ValueError:
             await self._reply(ctx, "Port must be between 1 and 65535.")
             return
-        await self.config.ws_port.set(port)
         await self._reply(
             ctx,
             f"Office server port set to `{port}`. Reload the cog to rebind, and update the "
@@ -1201,10 +1238,11 @@ class pixelagents(commands.Cog):
     @app_commands.describe(seconds="Seconds to keep the message activity indicator visible")
     async def cmd_toolcleardelay(self, ctx: commands.Context, seconds: float) -> None:
         """Set how long (in seconds) a message tool indicator stays visible (default: 2.0)."""
-        if seconds < 0:
+        try:
+            await self._settings_service.set_message_tool_clear_delay(seconds)
+        except ValueError:
             await self._reply(ctx, "Delay must be 0 or greater.")
             return
-        await self.config.message_tool_clear_delay.set(seconds)
         await self._reply(ctx, f"Message tool clear delay set to `{seconds}s`.")
 
     @pixelagents_group.command(name="richpresence")
@@ -1212,7 +1250,7 @@ class pixelagents(commands.Cog):
     @app_commands.describe(value="Whether rich presence (Spotify, games, etc.) is shown in the webview")
     async def cmd_richpresence(self, ctx: commands.Context, value: bool) -> None:
         """Set whether rich presence activity is broadcast to the webview (true/false)."""
-        await self.config.broadcast_rich_presence.set(value)
+        await self._settings_service.set_broadcast_rich_presence(value)
         await self._reply(ctx, f"Rich presence broadcasting set to `{value}`.")
 
     @pixelagents_group.command(name="messages")
@@ -1220,7 +1258,7 @@ class pixelagents(commands.Cog):
     @app_commands.describe(value="Whether Discord messages are shown as tool bubbles in the webview")
     async def cmd_messages(self, ctx: commands.Context, value: bool) -> None:
         """Set whether Discord messages are broadcast as tool bubbles to the webview (true/false)."""
-        await self.config.broadcast_messages.set(value)
+        await self._settings_service.set_broadcast_messages(value)
         await self._reply(ctx, f"Message broadcasting set to `{value}`.")
 
     @pixelagents_group.command(name="editorrole")
@@ -1229,10 +1267,10 @@ class pixelagents(commands.Cog):
     async def cmd_editorrole(self, ctx: commands.Context, role: Optional[discord.Role] = None) -> None:
         """Set the Discord role that grants webview editor access. Omit to clear."""
         if role is None:
-            await self.config.editor_role_id.set(None)
+            await self._settings_service.set_editor_role_id(None)
             await self._reply(ctx, "Editor role cleared.")
         else:
-            await self.config.editor_role_id.set(role.id)
+            await self._settings_service.set_editor_role_id(role.id)
             await self._reply(ctx, f"Editor role set to `{role.name}` (ID: {role.id}).")
 
     @pixelagents_group.command(name="enable")
@@ -1241,9 +1279,8 @@ class pixelagents(commands.Cog):
         """Enable Pixel Agents office presence mirroring for this guild and run a full sync."""
         if ctx.interaction:
             await ctx.interaction.response.defer(ephemeral=True)
-        await self.config.guild(ctx.guild).enabled.set(True)
+        result = await self._settings_service.enable_guild(ctx.guild.id)
         await self._reply(ctx, "Enabled. Running full sync…")
-        result = await self._full_sync(ctx.guild)
         await self._reply(ctx, result)
 
     @pixelagents_group.command(name="disable")
@@ -1252,9 +1289,8 @@ class pixelagents(commands.Cog):
         """Disable Pixel Agents office presence mirroring for this guild and despawn all agents."""
         if ctx.interaction:
             await ctx.interaction.response.defer(ephemeral=True)
-        await self.config.guild(ctx.guild).enabled.set(False)
+        await self._settings_service.disable_guild(ctx.guild.id)
         await self._reply(ctx, "Disabled. Despawning all tracked agents…")
-        await self._despawn_guild(ctx.guild)
         await self._reply(ctx, "Done.")
 
     @pixelagents_group.command(name="includebots")
@@ -1262,10 +1298,9 @@ class pixelagents(commands.Cog):
     @app_commands.describe(value="Whether bot users should be mirrored")
     async def cmd_includebots(self, ctx: commands.Context, value: bool) -> None:
         """Set whether bot users are mirrored (true/false)."""
-        await self.config.guild(ctx.guild).include_bots.set(value)
+        result = await self._settings_service.set_include_bots(ctx.guild.id, value)
         await self._reply(ctx, f"include_bots set to `{value}`. Running sync…")
-        if await self.config.guild(ctx.guild).enabled():
-            result = await self._full_sync(ctx.guild)
+        if result is not None:
             await self._reply(ctx, result)
 
     @pixelagents_group.command(name="sync")
@@ -1274,7 +1309,7 @@ class pixelagents(commands.Cog):
         """Manually reconcile all guild members against their current Discord presence."""
         if ctx.interaction:
             await ctx.interaction.response.defer(ephemeral=True)
-        if not await self.config.guild(ctx.guild).enabled():
+        if not await self._settings_repository.guild_enabled(ctx.guild):
             await self._reply(ctx, "Guild is not enabled. Use `[p]pixelagents enable` first.")
             return
         await self._reply(ctx, "Syncing…")
@@ -1299,8 +1334,9 @@ class pixelagents(commands.Cog):
             return
         if ctx.interaction:
             await ctx.interaction.response.defer(ephemeral=True)
-        api_url = await self.config.pixel_index_api_url()
-        web_url = await self.config.pixel_index_web_url()
+        settings = await self._settings_service.global_settings()
+        api_url = settings.pixel_index_api_url
+        web_url = settings.pixel_index_web_url
         ok, detail = await self._check_pixel_index_health(api_url)
         await self._reply(
             ctx,
@@ -1323,11 +1359,10 @@ class pixelagents(commands.Cog):
 
     @staticmethod
     def _clean_url(url: str) -> Optional[str]:
-        clean = url.strip().rstrip("/")
-        parsed = urlparse(clean)
-        if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        try:
+            return normalize_http_url(url)
+        except ValueError:
             return None
-        return clean
 
     @pixelagents_pixelindex_group.command(name="set")
     @commands.admin_or_permissions(administrator=True)
@@ -1336,11 +1371,11 @@ class pixelagents(commands.Cog):
         """Set the Pixel Index API endpoint (e.g. to switch between prod and staging)."""
         if ctx.interaction:
             await ctx.interaction.response.defer(ephemeral=True)
-        clean = self._clean_url(url)
-        if clean is None:
+        try:
+            clean = await self._settings_service.set_pixel_index_api_url(url)
+        except ValueError:
             await self._reply(ctx, "Please provide a valid URL, e.g. `https://pixel-index-api.nntin.xyz`.")
             return
-        await self.config.pixel_index_api_url.set(clean)
         ok, detail = await self._check_pixel_index_health(clean)
         await self._reply(
             ctx,
@@ -1352,11 +1387,11 @@ class pixelagents(commands.Cog):
     @app_commands.describe(url="Pixel Index web frontend base URL, e.g. https://pixel-index.vercel.app")
     async def cmd_pixelindex_setweb(self, ctx: commands.Context, url: str) -> None:
         """Set the Pixel Index web frontend base URL, used for "View on site" links."""
-        clean = self._clean_url(url)
-        if clean is None:
+        try:
+            clean = await self._settings_service.set_pixel_index_web_url(url)
+        except ValueError:
             await self._reply(ctx, "Please provide a valid URL, e.g. `https://pixel-index.vercel.app`.")
             return
-        await self.config.pixel_index_web_url.set(clean)
         await self._reply(ctx, f"Pixel Index web frontend set to `{clean}`.")
 
     # ------------------------------------------------------------------
@@ -1364,7 +1399,7 @@ class pixelagents(commands.Cog):
     # ------------------------------------------------------------------
 
     async def _pixel_index_get(self, path: str, params: Optional[dict] = None) -> Tuple[bool, Any]:
-        base = await self.config.pixel_index_api_url()
+        base = await self._settings_repository.pixel_index_api_url()
         url = f"{base.rstrip('/')}{path}"
         timeout = aiohttp.ClientTimeout(total=_PIXEL_INDEX_REQUEST_TIMEOUT)
         try:
@@ -1422,7 +1457,7 @@ class pixelagents(commands.Cog):
         layout = detail.layout
         if not self._validate_layout(layout):
             return False, "That layout is invalid and cannot be loaded."
-        await self.config.layout.set(layout)
+        await self._settings_repository.set_layout(layout)
         await self._send({"type": "layoutLoaded", "layout": layout})
         return True, f"Loaded `{detail.title or slug}` into the office."
 
@@ -1463,8 +1498,8 @@ class pixelagents(commands.Cog):
         if not page.layouts:
             await self._send_public(ctx, "No layouts found on Pixel Index.")
             return
-        api_base = await self.config.pixel_index_api_url()
-        web_base = await self.config.pixel_index_web_url()
+        api_base = await self._settings_repository.pixel_index_api_url()
+        web_base = await self._settings_repository.pixel_index_web_url()
         view = _LayoutBrowseView(
             self,
             ctx.author.id,
@@ -1488,8 +1523,8 @@ class pixelagents(commands.Cog):
         if not ok:
             await self._send_public(ctx, str(detail))
             return
-        api_base = await self.config.pixel_index_api_url()
-        web_base = await self.config.pixel_index_web_url()
+        api_base = await self._settings_repository.pixel_index_api_url()
+        web_base = await self._settings_repository.pixel_index_web_url()
         view = _LayoutDetailView(self, ctx.author.id, detail, api_base=api_base, web_base=web_base)
         await self._send_public(ctx, view=view)
 

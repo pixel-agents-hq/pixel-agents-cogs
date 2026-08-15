@@ -81,7 +81,12 @@ class _MockModal:
         super().__init_subclass__(**kwargs)
 
     def __init__(self, *args, **kwargs):
-        super().__init__()
+        self.timeout = kwargs.get("timeout")
+        self.children = []
+
+    def add_item(self, item):
+        self.children.append(item)
+        return self
 
     async def on_submit(self, interaction):
         pass
@@ -98,7 +103,7 @@ class _MockTextInput:
         self.required = required
         self.min_length = min_length
         self.max_length = max_length
-        self.value = ""
+        self.value = kwargs.get("default", "")
 
     def __set_name__(self, owner, name):
         self._name = name
@@ -107,9 +112,15 @@ class _MockTextInput:
 class _MockLayoutView:
     def __init__(self, *, timeout=180.0):
         self.timeout = timeout
+        self.children = []
+        self._stopped = False
 
     def add_item(self, item):
-        pass
+        self.children.append(item)
+        return self
+
+    def stop(self):
+        self._stopped = True
 
 
 def _stub_ui_item(*args, **kwargs):
@@ -123,6 +134,7 @@ _discord_ui = _make_stub_module("discord.ui")
 _discord_ui.Modal = _MockModal
 _discord_ui.TextInput = _MockTextInput
 _discord_ui.LayoutView = _MockLayoutView
+_discord_ui.Label = _stub_ui_item
 _discord_ui.Container = _stub_ui_item
 _discord_ui.Section = _stub_ui_item
 _discord_ui.Thumbnail = _stub_ui_item
@@ -130,6 +142,7 @@ _discord_ui.TextDisplay = _stub_ui_item
 _discord_ui.MediaGallery = _stub_ui_item
 _discord_ui.ActionRow = _stub_ui_item
 _discord_ui.Select = _stub_ui_item
+_discord_ui.RoleSelect = _stub_ui_item
 _discord_ui.Button = _stub_ui_item
 _discord.ui = _discord_ui
 sys.modules["discord.ui"] = _discord_ui

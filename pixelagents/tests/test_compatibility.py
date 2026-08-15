@@ -279,6 +279,7 @@ class TestCommandContract:
         assert root.__wrapped__.__guild_only__ is True
         assert set(root.subcommands) == {
             "status",
+            "settings",
             "wsport",
             "toolcleardelay",
             "richpresence",
@@ -299,6 +300,7 @@ class TestCommandContract:
         root = PixelAgentsCog.pixelagents_group
         direct_admin_commands = {
             "status",
+            "settings",
             "wsport",
             "toolcleardelay",
             "richpresence",

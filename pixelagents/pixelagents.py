@@ -15,6 +15,7 @@ from redbot.core import commands
 from redbot.core.bot import Red
 
 from .adapters.layout_views import LayoutBrowseView, LayoutDetailView, absolute_url
+from .adapters.settings_panel import SettingsPanelView, SettingsRuntimeSnapshot
 from .application import (
     LAYOUT_SORT_CHOICES,
     CatalogueResult,
@@ -825,6 +826,30 @@ class pixelagents(commands.Cog):
         )
 
         await self._reply(ctx, embed=embed)
+
+    def _settings_runtime_snapshot(self, guild_id: int) -> SettingsRuntimeSnapshot:
+        """Expose only the runtime values the settings adapter displays."""
+
+        return SettingsRuntimeSnapshot(
+            serving=self._websocket_server.running,
+            client_count=self._client_hub.client_count,
+            editor_count=self._client_hub.editor_count,
+            assets_loaded=bool(self._assets.get("characters")),
+            tracked_agents=sum(1 for agent_guild_id, _ in self._agents if agent_guild_id == guild_id),
+        )
+
+    @pixelagents_group.command(name="settings")
+    @commands.admin_or_permissions(administrator=True)
+    async def cmd_settings(self, ctx: commands.Context) -> None:
+        """Open the interactive Pixel Agents administration panel."""
+
+        view = await SettingsPanelView.create(
+            self._settings_service,
+            owner_id=ctx.author.id,
+            guild_id=ctx.guild.id,
+            runtime_snapshot=self._settings_runtime_snapshot,
+        )
+        await self._reply(ctx, view=view)
 
     @pixelagents_group.command(name="wsport")
     @commands.admin_or_permissions(administrator=True)

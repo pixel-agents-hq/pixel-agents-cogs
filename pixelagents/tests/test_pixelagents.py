@@ -11,6 +11,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from pixelagents.application.catalogue import CatalogueResult
 from pixelagents.models import LayoutDetail, LayoutListResponse
 from pixelagents.pixelagents import (
     _discord_id_to_agent_id,
@@ -984,6 +985,7 @@ class _FakeHttpSession:
     def __init__(self, response=None, exc=None):
         self._response = response
         self._exc = exc
+        self.closed = False
         self.last_url = None
         self.last_params = None
 
@@ -999,6 +1001,9 @@ class _FakeHttpSession:
 
     async def __aexit__(self, *args):
         return False
+
+    async def close(self):
+        self.closed = True
 
 
 def _layout_summary(slug="office", title="Office", **overrides):
@@ -1154,7 +1159,9 @@ class TestLoadPixelIndexLayout(unittest.IsolatedAsyncioTestCase):
         self.cog.bot.is_owner = AsyncMock(return_value=True)
         detail = _layout_detail("office")
         detail["layout"] = {"not": "valid"}
-        self.cog._pixel_index_layout = AsyncMock(return_value=(True, LayoutDetail.model_validate(detail)))
+        self.cog._catalogue_service.detail = AsyncMock(
+            return_value=CatalogueResult(value=LayoutDetail.model_validate(detail))
+        )
         ok, message = await self.cog._load_pixel_index_layout(12345, "office")
         self.assertFalse(ok)
         self.assertIn("invalid", message)
@@ -1163,7 +1170,9 @@ class TestLoadPixelIndexLayout(unittest.IsolatedAsyncioTestCase):
         self.cog.bot.is_owner = AsyncMock(return_value=True)
         detail = _layout_detail("office")
         model = LayoutDetail.model_validate(detail)
-        self.cog._pixel_index_layout = AsyncMock(return_value=(True, model))
+        self.cog._catalogue_service.detail = AsyncMock(
+            return_value=CatalogueResult(value=model)
+        )
         client = _connect(self.cog)
 
         ok, message = await self.cog._load_pixel_index_layout(12345, "office")
@@ -1184,7 +1193,7 @@ class TestLayoutBrowseView(unittest.IsolatedAsyncioTestCase):
 
     def _view(self, page_index=0, pages=None):
         return _LayoutBrowseView(
-            self.cog,
+            self.cog._catalogue_service,
             owner_id=1,
             query=None,
             tag=None,
@@ -1204,13 +1213,15 @@ class TestLayoutBrowseView(unittest.IsolatedAsyncioTestCase):
         second_page = LayoutListResponse.model_validate(
             {"total": 1, "layouts": [_layout_summary("second")], "nextCursor": None}
         )
-        self.cog._pixel_index_search = AsyncMock(return_value=(True, second_page))
+        self.cog._catalogue_service.search = AsyncMock(
+            return_value=CatalogueResult(value=second_page)
+        )
         interaction = _FakeInteraction()
         interaction.response.edit_message = AsyncMock()
 
         await view._on_next(interaction)
 
-        self.cog._pixel_index_search.assert_awaited_with(
+        self.cog._catalogue_service.search.assert_awaited_with(
             query=None, tag=None, sort="newest", cursor="next-cursor"
         )
         interaction.response.edit_message.assert_awaited()
@@ -1248,7 +1259,7 @@ class TestLayoutDetailView(unittest.IsolatedAsyncioTestCase):
 
     def _view(self, back=None):
         return _LayoutDetailView(
-            self.cog,
+            self.cog._catalogue_service,
             owner_id=1,
             detail=self.detail,
             api_base="https://pixel-index-api-staging.nntin.xyz",
@@ -1260,15 +1271,19 @@ class TestLayoutDetailView(unittest.IsolatedAsyncioTestCase):
         view = self._view()
         self.assertEqual(view.detail.slug, "office")
 
-    async def test_load_button_delegates_to_cog(self):
+    async def test_load_button_delegates_to_catalogue_service(self):
         view = self._view()
-        self.cog._load_pixel_index_layout = AsyncMock(return_value=(True, "Loaded `Office` into the office."))
+        self.cog._catalogue_service.load_layout = AsyncMock(
+            return_value=CatalogueResult(value="Loaded `Office` into the office.")
+        )
         interaction = _FakeInteraction()
         interaction.response.send_message = AsyncMock()
 
         await view._on_load(interaction)
 
-        self.cog._load_pixel_index_layout.assert_awaited_with(interaction.user.id, "office")
+        self.cog._catalogue_service.load_layout.assert_awaited_with(
+            interaction.user.id, "office"
+        )
         interaction.response.send_message.assert_awaited_with(
             "Loaded `Office` into the office.", ephemeral=True
         )

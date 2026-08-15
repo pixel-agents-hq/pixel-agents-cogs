@@ -104,7 +104,7 @@ class TestApplicationBoundaries(unittest.TestCase):
         application_root = Path(__file__).parents[1] / "application"
         banned_roots = {"aiohttp", "discord", "redbot"}
 
-        for filename in ("office.py", "presence.py", "tasks.py"):
+        for filename in ("catalogue.py", "office.py", "presence.py", "tasks.py"):
             tree = ast.parse((application_root / filename).read_text(encoding="utf-8"))
             imported_roots = {
                 alias.name.partition(".")[0]

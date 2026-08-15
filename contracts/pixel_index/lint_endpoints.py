@@ -2,11 +2,11 @@
 """Fail if PixelAgents calls a Pixel Index endpoint that isn't registered
 in contracts/pixel_index/endpoints.py.
 
-Every JSON endpoint PixelAgents hits goes through the single
-`self._pixel_index_get(path)` chokepoint, so this walks the package's AST for
+Every JSON endpoint PixelAgents hits goes through the client's single
+`_pixel_index_get(path)` chokepoint, so this walks the package's AST for
 those call sites, extracts the literal path (including f-string
 templates like f"/api/v1/layouts/{slug}"), and diffs against ENDPOINTS.
-`/health` is checked directly by `_check_pixel_index_health` instead of
+`/health` is checked directly by the client's `health` method instead of
 `_pixel_index_get` (it's a plain status check, no JSON body), so it's
 special-cased below rather than generalizing the walk for a call site that's
 unlikely to grow siblings.

@@ -1,13 +1,13 @@
 """Endpoint metadata for the office-cogs -> Pixel Index contract.
 
-Pairs each endpoint pixelagents.py actually calls with the pydantic model
+Pairs each endpoint the pixelagents package actually calls with the pydantic model
 (if any, from pixelagents/contracts/pixel_index.py) that describes the response shape it
 depends on. Only this bit — which endpoints, what params, how they chain —
 is hand-maintained; the response schemas themselves are generated from the
 models at build time by generate_contract.py, so they can't drift from what
 pixelagents.py actually parses.
 
-Update this alongside pixelagents.py whenever it starts/stops calling an
+Update this alongside the Pixel Index client whenever it starts/stops calling an
 endpoint or changes how it chains requests together.
 """
 from __future__ import annotations

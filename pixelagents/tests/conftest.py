@@ -206,9 +206,19 @@ class _FakeClientSession:
         await self.close()
 
 
+class _FakeClientError(Exception):
+    pass
+
+
+class _FakeContentTypeError(_FakeClientError):
+    pass
+
+
 _aiohttp = _make_stub_module(
     "aiohttp",
+    ClientError=_FakeClientError,
     ClientSession=_FakeClientSession,
+    ContentTypeError=_FakeContentTypeError,
     ClientWebSocketResponse=_FakeClientWebSocketResponse,
     WSMsgType=_WSMsgType,
     ClientTimeout=lambda **kwargs: kwargs,

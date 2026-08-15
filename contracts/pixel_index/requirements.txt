@@ -1,5 +1,5 @@
 requests>=2.31
 PyYAML>=6.0
 jsonschema>=4.20
-pydantic>=2.6
+pydantic>=2.6,<2.11
 mypy>=1.10

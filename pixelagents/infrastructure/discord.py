@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 import discord
 
@@ -30,7 +30,8 @@ def _optional_text(value: Any) -> str | None:
 
 
 def activity_snapshot(activity: Any) -> ActivitySnapshot | None:
-    kind = _ACTIVITY_KINDS.get(getattr(activity, "type", None))
+    activity_type = cast(discord.ActivityType, getattr(activity, "type", None))
+    kind = _ACTIVITY_KINDS.get(activity_type)
     if kind is None:
         return None
     return ActivitySnapshot(

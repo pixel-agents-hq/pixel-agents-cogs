@@ -40,7 +40,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r contracts/pixel_index/requirements.txt
-          python -m pip install aiohttp pytest ruff
+          python -m pip install 'discord.py>=2.7,<2.8' aiohttp pytest ruff
 
       - name: Run PixelAgents tests
         run: python -m pytest -q pixelagents/tests

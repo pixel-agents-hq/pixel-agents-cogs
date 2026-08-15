@@ -2,8 +2,6 @@
 target-version = "py311"
 line-length = 100
 extend-exclude = [
-    # Legacy modules remain gated by tests while they are split into typed layers.
-    "pixelagents/pixelagents.py",
     "pixelagents/conftest.py",
     "pixelagents/tests/conftest.py",
     "pixelagents/tests/test_pixelagents.py",
@@ -21,11 +19,31 @@ python_version = "3.11"
 strict = true
 ignore_missing_imports = true
 follow_imports = "silent"
-# The runtime contract is the first typed core module. New refactor modules
-# automatically join the strict gate unless they are one of the named legacy
-# adapters below.
+# Every production Pixel Agents module is part of the strict type gate.
 files = ["pixelagents"]
 exclude = [
-    "^pixelagents/(?:__init__|conftest|pixelagents)\\.py$",
+    "^pixelagents/conftest\\.py$",
     "^pixelagents/tests/",
 ]
+
+[[tool.mypy.overrides]]
+# Red is intentionally absent from the lightweight CI type environment, so
+# its decorators are dynamically typed. Keep the adapters otherwise strict.
+module = [
+    "pixelagents.adapters.catalogue_commands",
+    "pixelagents.adapters.dashboard",
+    "pixelagents.adapters.discord_gateway",
+]
+disable_error_code = ["untyped-decorator"]
+
+[[tool.mypy.overrides]]
+# Red's HybridGroup decorator loses the mixin callback type, and its untyped
+# Context leaks Any from `ctx.guild` when Red is absent from the type job.
+module = ["pixelagents.adapters.admin_commands"]
+disable_error_code = ["arg-type", "no-any-return", "untyped-decorator"]
+
+[[tool.mypy.overrides]]
+# The real Red Cog metaclass is not installed in the lightweight type job, so
+# `commands.Cog` resolves to Any there. The composition module remains checked.
+module = ["pixelagents.pixelagents"]
+disable_error_code = ["misc"]

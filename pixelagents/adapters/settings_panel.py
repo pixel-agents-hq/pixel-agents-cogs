@@ -6,7 +6,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from math import isfinite
-from typing import TypeAlias
+from typing import Any, TypeAlias, cast
 
 import discord
 
@@ -60,7 +60,7 @@ class SettingsValueModal(discord.ui.Modal):  # type: ignore[misc, unused-ignore]
         self._panel = panel
         self._parser = parser
         self._apply = apply
-        self.value_input = discord.ui.TextInput(
+        self.value_input: discord.ui.TextInput[SettingsValueModal] = discord.ui.TextInput(
             default=current,
             required=True,
             min_length=1,
@@ -156,7 +156,7 @@ class SettingsPanelView(discord.ui.LayoutView):  # type: ignore[misc, unused-ign
     def _build(self) -> None:
         global_settings = self.global_settings
         guild_settings = self.guild_settings
-        container = discord.ui.Container(
+        container: discord.ui.Container[SettingsPanelView] = discord.ui.Container(
             discord.ui.TextDisplay(
                 "# Pixel Agents settings\nChanges apply to this guild unless noted."
             ),
@@ -186,7 +186,7 @@ class SettingsPanelView(discord.ui.LayoutView):  # type: ignore[misc, unused-ign
                 accessory=discord.ui.Button(label="Host read-only", disabled=True),
             )
         )
-        network_actions = discord.ui.ActionRow()
+        network_actions: discord.ui.ActionRow[SettingsPanelView] = discord.ui.ActionRow()
         network_actions.add_item(
             self._button("Edit port", self._show_port_modal, discord.ButtonStyle.primary)
         )
@@ -205,17 +205,17 @@ class SettingsPanelView(discord.ui.LayoutView):  # type: ignore[misc, unused-ign
                 "Choose a role below, or submit no role to clear it."
             )
         )
-        role_row = discord.ui.ActionRow()
-        role_select = discord.ui.RoleSelect(
+        role_row: discord.ui.ActionRow[SettingsPanelView] = discord.ui.ActionRow()
+        role_select: discord.ui.RoleSelect[SettingsPanelView] = discord.ui.RoleSelect(
             placeholder="Set or clear the editor role…",
             min_values=0,
             max_values=1,
         )
         self._role_select = role_select
-        role_select.callback = self._role_callback(role_select)
+        cast(Any, role_select).callback = self._role_callback(role_select)
         role_row.add_item(role_select)
         container.add_item(role_row)
-        clear_role_row = discord.ui.ActionRow()
+        clear_role_row: discord.ui.ActionRow[SettingsPanelView] = discord.ui.ActionRow()
         clear_role_row.add_item(self._button("Clear editor role", self._clear_editor_role))
         container.add_item(clear_role_row)
 
@@ -231,7 +231,7 @@ class SettingsPanelView(discord.ui.LayoutView):  # type: ignore[misc, unused-ign
                 f"Clear delay: {_inline_code(global_settings.message_tool_clear_delay)} seconds"
             )
         )
-        toggles = discord.ui.ActionRow()
+        toggles: discord.ui.ActionRow[SettingsPanelView] = discord.ui.ActionRow()
         toggles.add_item(
             self._button(
                 "Toggle rich presence",
@@ -259,7 +259,7 @@ class SettingsPanelView(discord.ui.LayoutView):  # type: ignore[misc, unused-ign
                 accessory=discord.ui.Button(label="HTTP(S) only", disabled=True),
             )
         )
-        index_actions = discord.ui.ActionRow()
+        index_actions: discord.ui.ActionRow[SettingsPanelView] = discord.ui.ActionRow()
         index_actions.add_item(self._button("Edit API URL", self._show_api_url_modal))
         index_actions.add_item(self._button("Edit web URL", self._show_web_url_modal))
         container.add_item(index_actions)
@@ -272,7 +272,7 @@ class SettingsPanelView(discord.ui.LayoutView):  # type: ignore[misc, unused-ign
         style: discord.ButtonStyle = discord.ButtonStyle.secondary,
     ) -> discord.ui.Button[SettingsPanelView]:
         button: discord.ui.Button[SettingsPanelView] = discord.ui.Button(label=label, style=style)
-        button.callback = callback
+        cast(Any, button).callback = callback
         return button
 
     async def _show_port_modal(self, interaction: discord.Interaction) -> None:

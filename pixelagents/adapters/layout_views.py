@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from typing import Any, cast
 
 import discord
 
@@ -62,7 +63,9 @@ class LayoutBrowseView(discord.ui.LayoutView):  # type: ignore[misc, unused-igno
             header_bits.append(f"matching `{self.query}`")
         if self.tag:
             header_bits.append(f"tagged `{self.tag}`")
-        container = discord.ui.Container(discord.ui.TextDisplay(" ".join(header_bits)))
+        container: discord.ui.Container[LayoutBrowseView] = discord.ui.Container(
+            discord.ui.TextDisplay(" ".join(header_bits))
+        )
 
         for entry in layouts:
             display_name = entry.author.displayName if entry.author else None
@@ -76,7 +79,7 @@ class LayoutBrowseView(discord.ui.LayoutView):  # type: ignore[misc, unused-igno
             if entry.tags:
                 lines.append("_" + ", ".join(entry.tags) + "_")
             thumbnail_path = entry.files.thumbnail if entry.files else None
-            accessory = (
+            accessory: discord.ui.Item[LayoutBrowseView] = (
                 discord.ui.Thumbnail(absolute_url(self.api_base, thumbnail_path))
                 if thumbnail_path
                 else discord.ui.Button(label="?", disabled=True)
@@ -85,8 +88,8 @@ class LayoutBrowseView(discord.ui.LayoutView):  # type: ignore[misc, unused-igno
                 discord.ui.Section(discord.ui.TextDisplay("\n".join(lines)), accessory=accessory)
             )
 
-        select_row = discord.ui.ActionRow()
-        select = discord.ui.Select(
+        select_row: discord.ui.ActionRow[LayoutBrowseView] = discord.ui.ActionRow()
+        select: discord.ui.Select[LayoutBrowseView] = discord.ui.Select(
             placeholder="View a layout…",
             options=[
                 discord.SelectOption(
@@ -97,31 +100,31 @@ class LayoutBrowseView(discord.ui.LayoutView):  # type: ignore[misc, unused-igno
                 for entry in layouts
             ],
         )
-        select.callback = self._make_select_callback(select)
+        cast(Any, select).callback = self._make_select_callback(select)
         select_row.add_item(select)
         container.add_item(select_row)
 
-        nav_row = discord.ui.ActionRow()
-        previous = discord.ui.Button(
+        nav_row: discord.ui.ActionRow[LayoutBrowseView] = discord.ui.ActionRow()
+        previous: discord.ui.Button[LayoutBrowseView] = discord.ui.Button(
             label="◀ Prev",
             style=discord.ButtonStyle.secondary,
             disabled=self.page_index == 0,
         )
-        previous.callback = self._on_prev
+        cast(Any, previous).callback = self._on_prev
         at_last_known_page = self.page_index >= len(self.pages) - 1
-        following = discord.ui.Button(
+        following: discord.ui.Button[LayoutBrowseView] = discord.ui.Button(
             label="Next ▶",
             style=discord.ButtonStyle.secondary,
             disabled=at_last_known_page and page.nextCursor is None,
         )
-        following.callback = self._on_next
+        cast(Any, following).callback = self._on_next
         nav_row.add_item(previous)
         nav_row.add_item(following)
         container.add_item(nav_row)
         self.add_item(container)
 
     def _make_select_callback(
-        self, select: discord.ui.Select
+        self, select: discord.ui.Select[LayoutBrowseView]
     ) -> Callable[[discord.Interaction], Awaitable[None]]:
         async def on_select(interaction: discord.Interaction) -> None:
             result = await self.catalogue.detail(select.values[0])
@@ -252,7 +255,9 @@ class LayoutDetailView(discord.ui.LayoutView):  # type: ignore[misc, unused-igno
         if detail.tags:
             lines.append("Tags: " + ", ".join(detail.tags))
 
-        container = discord.ui.Container(discord.ui.TextDisplay("\n".join(lines)))
+        container: discord.ui.Container[LayoutDetailView] = discord.ui.Container(
+            discord.ui.TextDisplay("\n".join(lines))
+        )
         preview_path = detail.files.preview if detail.files else None
         if preview_path:
             container.add_item(
@@ -261,7 +266,7 @@ class LayoutDetailView(discord.ui.LayoutView):  # type: ignore[misc, unused-igno
                 )
             )
 
-        actions = discord.ui.ActionRow()
+        actions: discord.ui.ActionRow[LayoutDetailView] = discord.ui.ActionRow()
         download_path = detail.files.layout if detail.files else None
         if download_path:
             actions.add_item(
@@ -277,12 +282,16 @@ class LayoutDetailView(discord.ui.LayoutView):  # type: ignore[misc, unused-igno
                     url=absolute_url(self.web_base, f"/layouts/{detail.slug}"),
                 )
             )
-        load_button = discord.ui.Button(label="Load into office", style=discord.ButtonStyle.primary)
-        load_button.callback = self._on_load
+        load_button: discord.ui.Button[LayoutDetailView] = discord.ui.Button(
+            label="Load into office", style=discord.ButtonStyle.primary
+        )
+        cast(Any, load_button).callback = self._on_load
         actions.add_item(load_button)
         if self.back is not None:
-            back_button = discord.ui.Button(label="◀ Back", style=discord.ButtonStyle.secondary)
-            back_button.callback = self._on_back
+            back_button: discord.ui.Button[LayoutDetailView] = discord.ui.Button(
+                label="◀ Back", style=discord.ButtonStyle.secondary
+            )
+            cast(Any, back_button).callback = self._on_back
             actions.add_item(back_button)
         container.add_item(actions)
         self.add_item(container)

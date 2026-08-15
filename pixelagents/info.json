@@ -11,7 +11,7 @@
     "required_cogs": {},
     "requirements": [
         "aiohttp",
-        "pydantic"
+        "pydantic>=2.6,<2.11"
     ],
     "tags": [
         "pixelagents",

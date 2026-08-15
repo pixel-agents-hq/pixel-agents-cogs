@@ -5,6 +5,8 @@ import sys
 import types
 from unittest.mock import MagicMock
 
+from aiohttp import web as _aiohttp_web
+
 
 def _make_stub_module(name: str, **attrs) -> types.ModuleType:
     mod = types.ModuleType(name)
@@ -235,8 +237,10 @@ _aiohttp = _make_stub_module(
     ClientWebSocketResponse=_FakeClientWebSocketResponse,
     WSMsgType=_WSMsgType,
     ClientTimeout=lambda **kwargs: kwargs,
+    web=_aiohttp_web,
 )
 sys.modules["aiohttp"] = _aiohttp
+sys.modules["aiohttp.web"] = _aiohttp_web
 
 
 # --- redbot ---
@@ -388,11 +392,15 @@ class _FakeListener:
 
 class _FakeCog:
     @staticmethod
-    def listener(func=None):
+    def listener(func=None, name=None):
         if func is not None:
+            func.__cog_listener__ = True
+            func.__cog_listener_names__ = [name or func.__name__]
             return func
 
         def deco(f):
+            f.__cog_listener__ = True
+            f.__cog_listener_names__ = [name or f.__name__]
             return f
         return deco
 

@@ -122,3 +122,16 @@ def test_production_config_access_does_not_bypass_repository() -> None:
                 offenders.append(path)
                 break
     assert offenders == []
+
+
+def test_application_layer_does_not_import_infrastructure_or_adapters() -> None:
+    offenders: list[tuple[Path, str]] = []
+    for path in (PACKAGE_ROOT / "application").glob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ImportFrom) or node.level != 2 or node.module is None:
+                continue
+            dependency = node.module.split(".", 1)[0]
+            if dependency in {"infrastructure", "adapters"}:
+                offenders.append((path, dependency))
+    assert offenders == []

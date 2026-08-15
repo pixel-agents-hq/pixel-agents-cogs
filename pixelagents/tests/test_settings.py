@@ -139,6 +139,8 @@ class TestSettingsService(unittest.IsolatedAsyncioTestCase):
         invalid_calls = (
             service.set_ws_port(0),
             service.set_message_tool_clear_delay(-0.1),
+            service.set_message_tool_clear_delay(float("nan")),
+            service.set_message_tool_clear_delay(float("inf")),
             service.set_editor_role_id(0),
             service.set_pixel_index_api_url("ftp://example.com"),
             service.set_pixel_index_web_url("example.com"),
@@ -151,6 +153,15 @@ class TestSettingsService(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await repository.ws_port(), 3210)
         self.assertEqual(await repository.message_tool_clear_delay(), 2.0)
         self.assertIsNone(await repository.editor_role_id())
+
+    async def test_repository_rejects_non_finite_delay_defensively(self) -> None:
+        repository, _ = make_repository()
+
+        for value in (float("nan"), float("inf"), float("-inf")):
+            with self.assertRaises(ValueError):
+                await repository.set_message_tool_clear_delay(value)
+
+        self.assertEqual(await repository.message_tool_clear_delay(), 2.0)
 
 
 class TestSettingsCommandParity(unittest.IsolatedAsyncioTestCase):

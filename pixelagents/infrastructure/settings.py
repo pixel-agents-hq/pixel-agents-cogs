@@ -5,12 +5,12 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 from copy import deepcopy
+from math import isfinite
 from typing import Any, Protocol, TypeAlias, TypeVar, cast
-from urllib.parse import urlparse
 
 from redbot.core import Config
 
-from ..domain import GlobalSettings, GuildSettings
+from ..domain import GlobalSettings, GuildSettings, normalize_http_url
 
 CONFIG_IDENTIFIER = 0x706978656C61
 DEFAULT_PIXEL_INDEX_API_URL = "https://pixel-index-api-staging.nntin.xyz"
@@ -45,16 +45,6 @@ class GuildReference(Protocol):
     """Minimal framework-neutral shape accepted by Red's guild accessor."""
 
     id: int
-
-
-def normalize_http_url(value: str) -> str:
-    """Normalize and validate an HTTP(S) base URL."""
-
-    clean = value.strip().rstrip("/")
-    parsed = urlparse(clean)
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        raise ValueError("URL must be an absolute HTTP or HTTPS URL.")
-    return clean
 
 
 class RedSettingsRepository:
@@ -168,7 +158,7 @@ class RedSettingsRepository:
         await self._config.ws_port.set(port)
 
     async def set_message_tool_clear_delay(self, seconds: float) -> None:
-        if isinstance(seconds, bool) or seconds < 0:
+        if isinstance(seconds, bool) or not isfinite(seconds) or seconds < 0:
             raise ValueError("Delay must be 0 or greater.")
         await self._config.message_tool_clear_delay.set(float(seconds))
 

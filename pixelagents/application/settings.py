@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from math import isfinite
+from typing import Protocol
 
-from ..domain import GlobalSettings, GuildSettings
-from ..infrastructure.settings import RedSettingsRepository, normalize_http_url
+from ..domain import GlobalSettings, GuildSettings, normalize_http_url
 
 ClearPresenceCallback = Callable[[], Awaitable[None]]
 ReauthorizeCallback = Callable[[], Awaitable[None]]
@@ -13,12 +14,38 @@ SyncGuildCallback = Callable[[int], Awaitable[str]]
 DespawnGuildCallback = Callable[[int], Awaitable[None]]
 
 
+class SettingsRepository(Protocol):
+    """Persistence operations required by settings use cases."""
+
+    async def global_settings(self) -> GlobalSettings: ...
+
+    async def guild_settings(self, guild_id: int) -> GuildSettings: ...
+
+    async def set_ws_port(self, port: int) -> None: ...
+
+    async def set_message_tool_clear_delay(self, seconds: float) -> None: ...
+
+    async def set_broadcast_rich_presence(self, value: bool) -> None: ...
+
+    async def set_broadcast_messages(self, value: bool) -> None: ...
+
+    async def set_editor_role_id(self, role_id: int | None) -> None: ...
+
+    async def set_guild_enabled(self, guild_id: int, value: bool) -> None: ...
+
+    async def set_guild_include_bots(self, guild_id: int, value: bool) -> None: ...
+
+    async def set_pixel_index_api_url(self, value: str) -> str: ...
+
+    async def set_pixel_index_web_url(self, value: str) -> str: ...
+
+
 class SettingsService:
     """Validate setting changes and coordinate their required runtime effects."""
 
     def __init__(
         self,
-        repository: RedSettingsRepository,
+        repository: SettingsRepository,
         *,
         clear_rich_presence: ClearPresenceCallback,
         reauthorize_editors: ReauthorizeCallback,
@@ -43,7 +70,7 @@ class SettingsService:
         await self._repository.set_ws_port(port)
 
     async def set_message_tool_clear_delay(self, seconds: float) -> None:
-        if isinstance(seconds, bool) or seconds < 0:
+        if isinstance(seconds, bool) or not isfinite(seconds) or seconds < 0:
             raise ValueError("Delay must be 0 or greater.")
         await self._repository.set_message_tool_clear_delay(seconds)
 

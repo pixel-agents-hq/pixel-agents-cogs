@@ -15,6 +15,7 @@ from .models import (
     SnowflakeId,
     TrackedAgent,
 )
+from .settings import normalize_http_url
 
 __all__ = [
     "ActivityKind",
@@ -30,4 +31,5 @@ __all__ = [
     "SettingsSnapshot",
     "SnowflakeId",
     "TrackedAgent",
+    "normalize_http_url",
 ]

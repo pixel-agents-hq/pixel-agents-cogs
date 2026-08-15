@@ -11,7 +11,7 @@ from redbot.core import commands
 from ..application import LAYOUT_SORT_CHOICES, CatalogueResult
 from ..contracts.layout import RawOfficeLayout
 from ..contracts.outbound import layout_loaded
-from ..infrastructure.settings import normalize_http_url
+from ..domain import normalize_http_url
 from .admin_commands import AdminCommandsMixin
 from .cog_base import PixelAgentsBase
 from .layout_views import LayoutBrowseView, LayoutDetailView

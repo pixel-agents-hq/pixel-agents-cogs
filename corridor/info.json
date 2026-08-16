@@ -1,0 +1,16 @@
+{
+    "$schema": "https://raw.githubusercontent.com/Cog-Creators/Red-DiscordBot/V3/develop/schema/red_cog.schema.json",
+    "name": "corridor",
+    "short": "Shared reply style and permission tiers for office-cogs.",
+    "description": "Owns one guild-wide store for reply formatting (text/embed, icon) and moderator/privileged role tiers, exposed to other cogs via required_cogs so they don't each reinvent it.",
+    "end_user_data_statement": "This cog does not persistently store any data or metadata about users.",
+    "author": ["Tin Nguyen"],
+    "required_cogs": {},
+    "requirements": [],
+    "tags": ["shared", "settings", "permissions"],
+    "min_bot_version": "3.5.24",
+    "min_python_version": [3, 11, 0],
+    "hidden": true,
+    "disabled": false,
+    "type": "SHARED_LIBRARY"
+}

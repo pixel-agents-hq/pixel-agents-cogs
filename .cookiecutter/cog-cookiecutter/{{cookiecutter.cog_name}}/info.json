@@ -1,0 +1,18 @@
+{% set tags = cookiecutter.tags.replace(',', ' ').split() | map('trim') | select() | list -%}
+{% set install_msg_line = ('"install_msg": "' + cookiecutter.install_msg + '",\n    ') if cookiecutter.install_msg else '' -%}
+{
+    "$schema": "https://raw.githubusercontent.com/Cog-Creators/Red-DiscordBot/V3/develop/schema/red_cog.schema.json",
+    "name": "{{ cookiecutter.cog_name }}",
+    "short": "{{ cookiecutter.short }}",
+    "description": "{{ cookiecutter.description }}",
+    "end_user_data_statement": "{{ cookiecutter.end_user_data_statement }}",
+    {{ install_msg_line }}"author": ["{{ cookiecutter.author }}"],
+    "required_cogs": {"corridor": "https://github.com/NNTin/office-cogs"},
+    "requirements": [],
+    "tags": {{ tags | jsonify | indent(4) }},
+    "min_bot_version": "{{ cookiecutter.min_bot_version }}",
+    "min_python_version": [3, 11, 0],
+    "hidden": false,
+    "disabled": false,
+    "type": "COG"
+}

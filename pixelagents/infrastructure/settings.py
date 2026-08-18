@@ -61,6 +61,13 @@ class RedSettingsRepository:
             cog,
             identifier=CONFIG_IDENTIFIER,
             force_registration=True,
+            # Pinned to the cog's original (pre-PixelAgents-rename) folder name.
+            # Config.get_conf defaults to type(cog).__name__ ("PixelAgents") when
+            # this is omitted, which silently orphans all existing installations'
+            # data -- guild_enabled, seats, the office layout -- under a second,
+            # empty "PixelAgents" store the moment a real (non-hotreload-patched)
+            # cog_load runs. Existing installations' data lives under "pixelagents".
+            cog_name="pixelagents",
         )
         config.register_global(**GLOBAL_DEFAULTS)
         config.register_guild(**GUILD_DEFAULTS)

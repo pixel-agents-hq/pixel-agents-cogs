@@ -89,7 +89,7 @@ class _FakeConfig:
         self._users = {}
 
     @classmethod
-    def get_conf(cls, cog, identifier=0, force_registration=False):
+    def get_conf(cls, cog, identifier=0, force_registration=False, cog_name=None):
         return cls()
 
     def register_global(self, **defaults):

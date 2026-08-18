@@ -365,9 +365,10 @@ class _FakeConfig:
         self.force_registration = False
 
     @classmethod
-    def get_conf(cls, cog, identifier=0, force_registration=False):
+    def get_conf(cls, cog, identifier=0, force_registration=False, cog_name=None):
         config = cls()
         config.identifier = identifier
+        config.cog_name = cog_name
         config.force_registration = force_registration
         return config
 

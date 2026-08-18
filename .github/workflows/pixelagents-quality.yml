@@ -5,12 +5,14 @@ on:
     paths:
       - "pixelagents/**/*.py"
       - "contracts/pixel_index/**"
+      - "ui_limits.py"
       - "pyproject.toml"
       - ".github/workflows/pixelagents-quality.yml"
   pull_request:
     paths:
       - "pixelagents/**/*.py"
       - "contracts/pixel_index/**"
+      - "ui_limits.py"
       - "pyproject.toml"
       - ".github/workflows/pixelagents-quality.yml"
 
@@ -40,7 +42,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r contracts/pixel_index/requirements.txt
-          python -m pip install 'discord.py>=2.7,<2.8' aiohttp pytest ruff
+          python -m pip install 'discord.py>=2.7,<2.8' aiohttp pytest pytest-timeout ruff
 
       - name: Run PixelAgents tests
         run: python -m pytest -q pixelagents/tests
@@ -52,7 +54,10 @@ jobs:
         run: ruff check pixelagents
 
       - name: Check production typing
-        run: python -m mypy
+        # Scoped to pixelagents' own files -- see corridor-quality.yml's
+        # matching step for why an unscoped `python -m mypy` would pull in
+        # corridor as well.
+        run: python -m mypy pixelagents
 
       - name: Check Pixel Index endpoint registration
         run: python -m contracts.pixel_index.lint_endpoints

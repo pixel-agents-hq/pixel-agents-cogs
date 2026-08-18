@@ -1,0 +1,66 @@
+name: "Corridor Quality"
+
+on:
+  push:
+    paths:
+      - "corridor/**/*.py"
+      - "ui_limits.py"
+      - "test_ui_limits.py"
+      - "pyproject.toml"
+      - ".github/workflows/corridor-quality.yml"
+  pull_request:
+    paths:
+      - "corridor/**/*.py"
+      - "ui_limits.py"
+      - "test_ui_limits.py"
+      - "pyproject.toml"
+      - ".github/workflows/corridor-quality.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: corridor-quality-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Tests, lint, and types
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install 'discord.py>=2.7,<2.8' pytest pytest-timeout ruff mypy
+
+      - name: Run Corridor tests
+        # corridor and pixelagents each install their own, mutually
+        # incompatible `sys.modules["redbot.core"]` stub -- running both
+        # test trees in one pytest process makes whichever collects first
+        # silently win for the whole session. Keep this run scoped to
+        # corridor/ (plus the framework-agnostic ui_limits tests, which
+        # touch neither stub) and let pixelagents-quality.yml own its own.
+        run: python -m pytest -q corridor/ test_ui_limits.py
+
+      - name: Check formatting
+        run: ruff format --check corridor ui_limits.py test_ui_limits.py
+
+      - name: Run Ruff
+        run: ruff check corridor ui_limits.py test_ui_limits.py
+
+      - name: Check production typing
+        # Scoped to corridor's own files: `python -m mypy` with no args
+        # would check pyproject.toml's full `files` list, which also
+        # includes pixelagents -- pulling in pydantic/aiohttp as
+        # dependencies this job has no other reason to install.
+        run: python -m mypy corridor ui_limits.py

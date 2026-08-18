@@ -15,12 +15,47 @@ This module itself must not import discord/redbot -- it's what stubs them.
 
 from __future__ import annotations
 
+import os
 import sys
 import types
 from typing import Any
 from unittest.mock import MagicMock
 
 _INSTALLED = False
+
+
+def _generate_custom_id() -> str:
+    """Match discord.py's own default: 16 random bytes as hex (32 chars)."""
+    return os.urandom(16).hex()
+
+
+# --- reusable test-side assertions/helpers -----------------------------
+#
+# These read state recorded by the `_FakeInteraction` stub below. They live
+# at module level (not nested in _install_discord) so tests can import them
+# directly: `from ..testing import shown_modal, refreshed_view`.
+
+
+def shown_modal(interaction: Any) -> Any:
+    """The modal instance passed to `interaction.response.send_modal`, if any."""
+    return getattr(interaction, "shown_modal", None)
+
+
+def refreshed_view(interaction: Any) -> Any:
+    """The view most recently passed to `edit_message`/`edit_original_response`.
+
+    `None` if the interaction's message/view was never refreshed -- the
+    exact bug class this suite guards against, where a mutation lands but
+    the panel keeps showing stale state.
+    """
+    return getattr(interaction, "last_edited_view", None)
+
+
+def followup_messages(interaction: Any) -> list[Any]:
+    """Positional content of every `interaction.followup.send(...)` call."""
+    return [
+        args[0] if args else kwargs.get("content") for args, kwargs in interaction.followup.sent
+    ]
 
 
 def install_stubs() -> None:
@@ -50,21 +85,55 @@ def _install_discord() -> None:
     discord.Object = MagicMock
     discord.HTTPException = Exception
 
+    class _InteractionResponded(Exception):
+        """Mirrors discord.InteractionResponded: the initial response (one
+        of send_message/send_modal/defer/edit_message) can only be sent
+        once per interaction -- everything after that must go through
+        `followup` or `edit_original_response`."""
+
+    discord.InteractionResponded = _InteractionResponded
+
     class _FakeInteractionResponse:
-        def __init__(self) -> None:
-            self._done = False
+        def __init__(self, parent: _FakeInteraction) -> None:
+            self._parent = parent
+            self._responded = False
+            self.type: str | None = None
 
         def is_done(self) -> bool:
-            return self._done
+            return self._responded
+
+        def _acknowledge(self, response_type: str) -> None:
+            if self._responded:
+                raise _InteractionResponded(self._parent)
+            self._responded = True
+            self.type = response_type
 
         async def send_message(self, *args: object, **kwargs: object) -> None:
-            self._done = True
+            self._acknowledge("message")
 
         async def send_modal(self, modal: object) -> None:
-            self._done = True
+            self._acknowledge("modal")
+            self._parent.shown_modal = modal
 
         async def defer(self, **kwargs: object) -> None:
-            self._done = True
+            self._acknowledge("defer")
+
+        async def edit_message(self, *args: object, **kwargs: object) -> None:
+            self._acknowledge("edit_message")
+            self._parent.last_edited_view = kwargs.get("view")
+
+    class _FakeFollowup:
+        def __init__(self, parent: _FakeInteraction) -> None:
+            self._parent = parent
+            self.sent: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+        async def send(self, *args: object, **kwargs: object) -> None:
+            if not self._parent.response.is_done():
+                raise RuntimeError(
+                    "followup.send() called before the interaction was ever "
+                    "acknowledged -- Discord would reject this webhook call."
+                )
+            self.sent.append((args, kwargs))
 
     class _FakeInteraction:
         def __init__(
@@ -73,7 +142,18 @@ def _install_discord() -> None:
             self.guild = guild
             self.user = user or MagicMock()
             self.client = client
-            self.response = _FakeInteractionResponse()
+            self.response = _FakeInteractionResponse(self)
+            self.followup = _FakeFollowup(self)
+            self.shown_modal: object | None = None
+            self.last_edited_view: object | None = None
+
+        async def edit_original_response(self, *args: object, **kwargs: object) -> None:
+            if not self.response.is_done():
+                raise RuntimeError(
+                    "edit_original_response() called before the interaction was "
+                    "ever acknowledged -- there is no 'original response' yet."
+                )
+            self.last_edited_view = kwargs.get("view")
 
     discord.Interaction = _FakeInteraction
 
@@ -93,8 +173,11 @@ def _install_discord() -> None:
             cls.title = title
             super().__init_subclass__(**kwargs)
 
-        def __init__(self, *args: object, title: str = "", **kwargs: object) -> None:
+        def __init__(
+            self, *args: object, title: str = "", custom_id: str = "", **kwargs: object
+        ) -> None:
             self.title = title or type(self).title
+            self.custom_id = custom_id or _generate_custom_id()
             self.children: list[Any] = []
 
         def add_item(self, item: Any) -> _MockModal:
@@ -109,15 +192,22 @@ def _install_discord() -> None:
             self,
             *,
             label: str = "",
+            placeholder: str = "",
             required: bool = True,
             default: str = "",
+            min_length: int | None = None,
             max_length: int = 4000,
+            custom_id: str = "",
             **kwargs: object,
         ) -> None:
             self.label = label
+            self.placeholder = placeholder
             self.required = required
+            self.default = default
             self.value = default
+            self.min_length = min_length
             self.max_length = max_length
+            self.custom_id = custom_id or _generate_custom_id()
 
     class _MockLayoutView:
         def __init__(self, *, timeout: float | None = 180.0) -> None:
@@ -155,19 +245,27 @@ def _install_discord() -> None:
             label: str = "",
             style: object = None,
             disabled: bool = False,
+            custom_id: str = "",
             **kwargs: object,
         ) -> None:
             self.label = label
             self.style = style
             self.disabled = disabled
+            self.custom_id = custom_id or _generate_custom_id()
             self.callback: Any = None
 
     class _MockSelect:
         def __init__(
-            self, *, placeholder: str = "", options: list[Any] | None = None, **kwargs: object
+            self,
+            *,
+            placeholder: str = "",
+            options: list[Any] | None = None,
+            custom_id: str = "",
+            **kwargs: object,
         ) -> None:
             self.placeholder = placeholder
             self.options = options or []
+            self.custom_id = custom_id or _generate_custom_id()
             self.values: list[str] = []
             self.callback: Any = None
 
@@ -179,12 +277,14 @@ def _install_discord() -> None:
             min_values: int = 0,
             max_values: int = 25,
             default_values: list[Any] | None = None,
+            custom_id: str = "",
             **kwargs: object,
         ) -> None:
             self.placeholder = placeholder
             self.min_values = min_values
             self.max_values = max_values
             self.default_values = default_values or []
+            self.custom_id = custom_id or _generate_custom_id()
             self.values: list[Any] = list(self.default_values)
             self.callback: Any = None
 
@@ -198,8 +298,43 @@ def _install_discord() -> None:
     discord_ui.Button = _MockButton
     discord_ui.Select = _MockSelect
     discord_ui.RoleSelect = _MockRoleSelect
-    discord_ui.Section = lambda *a, **kw: MagicMock()
-    discord_ui.Label = lambda *a, **kw: MagicMock()
+
+    class _MockSection:
+        """Section wraps display components plus one `.accessory` (a Button
+        or Thumbnail). Must be a real stub, not a bare MagicMock --
+        `ui_limits.iter_ui_tree` walks `.accessory` looking for nested
+        components, and a bare MagicMock auto-vivifies a brand-new child
+        mock on every `.accessory` access, so the walk never revisits the
+        same object and its id-based cycle guard never fires: an unbounded
+        chain of mocks that OOMs the process instead of terminating."""
+
+        def __init__(self, *items: Any, accessory: Any = None, **kwargs: object) -> None:
+            self.children: list[Any] = list(items)
+            self.accessory = accessory
+
+        def add_item(self, item: Any) -> _MockSection:
+            self.children.append(item)
+            return self
+
+    class _MockLabel:
+        """The Components V2 replacement for TextInput(label=...). Must be a
+        real stub for the same reason as `_MockSection` above -- a bare
+        MagicMock's `.component` attribute would auto-vivify infinitely."""
+
+        def __init__(
+            self,
+            *,
+            text: str = "",
+            description: str | None = None,
+            component: Any = None,
+            **kwargs: object,
+        ) -> None:
+            self.text = text
+            self.description = description
+            self.component = component
+
+    discord_ui.Section = _MockSection
+    discord_ui.Label = _MockLabel
     discord.ui = discord_ui
     sys.modules["discord.ui"] = discord_ui
 

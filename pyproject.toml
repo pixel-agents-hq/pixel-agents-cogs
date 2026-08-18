@@ -1,3 +1,12 @@
+[tool.pytest.ini_options]
+# Second, independent safety net alongside ui_limits.MAX_TREE_NODES: a
+# per-test wall-clock cap so any hang (this bug class or a future one)
+# fails the test in seconds instead of running until it exhausts host
+# memory -- which previously took down shared test infrastructure.
+# Requires the `pytest-timeout` package in whatever environment runs these
+# suites (corridor's and pixelagents' alike).
+addopts = "--timeout=30"
+
 [tool.ruff]
 target-version = "py311"
 line-length = 100
@@ -19,11 +28,16 @@ python_version = "3.11"
 strict = true
 ignore_missing_imports = true
 follow_imports = "silent"
-# Every production Pixel Agents module is part of the strict type gate.
-files = ["pixelagents"]
+# Every production Pixel Agents / corridor module, plus the shared
+# component-limit checker, is part of the strict type gate.
+files = ["pixelagents", "corridor", "ui_limits.py"]
 exclude = [
     "^pixelagents/conftest\\.py$",
     "^pixelagents/tests/",
+    "^corridor/conftest\\.py$",
+    "^corridor/testing\\.py$",
+    "^corridor/tests/",
+    "^test_ui_limits\\.py$",
 ]
 
 [[tool.mypy.overrides]]
@@ -46,4 +60,22 @@ disable_error_code = ["arg-type", "no-any-return", "untyped-decorator"]
 # The real Red Cog metaclass is not installed in the lightweight type job, so
 # `commands.Cog` resolves to Any there. The composition module remains checked.
 module = ["pixelagents.pixelagents"]
+disable_error_code = ["misc"]
+
+[[tool.mypy.overrides]]
+# Same gap as pixelagents.adapters.admin_commands above, mirrored for
+# corridor: Red is absent from the lightweight CI type environment, so its
+# decorators and untyped Context leak Any.
+module = ["corridor.adapters.commands"]
+disable_error_code = ["untyped-decorator"]
+
+[[tool.mypy.overrides]]
+# `commands.Context.send` returns Any with Red absent from the type job.
+module = ["corridor.adapters.api"]
+disable_error_code = ["no-any-return"]
+
+[[tool.mypy.overrides]]
+# Same as pixelagents.pixelagents above: `commands.Cog` resolves to Any
+# without Red's real Cog metaclass installed.
+module = ["corridor.corridor"]
 disable_error_code = ["misc"]

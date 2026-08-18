@@ -44,7 +44,7 @@ def _group_from_dict(data: dict[str, object]) -> PermissionGroupDef:
     return PermissionGroupDef(
         key=cast(str, data["key"]),
         label=cast(str, data["label"]),
-        role_ids=frozenset(cast(list, data.get("role_ids", []))),
+        role_ids=frozenset(cast("list[int]", data.get("role_ids", []))),
     )
 
 
@@ -76,7 +76,7 @@ class RedCorridorRepository:
 
     async def guild_settings(self, guild_id: int) -> GuildSettings:
         guild = self._config.guild_from_id(guild_id)
-        raw_groups = cast(list, await guild.permission_groups())
+        raw_groups = cast("list[dict[str, object]]", await guild.permission_groups())
         return GuildSettings(
             guild_id=guild_id,
             reply=ReplyPreferences(
@@ -116,7 +116,10 @@ class RedCorridorRepository:
         await self._config.guild_from_id(guild_id).employee_label.set(label)
 
     async def _load_groups(self, guild_id: int) -> list[PermissionGroupDef]:
-        raw_groups = cast(list, await self._config.guild_from_id(guild_id).permission_groups())
+        raw_groups = cast(
+            "list[dict[str, object]]",
+            await self._config.guild_from_id(guild_id).permission_groups(),
+        )
         return [_group_from_dict(entry) for entry in raw_groups]
 
     async def _save_groups(self, guild_id: int, groups: list[PermissionGroupDef]) -> None:

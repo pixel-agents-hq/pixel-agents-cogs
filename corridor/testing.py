@@ -66,6 +66,16 @@ def _install_discord() -> None:
         async def defer(self, **kwargs: object) -> None:
             self._done = True
 
+        async def edit_message(self, *args: object, **kwargs: object) -> None:
+            self._done = True
+
+    class _FakeFollowup:
+        def __init__(self) -> None:
+            self.sent: list[object] = []
+
+        async def send(self, *args: object, **kwargs: object) -> None:
+            self.sent.append((args, kwargs))
+
     class _FakeInteraction:
         def __init__(
             self, guild: object = None, user: object = None, client: object = None
@@ -74,6 +84,10 @@ def _install_discord() -> None:
             self.user = user or MagicMock()
             self.client = client
             self.response = _FakeInteractionResponse()
+            self.followup = _FakeFollowup()
+
+        async def edit_original_response(self, *args: object, **kwargs: object) -> None:
+            pass
 
     discord.Interaction = _FakeInteraction
 

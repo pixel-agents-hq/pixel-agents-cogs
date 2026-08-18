@@ -44,6 +44,26 @@ def _get_corridor(interaction: discord.Interaction) -> CogBase:
     return corridor  # type: ignore[return-value]
 
 
+async def _refresh(interaction: discord.Interaction, confirmation: str | None = None) -> None:
+    """Re-render the panel against current settings after a mutation.
+
+    Every control below closes over a settings snapshot taken when the
+    panel was built, so without this the message keeps showing (and
+    toggling relative to) stale state forever -- each click looks like it
+    "didn't work" even though the mutation landed.
+    """
+    assert interaction.guild is not None
+    corridor = _get_corridor(interaction)
+    settings = await corridor.guild_settings(interaction.guild.id)
+    view = SharedSettingsView(settings)
+    if interaction.response.is_done():
+        await interaction.edit_original_response(view=view)
+    else:
+        await interaction.response.edit_message(view=view)
+    if confirmation:
+        await interaction.followup.send(confirmation, ephemeral=True)
+
+
 class SharedSettingsModal(discord.ui.Modal):
     def __init__(self, guild_settings: GuildSettings) -> None:
         super().__init__(title="Reply Settings")
@@ -54,7 +74,7 @@ class SharedSettingsModal(discord.ui.Modal):
             max_length=200,
         )
         self.custom_icon_input: discord.ui.TextInput[SharedSettingsModal] = discord.ui.TextInput(
-            label="Custom icon URL (used when icon source = custom)",
+            label="Custom icon URL (icon source = custom)",
             required=False,
             default=guild_settings.reply.icon.custom_url or "",
             max_length=500,
@@ -73,7 +93,7 @@ class SharedSettingsModal(discord.ui.Modal):
             interaction.guild.id,
             IconPreference(source=settings.reply.icon.source, custom_url=custom_url),
         )
-        await interaction.response.send_message("Reply settings updated.", ephemeral=True)
+        await _refresh(interaction, "Reply settings updated.")
 
 
 class TierLabelsModal(discord.ui.Modal):
@@ -101,7 +121,7 @@ class TierLabelsModal(discord.ui.Modal):
         corridor = _get_corridor(interaction)
         await corridor.set_owner_label(interaction.guild.id, self.owner_input.value)
         await corridor.set_employee_label(interaction.guild.id, self.employee_input.value)
-        await interaction.response.send_message("Tier names updated.", ephemeral=True)
+        await _refresh(interaction, "Tier names updated.")
 
 
 class AddGroupModal(discord.ui.Modal):
@@ -154,9 +174,7 @@ class AddGroupModal(discord.ui.Modal):
         except ValueError as exc:
             await interaction.response.send_message(str(exc), ephemeral=True)
             return
-        await interaction.response.send_message(
-            f"Added group {self.label_input.value!r} (key: `{key}`).", ephemeral=True
-        )
+        await _refresh(interaction, f"Added group {self.label_input.value!r} (key: `{key}`).")
 
 
 class RenameGroupModal(discord.ui.Modal):
@@ -175,9 +193,7 @@ class RenameGroupModal(discord.ui.Modal):
         assert interaction.guild is not None
         corridor = _get_corridor(interaction)
         await corridor.set_group_label(interaction.guild.id, self._key, self.label_input.value)
-        await interaction.response.send_message(
-            f"Renamed to {self.label_input.value!r}.", ephemeral=True
-        )
+        await _refresh(interaction, f"Renamed to {self.label_input.value!r}.")
 
 
 def build_shared_settings_container(
@@ -243,9 +259,7 @@ def _mode_button(current: ReplyMode) -> discord.ui.Button[discord.ui.LayoutView]
         corridor = _get_corridor(interaction)
         new_mode = ReplyMode.TEXT if current is ReplyMode.EMBED else ReplyMode.EMBED
         await corridor.set_reply_mode(interaction.guild.id, new_mode)
-        await interaction.response.send_message(
-            f"Reply mode set to `{new_mode.value}`.", ephemeral=True
-        )
+        await _refresh(interaction, f"Reply mode set to `{new_mode.value}`.")
 
     button.callback = callback  # type: ignore[method-assign]
     return button
@@ -261,9 +275,7 @@ def _timestamp_button(current: bool) -> discord.ui.Button[discord.ui.LayoutView]
         assert interaction.guild is not None
         corridor = _get_corridor(interaction)
         await corridor.set_show_timestamp(interaction.guild.id, not current)
-        await interaction.response.send_message(
-            f"Timestamp turned {'off' if current else 'on'}.", ephemeral=True
-        )
+        await _refresh(interaction, f"Timestamp turned {'off' if current else 'on'}.")
 
     button.callback = callback  # type: ignore[method-assign]
     return button
@@ -301,9 +313,7 @@ def _icon_source_select(
             interaction.guild.id,
             IconPreference(source=new_source, custom_url=settings.reply.icon.custom_url),
         )
-        await interaction.response.send_message(
-            f"Icon source set to `{new_source.value}`.", ephemeral=True
-        )
+        await _refresh(interaction, f"Icon source set to `{new_source.value}`.")
 
     select.callback = callback  # type: ignore[method-assign]
     return select
@@ -349,7 +359,7 @@ def _role_select(group: PermissionGroupDef) -> discord.ui.RoleSelect[discord.ui.
         corridor = _get_corridor(interaction)
         role_ids = frozenset(role.id for role in select.values)
         await corridor.set_group_role_ids(interaction.guild.id, group.key, role_ids)
-        await interaction.response.send_message(f"{group.label} roles updated.", ephemeral=True)
+        await _refresh(interaction, f"{group.label} roles updated.")
 
     select.callback = callback  # type: ignore[method-assign]
     return select
@@ -378,10 +388,10 @@ def _delete_group_button(group: PermissionGroupDef) -> discord.ui.Button[discord
         assert interaction.guild is not None
         corridor = _get_corridor(interaction)
         await corridor.remove_permission_group(interaction.guild.id, group.key)
-        await interaction.response.send_message(
+        await _refresh(
+            interaction,
             f"Deleted group {group.label!r}. Any cog checking key `{group.key}` will now "
             "deny access for that check until a group with that key exists again.",
-            ephemeral=True,
         )
 
     button.callback = callback  # type: ignore[method-assign]

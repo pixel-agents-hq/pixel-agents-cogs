@@ -89,7 +89,7 @@ class _FakeConfig:
         self._users = {}
 
     @classmethod
-    def get_conf(cls, cog, identifier=0, force_registration=False):
+    def get_conf(cls, cog, identifier=0, force_registration=False, cog_name=None):
         return cls()
 
     def register_global(self, **defaults):
@@ -191,7 +191,18 @@ class _FakeCommands:
         return deco
 
     @staticmethod
+    def hybrid_group(**kw):
+        def deco(f):
+            return _FakeGroup(f)
+        return deco
+
+    @staticmethod
     def command(**kw):
+        def deco(f): return f
+        return deco
+
+    @staticmethod
+    def hybrid_command(**kw):
         def deco(f): return f
         return deco
 
@@ -201,6 +212,15 @@ _redbot_core.commands = _FakeCommands()
 _redbot_core_bot = _make_stub_module("redbot.core.bot")
 _redbot_core_bot.Red = object
 
+
+class _FakeCogLoadError(RuntimeError):
+    pass
+
+
+_redbot_core_errors = _make_stub_module("redbot.core.errors", CogLoadError=_FakeCogLoadError)
+_redbot_core.errors = _redbot_core_errors
+
 sys.modules["redbot"] = _redbot
 sys.modules["redbot.core"] = _redbot_core
 sys.modules["redbot.core.bot"] = _redbot_core_bot
+sys.modules["redbot.core.errors"] = _redbot_core_errors

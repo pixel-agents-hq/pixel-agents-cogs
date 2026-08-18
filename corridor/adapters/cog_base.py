@@ -14,7 +14,7 @@ from redbot.core import commands
 from redbot.core.bot import Red
 
 from ..application import PermissionService, ReplyContent, ReplyService
-from ..domain import GuildSettings, IconPreference, PermissionGroup, ReplyMode
+from ..domain import GuildSettings, IconPreference, PermissionGroupDef, ReplyMode
 from ..infrastructure import RedCorridorRepository
 from .api import BotIconResolver, BotOwnerRegistry, DiscordMemberRef, send_rendered_reply
 
@@ -66,14 +66,14 @@ class CogBase:
     async def guild_settings(self, guild_id: int) -> GuildSettings:
         return await self._repository.guild_settings(guild_id)
 
-    async def capabilities_satisfy(self, member: discord.Member, group: PermissionGroup) -> bool:
+    async def capabilities_satisfy(self, member: discord.Member, group_key: str) -> bool:
         settings = await self._repository.guild_settings(member.guild.id)
         return await self._permission_service.satisfies(
-            DiscordMemberRef(member), settings.permissions, group
+            DiscordMemberRef(member), settings.permissions, group_key
         )
 
-    async def require_permission(self, ctx: commands.Context, group: PermissionGroup) -> bool:
-        if await self.capabilities_satisfy(ctx.author, group):
+    async def require_permission(self, ctx: commands.Context, group_key: str) -> bool:
+        if await self.capabilities_satisfy(ctx.author, group_key):
             return True
         await ctx.send("You don't have permission to do that.")
         return False
@@ -109,8 +109,25 @@ class CogBase:
     async def set_icon_preference(self, guild_id: int, icon: IconPreference) -> None:
         await self._repository.set_icon_preference(guild_id, icon)
 
-    async def set_moderator_role_ids(self, guild_id: int, role_ids: frozenset[int]) -> None:
-        await self._repository.set_moderator_role_ids(guild_id, role_ids)
+    async def list_permission_groups(self, guild_id: int) -> tuple[PermissionGroupDef, ...]:
+        return await self._repository.list_permission_groups(guild_id)
 
-    async def set_privileged_role_ids(self, guild_id: int, role_ids: frozenset[int]) -> None:
-        await self._repository.set_privileged_role_ids(guild_id, role_ids)
+    async def add_permission_group(
+        self, guild_id: int, key: str, label: str, role_ids: frozenset[int] = frozenset()
+    ) -> None:
+        await self._repository.add_permission_group(guild_id, key, label, role_ids)
+
+    async def remove_permission_group(self, guild_id: int, key: str) -> None:
+        await self._repository.remove_permission_group(guild_id, key)
+
+    async def set_group_role_ids(self, guild_id: int, key: str, role_ids: frozenset[int]) -> None:
+        await self._repository.set_group_role_ids(guild_id, key, role_ids)
+
+    async def set_group_label(self, guild_id: int, key: str, label: str) -> None:
+        await self._repository.set_group_label(guild_id, key, label)
+
+    async def set_owner_label(self, guild_id: int, label: str) -> None:
+        await self._repository.set_owner_label(guild_id, label)
+
+    async def set_employee_label(self, guild_id: int, label: str) -> None:
+        await self._repository.set_employee_label(guild_id, label)

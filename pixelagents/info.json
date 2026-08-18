@@ -2,13 +2,15 @@
     "$schema": "https://raw.githubusercontent.com/Cog-Creators/Red-DiscordBot/V3/develop/schema/red_cog.schema.json",
     "name": "pixelagents",
     "short": "Serve the Pixel Agents office and mirror Discord presence into it",
-    "description": "Hosts the Pixel Agents office webview through the Red Web Dashboard and serves its WebSocket protocol directly, turning Discord guild presence into animated characters. Owns the office layout and enforces editor authorization.",
+    "description": "Hosts the Pixel Agents office webview through the Red Web Dashboard and serves its WebSocket protocol directly, turning Discord guild presence into animated characters. Owns the office layout and delegates editor authorization to corridor's Keyholder permission tier.",
     "end_user_data_statement": "This cog transmits Discord user IDs, guild IDs, display names, presence status, and short message activity snippets to browsers connected to the Pixel Agents office. It stores one shared office layout and seat assignments globally.",
-    "install_msg": "Set `[p]pixelagents editorrole`, then enable a guild with `[p]pixelagents enable`. The office is served at /third-party/pixelagents; route `/ws` on that host to the port from `[p]pixelagents wsport`.",
+    "install_msg": "Requires corridor (auto-loaded). Configure who may edit the office layout via `[p]corridorsettings` (the Keyholder permission tier), then enable a guild with `[p]pixelagents enable`. The office is served at /third-party/pixelagents; route `/ws` on that host to the port from `[p]pixelagents wsport`.",
     "author": [
         "Tin Nguyen"
     ],
-    "required_cogs": {},
+    "required_cogs": {
+        "corridor": "https://github.com/NNTin/office-cogs"
+    },
     "requirements": [
         "aiohttp",
         "pydantic>=2.6,<2.11"

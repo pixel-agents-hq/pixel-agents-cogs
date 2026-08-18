@@ -1,9 +1,12 @@
 from .models import (
+    EMPLOYEE_KEY,
+    OWNER_KEY,
+    RESERVED_GROUP_KEYS,
     GuildSettings,
     IconPreference,
     IconSource,
     MemberCapabilities,
-    PermissionGroup,
+    PermissionGroupDef,
     PermissionSettings,
     RenderedReply,
     ReplyMode,
@@ -11,11 +14,14 @@ from .models import (
 )
 
 __all__ = [
+    "EMPLOYEE_KEY",
+    "OWNER_KEY",
+    "RESERVED_GROUP_KEYS",
     "GuildSettings",
     "IconPreference",
     "IconSource",
     "MemberCapabilities",
-    "PermissionGroup",
+    "PermissionGroupDef",
     "PermissionSettings",
     "RenderedReply",
     "ReplyMode",

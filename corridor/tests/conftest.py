@@ -17,11 +17,23 @@ class FakeGuild:
         self.icon = None
 
 
+class _FakeGuildPermissions:
+    def __init__(self, administrator: bool) -> None:
+        self.administrator = administrator
+
+
 class FakeMember:
-    def __init__(self, member_id: int, guild: FakeGuild, role_ids: tuple[int, ...] = ()) -> None:
+    def __init__(
+        self,
+        member_id: int,
+        guild: FakeGuild,
+        role_ids: tuple[int, ...] = (),
+        is_administrator: bool = False,
+    ) -> None:
         self.id = member_id
         self.guild = guild
         self.roles = [FakeRole(role_id) for role_id in role_ids]
+        self.guild_permissions = _FakeGuildPermissions(is_administrator)
 
 
 class FakeUser:

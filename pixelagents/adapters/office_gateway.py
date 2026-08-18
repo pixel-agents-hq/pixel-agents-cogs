@@ -185,18 +185,12 @@ class OfficeGatewayMixin(PixelAgentsBase):
         owner_candidate = cast("discord.User", discord.Object(id=user_id))
         if await self.bot.is_owner(owner_candidate):
             return True
-        role_id = await self._settings_repository.editor_role_id()
         for guild in self.bot.guilds:
             if not await self._settings_repository.guild_enabled(guild):
                 continue
             member = await self._get_auth_member(guild, user_id)
             if member is None:
                 continue
-            permissions = getattr(member, "guild_permissions", None)
-            if getattr(permissions, "administrator", False) is True:
-                return True
-            if role_id is not None and any(
-                role.id == role_id for role in getattr(member, "roles", [])
-            ):
+            if await self._corridor.capabilities_satisfy(member, "keyholder"):
                 return True
         return False

@@ -60,7 +60,6 @@ def test_settings_snapshot_finds_a_guild_without_mutable_mappings() -> None:
         ws_host="0.0.0.0",
         ws_port=3210,
         message_tool_clear_delay=2.0,
-        editor_role_id=None,
         broadcast_rich_presence=True,
         broadcast_messages=True,
         pixel_index_api_url="https://api.example.test",

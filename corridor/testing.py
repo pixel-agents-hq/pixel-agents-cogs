@@ -129,7 +129,7 @@ def _install_discord() -> None:
             return self
 
     class _MockContainer:
-        def __init__(self, *items: Any) -> None:
+        def __init__(self, *items: Any, **kwargs: object) -> None:
             self.children: list[Any] = list(items)
 
         def add_item(self, item: Any) -> _MockContainer:
@@ -137,7 +137,7 @@ def _install_discord() -> None:
             return self
 
     class _MockActionRow:
-        def __init__(self) -> None:
+        def __init__(self, *args: object, **kwargs: object) -> None:
             self.children: list[Any] = []
 
         def add_item(self, item: Any) -> _MockActionRow:
@@ -145,12 +145,17 @@ def _install_discord() -> None:
             return self
 
     class _MockTextDisplay:
-        def __init__(self, content: str = "") -> None:
+        def __init__(self, content: str = "", **kwargs: object) -> None:
             self.content = content
 
     class _MockButton:
         def __init__(
-            self, *, label: str = "", style: object = None, disabled: bool = False
+            self,
+            *,
+            label: str = "",
+            style: object = None,
+            disabled: bool = False,
+            **kwargs: object,
         ) -> None:
             self.label = label
             self.style = style
@@ -200,8 +205,29 @@ def _install_discord() -> None:
 
     discord.SelectOption = lambda **kwargs: types.SimpleNamespace(**kwargs)
     discord.ButtonStyle = types.SimpleNamespace(
-        secondary="secondary", primary="primary", link="link"
+        secondary="secondary", primary="primary", link="link", danger="danger"
     )
+    discord.Color = types.SimpleNamespace(blurple=lambda: None)
+    discord.File = MagicMock
+
+    class _ActivityType:
+        playing = 0
+        streaming = 1
+        listening = 2
+        watching = 3
+        custom = 4
+        competing = 5
+
+    discord.ActivityType = _ActivityType
+
+    discord_app_commands = _make_stub_module(
+        "discord.app_commands",
+        describe=lambda **kwargs: lambda f: f,
+        choices=lambda **kwargs: lambda f: f,
+        Choice=lambda **kwargs: MagicMock(**kwargs),
+    )
+    discord.app_commands = discord_app_commands
+    sys.modules["discord.app_commands"] = discord_app_commands
 
     sys.modules["discord"] = discord
 

@@ -6,6 +6,8 @@ from __future__ import annotations
 
 import unittest
 
+import pytest
+
 from ..domain import IconPreference, IconSource, ReplyMode
 from ..infrastructure import RedCorridorRepository
 
@@ -21,8 +23,13 @@ class TestRedCorridorRepository(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(settings.reply.show_timestamp)
         self.assertIsNone(settings.reply.footer_text)
         self.assertEqual(settings.reply.icon.source, IconSource.BOT)
-        self.assertEqual(settings.permissions.moderator_role_ids, frozenset())
-        self.assertEqual(settings.permissions.privileged_role_ids, frozenset())
+        self.assertEqual(settings.permissions.owner_label, "Owner")
+        self.assertEqual(settings.permissions.employee_label, "Employee")
+        self.assertEqual(
+            {group.key for group in settings.permissions.groups},
+            {"building_manager", "keyholder"},
+        )
+        self.assertTrue(all(group.role_ids == frozenset() for group in settings.permissions.groups))
 
     async def test_set_reply_mode_persists(self) -> None:
         await self.repository.set_reply_mode(1, ReplyMode.TEXT)
@@ -41,27 +48,61 @@ class TestRedCorridorRepository(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(settings.reply.icon.source, IconSource.CUSTOM)
         self.assertEqual(settings.reply.icon.custom_url, "https://x/y.png")
 
-    async def test_add_and_remove_moderator_role(self) -> None:
-        await self.repository.add_moderator_role(1, 100)
-        await self.repository.add_moderator_role(1, 200)
-        settings = await self.repository.guild_settings(1)
-        self.assertEqual(settings.permissions.moderator_role_ids, frozenset({100, 200}))
-
-        await self.repository.remove_moderator_role(1, 100)
-        settings = await self.repository.guild_settings(1)
-        self.assertEqual(settings.permissions.moderator_role_ids, frozenset({200}))
-
-    async def test_set_privileged_role_ids_replaces_whole_set(self) -> None:
-        await self.repository.add_privileged_role(1, 999)
-
-        await self.repository.set_privileged_role_ids(1, frozenset({300, 400}))
+    async def test_set_group_role_ids_persists(self) -> None:
+        await self.repository.set_group_role_ids(1, "building_manager", frozenset({100, 200}))
 
         settings = await self.repository.guild_settings(1)
-        self.assertEqual(settings.permissions.privileged_role_ids, frozenset({300, 400}))
+
+        building_manager = settings.permissions.group("building_manager")
+        assert building_manager is not None
+        self.assertEqual(building_manager.role_ids, frozenset({100, 200}))
+
+    async def test_add_and_remove_permission_group(self) -> None:
+        await self.repository.add_permission_group(1, "hr", "HR", frozenset({777}))
+
+        settings = await self.repository.guild_settings(1)
+        hr = settings.permissions.group("hr")
+        assert hr is not None
+        self.assertEqual(hr.label, "HR")
+        self.assertEqual(hr.role_ids, frozenset({777}))
+
+        await self.repository.remove_permission_group(1, "hr")
+        settings = await self.repository.guild_settings(1)
+        self.assertIsNone(settings.permissions.group("hr"))
+
+    async def test_add_permission_group_rejects_reserved_key(self) -> None:
+        with pytest.raises(ValueError):
+            await self.repository.add_permission_group(1, "owner", "Owner")
+
+    async def test_add_permission_group_rejects_duplicate_key(self) -> None:
+        with pytest.raises(ValueError):
+            await self.repository.add_permission_group(1, "keyholder", "Duplicate")
+
+    async def test_set_group_label_renames_without_changing_key_or_roles(self) -> None:
+        await self.repository.set_group_role_ids(1, "keyholder", frozenset({300}))
+
+        await self.repository.set_group_label(1, "keyholder", "Trusted Member")
+
+        settings = await self.repository.guild_settings(1)
+        keyholder = settings.permissions.group("keyholder")
+        assert keyholder is not None
+        self.assertEqual(keyholder.label, "Trusted Member")
+        self.assertEqual(keyholder.role_ids, frozenset({300}))
+
+    async def test_set_owner_and_employee_labels_persist(self) -> None:
+        await self.repository.set_owner_label(1, "Founder")
+        await self.repository.set_employee_label(1, "Resident")
+
+        settings = await self.repository.guild_settings(1)
+
+        self.assertEqual(settings.permissions.owner_label, "Founder")
+        self.assertEqual(settings.permissions.employee_label, "Resident")
 
     async def test_settings_are_scoped_per_guild(self) -> None:
-        await self.repository.add_moderator_role(1, 100)
+        await self.repository.set_group_role_ids(1, "building_manager", frozenset({100}))
 
         other_guild = await self.repository.guild_settings(2)
 
-        self.assertEqual(other_guild.permissions.moderator_role_ids, frozenset())
+        building_manager = other_guild.permissions.group("building_manager")
+        assert building_manager is not None
+        self.assertEqual(building_manager.role_ids, frozenset())

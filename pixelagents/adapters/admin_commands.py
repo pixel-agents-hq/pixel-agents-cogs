@@ -67,15 +67,6 @@ class AdminCommandsMixin(PixelAgentsBase):
             value=f"{global_settings.message_tool_clear_delay}s",
             inline=True,
         )
-        embed.add_field(
-            name="Editor Role ID",
-            value=(
-                str(global_settings.editor_role_id)
-                if global_settings.editor_role_id
-                else "⚠️ Not set"
-            ),
-            inline=True,
-        )
         embed.add_field(name="Guild Enabled", value=yn(guild_settings.enabled), inline=True)
         embed.add_field(name="Include Bots", value=yn(guild_settings.include_bots), inline=True)
         embed.add_field(name="Tracked Agents", value=str(tracked), inline=True)
@@ -173,19 +164,6 @@ class AdminCommandsMixin(PixelAgentsBase):
 
         await self._settings_service.set_broadcast_messages(value)
         await self._reply(ctx, f"Message broadcasting set to `{value}`.")
-
-    @pixelagents_group.command(name="editorrole")
-    @commands.admin_or_permissions(administrator=True)
-    @app_commands.describe(role="Discord role that grants webview editor access (omit to clear)")
-    async def cmd_editorrole(self, ctx: commands.Context, role: discord.Role | None = None) -> None:
-        """Set the Discord role that grants webview editor access."""
-
-        if role is None:
-            await self._settings_service.set_editor_role_id(None)
-            await self._reply(ctx, "Editor role cleared.")
-        else:
-            await self._settings_service.set_editor_role_id(role.id)
-            await self._reply(ctx, f"Editor role set to `{role.name}` (ID: {role.id}).")
 
     @pixelagents_group.command(name="enable")
     @commands.admin_or_permissions(administrator=True)

@@ -18,7 +18,7 @@ equivalent.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import discord
 
@@ -32,16 +32,23 @@ from ..domain import (
 )
 
 if TYPE_CHECKING:
+    from redbot.core.bot import Red
+
     from .cog_base import CogBase
 
 MAX_PERMISSION_GROUPS = 10
 
 
 def _get_corridor(interaction: discord.Interaction) -> CogBase:
-    corridor = interaction.client.get_cog("Corridor")
+    # `interaction.client` is typed as `discord.Client`, which has no
+    # `get_cog` -- that's a Red `Red`/`commands.Bot` method. Red is absent
+    # from the lightweight CI type environment (see cog_base.py's own
+    # overrides), so the cast below is the typed boundary for that gap.
+    bot = cast("Red", interaction.client)
+    corridor = bot.get_cog("Corridor")
     if corridor is None:
         raise RuntimeError("Corridor is not loaded.")
-    return corridor  # type: ignore[return-value]
+    return cast("CogBase", corridor)
 
 
 async def _refresh(interaction: discord.Interaction, confirmation: str | None = None) -> None:
@@ -128,7 +135,8 @@ class AddGroupModal(discord.ui.Modal):
     def __init__(self) -> None:
         super().__init__(title="Add permission group")
         self.key_input: discord.ui.TextInput[AddGroupModal] = discord.ui.TextInput(
-            label="Stable key (lowercase, letters/digits/underscore)",
+            label="Key (lowercase letters/digits/_)",
+            placeholder="Stable, never shown to members -- can't be changed later",
             required=True,
             max_length=50,
         )
@@ -179,7 +187,10 @@ class AddGroupModal(discord.ui.Modal):
 
 class RenameGroupModal(discord.ui.Modal):
     def __init__(self, key: str, current_label: str) -> None:
-        super().__init__(title=f"Rename {current_label}")
+        # `current_label` may be up to PermissionGroupDef's own 50-char max,
+        # which combined with "Rename " can exceed the modal title's 45-char
+        # limit -- truncate rather than let send_modal() fail outright.
+        super().__init__(title=f"Rename {current_label}"[:45])
         self._key = key
         self.label_input: discord.ui.TextInput[RenameGroupModal] = discord.ui.TextInput(
             label="Display name",
@@ -212,7 +223,7 @@ def build_shared_settings_container(
     mode_row: discord.ui.ActionRow[discord.ui.LayoutView] = discord.ui.ActionRow()
     mode_row.add_item(_mode_button(reply.mode))
     mode_row.add_item(_timestamp_button(reply.show_timestamp))
-    mode_row.add_item(_edit_button(guild_settings))
+    mode_row.add_item(_edit_button())
     container.add_item(mode_row)
 
     icon_row: discord.ui.ActionRow[discord.ui.LayoutView] = discord.ui.ActionRow()
@@ -231,7 +242,7 @@ def build_shared_settings_container(
     )
 
     tier_labels_row: discord.ui.ActionRow[discord.ui.LayoutView] = discord.ui.ActionRow()
-    tier_labels_row.add_item(_rename_tier_labels_button(guild_settings))
+    tier_labels_row.add_item(_rename_tier_labels_button())
     tier_labels_row.add_item(_add_group_button(guild_settings))
     container.add_item(tier_labels_row)
 
@@ -257,7 +268,8 @@ def _mode_button(current: ReplyMode) -> discord.ui.Button[discord.ui.LayoutView]
     async def callback(interaction: discord.Interaction) -> None:
         assert interaction.guild is not None
         corridor = _get_corridor(interaction)
-        new_mode = ReplyMode.TEXT if current is ReplyMode.EMBED else ReplyMode.EMBED
+        settings = await corridor.guild_settings(interaction.guild.id)
+        new_mode = ReplyMode.TEXT if settings.reply.mode is ReplyMode.EMBED else ReplyMode.EMBED
         await corridor.set_reply_mode(interaction.guild.id, new_mode)
         await _refresh(interaction, f"Reply mode set to `{new_mode.value}`.")
 
@@ -274,20 +286,25 @@ def _timestamp_button(current: bool) -> discord.ui.Button[discord.ui.LayoutView]
     async def callback(interaction: discord.Interaction) -> None:
         assert interaction.guild is not None
         corridor = _get_corridor(interaction)
-        await corridor.set_show_timestamp(interaction.guild.id, not current)
-        await _refresh(interaction, f"Timestamp turned {'off' if current else 'on'}.")
+        settings = await corridor.guild_settings(interaction.guild.id)
+        new_value = not settings.reply.show_timestamp
+        await corridor.set_show_timestamp(interaction.guild.id, new_value)
+        await _refresh(interaction, f"Timestamp turned {'on' if new_value else 'off'}.")
 
     button.callback = callback  # type: ignore[method-assign]
     return button
 
 
-def _edit_button(guild_settings: GuildSettings) -> discord.ui.Button[discord.ui.LayoutView]:
+def _edit_button() -> discord.ui.Button[discord.ui.LayoutView]:
     button: discord.ui.Button[discord.ui.LayoutView] = discord.ui.Button(
         label="Edit footer / custom icon", style=discord.ButtonStyle.primary
     )
 
     async def callback(interaction: discord.Interaction) -> None:
-        await interaction.response.send_modal(SharedSettingsModal(guild_settings))
+        assert interaction.guild is not None
+        corridor = _get_corridor(interaction)
+        settings = await corridor.guild_settings(interaction.guild.id)
+        await interaction.response.send_modal(SharedSettingsModal(settings))
 
     button.callback = callback  # type: ignore[method-assign]
     return button
@@ -319,15 +336,16 @@ def _icon_source_select(
     return select
 
 
-def _rename_tier_labels_button(
-    guild_settings: GuildSettings,
-) -> discord.ui.Button[discord.ui.LayoutView]:
+def _rename_tier_labels_button() -> discord.ui.Button[discord.ui.LayoutView]:
     button: discord.ui.Button[discord.ui.LayoutView] = discord.ui.Button(
         label="Rename Owner / Employee", style=discord.ButtonStyle.secondary
     )
 
     async def callback(interaction: discord.Interaction) -> None:
-        await interaction.response.send_modal(TierLabelsModal(guild_settings))
+        assert interaction.guild is not None
+        corridor = _get_corridor(interaction)
+        settings = await corridor.guild_settings(interaction.guild.id)
+        await interaction.response.send_modal(TierLabelsModal(settings))
 
     button.callback = callback  # type: ignore[method-assign]
     return button

@@ -86,6 +86,13 @@ _discord.utils = _discord_utils
 sys.modules["discord.utils"] = _discord_utils
 
 
+def _gen_custom_id() -> str:
+    """Match discord.py's own default: 16 random bytes as hex (32 chars)."""
+    import os
+
+    return os.urandom(16).hex()
+
+
 # discord.ui stub
 class _MockModal:
     title: str = ""
@@ -94,8 +101,9 @@ class _MockModal:
         cls.title = title
         super().__init_subclass__(**kwargs)
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, custom_id: str = "", **kwargs):
         self.timeout = kwargs.get("timeout")
+        self.custom_id = custom_id or _gen_custom_id()
         self.children = []
 
     def add_item(self, item):
@@ -111,16 +119,30 @@ class _MockModal:
 
 class _MockTextInput:
     def __init__(self, *, label: str = "", placeholder: str = "", required: bool = True,
-                 min_length: int = 0, max_length: int = 4000, **kwargs):
+                 min_length: int = 0, max_length: int = 4000, custom_id: str = "", **kwargs):
         self.label = label
         self.placeholder = placeholder
         self.required = required
         self.min_length = min_length
         self.max_length = max_length
-        self.value = kwargs.get("default", "")
+        self.default = kwargs.get("default", "")
+        self.value = self.default
+        self.custom_id = custom_id or _gen_custom_id()
 
     def __set_name__(self, owner, name):
         self._name = name
+
+
+class _MockLabel:
+    """The Components V2 replacement for TextInput(label=...): wraps a
+    single input and carries the label text/description that used to live
+    on the input itself. Must be a real stub (not a bare MagicMock) or its
+    text/description are unverifiable auto-mock attributes."""
+
+    def __init__(self, *, text: str = "", description: str | None = None, component=None, **kwargs):
+        self.text = text
+        self.description = description
+        self.component = component
 
 
 class _MockLayoutView:
@@ -142,6 +164,36 @@ def _stub_ui_item(*args, **kwargs):
     # own __init__ treats a first positional arg as `spec`, which would silently
     # restrict the returned mock's attributes (e.g. dropping `.add_item`).
     return MagicMock()
+
+
+class _MockSection:
+    """Section wraps display components plus one `.accessory` (a Button or
+    Thumbnail). Must be a real stub, not `_stub_ui_item`'s bare MagicMock --
+    `ui_limits.iter_ui_tree` walks `.accessory` looking for nested
+    components, and a bare MagicMock auto-vivifies a brand-new child mock on
+    every `.accessory` access, so the walk never revisits the same object
+    and its id-based cycle guard never fires -- an unbounded chain of mocks
+    that OOMs the process instead of terminating."""
+
+    def __init__(self, *items, accessory=None, **kwargs):
+        self.children = list(items)
+        self.accessory = accessory
+
+    def add_item(self, item):
+        self.children.append(item)
+        return self
+
+
+class _MockLeafItem:
+    """Thumbnail/MediaGallery: leaf components with no nested
+    accessory/component/children. A bare MagicMock here is unsafe for the
+    same reason as `_MockSection` above -- if one ever ends up reachable as
+    a Section's `.accessory` or a Container's child, `iter_ui_tree` would
+    auto-vivify an infinite `.accessory` chain through it."""
+
+    def __init__(self, *args, **kwargs):
+        self.args = args
+        self.kwargs = kwargs
 
 
 class _MockContainer:
@@ -170,27 +222,31 @@ class _MockTextDisplay:
 
 
 class _MockButton:
-    def __init__(self, *, label="", style=None, disabled=False, **kwargs):
+    def __init__(self, *, label="", style=None, disabled=False, custom_id="", **kwargs):
         self.label = label
         self.style = style
         self.disabled = disabled
+        self.custom_id = custom_id or _gen_custom_id()
         self.callback = None
 
 
 class _MockSelect:
-    def __init__(self, *, placeholder="", options=None, **kwargs):
+    def __init__(self, *, placeholder="", options=None, custom_id="", **kwargs):
         self.placeholder = placeholder
         self.options = options or []
+        self.custom_id = custom_id or _gen_custom_id()
         self.values = []
         self.callback = None
 
 
 class _MockRoleSelect:
-    def __init__(self, *, placeholder="", min_values=0, max_values=25, default_values=None, **kwargs):
+    def __init__(self, *, placeholder="", min_values=0, max_values=25, default_values=None,
+                 custom_id="", **kwargs):
         self.placeholder = placeholder
         self.min_values = min_values
         self.max_values = max_values
         self.default_values = default_values or []
+        self.custom_id = custom_id or _gen_custom_id()
         self.values = list(self.default_values)
         self.callback = None
 
@@ -199,12 +255,12 @@ _discord_ui = _make_stub_module("discord.ui")
 _discord_ui.Modal = _MockModal
 _discord_ui.TextInput = _MockTextInput
 _discord_ui.LayoutView = _MockLayoutView
-_discord_ui.Label = _stub_ui_item
+_discord_ui.Label = _MockLabel
 _discord_ui.Container = _MockContainer
-_discord_ui.Section = _stub_ui_item
-_discord_ui.Thumbnail = _stub_ui_item
+_discord_ui.Section = _MockSection
+_discord_ui.Thumbnail = _MockLeafItem
 _discord_ui.TextDisplay = _MockTextDisplay
-_discord_ui.MediaGallery = _stub_ui_item
+_discord_ui.MediaGallery = _MockLeafItem
 _discord_ui.ActionRow = _MockActionRow
 _discord_ui.Select = _MockSelect
 _discord_ui.RoleSelect = _MockRoleSelect

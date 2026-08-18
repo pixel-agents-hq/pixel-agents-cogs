@@ -9,11 +9,17 @@ import unittest
 
 import discord
 
+import ui_limits
+
 from ..adapters.settings_ui import (
     AddGroupModal,
     RenameGroupModal,
+    SharedSettingsModal,
     SharedSettingsView,
     TierLabelsModal,
+    _edit_button,
+    _mode_button,
+    _timestamp_button,
     build_shared_settings_container,
 )
 from ..corridor import Corridor
@@ -26,7 +32,19 @@ from ..domain import (
     ReplyMode,
     ReplyPreferences,
 )
+from ..testing import followup_messages, refreshed_view, shown_modal
 from .conftest import FakeBot, FakeGuild
+
+
+def _find_component(root: object, label_prefix: str) -> object:
+    """Locate a control by its rendered label prefix, walking the whole
+    View/Container/ActionRow tree -- used to grab "the button as it exists
+    in a freshly-refreshed view" rather than the one built earlier."""
+    for node in ui_limits.iter_ui_tree(root):
+        label = getattr(node, "label", None)
+        if label and label.startswith(label_prefix) and hasattr(node, "callback"):
+            return node
+    raise AssertionError(f"no component with label prefix {label_prefix!r} found in {root!r}")
 
 
 def _settings(guild_id: int) -> GuildSettings:
@@ -170,3 +188,168 @@ class TestGroupManagementModals(unittest.IsolatedAsyncioTestCase):
         settings = await corridor.guild_settings(1)
         self.assertEqual(settings.permissions.owner_label, "Founder")
         self.assertEqual(settings.permissions.employee_label, "Resident")
+
+
+class TestToggleUsesFreshStateNotConstructionSnapshot(unittest.IsolatedAsyncioTestCase):
+    """Regression coverage for the reported bug: toggle clicks appeared to
+    do nothing because the mutation was computed from the settings snapshot
+    captured when the panel was built, not the current stored value."""
+
+    async def test_timestamp_button_flips_the_current_stored_value(self) -> None:
+        bot = FakeBot()
+        guild = FakeGuild(guild_id=1)
+        bot.register_guild(guild)
+        corridor = Corridor(bot=bot)
+        bot.add_cog(corridor)
+
+        # Button rendered while show_timestamp was True...
+        button = _timestamp_button(current=True)
+        # ...but the real stored value has since changed to False (another
+        # admin toggled it, or an earlier click already flipped it and this
+        # is a stale render of the panel).
+        await corridor.set_show_timestamp(1, False)
+
+        interaction = discord.Interaction(guild=guild, client=bot)
+        await button.callback(interaction)
+
+        settings = await corridor.guild_settings(1)
+        # Correct: flips the *actual* False to True. A closure-bound
+        # implementation would instead flip its stale `current=True` to
+        # False, silently reapplying the old value instead of toggling.
+        self.assertTrue(settings.reply.show_timestamp)
+
+    async def test_mode_button_flips_the_current_stored_value(self) -> None:
+        bot = FakeBot()
+        guild = FakeGuild(guild_id=1)
+        bot.register_guild(guild)
+        corridor = Corridor(bot=bot)
+        bot.add_cog(corridor)
+
+        button = _mode_button(current=ReplyMode.EMBED)
+        await corridor.set_reply_mode(1, ReplyMode.TEXT)
+
+        interaction = discord.Interaction(guild=guild, client=bot)
+        await button.callback(interaction)
+
+        settings = await corridor.guild_settings(1)
+        self.assertEqual(settings.reply.mode, ReplyMode.EMBED)
+
+    async def test_edit_button_opens_modal_with_the_latest_footer_text(self) -> None:
+        bot = FakeBot()
+        guild = FakeGuild(guild_id=1)
+        bot.register_guild(guild)
+        corridor = Corridor(bot=bot)
+        bot.add_cog(corridor)
+
+        button = _edit_button()  # built before any footer text was ever set
+        await corridor.set_footer_text(1, "Updated after the panel was built")
+
+        interaction = discord.Interaction(guild=guild, client=bot)
+        await button.callback(interaction)
+
+        modal = shown_modal(interaction)
+        self.assertIsInstance(modal, SharedSettingsModal)
+        self.assertEqual(modal.footer_input.value, "Updated after the panel was built")
+
+
+class TestSequentialTogglesRefreshEachTime(unittest.IsolatedAsyncioTestCase):
+    """End-to-end version of the bug report: click the toggle, then click
+    the *rendered* button in the panel it produced, repeatedly -- exactly
+    what the user did with `!corridorsettings`."""
+
+    async def test_two_clicks_in_a_row_flip_twice_and_each_refresh_shows_it(self) -> None:
+        bot = FakeBot()
+        guild = FakeGuild(guild_id=1)
+        bot.register_guild(guild)
+        corridor = Corridor(bot=bot)
+        bot.add_cog(corridor)
+
+        view = SharedSettingsView(_settings(1))
+        button = _find_component(view, "Timestamp:")
+        self.assertEqual(button.label, "Timestamp: on")
+
+        first = discord.Interaction(guild=guild, client=bot)
+        await button.callback(first)
+
+        settings_after_first = await corridor.guild_settings(1)
+        self.assertFalse(settings_after_first.reply.show_timestamp)
+        panel_after_first = refreshed_view(first)
+        self.assertIsInstance(panel_after_first, SharedSettingsView)
+        button_after_first = _find_component(panel_after_first, "Timestamp:")
+        self.assertEqual(button_after_first.label, "Timestamp: off")
+
+        second = discord.Interaction(guild=guild, client=bot)
+        await button_after_first.callback(second)
+
+        settings_after_second = await corridor.guild_settings(1)
+        self.assertTrue(settings_after_second.reply.show_timestamp)
+        button_after_second = _find_component(refreshed_view(second), "Timestamp:")
+        self.assertEqual(button_after_second.label, "Timestamp: on")
+
+    async def test_add_group_modal_submission_refreshes_the_panel_and_confirms(self) -> None:
+        bot = FakeBot()
+        guild = FakeGuild(guild_id=1)
+        bot.register_guild(guild)
+        corridor = Corridor(bot=bot)
+        bot.add_cog(corridor)
+
+        modal = AddGroupModal()
+        modal.key_input.value = "hr"
+        modal.label_input.value = "HR"
+        interaction = discord.Interaction(guild=guild, client=bot)
+
+        await modal.on_submit(interaction)
+
+        self.assertIsInstance(refreshed_view(interaction), SharedSettingsView)
+        messages = followup_messages(interaction)
+        self.assertTrue(any("Added group" in str(message) for message in messages))
+
+
+class TestInteractionLifecycleStub(unittest.IsolatedAsyncioTestCase):
+    """The fake `discord.Interaction` should behave like the real one enough
+    to catch misuse: an interaction can only be initially acknowledged
+    once, and `followup`/`edit_original_response` require that ack first."""
+
+    async def test_second_initial_response_raises_interaction_responded(self) -> None:
+        interaction = discord.Interaction()
+        await interaction.response.send_message("first", ephemeral=True)
+
+        with self.assertRaises(discord.InteractionResponded):
+            await interaction.response.send_message("second", ephemeral=True)
+
+    async def test_send_modal_after_send_message_raises_interaction_responded(self) -> None:
+        interaction = discord.Interaction()
+        await interaction.response.send_message("first", ephemeral=True)
+
+        with self.assertRaises(discord.InteractionResponded):
+            await interaction.response.send_modal(AddGroupModal())
+
+    async def test_edit_original_response_before_any_ack_raises(self) -> None:
+        interaction = discord.Interaction()
+
+        with self.assertRaises(RuntimeError):
+            await interaction.edit_original_response(view=None)
+
+    async def test_followup_before_any_ack_raises(self) -> None:
+        interaction = discord.Interaction()
+
+        with self.assertRaises(RuntimeError):
+            await interaction.followup.send("too early", ephemeral=True)
+
+    async def test_edit_original_response_after_defer_records_the_view(self) -> None:
+        interaction = discord.Interaction()
+        await interaction.response.defer()
+        sentinel = object()
+
+        await interaction.edit_original_response(view=sentinel)
+
+        self.assertIs(refreshed_view(interaction), sentinel)
+
+    async def test_edit_message_is_a_valid_first_response(self) -> None:
+        interaction = discord.Interaction()
+        sentinel = object()
+
+        await interaction.response.edit_message(view=sentinel)
+
+        self.assertTrue(interaction.response.is_done())
+        self.assertIs(refreshed_view(interaction), sentinel)

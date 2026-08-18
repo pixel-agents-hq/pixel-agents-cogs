@@ -12,5 +12,5 @@
     "min_python_version": [3, 11, 0],
     "hidden": true,
     "disabled": false,
-    "type": "SHARED_LIBRARY"
+    "type": "COG"
 }

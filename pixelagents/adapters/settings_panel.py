@@ -193,32 +193,6 @@ class SettingsPanelView(discord.ui.LayoutView):  # type: ignore[misc, unused-ign
         network_actions.add_item(self._button("Edit clear delay", self._show_delay_modal))
         container.add_item(network_actions)
 
-        role_label = (
-            _inline_code(global_settings.editor_role_id)
-            if global_settings.editor_role_id is not None
-            else "Not configured"
-        )
-        container.add_item(
-            discord.ui.TextDisplay(
-                "**Editor access (global)**\n"
-                f"Editor role ID: {role_label}\n"
-                "Choose a role below, or submit no role to clear it."
-            )
-        )
-        role_row: discord.ui.ActionRow[SettingsPanelView] = discord.ui.ActionRow()
-        role_select: discord.ui.RoleSelect[SettingsPanelView] = discord.ui.RoleSelect(
-            placeholder="Set or clear the editor role…",
-            min_values=0,
-            max_values=1,
-        )
-        self._role_select = role_select
-        cast(Any, role_select).callback = self._role_callback(role_select)
-        role_row.add_item(role_select)
-        container.add_item(role_row)
-        clear_role_row: discord.ui.ActionRow[SettingsPanelView] = discord.ui.ActionRow()
-        clear_role_row.add_item(self._button("Clear editor role", self._clear_editor_role))
-        container.add_item(clear_role_row)
-
         container.add_item(
             discord.ui.TextDisplay(
                 "**Broadcasting (global)**\n"
@@ -369,28 +343,6 @@ class SettingsPanelView(discord.ui.LayoutView):  # type: ignore[misc, unused-ign
     async def _set_web_url(self, value: SettingValue) -> MutationResult:
         await self.service.set_pixel_index_web_url(str(value))
         return None
-
-    def _role_callback(
-        self,
-        role_select: discord.ui.RoleSelect[SettingsPanelView],
-    ) -> Callable[[discord.Interaction], Awaitable[None]]:
-        async def role_selected(interaction: discord.Interaction) -> None:
-            role_id = role_select.values[0].id if role_select.values else None
-
-            async def mutation() -> MutationResult:
-                await self.service.set_editor_role_id(role_id)
-                return None
-
-            await self.apply_mutation(interaction, mutation, slow=True)
-
-        return role_selected
-
-    async def _clear_editor_role(self, interaction: discord.Interaction) -> None:
-        async def mutation() -> MutationResult:
-            await self.service.set_editor_role_id(None)
-            return None
-
-        await self.apply_mutation(interaction, mutation, slow=True)
 
     async def _toggle_rich_presence(self, interaction: discord.Interaction) -> None:
         value = not self.global_settings.broadcast_rich_presence

@@ -7,7 +7,7 @@ from __future__ import annotations
 import unittest
 
 from ..corridor import Corridor
-from ..domain import PermissionGroup, ReplyMode
+from ..domain import ReplyMode
 from .conftest import FakeBot, FakeContext, FakeGuild, FakeMember
 
 
@@ -42,17 +42,17 @@ class TestCorridorApi(unittest.IsolatedAsyncioTestCase):
         member = FakeMember(2, self.guild)
         ctx = FakeContext(author=member, guild=self.guild)
 
-        allowed = await self.corridor.require_permission(ctx, PermissionGroup.MODERATOR)
+        allowed = await self.corridor.require_permission(ctx, "building_manager")
 
         self.assertFalse(allowed)
         self.assertEqual(ctx.sent[0]["content"], "You don't have permission to do that.")
 
     async def test_require_permission_allows_after_role_granted(self) -> None:
-        await self.corridor.set_moderator_role_ids(self.guild.id, frozenset({500}))
+        await self.corridor.set_group_role_ids(self.guild.id, "building_manager", frozenset({500}))
         member = FakeMember(2, self.guild, role_ids=(500,))
         ctx = FakeContext(author=member, guild=self.guild)
 
-        allowed = await self.corridor.require_permission(ctx, PermissionGroup.MODERATOR)
+        allowed = await self.corridor.require_permission(ctx, "building_manager")
 
         self.assertTrue(allowed)
         self.assertEqual(ctx.sent, [])
@@ -61,6 +61,28 @@ class TestCorridorApi(unittest.IsolatedAsyncioTestCase):
         owner = FakeMember(1, self.guild)
         ctx = FakeContext(author=owner, guild=self.guild)
 
-        allowed = await self.corridor.require_permission(ctx, PermissionGroup.PRIVILEGED)
+        allowed = await self.corridor.require_permission(ctx, "keyholder")
 
         self.assertTrue(allowed)
+
+    async def test_guild_administrator_bypasses_permission_checks(self) -> None:
+        admin = FakeMember(2, self.guild, is_administrator=True)
+        ctx = FakeContext(author=admin, guild=self.guild)
+
+        allowed = await self.corridor.require_permission(ctx, "keyholder")
+
+        self.assertTrue(allowed)
+
+    async def test_add_rename_and_remove_permission_group(self) -> None:
+        await self.corridor.add_permission_group(self.guild.id, "hr", "HR")
+        groups = await self.corridor.list_permission_groups(self.guild.id)
+        self.assertIn("hr", {group.key for group in groups})
+
+        await self.corridor.set_group_label(self.guild.id, "hr", "Human Resources")
+        member = FakeMember(3, self.guild, role_ids=())
+        ctx = FakeContext(author=member, guild=self.guild)
+        self.assertFalse(await self.corridor.require_permission(ctx, "hr"))
+
+        await self.corridor.remove_permission_group(self.guild.id, "hr")
+        groups = await self.corridor.list_permission_groups(self.guild.id)
+        self.assertNotIn("hr", {group.key for group in groups})

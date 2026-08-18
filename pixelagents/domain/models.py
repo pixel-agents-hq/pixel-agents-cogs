@@ -101,7 +101,6 @@ class GlobalSettings:
     ws_host: str
     ws_port: int
     message_tool_clear_delay: float
-    editor_role_id: SnowflakeId | None
     broadcast_rich_presence: bool
     broadcast_messages: bool
     pixel_index_api_url: str

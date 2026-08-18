@@ -52,6 +52,9 @@ def __getattr__(name: str) -> object:
 async def setup(bot: Red) -> None:
     """Load the canonical Cog class through Red's standard extension hook."""
 
+    from .dependency_loader import ensure_corridor_loaded
+
+    await ensure_corridor_loaded(bot)
     from .pixelagents import PixelAgents
 
     await bot.add_cog(PixelAgents(bot))

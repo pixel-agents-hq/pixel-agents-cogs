@@ -59,7 +59,6 @@ class TestRedSettingsRepository(unittest.IsolatedAsyncioTestCase):
 
         await repository.set_ws_port(4321)
         await repository.set_message_tool_clear_delay(3)
-        await repository.set_editor_role_id(42)
         api_url = await repository.set_pixel_index_api_url(" https://example.com/api/ ")
 
         global_settings = await repository.global_settings()
@@ -68,7 +67,6 @@ class TestRedSettingsRepository(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(api_url, "https://example.com/api")
         self.assertEqual(global_settings.ws_port, 4321)
         self.assertEqual(global_settings.message_tool_clear_delay, 3.0)
-        self.assertEqual(global_settings.editor_role_id, 42)
         self.assertFalse(guild_settings.enabled)
         self.assertTrue(guild_settings.include_bots)
 
@@ -106,16 +104,15 @@ class TestSettingsService(unittest.IsolatedAsyncioTestCase):
         await service.set_broadcast_rich_presence(True)
         clear_presence.assert_not_awaited()
 
-    async def test_editor_and_guild_changes_run_shared_side_effects(self) -> None:
+    async def test_guild_changes_run_shared_side_effects(self) -> None:
         repository, _ = make_repository()
         service, _, reauthorize, sync_guild, despawn_guild = make_service(repository)
 
-        await service.set_editor_role_id(99)
         result = await service.enable_guild(123)
         await service.disable_guild(123)
 
         self.assertEqual(result, "Sync complete.")
-        self.assertEqual(reauthorize.await_count, 3)
+        self.assertEqual(reauthorize.await_count, 2)
         sync_guild.assert_awaited_once_with(123)
         despawn_guild.assert_awaited_once_with(123)
         self.assertFalse((await repository.guild_settings(123)).enabled)
@@ -141,7 +138,6 @@ class TestSettingsService(unittest.IsolatedAsyncioTestCase):
             service.set_message_tool_clear_delay(-0.1),
             service.set_message_tool_clear_delay(float("nan")),
             service.set_message_tool_clear_delay(float("inf")),
-            service.set_editor_role_id(0),
             service.set_pixel_index_api_url("ftp://example.com"),
             service.set_pixel_index_web_url("example.com"),
         )
@@ -152,7 +148,6 @@ class TestSettingsService(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await repository.global_settings(), before)
         self.assertEqual(await repository.ws_port(), 3210)
         self.assertEqual(await repository.message_tool_clear_delay(), 2.0)
-        self.assertIsNone(await repository.editor_role_id())
 
     async def test_repository_rejects_non_finite_delay_defensively(self) -> None:
         repository, _ = make_repository()
@@ -175,7 +170,6 @@ class TestSettingsCommandParity(unittest.IsolatedAsyncioTestCase):
         self.cog._settings_service.set_message_tool_clear_delay = AsyncMock()
         self.cog._settings_service.set_broadcast_rich_presence = AsyncMock()
         self.cog._settings_service.set_broadcast_messages = AsyncMock()
-        self.cog._settings_service.set_editor_role_id = AsyncMock()
         self.cog._settings_service.enable_guild = AsyncMock(return_value="Sync complete.")
         self.cog._settings_service.disable_guild = AsyncMock()
         self.cog._settings_service.set_include_bots = AsyncMock(return_value=None)
@@ -207,11 +201,9 @@ class TestSettingsCommandParity(unittest.IsolatedAsyncioTestCase):
     async def test_all_other_setting_commands_use_the_same_service(self) -> None:
         ctx = self.context()
         ctx.guild.id = 123
-        role = MagicMock(id=99, name="Editors")
 
         await self.cog.cmd_toolcleardelay(ctx, 4.0)
         await self.cog.cmd_messages(ctx, False)
-        await self.cog.cmd_editorrole(ctx, role)
         await self.cog.cmd_enable(ctx)
         await self.cog.cmd_disable(ctx)
         await self.cog.cmd_includebots(ctx, False)
@@ -220,7 +212,6 @@ class TestSettingsCommandParity(unittest.IsolatedAsyncioTestCase):
 
         self.cog._settings_service.set_message_tool_clear_delay.assert_awaited_once_with(4.0)
         self.cog._settings_service.set_broadcast_messages.assert_awaited_once_with(False)
-        self.cog._settings_service.set_editor_role_id.assert_awaited_once_with(99)
         self.cog._settings_service.enable_guild.assert_awaited_once_with(123)
         self.cog._settings_service.disable_guild.assert_awaited_once_with(123)
         self.cog._settings_service.set_include_bots.assert_awaited_once_with(123, False)

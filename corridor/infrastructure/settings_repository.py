@@ -11,9 +11,11 @@ from typing import Any, cast
 from redbot.core import Config
 
 from ..domain import (
+    RESERVED_GROUP_KEYS,
     GuildSettings,
     IconPreference,
     IconSource,
+    PermissionGroupDef,
     PermissionSettings,
     ReplyMode,
     ReplyPreferences,
@@ -21,15 +23,33 @@ from ..domain import (
 
 CONFIG_IDENTIFIER = 0x636F72726964  # "corrid" in hex
 
+DEFAULT_PERMISSION_GROUPS: list[dict[str, object]] = [
+    {"key": "building_manager", "label": "Building Manager", "role_ids": []},
+    {"key": "keyholder", "label": "Keyholder", "role_ids": []},
+]
+
 GUILD_DEFAULTS: dict[str, object] = {
     "reply_mode": ReplyMode.EMBED.value,
     "show_timestamp": True,
     "footer_text": None,
     "icon_source": IconSource.BOT.value,
     "icon_custom_url": None,
-    "moderator_role_ids": [],
-    "privileged_role_ids": [],
+    "permission_groups": DEFAULT_PERMISSION_GROUPS,
+    "owner_label": "Owner",
+    "employee_label": "Employee",
 }
+
+
+def _group_from_dict(data: dict[str, object]) -> PermissionGroupDef:
+    return PermissionGroupDef(
+        key=cast(str, data["key"]),
+        label=cast(str, data["label"]),
+        role_ids=frozenset(cast(list, data.get("role_ids", []))),
+    )
+
+
+def _group_to_dict(group: PermissionGroupDef) -> dict[str, object]:
+    return {"key": group.key, "label": group.label, "role_ids": sorted(group.role_ids)}
 
 
 class RedCorridorRepository:
@@ -56,6 +76,7 @@ class RedCorridorRepository:
 
     async def guild_settings(self, guild_id: int) -> GuildSettings:
         guild = self._config.guild_from_id(guild_id)
+        raw_groups = cast(list, await guild.permission_groups())
         return GuildSettings(
             guild_id=guild_id,
             reply=ReplyPreferences(
@@ -68,8 +89,9 @@ class RedCorridorRepository:
                 ),
             ),
             permissions=PermissionSettings(
-                moderator_role_ids=frozenset(cast(list, await guild.moderator_role_ids())),
-                privileged_role_ids=frozenset(cast(list, await guild.privileged_role_ids())),
+                groups=tuple(_group_from_dict(entry) for entry in raw_groups),
+                owner_label=cast(str, await guild.owner_label()),
+                employee_label=cast(str, await guild.employee_label()),
             ),
         )
 
@@ -87,32 +109,56 @@ class RedCorridorRepository:
         await guild.icon_source.set(icon.source.value)
         await guild.icon_custom_url.set(icon.custom_url)
 
-    async def set_moderator_role_ids(self, guild_id: int, role_ids: frozenset[int]) -> None:
-        await self._config.guild_from_id(guild_id).moderator_role_ids.set(sorted(role_ids))
+    async def set_owner_label(self, guild_id: int, label: str) -> None:
+        await self._config.guild_from_id(guild_id).owner_label.set(label)
 
-    async def set_privileged_role_ids(self, guild_id: int, role_ids: frozenset[int]) -> None:
-        await self._config.guild_from_id(guild_id).privileged_role_ids.set(sorted(role_ids))
+    async def set_employee_label(self, guild_id: int, label: str) -> None:
+        await self._config.guild_from_id(guild_id).employee_label.set(label)
 
-    async def add_moderator_role(self, guild_id: int, role_id: int) -> None:
-        await self._add_role(guild_id, "moderator_role_ids", role_id)
+    async def _load_groups(self, guild_id: int) -> list[PermissionGroupDef]:
+        raw_groups = cast(list, await self._config.guild_from_id(guild_id).permission_groups())
+        return [_group_from_dict(entry) for entry in raw_groups]
 
-    async def remove_moderator_role(self, guild_id: int, role_id: int) -> None:
-        await self._remove_role(guild_id, "moderator_role_ids", role_id)
+    async def _save_groups(self, guild_id: int, groups: list[PermissionGroupDef]) -> None:
+        await self._config.guild_from_id(guild_id).permission_groups.set(
+            [_group_to_dict(group) for group in groups]
+        )
 
-    async def add_privileged_role(self, guild_id: int, role_id: int) -> None:
-        await self._add_role(guild_id, "privileged_role_ids", role_id)
+    async def list_permission_groups(self, guild_id: int) -> tuple[PermissionGroupDef, ...]:
+        return tuple(await self._load_groups(guild_id))
 
-    async def remove_privileged_role(self, guild_id: int, role_id: int) -> None:
-        await self._remove_role(guild_id, "privileged_role_ids", role_id)
+    async def add_permission_group(
+        self, guild_id: int, key: str, label: str, role_ids: frozenset[int] = frozenset()
+    ) -> None:
+        if key in RESERVED_GROUP_KEYS:
+            raise ValueError(f"{key!r} is a reserved group key")
+        groups = await self._load_groups(guild_id)
+        if any(group.key == key for group in groups):
+            raise ValueError(f"a group with key {key!r} already exists")
+        groups.append(PermissionGroupDef(key=key, label=label, role_ids=role_ids))
+        await self._save_groups(guild_id, groups)
 
-    async def _add_role(self, guild_id: int, key: str, role_id: int) -> None:
-        attr = getattr(self._config.guild_from_id(guild_id), key)
-        role_ids = set(cast(list, await attr()))
-        role_ids.add(role_id)
-        await attr.set(sorted(role_ids))
+    async def remove_permission_group(self, guild_id: int, key: str) -> None:
+        groups = await self._load_groups(guild_id)
+        remaining = [group for group in groups if group.key != key]
+        await self._save_groups(guild_id, remaining)
 
-    async def _remove_role(self, guild_id: int, key: str, role_id: int) -> None:
-        attr = getattr(self._config.guild_from_id(guild_id), key)
-        role_ids = set(cast(list, await attr()))
-        role_ids.discard(role_id)
-        await attr.set(sorted(role_ids))
+    async def set_group_role_ids(self, guild_id: int, key: str, role_ids: frozenset[int]) -> None:
+        groups = await self._load_groups(guild_id)
+        updated = [
+            PermissionGroupDef(key=group.key, label=group.label, role_ids=role_ids)
+            if group.key == key
+            else group
+            for group in groups
+        ]
+        await self._save_groups(guild_id, updated)
+
+    async def set_group_label(self, guild_id: int, key: str, label: str) -> None:
+        groups = await self._load_groups(guild_id)
+        updated = [
+            PermissionGroupDef(key=group.key, label=label, role_ids=group.role_ids)
+            if group.key == key
+            else group
+            for group in groups
+        ]
+        await self._save_groups(guild_id, updated)

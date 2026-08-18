@@ -23,7 +23,6 @@ GLOBAL_DEFAULTS: dict[str, object] = {
     "ws_host": "0.0.0.0",
     "ws_port": 3210,
     "message_tool_clear_delay": 2.0,
-    "editor_role_id": None,
     "broadcast_rich_presence": True,
     "broadcast_messages": True,
     "layout": None,
@@ -83,7 +82,6 @@ class RedSettingsRepository:
                 float,
                 await self._config.message_tool_clear_delay(),
             ),
-            editor_role_id=cast(int | None, await self._config.editor_role_id()),
             broadcast_rich_presence=cast(
                 bool,
                 await self._config.broadcast_rich_presence(),
@@ -129,9 +127,6 @@ class RedSettingsRepository:
     async def message_tool_clear_delay(self) -> float:
         return cast(float, await self._config.message_tool_clear_delay())
 
-    async def editor_role_id(self) -> int | None:
-        return cast(int | None, await self._config.editor_role_id())
-
     async def broadcast_rich_presence(self) -> bool:
         return cast(bool, await self._config.broadcast_rich_presence())
 
@@ -161,11 +156,6 @@ class RedSettingsRepository:
         if isinstance(seconds, bool) or not isfinite(seconds) or seconds < 0:
             raise ValueError("Delay must be 0 or greater.")
         await self._config.message_tool_clear_delay.set(float(seconds))
-
-    async def set_editor_role_id(self, role_id: int | None) -> None:
-        if role_id is not None and (isinstance(role_id, bool) or role_id <= 0):
-            raise ValueError("Role ID must be a positive integer or None.")
-        await self._config.editor_role_id.set(role_id)
 
     async def set_broadcast_rich_presence(self, value: bool) -> None:
         if not isinstance(value, bool):

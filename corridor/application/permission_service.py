@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from ..domain import MemberCapabilities, PermissionGroup, PermissionSettings
+from ..domain import MemberCapabilities, PermissionSettings
 
 
 class MemberRef(Protocol):
@@ -14,10 +14,13 @@ class MemberRef(Protocol):
 
     id: int
     role_ids: frozenset[int]
+    is_administrator: bool
 
 
 class OwnerRegistry(Protocol):
-    """The bot-owner boundary -- who counts as PermissionGroup.OWNER."""
+    """The bot-owner boundary -- part of who counts as the OWNER tier
+    (the other part, guild Administrator permission, comes from
+    MemberRef.is_administrator)."""
 
     async def is_owner(self, user_id: int) -> bool: ...
 
@@ -29,17 +32,17 @@ class PermissionService:
     async def capabilities_for(
         self, member: MemberRef, settings: PermissionSettings
     ) -> MemberCapabilities:
-        return MemberCapabilities(
-            is_owner=await self._owners.is_owner(member.id),
-            is_moderator=bool(member.role_ids & settings.moderator_role_ids),
-            is_privileged=bool(member.role_ids & settings.privileged_role_ids),
+        is_owner = await self._owners.is_owner(member.id) or member.is_administrator
+        satisfied_keys = frozenset(
+            group.key for group in settings.groups if member.role_ids & group.role_ids
         )
+        return MemberCapabilities(is_owner=is_owner, satisfied_keys=satisfied_keys)
 
     async def satisfies(
         self,
         member: MemberRef,
         settings: PermissionSettings,
-        group: PermissionGroup,
+        key: str,
     ) -> bool:
         capabilities = await self.capabilities_for(member, settings)
-        return capabilities.satisfies(group)
+        return capabilities.satisfies(key)

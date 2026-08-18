@@ -358,10 +358,16 @@ On receiving `authorize` the cog resolves the ticket and applies:
 ```text
 Allow if ANY of:
   1. the user is a bot owner
-  2. the user is an administrator in an enabled guild
-  3. editor_role_id is set and the user holds it in an enabled guild
+  2. the user satisfies corridor's "keyholder" permission group in an
+     enabled guild (corridor's Owner tier -- bot owner or guild
+     Administrator permission -- always satisfies this)
 Deny otherwise
 ```
+
+Permission configuration (which Discord roles count as Keyholder, and the
+Owner/Employee tier display names) lives entirely in corridor, configured
+via `[p]corridorsettings`; pixelagents holds no role IDs of its own and
+depends on corridor (`required_cogs`) to resolve the check.
 
 Sockets that never authorize (or fail the check above) stay **read-only
 viewers**; `saveLayout`, `saveAgentSeats`, and `importLayout` are dropped
@@ -376,7 +382,6 @@ Global:
 | `ws_host` | `0.0.0.0` | Office server bind address |
 | `ws_port` | `3210` | Office server port (must match the Traefik `/ws` route) |
 | `message_tool_clear_delay` | `2.0` | Seconds the message bubble stays visible |
-| `editor_role_id` | `None` | Role granting editor access |
 | `broadcast_rich_presence` | `True` | Send Spotify/game activity as bubbles |
 | `broadcast_messages` | `True` | Send messages as bubbles |
 | `layout` | `None` | The office layout; falls back to the bundled default |
@@ -429,7 +434,7 @@ randomly among the least-used, and hue-shift once all six are taken.
 | `[p]pixelagents toolcleardelay <s>` | Message bubble duration |
 | `[p]pixelagents richpresence <bool>` | Activity bubbles |
 | `[p]pixelagents messages <bool>` | Message bubbles |
-| `[p]pixelagents editorrole [role]` | Editor role |
+| `[p]corridorsettings` | Configure the Keyholder role (and other permission tiers) that gates layout editing |
 | `[p]pixelagents index` | Pixel Index endpoints and API health |
 | `[p]pixelagents index set <url>` / `setweb <url>` | Configure the Pixel Index API/frontend |
 | `[p]pixelagents layout search [query] [tag] [sort]` | Browse Pixel Index layouts |

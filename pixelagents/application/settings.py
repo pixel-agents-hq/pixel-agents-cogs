@@ -29,8 +29,6 @@ class SettingsRepository(Protocol):
 
     async def set_broadcast_messages(self, value: bool) -> None: ...
 
-    async def set_editor_role_id(self, role_id: int | None) -> None: ...
-
     async def set_guild_enabled(self, guild_id: int, value: bool) -> None: ...
 
     async def set_guild_include_bots(self, guild_id: int, value: bool) -> None: ...
@@ -85,12 +83,6 @@ class SettingsService:
         if not isinstance(value, bool):
             raise ValueError("Message broadcasting setting must be a boolean.")
         await self._repository.set_broadcast_messages(value)
-
-    async def set_editor_role_id(self, role_id: int | None) -> None:
-        if role_id is not None and (isinstance(role_id, bool) or role_id <= 0):
-            raise ValueError("Role ID must be a positive integer or None.")
-        await self._repository.set_editor_role_id(role_id)
-        await self._reauthorize_editors()
 
     async def enable_guild(self, guild_id: int) -> str:
         await self._repository.set_guild_enabled(guild_id, True)

@@ -64,14 +64,26 @@ class _FakeInteractionFollowup:
 
 
 class _FakeInteraction:
-    def __init__(self, guild=None, user=None):
+    def __init__(self, guild=None, user=None, client=None):
         self.guild = guild
         self.user = user or MagicMock()
+        self.client = client
         self.response = _FakeInteractionResponse()
         self.followup = _FakeInteractionFollowup()
 
 
 _discord.Interaction = _FakeInteraction
+
+
+def _utcnow():
+    import datetime
+
+    return datetime.datetime.now(datetime.UTC)
+
+
+_discord_utils = _make_stub_module("discord.utils", utcnow=_utcnow)
+_discord.utils = _discord_utils
+sys.modules["discord.utils"] = _discord_utils
 
 
 # discord.ui stub
@@ -132,20 +144,71 @@ def _stub_ui_item(*args, **kwargs):
     return MagicMock()
 
 
+class _MockContainer:
+    # Accepts and ignores extra kwargs (e.g. accent_colour) so both this
+    # cog's and corridor's construction calls work against one shared stub.
+    def __init__(self, *items, **kwargs):
+        self.children = list(items)
+
+    def add_item(self, item):
+        self.children.append(item)
+        return self
+
+
+class _MockActionRow:
+    def __init__(self, *args, **kwargs):
+        self.children = []
+
+    def add_item(self, item):
+        self.children.append(item)
+        return self
+
+
+class _MockTextDisplay:
+    def __init__(self, content="", **kwargs):
+        self.content = content
+
+
+class _MockButton:
+    def __init__(self, *, label="", style=None, disabled=False, **kwargs):
+        self.label = label
+        self.style = style
+        self.disabled = disabled
+        self.callback = None
+
+
+class _MockSelect:
+    def __init__(self, *, placeholder="", options=None, **kwargs):
+        self.placeholder = placeholder
+        self.options = options or []
+        self.values = []
+        self.callback = None
+
+
+class _MockRoleSelect:
+    def __init__(self, *, placeholder="", min_values=0, max_values=25, default_values=None, **kwargs):
+        self.placeholder = placeholder
+        self.min_values = min_values
+        self.max_values = max_values
+        self.default_values = default_values or []
+        self.values = list(self.default_values)
+        self.callback = None
+
+
 _discord_ui = _make_stub_module("discord.ui")
 _discord_ui.Modal = _MockModal
 _discord_ui.TextInput = _MockTextInput
 _discord_ui.LayoutView = _MockLayoutView
 _discord_ui.Label = _stub_ui_item
-_discord_ui.Container = _stub_ui_item
+_discord_ui.Container = _MockContainer
 _discord_ui.Section = _stub_ui_item
 _discord_ui.Thumbnail = _stub_ui_item
-_discord_ui.TextDisplay = _stub_ui_item
+_discord_ui.TextDisplay = _MockTextDisplay
 _discord_ui.MediaGallery = _stub_ui_item
-_discord_ui.ActionRow = _stub_ui_item
-_discord_ui.Select = _stub_ui_item
-_discord_ui.RoleSelect = _stub_ui_item
-_discord_ui.Button = _stub_ui_item
+_discord_ui.ActionRow = _MockActionRow
+_discord_ui.Select = _MockSelect
+_discord_ui.RoleSelect = _MockRoleSelect
+_discord_ui.Button = _MockButton
 _discord.ui = _discord_ui
 sys.modules["discord.ui"] = _discord_ui
 _discord.SelectOption = _stub_ui_item
@@ -444,12 +507,58 @@ class _FakeCommands:
             return f
         return deco
 
+    @staticmethod
+    def hybrid_command(**kw):
+        def deco(f):
+            f.__command_metadata__ = kw
+            return f
+        return deco
+
 
 _redbot_core.Config = _FakeConfig
 _redbot_core.commands = _FakeCommands()
 _redbot_core_bot = _make_stub_module("redbot.core.bot")
 _redbot_core_bot.Red = object
 
+
+class _FakeCogLoadError(RuntimeError):
+    pass
+
+
+_redbot_core_errors = _make_stub_module("redbot.core.errors", CogLoadError=_FakeCogLoadError)
+_redbot_core.errors = _redbot_core_errors
+
 sys.modules["redbot"] = _redbot
 sys.modules["redbot.core"] = _redbot_core
 sys.modules["redbot.core.bot"] = _redbot_core_bot
+sys.modules["redbot.core.errors"] = _redbot_core_errors
+
+
+class FakeCorridor:
+    """Test double for corridor's cross-cog permission API.
+
+    `keyholders` and `owners` are member ids treated as satisfying the
+    "keyholder" group key / bypassing every check, respectively -- mirroring
+    corridor's real capabilities_satisfy(member, group_key) contract.
+    """
+
+    def __init__(self, keyholders=frozenset(), owners=frozenset()):
+        self._keyholders = keyholders
+        self._owners = owners
+        self.registered_dependents = set()
+        self.capability_checks = []
+
+    def register_dependent(self, extension_name):
+        self.registered_dependents.add(extension_name)
+
+    def unregister_dependent(self, extension_name):
+        self.registered_dependents.discard(extension_name)
+
+    async def capabilities_satisfy(self, member, group_key):
+        member_id = getattr(member, "id", None)
+        self.capability_checks.append((member_id, group_key))
+        if member_id in self._owners:
+            return True
+        if group_key == "keyholder":
+            return member_id in self._keyholders
+        return False

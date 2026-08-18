@@ -22,6 +22,7 @@ from ..application import (
 )
 from ..contracts.layout import RawOfficeLayout
 from ..contracts.websocket import ClientMessage
+from ..dependency_loader import ensure_corridor_loaded
 from ..infrastructure.client_hub import ClientHub, ClientState
 from ..infrastructure.pixel_index import PixelIndexClient
 from ..infrastructure.settings import RedSettingsRepository
@@ -45,6 +46,7 @@ class PixelAgentsBase:
     def __init__(self, bot: Red) -> None:
         self.bot = bot
         self._closing = False
+        self._corridor: Any = None
         self._task_supervisor = TaskSupervisor(logger=log)
         self._settings_repository = RedSettingsRepository.create(self)
         self.config = self._settings_repository.config
@@ -140,6 +142,8 @@ class PixelAgentsBase:
 
     async def cog_load(self) -> None:
         self._closing = False
+        self._corridor = await ensure_corridor_loaded(self.bot)
+        self._corridor.register_dependent("pixelagents")
         self._task_supervisor.open()
         await asyncio.to_thread(self._load_assets)
         await self._pixel_index_client.start()
@@ -155,6 +159,8 @@ class PixelAgentsBase:
 
     async def cog_unload(self) -> None:
         self._closing = True
+        if self._corridor is not None:
+            self._corridor.unregister_dependent("pixelagents")
         await self._task_supervisor.shutdown()
         self._sync_task = None
         await self._websocket_server.stop()

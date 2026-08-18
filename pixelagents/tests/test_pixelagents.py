@@ -24,6 +24,7 @@ from pixelagents.pixelagents import (
 from pixelagents.infrastructure.tickets import TicketStore
 from pixelagents.infrastructure.webview import WebviewAssetProvider
 from pixelagents.tests.conftest import (
+    FakeCorridor,
     _FakeClientWebSocketResponse,
     _FakeInteraction,
 )
@@ -481,6 +482,15 @@ class TestCheckAuth(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.cog = _make_cog()
 
+    def _enable_guild(self, guild):
+        async def _enabled():
+            return True
+
+        guild_cfg = MagicMock()
+        guild_cfg.enabled = _enabled
+        self.cog.config.guild = MagicMock(return_value=guild_cfg)
+        self.cog.bot.guilds = [guild]
+
     async def test_zero_user_id_denied(self):
         self.assertFalse(await self.cog._check_auth(0))
 
@@ -488,141 +498,87 @@ class TestCheckAuth(unittest.IsolatedAsyncioTestCase):
         self.cog.bot.is_owner = AsyncMock(return_value=True)
         self.assertTrue(await self.cog._check_auth(12345))
 
-    async def test_no_role_configured_denied(self):
-        self.cog.config._global["editor_role_id"] = None
+    async def test_keyholder_denied_when_no_guild_membership(self):
+        self.cog._corridor = FakeCorridor(keyholders=frozenset({12345}))
+        self.cog.bot.guilds = []
+
         self.assertFalse(await self.cog._check_auth(12345))
 
-    async def test_role_match_allows(self):
-        role_id = 999
-        self.cog.config._global["editor_role_id"] = role_id
-
-        role = MagicMock()
-        role.id = role_id
-
+    async def test_keyholder_allows(self):
+        self.cog._corridor = FakeCorridor(keyholders=frozenset({12345}))
         member = MagicMock()
-        member.roles = [role]
+        member.id = 12345
 
         guild = MagicMock()
         guild.get_member = MagicMock(return_value=member)
-
-        self.cog.bot.guilds = [guild]
-
-        async def _enabled():
-            return True
-
-        guild_cfg = MagicMock()
-        guild_cfg.enabled = _enabled
-        self.cog.config.guild = MagicMock(return_value=guild_cfg)
+        self._enable_guild(guild)
 
         self.assertTrue(await self.cog._check_auth(12345))
         guild.fetch_member.assert_not_called()
+        self.assertIn((12345, "keyholder"), self.cog._corridor.capability_checks)
 
-    async def test_uncached_role_match_fetches_member_and_allows(self):
-        role_id = 999
-        self.cog.config._global["editor_role_id"] = role_id
-
-        role = MagicMock()
-        role.id = role_id
-
+    async def test_uncached_keyholder_fetches_member_and_allows(self):
+        self.cog._corridor = FakeCorridor(keyholders=frozenset({12345}))
         member = MagicMock()
-        member.roles = [role]
-        member.guild_permissions.administrator = False
+        member.id = 12345
 
         guild = MagicMock()
         guild.get_member = MagicMock(return_value=None)
         guild.fetch_member = AsyncMock(return_value=member)
-
-        self.cog.bot.guilds = [guild]
-
-        async def _enabled():
-            return True
-
-        guild_cfg = MagicMock()
-        guild_cfg.enabled = _enabled
-        self.cog.config.guild = MagicMock(return_value=guild_cfg)
+        self._enable_guild(guild)
 
         self.assertTrue(await self.cog._check_auth(12345))
         guild.fetch_member.assert_awaited_once_with(12345)
 
-    async def test_enabled_guild_admin_allows(self):
+    async def test_corridor_owner_allows_without_keyholder_role(self):
+        self.cog._corridor = FakeCorridor(owners=frozenset({12345}))
         member = MagicMock()
-        member.guild_permissions.administrator = True
-        member.roles = []
+        member.id = 12345
 
         guild = MagicMock()
         guild.get_member = MagicMock(return_value=member)
-        self.cog.bot.guilds = [guild]
-
-        async def _enabled():
-            return True
-
-        guild_cfg = MagicMock()
-        guild_cfg.enabled = _enabled
-        self.cog.config.guild = MagicMock(return_value=guild_cfg)
+        self._enable_guild(guild)
 
         self.assertTrue(await self.cog._check_auth(12345))
 
-    async def test_uncached_admin_fetches_member_and_allows(self):
+    async def test_non_keyholder_denied(self):
+        self.cog._corridor = FakeCorridor(keyholders=frozenset({999}))
         member = MagicMock()
-        member.guild_permissions.administrator = True
-        member.roles = []
-
-        guild = MagicMock()
-        guild.get_member = MagicMock(return_value=None)
-        guild.fetch_member = AsyncMock(return_value=member)
-        self.cog.bot.guilds = [guild]
-
-        async def _enabled():
-            return True
-
-        guild_cfg = MagicMock()
-        guild_cfg.enabled = _enabled
-        self.cog.config.guild = MagicMock(return_value=guild_cfg)
-
-        self.assertTrue(await self.cog._check_auth(12345))
-        guild.fetch_member.assert_awaited_once_with(12345)
-
-    async def test_no_role_match_denied(self):
-        role_id = 999
-        self.cog.config._global["editor_role_id"] = role_id
-
-        other_role = MagicMock()
-        other_role.id = 888
-
-        member = MagicMock()
-        member.roles = [other_role]
+        member.id = 12345
 
         guild = MagicMock()
         guild.get_member = MagicMock(return_value=member)
-        self.cog.bot.guilds = [guild]
-
-        async def _enabled():
-            return True
-
-        guild_cfg = MagicMock()
-        guild_cfg.enabled = _enabled
-        self.cog.config.guild = MagicMock(return_value=guild_cfg)
+        self._enable_guild(guild)
 
         self.assertFalse(await self.cog._check_auth(12345))
 
     async def test_uncached_member_fetch_failure_denied(self):
-        role_id = 999
-        self.cog.config._global["editor_role_id"] = role_id
-
+        self.cog._corridor = FakeCorridor(keyholders=frozenset({12345}))
         guild = MagicMock()
         guild.get_member = MagicMock(return_value=None)
         guild.fetch_member = AsyncMock(side_effect=Exception("not found"))
-        self.cog.bot.guilds = [guild]
-
-        async def _enabled():
-            return True
-
-        guild_cfg = MagicMock()
-        guild_cfg.enabled = _enabled
-        self.cog.config.guild = MagicMock(return_value=guild_cfg)
+        self._enable_guild(guild)
 
         self.assertFalse(await self.cog._check_auth(12345))
         guild.fetch_member.assert_awaited_once_with(12345)
+
+    async def test_disabled_guild_is_skipped(self):
+        self.cog._corridor = FakeCorridor(keyholders=frozenset({12345}))
+        member = MagicMock()
+        member.id = 12345
+
+        guild = MagicMock()
+        guild.get_member = MagicMock(return_value=member)
+
+        async def _disabled():
+            return False
+
+        guild_cfg = MagicMock()
+        guild_cfg.enabled = _disabled
+        self.cog.config.guild = MagicMock(return_value=guild_cfg)
+        self.cog.bot.guilds = [guild]
+
+        self.assertFalse(await self.cog._check_auth(12345))
 
 
 # ---------------------------------------------------------------------------

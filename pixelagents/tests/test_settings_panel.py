@@ -23,7 +23,6 @@ def global_settings(**changes: object) -> GlobalSettings:
         "ws_host": "0.0.0.0",
         "ws_port": 3210,
         "message_tool_clear_delay": 2.0,
-        "editor_role_id": 99,
         "broadcast_rich_presence": True,
         "broadcast_messages": False,
         "pixel_index_api_url": "https://api.example.test",
@@ -49,7 +48,6 @@ def settings_service(
     service.guild_settings = AsyncMock(return_value=guild_value or guild_settings())
     service.set_ws_port = AsyncMock()
     service.set_message_tool_clear_delay = AsyncMock()
-    service.set_editor_role_id = AsyncMock()
     service.set_broadcast_rich_presence = AsyncMock()
     service.set_broadcast_messages = AsyncMock()
     service.enable_guild = AsyncMock(return_value="Sync complete.")
@@ -101,7 +99,6 @@ class TestSettingsPanelRendering(unittest.IsolatedAsyncioTestCase):
             "0.0.0.0",
             "3210",
             "2.0",
-            "99",
             "Rich presence: Enabled",
             "Messages: Disabled",
             "Presence mirroring: Disabled",
@@ -186,19 +183,6 @@ class TestSettingsPanelMutations(unittest.IsolatedAsyncioTestCase):
                 getattr(service, method_name).assert_awaited_once_with(expected)
                 submission.response.edit_message.assert_awaited_once()
                 self.assertTrue(view._stale)
-
-    async def test_role_selection_and_clear_delegate_once(self) -> None:
-        view, service = await self.make_view()
-        view._role_select.values = [SimpleNamespace(id=123)]
-
-        await view._role_select.callback(interaction())
-
-        service.set_editor_role_id.assert_awaited_once_with(123)
-
-        view, service = await self.make_view()
-        await view._clear_editor_role(interaction())
-
-        service.set_editor_role_id.assert_awaited_once_with(None)
 
     async def test_global_boolean_buttons_delegate_once(self) -> None:
         view, service = await self.make_view()

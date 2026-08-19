@@ -178,6 +178,13 @@ class TestBuildWebview(unittest.TestCase):
             outcome = webview_build.build_webview(cog_data_dir, logger=_LOG)
         self.assertTrue(outcome.ok)
         self.assertIn("up to date", outcome.status_line)
+        # Discord markdown link, not a bare "@abc1234" -- the commit should
+        # be one click from the reader, not something to copy-paste.
+        expected_link = (
+            f"[pixel-agents-hq/pixel-agents@{commit[:7]}]"
+            f"(https://github.com/pixel-agents-hq/pixel-agents/commit/{commit})"
+        )
+        self.assertIn(expected_link, outcome.status_line)
 
 
 class TestOwnerNotificationFor(unittest.TestCase):

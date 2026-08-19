@@ -26,6 +26,12 @@ from dataclasses import dataclass
 from pathlib import Path
 
 REPO_URL = "https://github.com/pixel-agents-hq/pixel-agents.git"
+
+
+def _commit_url(commit: str) -> str:
+    return f"{REPO_URL.removesuffix('.git')}/commit/{commit}"
+
+
 REQUIRED_TOOLS = ("git", "node", "npm")
 
 _PIN_FILE = Path(__file__).with_name("webview_vendor.commit")
@@ -161,9 +167,8 @@ def build_webview(
 
     verb = "built" if result.rebuilt else "already up to date"
     short = result.commit[:7]
-    return BuildOutcome(
-        ok=True, status_line=f"✅ Webview {verb} (pixel-agents-hq/pixel-agents@{short})."
-    )
+    link = f"[pixel-agents-hq/pixel-agents@{short}]({_commit_url(result.commit)})"
+    return BuildOutcome(ok=True, status_line=f"✅ Webview {verb} ({link}).")
 
 
 def owner_notification_for(outcome: BuildOutcome) -> str:

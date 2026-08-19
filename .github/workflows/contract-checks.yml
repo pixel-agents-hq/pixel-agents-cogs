@@ -144,11 +144,14 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        # discord.py/aiohttp are only needed to satisfy pixelagents.tests.conftest's
-        # redbot stub, which contracts.pixel_agents.verify imports before reaching
-        # pixelagents.infrastructure — same dependency set cogs-quality.yml's
-        # pixelagents leg installs.
-        run: pip install 'discord.py>=2.7,<2.8' aiohttp
+        # aiohttp/pydantic are what pixelagents.infrastructure's own imports need
+        # (pixel_index.py imports both) once contracts.pixel_agents.verify reaches
+        # it via webview_build. discord.py itself is not required: importing
+        # pixelagents.tests.conftest first (for its redbot stub) also stubs
+        # `discord` in sys.modules before anything does a real `import discord`.
+        # Matches the dependency set vendor-update.yml's real-build gate installs
+        # for this same code path.
+        run: pip install aiohttp 'pydantic>=2.6,<2.11'
 
       - name: Run contract check
         run: |

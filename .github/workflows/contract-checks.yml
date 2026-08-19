@@ -1,4 +1,10 @@
-name: "Pixel Index Contract Check"
+name: "Contract Checks"
+
+# Covers two independent consumer-driven contracts -- Pixel Index (HTTP API)
+# and Pixel Agents (vendored webview source) -- in one workflow so both can
+# publish to the same GitHub Pages status site without one deploy clobbering
+# the other's latest results (actions/deploy-pages replaces the whole site
+# every run). See docs/contract-testing.md.
 
 on:
   push:
@@ -8,19 +14,22 @@ on:
   pull_request:
     paths:
       - "contracts/pixel_index/**"
+      - "contracts/pixel_agents/**"
       - "pixelagents/**/*.py"
-      - ".github/workflows/pixel-index-contract.yml"
+      - "pixelagents/infrastructure/webview_vendor.commit"
+      - "pixelagents/infrastructure/webview_build_scripts/**"
+      - ".github/workflows/contract-checks.yml"
 
 permissions:
   contents: read
 
 concurrency:
-  group: pixel-index-contract-${{ github.ref }}
+  group: contract-checks-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   verify-contract:
-    name: Verify (${{ matrix.name }})
+    name: Verify Pixel Index (${{ matrix.name }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -99,9 +108,84 @@ jobs:
             [{"name": "Environment", "value": "${{ matrix.name }}", "inline": true},
              {"name": "Run", "value": "[View run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})", "inline": true}]
 
+  verify-pixel-agents:
+    name: Verify Pixel Agents (production)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Initialize contract result
+        env:
+          RESULT_PATH: ${{ runner.temp }}/pixel-agents-contract-results/production.json
+        run: |
+          mkdir -p "$(dirname "$RESULT_PATH")"
+          jq -n \
+            '{
+              schema_version: 1,
+              environment: "production",
+              source: null,
+              status: "unknown",
+              checked_at: null,
+              counts: {pass: 0, fail: 0, skipped: 0},
+              checks: [],
+              detail: "The contract check did not complete. Inspect the workflow run for an infrastructure or setup failure."
+            }' > "$RESULT_PATH"
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        # aiohttp/pydantic are what pixelagents.infrastructure's own imports need
+        # (pixel_index.py imports both) once contracts.pixel_agents.verify reaches
+        # it via webview_build. discord.py itself is not required: importing
+        # pixelagents.tests.conftest first (for its redbot stub) also stubs
+        # `discord` in sys.modules before anything does a real `import discord`.
+        # Matches the dependency set vendor-update.yml's real-build gate installs
+        # for this same code path.
+        run: pip install aiohttp 'pydantic>=2.6,<2.11'
+
+      - name: Run contract check
+        run: |
+          python -m contracts.pixel_agents.verify \
+            --env-name production \
+            --output-json "${{ runner.temp }}/pixel-agents-contract-results/production.json"
+
+      - name: Upload contract result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pixel-agents-contract-result-production
+          path: ${{ runner.temp }}/pixel-agents-contract-results/production.json
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Notify on failure
+        if: failure()
+        uses: nntin/d-flows/actions/discord-notify@v1
+        with:
+          webhook_url: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          message_type: "embed"
+          title: "❌ Pixel Agents contract check failed"
+          description: >-
+            The pinned Pixel Agents commit (`pixelagents/infrastructure/webview_vendor.commit`)
+            no longer builds and serves cleanly against upstream — see the run for which
+            check broke.
+          color: "15158332"
+          fields: >-
+            [{"name": "Run", "value": "[View run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})", "inline": true}]
+
   build-status-site:
     name: Build current status site
-    needs: verify-contract
+    needs: [verify-contract, verify-pixel-agents]
     if: ${{ always() && github.ref_name == github.event.repository.default_branch }}
     runs-on: ubuntu-latest
 
@@ -114,17 +198,24 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Download contract results
+      - name: Download Pixel Index contract results
         uses: actions/download-artifact@v5
         with:
           pattern: pixel-index-contract-result-*
           path: ${{ runner.temp }}/pixel-index-contract-results
           merge-multiple: true
 
-      - name: Generate status site
+      - name: Download Pixel Agents contract results
+        uses: actions/download-artifact@v5
+        with:
+          pattern: pixel-agents-contract-result-*
+          path: ${{ runner.temp }}/pixel-agents-contract-results
+          merge-multiple: true
+
+      - name: Generate Pixel Index status site
         env:
           RESULTS_DIR: ${{ runner.temp }}/pixel-index-contract-results
-          OUTPUT_DIR: ${{ runner.temp }}/pixel-index-contract-site
+          OUTPUT_DIR: ${{ runner.temp }}/contract-site
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
@@ -138,10 +229,27 @@ jobs:
             --run-url "$RUN_URL" \
             --event "${{ github.event_name }}"
 
+      - name: Generate Pixel Agents status site
+        env:
+          RESULTS_DIR: ${{ runner.temp }}/pixel-agents-contract-results
+          OUTPUT_DIR: ${{ runner.temp }}/contract-site/pixel-agents
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          python -m contracts.pixel_agents.generate_status_site \
+            --results-dir "$RESULTS_DIR" \
+            --output-dir "$OUTPUT_DIR" \
+            --repository "${{ github.repository }}" \
+            --branch "$DEFAULT_BRANCH" \
+            --commit "${{ github.sha }}" \
+            --run-id "${{ github.run_id }}" \
+            --run-url "$RUN_URL" \
+            --event "${{ github.event_name }}"
+
       - name: Upload GitHub Pages artifact
         uses: actions/upload-pages-artifact@v4
         with:
-          path: ${{ runner.temp }}/pixel-index-contract-site
+          path: ${{ runner.temp }}/contract-site
 
   deploy-status-site:
     name: Deploy current status site

@@ -94,6 +94,11 @@ class WebviewAssetProvider:
         self.root = root.resolve()
         self.assets: dict[str, object] = {}
         self._log = logger or logging.getLogger(__name__)
+        # Set by PixelAgentsBase after each build attempt, so a visitor
+        # hitting the public office page while assets are missing sees why
+        # (a specific missing tool, a build failure) instead of a bare
+        # "not installed". None once a build has actually succeeded.
+        self.build_status: str | None = None
 
     def resolve(self, asset_path: str) -> Path | None:
         """Resolve a regular file without allowing traversal outside the root."""
@@ -132,10 +137,14 @@ class WebviewAssetProvider:
 
         index_path = self.resolve("index.html")
         if index_path is None:
+            message = self.build_status or (
+                "Pixel Agents webview assets are not installed yet. "
+                "Ask the bot owner to run `[p]pixelagents webview rebuild`."
+            )
             return {
                 "status": 1,
                 "error_code": 503,
-                "error_message": "Pixel Agents webview assets are not installed.",
+                "error_message": message,
             }
         source = index_path.read_text(encoding="utf-8")
         match = re.search(r"<head[^>]*>", source, re.IGNORECASE)
@@ -176,7 +185,8 @@ class WebviewAssetProvider:
             path = self.resolve(f"assets/decoded/{name}.json")
             if path is None:
                 self._log.warning(
-                    "pixelagents: missing assets/decoded/%s.json — run scripts/build-webview",
+                    "pixelagents: missing assets/decoded/%s.json — "
+                    "run [p]pixelagents webview rebuild",
                     name,
                 )
                 continue

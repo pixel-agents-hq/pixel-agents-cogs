@@ -23,8 +23,30 @@ worktree matches the gitlink recorded by a temporarily checked-out revision.
 
 For office-cogs, the safe current architecture is to consume Pixel Index over
 HTTP and ship any assets needed by the cog in the cog package. A Pixel Index
-submodule is not required for that integration, and this repository currently
-has neither a `.gitmodules` file nor a gitlink entry.
+submodule is not required for that integration, and office-cogs has no git
+submodules and no `.gitmodules` file.
+
+The Pixel Agents webview asked the same question issue #7 raised for Pixel
+Index's vendoring: how does a top-level, build-time-only dependency reach an
+installed cog when Downloader will neither copy nor build one? A first pass
+at #7 tried a repo-root `vendor/pixel-agents` submodule with the built
+`webview_dist/` committed inside `pixelagents/` as the shipped artifact —
+consistent with "ship any assets needed by the cog in the cog package" above,
+and with the "Consequently" bullets below. That was superseded before merge:
+`webview_dist/` is not committed at all now. Instead,
+`pixelagents/infrastructure/webview_build.py` clones the pinned commit
+(`pixelagents/infrastructure/webview_vendor.commit`, shipped *inside*
+`pixelagents/` for the same "Downloader only copies this directory" reason
+the pin file for a hypothetical nested submodule would need to be) and runs
+the frontend build itself, from inside the installed cog, at `cog_load`
+time, into `redbot.core.data_manager.cog_data_path(self)` rather than
+`pixelagents/` or any Downloader-managed path. This sidesteps the whole
+submodule question: there is no submodule, top-level or nested, for
+Downloader to mishandle, and the build runs where Downloader's copy step
+already can't reach — after install, inside the cog's own code. See
+`pixelagents/Architecture.md`, "Building `webview_dist`", for the full
+mechanism, and its "degrades gracefully when git/node/npm are missing"
+behavior, which a repo-root submodule could never have needed to think about.
 
 ## What Downloader runs
 
@@ -107,9 +129,17 @@ Consequently:
 
 - A user running the ordinary `[p]repo add` and `[p]cog install` flow should
   receive a ready-to-run cog.
-- If a submodule is used only as release-time source, maintainers or CI should
+- If a submodule is used only as release-time source, maintainers or CI could
   build from it before release and commit or otherwise package the generated
-  files inside `pixelagents/`.
+  files inside `pixelagents/`. office-cogs took a different path for its one
+  build-time dependency (Pixel Agents' webview) instead: build from the
+  installed cog itself, at `cog_load`, into Red's per-cog data directory. See
+  the Conclusion above and `pixelagents/Architecture.md`. That avoids a
+  release step that can drift from what actually ships, at the cost of the
+  build tools (git/node/npm) needing to be present on the bot's own host, not
+  just on a release machine -- which is why that path has to degrade
+  gracefully (a clear status, an owner DM, a manual rebuild command) rather
+  than assume they always are.
 - Requiring every bot owner to locate Downloader's repository worktree and run
   a manual build is possible operationally, but it is outside Downloader's
   install/update contract and can be overwritten by later updates.

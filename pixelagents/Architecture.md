@@ -159,6 +159,7 @@ flowchart TD
     DOCS["docs<br/><small>doc page of pixel agents</small>"]
 
     IDX -->|git submodule for UI rendering| PA
+    OC -->|cloned at cog_load, into cog_data_path| PA
     OC -->|public HTTP API| IDX
     OC -->|Downloader cog package| RED
 ```
@@ -168,11 +169,22 @@ Index pins that UI as a git submodule so its gallery can render layouts with
 the same code as the core product. The docs site describes the core product
 but is not part of the office-cogs runtime path.
 
-office-cogs itself currently has no git submodules. Red's Downloader can clone
-a cog repository containing submodules, but it does not recursively update
-them on every revision checkout and it copies only the selected cog directory
-to Red's install path. The exact behavior and its build implications are
-documented in [Downloader and Git submodules](../docs/red-downloader-submodules.md).
+office-cogs pins the same upstream commit
+(`pixelagents/infrastructure/webview_vendor.commit`) but cannot vendor it as
+a submodule the way Pixel Index does: Red's Downloader clones a cog
+repository with `--recurse-submodules`, but it does not recursively update
+submodules on later revision checkouts, has no hook to run a frontend build,
+and copies only the selected cog directory (`pixelagents/`) to Red's install
+path — a top-level `vendor/` submodule would not even be copied, and nothing
+would ever build it for an installed cog. So instead of vendoring the
+source, office-cogs vendors *the build*: `pixelagents/infrastructure/
+webview_build.py` clones the pinned commit and runs the same subpath Vite
+build directly from inside the installed cog, the first time `cog_load`
+runs, into Red's per-cog data directory (see "Building `webview_dist`"
+below) — never into the installed package tree, which stays read-only from
+Downloader's point of view. The exact Downloader behavior this works around
+is documented in
+[Downloader and Git submodules](../docs/red-downloader-submodules.md).
 
 At runtime, office-cogs integrates with Pixel Index over its public HTTP API;
 it does not connect to the index database or renderer directly:
@@ -291,21 +303,66 @@ GET /third-party/pixelagents/static/<asset_path>
 
 ## Building `webview_dist`
 
-Built from the `vendor/pixel-agents` submodule in redstack:
+`webview_dist/` is not committed and does not exist anywhere in this
+repository's tree. It is cloned and built at runtime, the first time
+`cog_load` runs on a given bot host, by
+`pixelagents/infrastructure/webview_build.py`:
 
-```sh
-./scripts/build-webview
+```text
+ensure_webview_built(cog_data_path(self))
+  → already built at the pinned commit? return -- see is_up_to_date()
+  → git missing/node missing/npm missing? raise WebviewBuildError
+  → git clone/fetch + checkout <pinned commit>   → <data>/vendor/pixel-agents
+  → npm ci --workspace=webview-ui --ignore-scripts
+  → vite build --base /third-party/pixelagents/static/
+  → emit_decoded_assets.ts (upstream's own PNG decoders)
+  → sync the trimmed result                      → <data>/webview_dist
 ```
 
-which runs a subpath Vite build (`--base /third-party/pixelagents/static/`,
-supported upstream and covered by its `build-subpath` test) plus
-`scripts/emit-decoded-assets.ts`, then syncs into `webview_dist/`.
+`<data>` is `redbot.core.data_manager.cog_data_path(self)` — Red's per-cog
+data directory, writable and persisted across cog reloads/updates, *not* the
+installed `pixelagents/` package tree Downloader manages. That distinction
+is the whole reason this builds at runtime instead of vendoring a submodule
+the way Pixel Index does: Downloader copies only `pixelagents/` on install
+and has no hook to run a frontend build (see
+[Downloader and Git submodules](../docs/red-downloader-submodules.md)), so
+nothing outside the cog's own `cog_load` could ever produce `webview_dist`
+for an installed cog. `pixelagents/infrastructure/webview_vendor.commit`
+ships the pin *inside* `pixelagents/` for exactly that reason — a
+repo-root file, like the old `vendor/pixel-agents.commit`, would share the
+same problem a repo-root submodule has.
+
+The sync step trims Vite's output to what `WebviewAssetProvider` and the
+served bundle actually read: the entry HTML, the hashed JS/CSS bundle, the
+font it references, and the specific `assets/*.json` files below. Vite's
+`public/` passthrough also copies upstream's raw per-tile PNGs and unrelated
+promo images that nothing here serves; `_sync_dist` drops them rather than
+copying everything.
+
+Two failure modes both have to leave the cog usable rather than breaking
+`cog_load`, since a bot host may simply not have Node.js:
+
+- **A required tool is missing.** `[p]pixelagents status`'s Assets field
+  names which one; the bot owner gets an unsolicited DM (`Red.send_to_owners`)
+  the first time this happens, since a silently-broken webview is easy to
+  miss; and the public office page returns a friendly explanation instead of
+  a bare 503.
+- **The build itself fails** (network, a broken npm registry, upstream
+  shipping something the pinned Vite/tsx can't parse) -- same three
+  surfaces, with the captured error instead of a tool name.
+
+`[p]pixelagents webview rebuild` re-runs the same `ensure_webview_built`
+routine (forced, bypassing the already-built check), off the event loop --
+useful after installing a missing tool, or to pick up a pin bump without a
+full cog reload.
 
 The production bundle decodes **no** assets itself — `initBrowserMock()` is
 DEV-gated in `main.tsx` — so sprites must arrive over the socket as pixel
 arrays. Upstream decodes PNGs in Node; rather than port that to Python, the
-build runs upstream's own decoders and writes `assets/decoded/*.json`, which
-the cog reads at load and forwards verbatim.
+build runs upstream's own decoders
+(`infrastructure/webview_build_scripts/emit_decoded_assets.ts`, invoked
+against the runtime clone) and writes `assets/decoded/*.json`, which the cog
+reads at load and forwards verbatim.
 
 ## The `webviewReady` bootstrap
 

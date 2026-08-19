@@ -291,9 +291,11 @@ class TestCommandContract:
             "despawnall",
             "index",
             "layout",
+            "webview",
         }
         assert set(root.subcommands["index"].subcommands) == {"set", "setweb"}
         assert set(root.subcommands["layout"].subcommands) == {"search", "view"}
+        assert set(root.subcommands["webview"].subcommands) == {"rebuild"}
 
     def test_administrative_permissions_are_stable(self):
         root = PixelAgentsCog.pixelagents_group
@@ -322,3 +324,7 @@ class TestCommandContract:
         }
         assert not hasattr(root.subcommands["layout"].subcommands["search"], "__permissions__")
         assert not hasattr(root.subcommands["layout"].subcommands["view"], "__permissions__")
+        assert root.subcommands["webview"].__wrapped__.__permissions__ == {"administrator": True}
+        assert root.subcommands["webview"].subcommands["rebuild"].__permissions__ == {
+            "administrator": True
+        }

@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import sys
+import tempfile
 import types
+from pathlib import Path
 from unittest.mock import MagicMock
 
 
@@ -220,7 +222,41 @@ class _FakeCogLoadError(RuntimeError):
 _redbot_core_errors = _make_stub_module("redbot.core.errors", CogLoadError=_FakeCogLoadError)
 _redbot_core.errors = _redbot_core_errors
 
+
+# --- redbot.core.data_manager ---
+# Real Red only initializes this once the bot process has started
+# (load_basic_configuration); tests construct cogs standalone, so this
+# stands in with a throwaway directory per (test-process, cog class name).
+# It pre-seeds a webview_dist already matching the packaged vendor pin, so
+# constructing a cog in a test never triggers a real clone+build -- see
+# infrastructure/webview_build.py's `.built_commit` marker convention.
+_FAKE_DATA_ROOT = Path(tempfile.mkdtemp(prefix="pixelagents-test-data-"))
+_PIN_COMMIT = (
+    (Path(__file__).parent / "infrastructure" / "webview_vendor.commit")
+    .read_text(encoding="utf-8")
+    .strip()
+)
+
+
+def _fake_cog_data_path(cog_instance=None, raw_name=None):
+    name = raw_name or type(cog_instance).__name__
+    path = _FAKE_DATA_ROOT / name
+    if not path.exists():
+        path.mkdir(parents=True)
+        webview_dist = path / "webview_dist"
+        webview_dist.mkdir()
+        (webview_dist / "index.html").write_text("<html><head></head><body></body></html>")
+        (webview_dist / ".built_commit").write_text(_PIN_COMMIT + "\n")
+    return path
+
+
+_redbot_core_data_manager = _make_stub_module(
+    "redbot.core.data_manager", cog_data_path=_fake_cog_data_path
+)
+_redbot_core.data_manager = _redbot_core_data_manager
+
 sys.modules["redbot"] = _redbot
 sys.modules["redbot.core"] = _redbot_core
 sys.modules["redbot.core.bot"] = _redbot_core_bot
 sys.modules["redbot.core.errors"] = _redbot_core_errors
+sys.modules["redbot.core.data_manager"] = _redbot_core_data_manager

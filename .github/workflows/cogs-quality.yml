@@ -5,6 +5,8 @@ on:
     paths:
       - "corridor/**/*.py"
       - "pixelagents/**/*.py"
+      - "pixelagents/infrastructure/webview_vendor.commit"
+      - "pixelagents/infrastructure/webview_build_scripts/**"
       - "toolbox/**/*.py"
       - "contracts/pixel_index/**"
       - "ui_limits.py"
@@ -15,6 +17,8 @@ on:
     paths:
       - "corridor/**/*.py"
       - "pixelagents/**/*.py"
+      - "pixelagents/infrastructure/webview_vendor.commit"
+      - "pixelagents/infrastructure/webview_build_scripts/**"
       - "toolbox/**/*.py"
       - "contracts/pixel_index/**"
       - "ui_limits.py"

@@ -45,48 +45,22 @@ class AdminCommandsMixin(PixelAgentsBase):
         def yn(value: bool) -> str:
             return "✅" if value else "🛑"
 
-        embed = discord.Embed(title="Pixelagents Status", color=discord.Color.blurple())
-        embed.add_field(
-            name="Office Server",
-            value=f"{global_settings.ws_host}:{global_settings.ws_port}/ws",
-            inline=False,
-        )
-        embed.add_field(name="Serving", value=yn(self._websocket_server.running), inline=True)
-        embed.add_field(
-            name="Office Clients",
-            value=(f"{self._client_hub.client_count} ({self._client_hub.editor_count} editor)"),
-            inline=True,
-        )
-        embed.add_field(
-            name="Assets",
-            value=self._webview_assets_status(),
-            inline=True,
-        )
-        embed.add_field(
-            name="Msg Tool Clear Delay",
-            value=f"{global_settings.message_tool_clear_delay}s",
-            inline=True,
-        )
-        embed.add_field(name="Guild Enabled", value=yn(guild_settings.enabled), inline=True)
-        embed.add_field(name="Include Bots", value=yn(guild_settings.include_bots), inline=True)
-        embed.add_field(name="Tracked Agents", value=str(tracked), inline=True)
-        embed.add_field(
-            name="Broadcast Rich Presence",
-            value=yn(global_settings.broadcast_rich_presence),
-            inline=True,
-        )
-        embed.add_field(
-            name="Broadcast Messages",
-            value=yn(global_settings.broadcast_messages),
-            inline=True,
-        )
-        embed.add_field(
-            name="Pixel Index API", value=global_settings.pixel_index_api_url, inline=False
-        )
-        embed.add_field(
-            name="Pixel Index Web", value=global_settings.pixel_index_web_url, inline=False
-        )
-        await self._reply(ctx, embed=embed)
+        lines = [
+            f"**Office Server:** {global_settings.ws_host}:{global_settings.ws_port}/ws",
+            f"**Serving:** {yn(self._websocket_server.running)}",
+            "**Office Clients:** "
+            f"{self._client_hub.client_count} ({self._client_hub.editor_count} editor)",
+            f"**Assets:** {self._webview_assets_status()}",
+            f"**Msg Tool Clear Delay:** {global_settings.message_tool_clear_delay}s",
+            f"**Guild Enabled:** {yn(guild_settings.enabled)}",
+            f"**Include Bots:** {yn(guild_settings.include_bots)}",
+            f"**Tracked Agents:** {tracked}",
+            f"**Broadcast Rich Presence:** {yn(global_settings.broadcast_rich_presence)}",
+            f"**Broadcast Messages:** {yn(global_settings.broadcast_messages)}",
+            f"**Pixel Index API:** {global_settings.pixel_index_api_url}",
+            f"**Pixel Index Web:** {global_settings.pixel_index_web_url}",
+        ]
+        await self._reply(ctx, "\n".join(lines), title="Pixelagents Status")
 
     def _settings_runtime_snapshot(self, guild_id: int) -> SettingsRuntimeSnapshot:
         return SettingsRuntimeSnapshot(

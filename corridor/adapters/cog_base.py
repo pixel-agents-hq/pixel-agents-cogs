@@ -14,7 +14,7 @@ from redbot.core import commands
 from redbot.core.bot import Red
 
 from ..application import PermissionService, ReplyContent, ReplyService
-from ..domain import GuildSettings, IconPreference, PermissionGroupDef, ReplyMode
+from ..domain import GuildSettings, IconPreference, PermissionGroupDef, RenderedReply, ReplyMode
 from ..infrastructure import RedCorridorRepository
 from .api import BotIconResolver, BotOwnerRegistry, DiscordMemberRef, send_rendered_reply
 
@@ -78,6 +78,27 @@ class CogBase:
         await ctx.send("You don't have permission to do that.")
         return False
 
+    async def render_reply(
+        self,
+        guild_id: int,
+        *,
+        title: str | None = None,
+        description: str | None = None,
+        content: str | None = None,
+    ) -> RenderedReply:
+        """Render title/description/content against a guild's `ReplyMode`
+        without sending anything -- the single source of truth other cogs
+        use when they need their own interaction-aware dispatch (ephemeral
+        responses, hybrid-command followups, ...) instead of `send_reply`'s
+        plain `ctx.send`. See pixelagents' `ReplyMixin` for that use."""
+
+        settings = await self._repository.guild_settings(guild_id)
+        return await self._reply_service.render(
+            guild_id,
+            settings.reply,
+            ReplyContent(title=title, description=description, content=content),
+        )
+
     async def send_reply(
         self,
         ctx: commands.Context,
@@ -87,11 +108,8 @@ class CogBase:
         content: str | None = None,
     ) -> discord.Message:
         assert ctx.guild is not None, "send_reply needs a guild context"
-        settings = await self._repository.guild_settings(ctx.guild.id)
-        rendered = await self._reply_service.render(
-            ctx.guild.id,
-            settings.reply,
-            ReplyContent(title=title, description=description, content=content),
+        rendered = await self.render_reply(
+            ctx.guild.id, title=title, description=description, content=content
         )
         return await send_rendered_reply(ctx, rendered)
 

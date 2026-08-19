@@ -16,7 +16,7 @@ from pixelagents.infrastructure.settings import (
     RedSettingsRepository,
 )
 from pixelagents.pixelagents import pixelagents as PixelAgentsCog
-from pixelagents.tests.conftest import _FakeClientWebSocketResponse, _FakeConfig
+from pixelagents.tests.conftest import FakeCorridor, _FakeClientWebSocketResponse, _FakeConfig
 
 
 def make_repository() -> tuple[RedSettingsRepository, _FakeConfig]:
@@ -165,6 +165,7 @@ class TestSettingsCommandParity(unittest.IsolatedAsyncioTestCase):
         bot.guilds = []
         bot.is_owner = AsyncMock(return_value=False)
         self.cog = PixelAgentsCog(bot)
+        self.cog._corridor = FakeCorridor()
         self.cog._settings_service = MagicMock()
         self.cog._settings_service.set_ws_port = AsyncMock()
         self.cog._settings_service.set_message_tool_clear_delay = AsyncMock()
@@ -229,6 +230,7 @@ class TestRichPresenceDisableBehavior(unittest.IsolatedAsyncioTestCase):
         bot.guilds = []
         bot.is_owner = AsyncMock(return_value=False)
         cog = PixelAgentsCog(bot)
+        cog._corridor = FakeCorridor()
         cog._agents[(1, 10)] = ("online", "Agent")
         cog._presence_cache[(1, 10)] = "Listening to music"
         connected_socket = _FakeClientWebSocketResponse()

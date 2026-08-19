@@ -29,7 +29,7 @@ class TestWebviewBuildSurfaces(unittest.IsolatedAsyncioTestCase):
         with patch.object(webview_build, "missing_tools", return_value=("git", "npm")):
             await self.cog.cmd_webview_rebuild(ctx)
 
-        messages = [call.args[0] for call in ctx.send.await_args_list]
+        messages = [call.kwargs["content"] for call in ctx.send.await_args_list]
         self.assertTrue(any("Rebuilding" in m for m in messages))
         self.assertTrue(any("git" in m and "npm" in m for m in messages))
         self.assertEqual(self.cog._webview_assets_status(), "⚠️ missing tool(s): git, npm")
@@ -57,7 +57,7 @@ class TestWebviewBuildSurfaces(unittest.IsolatedAsyncioTestCase):
             await self.cog.cmd_webview_rebuild(ctx)
         sync_dist.assert_called_once()
 
-        messages = [call.args[0] for call in ctx.send.await_args_list]
+        messages = [call.kwargs["content"] for call in ctx.send.await_args_list]
         self.assertTrue(any("✅" in m for m in messages))
 
     async def test_failed_build_notifies_owners_with_missing_tools(self) -> None:

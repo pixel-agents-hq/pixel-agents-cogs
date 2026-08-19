@@ -396,6 +396,7 @@ def _install_redbot() -> None:
         def __init__(self) -> None:
             self._guild_defaults: dict[str, Any] = {}
             self._guilds: dict[int, _FakeGuildConfig] = {}
+            self._global_data: dict[str, Any] = {}
 
         @classmethod
         def get_conf(
@@ -411,6 +412,15 @@ def _install_redbot() -> None:
                 self._guilds[guild_id] = _FakeGuildConfig(self._guild_defaults)
             return self._guilds[guild_id]
 
+        def register_global(self, **defaults: object) -> None:
+            self._global_data.update(defaults)
+
+        def __getattr__(self, name: str) -> _FakeConfigValue:
+            # Only reached for global config keys registered via
+            # register_global -- guild_from_id/register_guild above are
+            # real attributes, so normal lookup finds them first.
+            return _FakeConfigValue(self._global_data, name)
+
     class _FakeCommand:
         def __init__(self, func: Any) -> None:
             self.callback = func
@@ -422,6 +432,12 @@ def _install_redbot() -> None:
             return await self.__wrapped__(*args, **kwargs)
 
         def command(self, **_kwargs: object) -> Any:
+            def decorator(func: Any) -> _FakeCommand:
+                return _FakeCommand(func)
+
+            return decorator
+
+        def group(self, **_kwargs: object) -> Any:
             def decorator(func: Any) -> _FakeCommand:
                 return _FakeCommand(func)
 
@@ -451,6 +467,13 @@ def _install_redbot() -> None:
 
         @staticmethod
         def admin_or_permissions(**_kwargs: object) -> Any:
+            def decorator(func: Any) -> Any:
+                return func
+
+            return decorator
+
+        @staticmethod
+        def is_owner() -> Any:
             def decorator(func: Any) -> Any:
                 return func
 
@@ -490,8 +513,28 @@ def _install_redbot() -> None:
         get_end_user_data_statement_or_raise=lambda _file: "stubbed data statement",
     )
 
+    import tempfile
+    from pathlib import Path
+
+    _data_root = Path(tempfile.mkdtemp(prefix="red-testing-data-"))
+
+    def _cog_data_path(cog_instance: object) -> Path:
+        path = _data_root / type(cog_instance).__name__
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    redbot_core_data_manager = _make_stub_module(
+        "redbot.core.data_manager", cog_data_path=_cog_data_path
+    )
+    # `from redbot.core import data_manager` needs this as a real attribute
+    # on the redbot.core stub, not just present in sys.modules -- manually
+    # inserting a submodule into sys.modules skips the parent-package
+    # attribute wiring the real import system would otherwise do.
+    redbot_core.data_manager = redbot_core_data_manager
+
     sys.modules["redbot"] = redbot
     sys.modules["redbot.core"] = redbot_core
     sys.modules["redbot.core.errors"] = redbot_core_errors
     sys.modules["redbot.core.bot"] = redbot_core_bot
     sys.modules["redbot.core.utils"] = redbot_core_utils
+    sys.modules["redbot.core.data_manager"] = redbot_core_data_manager

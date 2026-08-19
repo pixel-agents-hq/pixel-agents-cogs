@@ -2,8 +2,8 @@
 
 Replies and permission checks go through corridor (this cog's required_cogs
 dependency) rather than ctx.send()/hand-rolled role checks, so this cog
-automatically respects whatever reply style and moderator/privileged roles
-the guild has already configured for every other cog.
+automatically respects whatever reply style and permission groups the guild
+has already configured for every other cog.
 """
 
 from __future__ import annotations
@@ -11,8 +11,6 @@ from __future__ import annotations
 from typing import Any
 
 from redbot.core import commands
-
-from corridor.domain import PermissionGroup
 
 from ..application import CounterService
 
@@ -40,9 +38,9 @@ class CommandsMixin:
 
     @{{cookiecutter.cog_name}}_group.command(name="bump")
     async def bump(self, ctx: commands.Context) -> None:
-        """Increment this server's count by one. Requires the moderator tier."""
+        """Increment this server's count by one. Requires the keyholder tier."""
 
-        if not await self._corridor.require_permission(ctx, PermissionGroup.MODERATOR):
+        if not await self._corridor.require_permission(ctx, "keyholder"):
             return
         snapshot = await self._service.bump(ctx.guild.id)
         await self._corridor.send_reply(ctx, title="Count", description=f"Now: {snapshot.count}")

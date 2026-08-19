@@ -8,8 +8,6 @@ import unittest
 
 from redbot.core.errors import CogLoadError
 
-from corridor.domain import PermissionGroup
-
 from .. import setup
 from ..{{cookiecutter.cog_name}} import {{ cookiecutter.cog_name.replace('-', '_').split('_') | map('capitalize') | join }}
 from .conftest import FakeBot, FakeContext, FakeCorridor
@@ -36,10 +34,10 @@ class TestCommands(unittest.IsolatedAsyncioTestCase):
         descriptions = [reply["description"] for reply in self.bot.corridor.replies]
         self.assertEqual(descriptions, ["Now: 1", "Now: 2"])
 
-    async def test_bump_checks_moderator_permission(self) -> None:
+    async def test_bump_checks_keyholder_permission(self) -> None:
         await self.cog.bump.callback(self.cog, self.ctx)
 
-        self.assertEqual(self.bot.corridor.permission_checks, [PermissionGroup.MODERATOR])
+        self.assertEqual(self.bot.corridor.permission_checks, ["keyholder"])
 
     async def test_bump_is_blocked_when_corridor_denies_permission(self) -> None:
         self.bot.corridor = FakeCorridor(allow_permission=False)

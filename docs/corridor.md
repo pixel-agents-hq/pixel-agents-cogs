@@ -10,40 +10,55 @@ formatted**. Neither is reinvented per cog.
 
 ## Why a shared cog instead of per-cog settings
 
-Before corridor, each cog would have needed its own moderator/privileged
-role configuration and its own text-vs-embed reply logic — meaning a server
-admin configuring "who counts as a moderator" once per cog, and every cog
+Before corridor, each cog would have needed its own permission-role
+configuration and its own text-vs-embed reply logic — meaning a server
+admin configuring "who counts as a keyholder" once per cog, and every cog
 maintaining its own copy of embed-building boilerplate. corridor owns one
-guild-wide `Config` store instead: configure the role tiers and reply style
-once, and every cog that depends on corridor respects it immediately. This
-is the kind of sharing that's worth the `required_cogs` coupling — it's
-guild-wide *state* that genuinely needs one source of truth, not shared UI
-code wrapped around independent per-cog logic.
+guild-wide `Config` store instead: configure the permission groups and
+reply style once, and every cog that depends on corridor respects it
+immediately. This is the kind of sharing that's worth the `required_cogs`
+coupling — it's guild-wide *state* that genuinely needs one source of
+truth, not shared UI code wrapped around independent per-cog logic.
 
 ## The permission model
 
-Defined in [`corridor/domain/models.py`](../corridor/domain/models.py) as
-`PermissionGroup`, an `enum.StrEnum` with four values:
+Defined in [`corridor/domain/models.py`](../corridor/domain/models.py) as an
+open, admin-configurable group model rather than a fixed enum:
+`PermissionGroupDef` (`key`/`label`/`role_ids`) is one role-backed tier, and
+`PermissionSettings` holds a per-guild, admin-managed tuple of those groups
+plus the two reserved, non-role-backed keys below. Groups seed by default
+with `building_manager` ("Building Manager") and `keyholder` ("Keyholder")
+— see `DEFAULT_PERMISSION_GROUPS` in
+[`corridor/infrastructure/settings_repository.py`](../corridor/infrastructure/settings_repository.py)
+— but a guild admin can add, remove, or rename further groups at any time
+from the settings panel (see "Configuring it" below).
 
-| Group | Who satisfies it |
-|---|---|
-| `ALL` | Everyone. Never restricts. |
-| `MODERATOR` | Members holding one of the guild's configured moderator roles. |
-| `PRIVILEGED` | Members holding one of the guild's configured privileged roles. |
-| `OWNER` | The bot owner (Red's owner concept, not guild owner). |
+| Group | Key | Who satisfies it |
+|---|---|---|
+| Owner | `owner` (`OWNER_KEY`, reserved) | The bot owner (Red's owner concept, not guild owner) OR a member with guild Administrator permission. |
+| Employee | `employee` (`EMPLOYEE_KEY`, reserved) | Everyone. Never restricts. |
+| Building Manager *(default)* | `building_manager` | Members holding one of the roles a guild admin has assigned to this group. |
+| Keyholder *(default)* | `keyholder` | Members holding one of the roles a guild admin has assigned to this group. |
+| *(any admin-added group)* | *(admin-chosen at creation, stable thereafter)* | Members holding one of the roles a guild admin has assigned to that group. |
 
-**`MODERATOR` and `PRIVILEGED` are independent, unranked tiers** — holding
-one does not imply the other. A member with only the moderator role fails a
-`require_permission(PRIVILEGED)` check, and vice versa. This was a
-deliberate choice over a linear hierarchy (`ALL < PRIVILEGED < MODERATOR <
-OWNER`): "privileged" is meant as a distinct special-access group, not a
-lesser form of moderator. The bot owner bypasses every check regardless of
-group, and `ALL` never restricts.
+Dependent cogs reference a group by its plain string `key` — e.g.
+pixelagents hardcodes `"keyholder"` — not an enum member.
+`corridor/adapters/cog_base.py`'s `capabilities_satisfy(member, group_key:
+str)` / `require_permission(ctx, group_key: str)` both take `str`.
 
-Each tier's role set is a `frozenset[int]` of Discord role IDs — a guild can
-assign more than one role per tier, and the sets are mutable at any time
-(add/remove a role without redefining the whole tier). This is computed per
-check via `MemberCapabilities` (`corridor/domain/models.py`), which the
+**Role-backed groups are independent, unranked tiers** — holding one does
+not imply another. A member with only a Keyholder role fails a
+`require_permission("building_manager")` check, and vice versa. `owner`
+bypasses every check regardless of group, and `employee` never restricts.
+A role-backed group can have any number of roles assigned, including zero —
+new groups start with no roles until an admin assigns some, and a group's
+`key` is stable once created while its `label` (the display name) can be
+renamed freely.
+
+Each group's role set is a `frozenset[int]` of Discord role IDs — a guild
+can assign more than one role per group, and the set is mutable at any time
+(add/remove a role without redefining the whole group). This is computed
+per check via `MemberCapabilities` (`corridor/domain/models.py`), which the
 pure `PermissionService`
 ([`corridor/application/permission_service.py`](../corridor/application/permission_service.py))
 resolves from a member's role IDs and the bot's owner ID set — no discord.py
@@ -76,7 +91,7 @@ instance, fetched via `bot.get_cog("Corridor")`
 ```python
 await corridor.send_reply(ctx, title="Count", description=str(snapshot.count))
 
-if not await corridor.require_permission(ctx, PermissionGroup.MODERATOR):
+if not await corridor.require_permission(ctx, "keyholder"):
     return
 ```
 
@@ -127,8 +142,10 @@ Red's cog manager and loads it if it isn't already, raising a clear
 
 The Components V2 settings panel
 ([`corridor/adapters/settings_ui.py`](../corridor/adapters/settings_ui.py))
-is where a guild sets its moderator/privileged role sets and reply
-preferences. Two ways to reach it:
+is where a guild sets its permission groups' role assignments (add, remove,
+or rename a group; assign or clear its roles) and reply preferences. Group
+management is UI-only — there is no text-command equivalent. Two ways to
+reach it:
 
 - **Standalone**: `[p]corridorsettings` — corridor's own command.
 - **Mounted**: any cog's own settings command can embed the exact same
@@ -145,7 +162,7 @@ Red's default behavior for a failed permission check, not a bug.
 ## What this is not
 
 corridor doesn't touch Discord's own permission system (role permission
-bits, channel overwrites) — the moderator/privileged tiers are an
+bits, channel overwrites) — the permission groups are an
 office-cogs-specific concept layered on top, deliberately decoupled from
 whether a role happens to have "Manage Server" or similar. It also isn't a
 general shared-code library for UI or business logic: the earlier idea of

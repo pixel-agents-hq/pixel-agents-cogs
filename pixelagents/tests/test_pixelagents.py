@@ -11,6 +11,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from corridor.domain import ReplyField
 from pixelagents.application.catalogue import CatalogueResult
 from pixelagents.models import LayoutDetail, LayoutListResponse
 from pixelagents.pixelagents import (
@@ -62,7 +63,12 @@ def _make_cog():
     bot = MagicMock()
     bot.guilds = []
     bot.is_owner = AsyncMock(return_value=False)
-    return PixelAgentsCog(bot)
+    cog = PixelAgentsCog(bot)
+    # Commands reply through corridor's shared ReplyMode (see
+    # pixelagents/adapters/replies.py) -- default to a text-mode double so
+    # tests that don't care about ReplyMode still get a working `_corridor`.
+    cog._corridor = FakeCorridor()
+    return cog
 
 
 def _connect(cog, authorized=False):
@@ -893,7 +899,7 @@ class TestToolClearDelayCommand(unittest.IsolatedAsyncioTestCase):
         await self.cog.cmd_toolcleardelay(ctx, 5.0)
         self.assertEqual(await self.cog.config.message_tool_clear_delay(), 5.0)
         ctx.send.assert_awaited_once()
-        self.assertIn("5.0", ctx.send.call_args[0][0])
+        self.assertIn("5.0", ctx.send.call_args.kwargs["content"])
 
     async def test_negative_delay_rejected(self):
         ctx = MagicMock()
@@ -1029,7 +1035,7 @@ class TestPixelIndexSetwebCommand(unittest.IsolatedAsyncioTestCase):
     async def test_rejects_invalid_url(self):
         ctx = self._ctx()
         await self.cog.cmd_pixelindex_setweb(ctx, "not-a-url")
-        self.assertIn("valid URL", ctx.send.call_args[0][0])
+        self.assertIn("valid URL", ctx.send.call_args.kwargs["content"])
 
 
 class TestPixelIndexGet(unittest.IsolatedAsyncioTestCase):
@@ -1264,7 +1270,70 @@ class TestReplyHelper(unittest.IsolatedAsyncioTestCase):
         ctx.interaction = None
         ctx.send = AsyncMock()
         await self.cog._reply(ctx, "hello")
-        ctx.send.assert_awaited_once_with("hello")
+        ctx.send.assert_awaited_once_with(content="hello")
+
+    async def test_text_mode_renders_through_corridor(self):
+        self.cog._corridor = FakeCorridor(reply_mode="text")
+        ctx = MagicMock()
+        ctx.interaction = None
+        ctx.send = AsyncMock()
+        await self.cog._reply(ctx, "hello", title="Pixel Agents")
+        ctx.send.assert_awaited_once_with(content="hello")
+        self.assertEqual(
+            self.cog._corridor.rendered_replies,
+            [(ctx.guild.id, "Pixel Agents", "hello", None, ())],
+        )
+
+    async def test_embed_mode_renders_through_corridor(self):
+        self.cog._corridor = FakeCorridor(reply_mode="embed")
+        ctx = MagicMock()
+        ctx.interaction = None
+        ctx.send = AsyncMock()
+        await self.cog._reply(ctx, "hello", title="Pixel Agents")
+        ctx.send.assert_awaited_once()
+        self.assertIn("embed", ctx.send.call_args.kwargs)
+        self.assertNotIn("content", ctx.send.call_args.kwargs)
+
+    async def test_embed_mode_reply_carries_fields(self):
+        self.cog._corridor = FakeCorridor(reply_mode="embed")
+        ctx = MagicMock()
+        ctx.interaction = None
+        ctx.send = AsyncMock()
+        fields = [ReplyField("Serving", "yes", False), ReplyField("Clients", "3")]
+
+        await self.cog._reply(ctx, title="Status", fields=fields)
+
+        embed = ctx.send.call_args.kwargs["embed"]
+        self.assertEqual(
+            [call.kwargs for call in embed.add_field.call_args_list],
+            [
+                {"name": "Serving", "value": "yes", "inline": False},
+                {"name": "Clients", "value": "3", "inline": True},
+            ],
+        )
+
+    async def test_text_mode_reply_flattens_fields_to_lines(self):
+        self.cog._corridor = FakeCorridor(reply_mode="text")
+        ctx = MagicMock()
+        ctx.interaction = None
+        ctx.send = AsyncMock()
+        fields = [ReplyField("Serving", "yes"), ReplyField("Clients", "3")]
+
+        await self.cog._reply(ctx, title="Status", fields=fields)
+
+        ctx.send.assert_awaited_once_with(
+            content="Status\n**Serving:** yes\n**Clients:** 3"
+        )
+
+    async def test_view_only_reply_bypasses_corridor(self):
+        self.cog._corridor = FakeCorridor(reply_mode="embed")
+        ctx = MagicMock()
+        ctx.interaction = None
+        ctx.send = AsyncMock()
+        view = object()
+        await self.cog._reply(ctx, view=view)
+        ctx.send.assert_awaited_once_with(view=view)
+        self.assertEqual(self.cog._corridor.rendered_replies, [])
 
     async def test_slash_uses_response_send_message(self):
         ctx = MagicMock()

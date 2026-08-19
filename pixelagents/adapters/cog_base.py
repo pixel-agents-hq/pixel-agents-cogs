@@ -248,8 +248,12 @@ class PixelAgentsBase:
     async def _despawn_guild(self, guild: discord.Guild) -> None:
         raise NotImplementedError
 
-    async def _reply(self, ctx: commands.Context, content: Any = None, **kwargs: Any) -> None:
+    async def _reply(
+        self, ctx: commands.Context, content: str | None = None, **kwargs: Any
+    ) -> None:
         raise NotImplementedError
 
-    async def _send_public(self, ctx: commands.Context, content: Any = None, **kwargs: Any) -> None:
+    async def _send_public(
+        self, ctx: commands.Context, content: str | None = None, **kwargs: Any
+    ) -> None:
         raise NotImplementedError

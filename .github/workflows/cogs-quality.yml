@@ -96,6 +96,18 @@ jobs:
       - name: Run Ruff
         run: ruff check ${{ matrix.lint_target }}
 
+      - name: Test shared lint tooling (contracts/ast_call_graph.py)
+        # Also cross-cog, not scoped to matrix.lint_target -- run once.
+        if: matrix.cog == 'corridor'
+        run: python -m unittest discover -s contracts/tests
+
+      - name: Check reply-channel compliance (respects corridor's ReplyMode)
+        # Scans corridor/pixelagents/toolbox together in one pass (it's a
+        # cross-cog check, not scoped to matrix.lint_target) -- run it once
+        # rather than once per matrix leg.
+        if: matrix.cog == 'corridor'
+        run: python -m contracts.discord_replies.lint_reply_channel
+
       - name: Check production typing
         # Scoped to this cog's own files: an unscoped `python -m mypy` would
         # check pyproject.toml's full `files` list, which spans every cog --

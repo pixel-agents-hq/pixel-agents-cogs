@@ -628,19 +628,54 @@ sys.modules["redbot.core.errors"] = _redbot_core_errors
 sys.modules["redbot.core.data_manager"] = _redbot_core_data_manager
 
 
+class _FakeRenderedReply:
+    """Test double for corridor's RenderedReply DTO -- pixelagents' ReplyMixin
+    only reads these attributes, duck-typed the same way it reads FakeCorridor
+    itself (no static import of corridor's domain types, `fields` aside --
+    ReplyMixin imports the real corridor.domain.ReplyField as its own field
+    type, so this double's `fields` are real ReplyField instances too)."""
+
+    def __init__(
+        self,
+        *,
+        mode,
+        content=None,
+        embed_title=None,
+        embed_description=None,
+        fields=(),
+        footer_text=None,
+        show_timestamp=False,
+        icon_url=None,
+    ):
+        self.mode = mode
+        self.content = content
+        self.embed_title = embed_title
+        self.embed_description = embed_description
+        self.fields = fields
+        self.footer_text = footer_text
+        self.show_timestamp = show_timestamp
+        self.icon_url = icon_url
+
+
 class FakeCorridor:
-    """Test double for corridor's cross-cog permission API.
+    """Test double for corridor's cross-cog permission + reply-render API.
 
     `keyholders` and `owners` are member ids treated as satisfying the
     "keyholder" group key / bypassing every check, respectively -- mirroring
     corridor's real capabilities_satisfy(member, group_key) contract.
+
+    `reply_mode` ("text" or "embed") mirrors corridor's real
+    ReplyService.render: title/description in, a RenderedReply-shaped object
+    out, nothing sent -- see corridor/application/reply_service.py.
     """
 
-    def __init__(self, keyholders=frozenset(), owners=frozenset()):
+    def __init__(self, keyholders=frozenset(), owners=frozenset(), reply_mode="text"):
         self._keyholders = keyholders
         self._owners = owners
+        self.reply_mode = reply_mode
         self.registered_dependents = set()
         self.capability_checks = []
+        self.rendered_replies = []
 
     def register_dependent(self, extension_name):
         self.registered_dependents.add(extension_name)
@@ -656,6 +691,20 @@ class FakeCorridor:
         if group_key == "keyholder":
             return member_id in self._keyholders
         return False
+
+    async def render_reply(self, guild_id, *, title=None, description=None, content=None, fields=()):
+        self.rendered_replies.append((guild_id, title, description, content, tuple(fields)))
+        if self.reply_mode == "text":
+            base = content or description or title or ""
+            lines = [base] if base else []
+            lines.extend(f"**{field.name}:** {field.value}" for field in fields)
+            return _FakeRenderedReply(mode="text", content="\n".join(lines))
+        return _FakeRenderedReply(
+            mode="embed",
+            embed_title=title,
+            embed_description=description or content,
+            fields=tuple(fields),
+        )
 
 
 def write_fake_vite_build(build_out_dir: Path) -> None:

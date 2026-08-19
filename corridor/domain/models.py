@@ -78,6 +78,18 @@ class GuildSettings:
 
 
 @dataclass(frozen=True, slots=True)
+class ReplyField:
+    """One embed field -- discord.Embed.add_field's name/value/inline,
+    framework-neutral. In ReplyMode.TEXT there's no such thing as an embed
+    field, so ReplyService.render flattens each into an extra text line
+    instead of dropping it -- see that method for the exact format."""
+
+    name: str
+    value: str
+    inline: bool = True
+
+
+@dataclass(frozen=True, slots=True)
 class RenderedReply:
     """Framework-neutral description of what to send. The adapter layer turns
     this into a plain ctx.send() or a discord.Embed -- this module never
@@ -87,6 +99,7 @@ class RenderedReply:
     content: str | None
     embed_title: str | None
     embed_description: str | None
+    fields: tuple[ReplyField, ...]
     footer_text: str | None
     show_timestamp: bool
     icon_url: str | None

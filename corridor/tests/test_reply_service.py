@@ -6,7 +6,7 @@ from __future__ import annotations
 import unittest
 
 from ..application import ReplyContent, ReplyService
-from ..domain import IconPreference, IconSource, ReplyMode, ReplyPreferences
+from ..domain import IconPreference, IconSource, ReplyField, ReplyMode, ReplyPreferences
 
 
 class FakeIconResolver:
@@ -76,3 +76,47 @@ class TestReplyService(unittest.IsolatedAsyncioTestCase):
         rendered = await self.service.render(1, preferences, ReplyContent(description="Body"))
 
         self.assertEqual(rendered.icon_url, "https://example.com/x.png")
+
+    async def test_embed_mode_carries_fields_through_unchanged(self) -> None:
+        preferences = ReplyPreferences(
+            mode=ReplyMode.EMBED,
+            show_timestamp=False,
+            footer_text=None,
+            icon=IconPreference(source=IconSource.BOT),
+        )
+        fields = (ReplyField("Serving", "yes", False), ReplyField("Clients", "3"))
+
+        rendered = await self.service.render(
+            1, preferences, ReplyContent(title="Status", fields=fields)
+        )
+
+        self.assertEqual(rendered.fields, fields)
+
+    async def test_text_mode_flattens_fields_to_lines(self) -> None:
+        preferences = ReplyPreferences(
+            mode=ReplyMode.TEXT,
+            show_timestamp=False,
+            footer_text=None,
+            icon=IconPreference(source=IconSource.BOT),
+        )
+        fields = (ReplyField("Serving", "yes"), ReplyField("Clients", "3"))
+
+        rendered = await self.service.render(
+            1, preferences, ReplyContent(description="Status", fields=fields)
+        )
+
+        self.assertEqual(rendered.content, "Status\n**Serving:** yes\n**Clients:** 3")
+        self.assertEqual(rendered.fields, ())
+
+    async def test_text_mode_with_only_fields_omits_leading_blank_line(self) -> None:
+        preferences = ReplyPreferences(
+            mode=ReplyMode.TEXT,
+            show_timestamp=False,
+            footer_text=None,
+            icon=IconPreference(source=IconSource.BOT),
+        )
+        fields = (ReplyField("Serving", "yes"),)
+
+        rendered = await self.service.render(1, preferences, ReplyContent(fields=fields))
+
+        self.assertEqual(rendered.content, "**Serving:** yes")

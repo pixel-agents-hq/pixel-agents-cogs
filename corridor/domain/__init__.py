@@ -9,6 +9,7 @@ from .models import (
     PermissionGroupDef,
     PermissionSettings,
     RenderedReply,
+    ReplyField,
     ReplyMode,
     ReplyPreferences,
 )
@@ -24,6 +25,7 @@ __all__ = [
     "PermissionGroupDef",
     "PermissionSettings",
     "RenderedReply",
+    "ReplyField",
     "ReplyMode",
     "ReplyPreferences",
 ]

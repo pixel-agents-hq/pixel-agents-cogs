@@ -85,6 +85,32 @@ resolves the icon; `require_permission` runs the check and sends the
 decline message itself on failure, so a command just returns early on
 `False`.
 
+Both also take an optional `fields=[ReplyField(name, value, inline), ...]` —
+`discord.Embed.add_field`'s shape, framework-neutral — for a reply that's
+more than one title/description, e.g. a multi-field status command. In
+`ReplyMode.EMBED` each becomes a real embed field; in `ReplyMode.TEXT`,
+where there's no such thing as an embed field, each instead becomes an
+extra `**name:** value` line. This is what lets a cog send one rich,
+multi-field reply through a single `send_reply`/`render_reply` call instead
+of hand-building its own `discord.Embed` (which would both duplicate
+corridor's rendering and silently stop respecting `ReplyMode` the moment
+someone does) — see `pixelagents/adapters/admin_commands.py`'s `cmd_status`.
+
+A cog that needs its own interaction-aware dispatch on top of that (an
+ephemeral slash-command response, a deferred followup, ...) — something
+`send_reply`'s plain `ctx.send()` doesn't support — calls the lower-level
+`corridor.render_reply(guild_id, title=..., description=..., fields=...)`
+instead: same `ReplyMode` rendering, returned as a `RenderedReply` DTO
+instead of sent, so the caller does its own send. pixelagents' `ReplyMixin`
+([`pixelagents/adapters/replies.py`](../pixelagents/adapters/replies.py)) is
+the reference example. Every command handler across corridor/pixelagents/
+toolbox is checked for this by
+[`contracts/discord_replies/lint_reply_channel.py`](../contracts/discord_replies/lint_reply_channel.py)
+(run in CI by `cogs-quality.yml`), which fails on any raw
+`ctx.send()`/`interaction.response.send_message()`/`interaction.followup.send()`
+reachable from a command handler without a `send_reply`/`render_reply` call
+along the way.
+
 ### required_cogs does not auto-load the dependency
 
 `info.json`'s `required_cogs` field is a **Downloader install hint only** —

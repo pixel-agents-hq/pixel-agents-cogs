@@ -30,6 +30,9 @@ class TestRedCorridorRepository(unittest.IsolatedAsyncioTestCase):
             {"building_manager", "keyholder"},
         )
         self.assertTrue(all(group.role_ids == frozenset() for group in settings.permissions.groups))
+        self.assertTrue(
+            all(group.permission_names == frozenset() for group in settings.permissions.groups)
+        )
 
     async def test_set_reply_mode_persists(self) -> None:
         await self.repository.set_reply_mode(1, ReplyMode.TEXT)
@@ -58,17 +61,53 @@ class TestRedCorridorRepository(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(building_manager.role_ids, frozenset({100, 200}))
 
     async def test_add_and_remove_permission_group(self) -> None:
-        await self.repository.add_permission_group(1, "hr", "HR", frozenset({777}))
+        await self.repository.add_permission_group(
+            1, "hr", "HR", frozenset({777}), frozenset({"manage_roles"})
+        )
 
         settings = await self.repository.guild_settings(1)
         hr = settings.permissions.group("hr")
         assert hr is not None
         self.assertEqual(hr.label, "HR")
         self.assertEqual(hr.role_ids, frozenset({777}))
+        self.assertEqual(hr.permission_names, frozenset({"manage_roles"}))
 
         await self.repository.remove_permission_group(1, "hr")
         settings = await self.repository.guild_settings(1)
         self.assertIsNone(settings.permissions.group("hr"))
+
+    async def test_set_group_permissions_persists(self) -> None:
+        await self.repository.set_group_permissions(
+            1, "keyholder", frozenset({"kick_members", "ban_members"})
+        )
+
+        settings = await self.repository.guild_settings(1)
+
+        keyholder = settings.permissions.group("keyholder")
+        assert keyholder is not None
+        self.assertEqual(keyholder.permission_names, frozenset({"kick_members", "ban_members"}))
+
+    async def test_set_group_permissions_leaves_role_ids_untouched(self) -> None:
+        await self.repository.set_group_role_ids(1, "keyholder", frozenset({300}))
+
+        await self.repository.set_group_permissions(1, "keyholder", frozenset({"ban_members"}))
+
+        settings = await self.repository.guild_settings(1)
+        keyholder = settings.permissions.group("keyholder")
+        assert keyholder is not None
+        self.assertEqual(keyholder.role_ids, frozenset({300}))
+        self.assertEqual(keyholder.permission_names, frozenset({"ban_members"}))
+
+    async def test_set_group_role_ids_leaves_permission_names_untouched(self) -> None:
+        await self.repository.set_group_permissions(1, "keyholder", frozenset({"ban_members"}))
+
+        await self.repository.set_group_role_ids(1, "keyholder", frozenset({300}))
+
+        settings = await self.repository.guild_settings(1)
+        keyholder = settings.permissions.group("keyholder")
+        assert keyholder is not None
+        self.assertEqual(keyholder.role_ids, frozenset({300}))
+        self.assertEqual(keyholder.permission_names, frozenset({"ban_members"}))
 
     async def test_add_permission_group_rejects_reserved_key(self) -> None:
         with pytest.raises(ValueError):
@@ -80,6 +119,7 @@ class TestRedCorridorRepository(unittest.IsolatedAsyncioTestCase):
 
     async def test_set_group_label_renames_without_changing_key_or_roles(self) -> None:
         await self.repository.set_group_role_ids(1, "keyholder", frozenset({300}))
+        await self.repository.set_group_permissions(1, "keyholder", frozenset({"ban_members"}))
 
         await self.repository.set_group_label(1, "keyholder", "Trusted Member")
 
@@ -88,6 +128,7 @@ class TestRedCorridorRepository(unittest.IsolatedAsyncioTestCase):
         assert keyholder is not None
         self.assertEqual(keyholder.label, "Trusted Member")
         self.assertEqual(keyholder.role_ids, frozenset({300}))
+        self.assertEqual(keyholder.permission_names, frozenset({"ban_members"}))
 
     async def test_set_owner_and_employee_labels_persist(self) -> None:
         await self.repository.set_owner_label(1, "Founder")

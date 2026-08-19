@@ -14,6 +14,7 @@ class MemberRef(Protocol):
 
     id: int
     role_ids: frozenset[int]
+    permission_names: frozenset[str]
     is_administrator: bool
 
 
@@ -34,7 +35,10 @@ class PermissionService:
     ) -> MemberCapabilities:
         is_owner = await self._owners.is_owner(member.id) or member.is_administrator
         satisfied_keys = frozenset(
-            group.key for group in settings.groups if member.role_ids & group.role_ids
+            group.key
+            for group in settings.groups
+            if (member.role_ids & group.role_ids)
+            or (member.permission_names & group.permission_names)
         )
         return MemberCapabilities(is_owner=is_owner, satisfied_keys=satisfied_keys)
 

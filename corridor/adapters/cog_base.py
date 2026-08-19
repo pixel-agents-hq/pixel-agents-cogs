@@ -152,15 +152,27 @@ class CogBase:
         return await self._repository.list_permission_groups(guild_id)
 
     async def add_permission_group(
-        self, guild_id: int, key: str, label: str, role_ids: frozenset[int] = frozenset()
+        self,
+        guild_id: int,
+        key: str,
+        label: str,
+        role_ids: frozenset[int] = frozenset(),
+        permission_names: frozenset[str] = frozenset(),
     ) -> None:
-        await self._repository.add_permission_group(guild_id, key, label, role_ids)
+        await self._repository.add_permission_group(
+            guild_id, key, label, role_ids, permission_names
+        )
 
     async def remove_permission_group(self, guild_id: int, key: str) -> None:
         await self._repository.remove_permission_group(guild_id, key)
 
     async def set_group_role_ids(self, guild_id: int, key: str, role_ids: frozenset[int]) -> None:
         await self._repository.set_group_role_ids(guild_id, key, role_ids)
+
+    async def set_group_permissions(
+        self, guild_id: int, key: str, permission_names: frozenset[str]
+    ) -> None:
+        await self._repository.set_group_permissions(guild_id, key, permission_names)
 
     async def set_group_label(self, guild_id: int, key: str, label: str) -> None:
         await self._repository.set_group_label(guild_id, key, label)

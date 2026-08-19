@@ -37,16 +37,25 @@ class ReplyPreferences:
 
 @dataclass(frozen=True, slots=True)
 class PermissionGroupDef:
-    """One admin-configurable, role-backed permission tier.
+    """One admin-configurable permission tier, satisfied by role membership
+    and/or a Discord permission -- whichever a member has either counts.
 
     `key` is the stable identifier dependent cogs reference in code (e.g.
     pixelagents hardcodes "keyholder") and never changes once created --
     admins may only rename `label`, the display name shown in UI/messages.
+
+    `permission_names` holds `discord.Permissions` flag names (e.g.
+    "kick_members") as plain strings -- this module has zero discord.py
+    imports by design, so a raw int bitmask or discord.Permissions object
+    would leak a framework type into the domain layer. Translation to/from
+    real discord.Permissions happens only at the adapter boundary, same
+    pattern ReplyMode/IconSource already follow.
     """
 
     key: str
     label: str
     role_ids: frozenset[int] = field(default_factory=frozenset)
+    permission_names: frozenset[str] = field(default_factory=frozenset)
 
 
 @dataclass(frozen=True, slots=True)

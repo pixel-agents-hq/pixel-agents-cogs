@@ -85,6 +85,30 @@ class TestCorridorApi(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(allowed)
         self.assertEqual(ctx.sent, [])
 
+    async def test_require_permission_allows_after_discord_permission_granted(self) -> None:
+        await self.corridor.set_group_permissions(
+            self.guild.id, "building_manager", frozenset({"kick_members"})
+        )
+        member = FakeMember(2, self.guild, permission_names=frozenset({"kick_members"}))
+        ctx = FakeContext(author=member, guild=self.guild)
+
+        allowed = await self.corridor.require_permission(ctx, "building_manager")
+
+        self.assertTrue(allowed)
+        self.assertEqual(ctx.sent, [])
+
+    async def test_require_permission_denies_without_matching_role_or_permission(self) -> None:
+        await self.corridor.set_group_role_ids(self.guild.id, "building_manager", frozenset({500}))
+        await self.corridor.set_group_permissions(
+            self.guild.id, "building_manager", frozenset({"kick_members"})
+        )
+        member = FakeMember(2, self.guild)
+        ctx = FakeContext(author=member, guild=self.guild)
+
+        allowed = await self.corridor.require_permission(ctx, "building_manager")
+
+        self.assertFalse(allowed)
+
     async def test_bot_owner_bypasses_permission_checks(self) -> None:
         owner = FakeMember(1, self.guild)
         ctx = FakeContext(author=owner, guild=self.guild)

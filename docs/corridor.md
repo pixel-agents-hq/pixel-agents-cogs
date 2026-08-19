@@ -24,7 +24,8 @@ truth, not shared UI code wrapped around independent per-cog logic.
 
 Defined in [`corridor/domain/models.py`](../corridor/domain/models.py) as an
 open, admin-configurable group model rather than a fixed enum:
-`PermissionGroupDef` (`key`/`label`/`role_ids`) is one role-backed tier, and
+`PermissionGroupDef` (`key`/`label`/`role_ids`/`permission_names`) is one
+tier satisfied by role membership and/or a Discord permission, and
 `PermissionSettings` holds a per-guild, admin-managed tuple of those groups
 plus the two reserved, non-role-backed keys below. Groups seed by default
 with `building_manager` ("Building Manager") and `keyholder` ("Keyholder")
@@ -37,33 +38,51 @@ from the settings panel (see "Configuring it" below).
 |---|---|---|
 | Owner | `owner` (`OWNER_KEY`, reserved) | The bot owner (Red's owner concept, not guild owner) OR a member with guild Administrator permission. |
 | Employee | `employee` (`EMPLOYEE_KEY`, reserved) | Everyone. Never restricts. |
-| Building Manager *(default)* | `building_manager` | Members holding one of the roles a guild admin has assigned to this group. |
-| Keyholder *(default)* | `keyholder` | Members holding one of the roles a guild admin has assigned to this group. |
-| *(any admin-added group)* | *(admin-chosen at creation, stable thereafter)* | Members holding one of the roles a guild admin has assigned to that group. |
+| Building Manager *(default)* | `building_manager` | Members holding one of the roles, or one of the Discord permissions, a guild admin has assigned to this group. |
+| Keyholder *(default)* | `keyholder` | Members holding one of the roles, or one of the Discord permissions, a guild admin has assigned to this group. |
+| *(any admin-added group)* | *(admin-chosen at creation, stable thereafter)* | Members holding one of the roles, or one of the Discord permissions, a guild admin has assigned to that group. |
 
 Dependent cogs reference a group by its plain string `key` — e.g.
 pixelagents hardcodes `"keyholder"` — not an enum member.
 `corridor/adapters/cog_base.py`'s `capabilities_satisfy(member, group_key:
 str)` / `require_permission(ctx, group_key: str)` both take `str`.
 
-**Role-backed groups are independent, unranked tiers** — holding one does
-not imply another. A member with only a Keyholder role fails a
+**Groups are independent, unranked tiers** — holding one does not imply
+another. A member with only a Keyholder role fails a
 `require_permission("building_manager")` check, and vice versa. `owner`
 bypasses every check regardless of group, and `employee` never restricts.
-A role-backed group can have any number of roles assigned, including zero —
-new groups start with no roles until an admin assigns some, and a group's
-`key` is stable once created while its `label` (the display name) can be
-renamed freely.
+A group can have any number of roles and any number of permissions
+assigned, including zero of either — new groups start with none of either
+until an admin assigns some, and a group's `key` is stable once created
+while its `label` (the display name) can be renamed freely.
 
-Each group's role set is a `frozenset[int]` of Discord role IDs — a guild
-can assign more than one role per group, and the set is mutable at any time
-(add/remove a role without redefining the whole group). This is computed
-per check via `MemberCapabilities` (`corridor/domain/models.py`), which the
-pure `PermissionService`
+**Roles and permissions are two independent, OR'd criteria** — a member
+satisfies a group by matching *either* one, not both. Holding any one of
+the group's assigned roles is enough regardless of permissions, and having
+any one of the group's assigned Discord permissions is enough regardless of
+roles; a group configured with both roles and permissions is satisfied by a
+member who matches only one of the two. `permission_names` is a curated
+subset of `discord.Permissions` flags relevant to a moderation/management
+tier (e.g. `kick_members`, `ban_members`, `manage_roles`) exposed in the
+settings panel — not all ~40 flags, both because a single Discord select
+maxes out at 25 options and because most flags aren't relevant to this use
+case; see `CURATED_PERMISSIONS` in
+[`corridor/adapters/settings_ui.py`](../corridor/adapters/settings_ui.py)
+for the exact list.
+
+Each group's role set is a `frozenset[int]` of Discord role IDs, and its
+permission set a `frozenset[str]` of `discord.Permissions` flag names (kept
+as plain strings, not a raw bitmask or `discord.Permissions` object, so the
+domain layer stays free of discord.py imports — translation to/from real
+`discord.Permissions` happens only at the adapter boundary) — a guild can
+assign more than one role or permission per group, and either set is
+mutable at any time (add/remove without redefining the whole group). This
+is computed per check via `MemberCapabilities` (`corridor/domain/models.py`),
+which the pure `PermissionService`
 ([`corridor/application/permission_service.py`](../corridor/application/permission_service.py))
-resolves from a member's role IDs and the bot's owner ID set — no discord.py
-or Red imports in that resolution logic, so it's unit-tested with plain
-fakes, no framework stubbing needed.
+resolves from a member's role IDs, granted permission names, and the bot's
+owner ID set — no discord.py or Red imports in that resolution logic, so
+it's unit-tested with plain fakes, no framework stubbing needed.
 
 ## Reply style
 
@@ -142,8 +161,9 @@ Red's cog manager and loads it if it isn't already, raising a clear
 
 The Components V2 settings panel
 ([`corridor/adapters/settings_ui.py`](../corridor/adapters/settings_ui.py))
-is where a guild sets its permission groups' role assignments (add, remove,
-or rename a group; assign or clear its roles) and reply preferences. Group
+is where a guild sets its permission groups' role and permission
+assignments (add, remove, or rename a group; assign or clear its roles;
+select from the curated permission list) and reply preferences. Group
 management is UI-only — there is no text-command equivalent. Two ways to
 reach it:
 
@@ -161,10 +181,12 @@ Red's default behavior for a failed permission check, not a bug.
 
 ## What this is not
 
-corridor doesn't touch Discord's own permission system (role permission
-bits, channel overwrites) — the permission groups are an
-office-cogs-specific concept layered on top, deliberately decoupled from
-whether a role happens to have "Manage Server" or similar. It also isn't a
+corridor doesn't touch Discord's own permission system (it never grants,
+revokes, or checks channel overwrites) — a group's `permission_names` is an
+*optional extra way to satisfy* an office-cogs-specific tier, read-only off
+`member.guild_permissions`, not a mechanism for managing Discord
+permissions themselves. A group with no `permission_names` configured is
+still purely role-backed, exactly as before. It also isn't a
 general shared-code library for UI or business logic: the earlier idea of
 extracting Components V2 boilerplate into a shared package was deliberately
 rejected as premature abstraction. What justified corridor specifically is

@@ -18,8 +18,20 @@ class FakeGuild:
 
 
 class _FakeGuildPermissions:
-    def __init__(self, administrator: bool) -> None:
+    """Mimics enough of discord.Permissions for DiscordMemberRef: the
+    `.administrator` attribute it reads directly, plus iteration as
+    `(name, value)` pairs, which it uses to derive `permission_names`."""
+
+    def __init__(self, administrator: bool, permission_names: frozenset[str] = frozenset()) -> None:
         self.administrator = administrator
+        self._permission_names = permission_names
+
+    def __iter__(self) -> Any:
+        names = set(self._permission_names)
+        if self.administrator:
+            names.add("administrator")
+        for name in names:
+            yield name, True
 
 
 class FakeMember:
@@ -29,11 +41,12 @@ class FakeMember:
         guild: FakeGuild,
         role_ids: tuple[int, ...] = (),
         is_administrator: bool = False,
+        permission_names: frozenset[str] = frozenset(),
     ) -> None:
         self.id = member_id
         self.guild = guild
         self.roles = [FakeRole(role_id) for role_id in role_ids]
-        self.guild_permissions = _FakeGuildPermissions(is_administrator)
+        self.guild_permissions = _FakeGuildPermissions(is_administrator, permission_names)
 
 
 class FakeUser:

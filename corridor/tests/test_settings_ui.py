@@ -88,6 +88,19 @@ class TestSettingsUiConstruction(unittest.TestCase):
 
         self.assertEqual(len(role_select_rows), 2)
 
+    def test_one_permission_select_row_per_group(self) -> None:
+        container = build_shared_settings_container(_settings(1))
+
+        permission_select_rows = [
+            child
+            for child in container.children
+            if getattr(child, "children", None)
+            and type(child.children[0]) is discord.ui.Select
+            and (child.children[0].placeholder or "").endswith("Discord permissions")
+        ]
+
+        self.assertEqual(len(permission_select_rows), 2)
+
 
 class TestRoleSelectCallback(unittest.IsolatedAsyncioTestCase):
     async def test_selecting_roles_persists_via_corridor_api(self) -> None:
@@ -114,6 +127,36 @@ class TestRoleSelectCallback(unittest.IsolatedAsyncioTestCase):
         building_manager = settings.permissions.group("building_manager")
         assert building_manager is not None
         self.assertEqual(building_manager.role_ids, frozenset({500, 600}))
+
+
+class TestPermissionSelectCallback(unittest.IsolatedAsyncioTestCase):
+    async def test_selecting_permissions_persists_via_corridor_api(self) -> None:
+        bot = FakeBot()
+        guild = FakeGuild(guild_id=1)
+        bot.register_guild(guild)
+        corridor = Corridor(bot=bot)
+        bot.add_cog(corridor)
+
+        container = build_shared_settings_container(_settings(1))
+        permission_select_row = next(
+            child
+            for child in container.children
+            if getattr(child, "children", None)
+            and type(child.children[0]) is discord.ui.Select
+            and (child.children[0].placeholder or "").endswith("Discord permissions")
+        )
+        permission_select = permission_select_row.children[0]
+        permission_select.values = ["kick_members", "ban_members"]
+
+        interaction = discord.Interaction(guild=guild, client=bot)
+        await permission_select.callback(interaction)
+
+        settings = await corridor.guild_settings(1)
+        building_manager = settings.permissions.group("building_manager")
+        assert building_manager is not None
+        self.assertEqual(
+            building_manager.permission_names, frozenset({"kick_members", "ban_members"})
+        )
 
 
 class TestGroupManagementModals(unittest.IsolatedAsyncioTestCase):
@@ -158,6 +201,7 @@ class TestGroupManagementModals(unittest.IsolatedAsyncioTestCase):
         corridor = Corridor(bot=bot)
         bot.add_cog(corridor)
         await corridor.set_group_role_ids(1, "keyholder", frozenset({42}))
+        await corridor.set_group_permissions(1, "keyholder", frozenset({"ban_members"}))
 
         modal = RenameGroupModal("keyholder", "Keyholder")
         modal.label_input.value = "Trusted Member"
@@ -170,6 +214,7 @@ class TestGroupManagementModals(unittest.IsolatedAsyncioTestCase):
         assert keyholder is not None
         self.assertEqual(keyholder.label, "Trusted Member")
         self.assertEqual(keyholder.role_ids, frozenset({42}))
+        self.assertEqual(keyholder.permission_names, frozenset({"ban_members"}))
 
     async def test_tier_labels_modal_renames_owner_and_employee(self) -> None:
         bot = FakeBot()

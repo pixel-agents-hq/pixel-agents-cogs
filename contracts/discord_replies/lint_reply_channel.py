@@ -15,17 +15,18 @@ exactly the bug this script exists to catch (a prior version of
 pixelagents' `ReplyMixin` did precisely this).
 
 Approach: for each cog package, index every function/method definition by
-name, then for each Red command handler (any function decorated with
-`.command(...)`, `.group(...)`, `.hybrid_command(...)`, or
-`.hybrid_group(...)` -- covers `@commands.command`, `@commands.hybrid_group`,
-and `@some_group.command`/`.group` subcommand registration alike) walk its
-reachable call graph: follow `self.<name>(...)` calls into same-named
-methods elsewhere in the package (this is what lets it see through a local
-reply-dispatch helper, not just the command handler's own body), and note
-every `ctx`/`interaction` send call found along the way. If nothing in that
-whole reachable subgraph ever calls `self._corridor.send_reply(...)` /
-`render_reply(...)`, every raw send found in it is reported against the
-command handler that reaches it.
+name (`contracts.ast_call_graph.index_functions`), then for each Red command
+handler (any function decorated with `.command(...)`, `.group(...)`,
+`.hybrid_command(...)`, or `.hybrid_group(...)` -- covers `@commands.command`,
+`@commands.hybrid_group`, and `@some_group.command`/`.group` subcommand
+registration alike) crawl its reachable call graph
+(`contracts.ast_call_graph.crawl_call_graph`): follow `self.<name>(...)`
+calls into same-named methods elsewhere in the package (this is what lets it
+see through a local reply-dispatch helper, not just the command handler's
+own body), and note every `ctx`/`interaction` send call found along the
+way. If nothing in that whole reachable subgraph ever calls
+`self._corridor.send_reply(...)` / `render_reply(...)`, every raw send found
+in it is reported against the command handler that reaches it.
 
 This is a static, name-based approximation, not real dataflow analysis: it
 does not verify that a found `self._corridor.render_reply(...)` call
@@ -65,8 +66,9 @@ from __future__ import annotations
 import ast
 import sys
 from collections import defaultdict
-from dataclasses import dataclass
 from pathlib import Path
+
+from contracts.ast_call_graph import FunctionDef, crawl_call_graph, index_functions
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -81,29 +83,8 @@ _SEND_ATTRS = {"send", "send_message"}
 _SEND_ROOTS = {"ctx", "interaction"}
 _CORRIDOR_REPLY_CALLS = {"self._corridor.send_reply", "self._corridor.render_reply"}
 
-FuncNode = ast.AsyncFunctionDef | ast.FunctionDef
 
-
-@dataclass(frozen=True)
-class MethodDef:
-    path: Path
-    node: FuncNode
-
-
-def _dotted_name(node: ast.expr) -> str | None:
-    """Flatten `a.b.c` attribute/name chains to `"a.b.c"`; anything else (a
-    call result, a subscript, ...) can't be statically resolved and returns
-    None -- not flagged either way, rather than risk a false positive."""
-
-    if isinstance(node, ast.Name):
-        return node.id
-    if isinstance(node, ast.Attribute):
-        base = _dotted_name(node.value)
-        return f"{base}.{node.attr}" if base else None
-    return None
-
-
-def _is_command_handler(node: FuncNode) -> bool:
+def _is_command_handler(node: ast.AsyncFunctionDef | ast.FunctionDef) -> bool:
     for decorator in node.decorator_list:
         call = decorator if isinstance(decorator, ast.Call) else None
         func = call.func if call is not None else decorator
@@ -124,57 +105,30 @@ def _is_view_only_send(call: ast.Call) -> bool:
     return "view" in keys and "content" not in keys and "embed" not in keys
 
 
-def _index_package(package: str) -> tuple[dict[Path, ast.Module], dict[str, list[MethodDef]]]:
-    root = REPO_ROOT / package
-    parsed: dict[Path, ast.Module] = {}
-    index: dict[str, list[MethodDef]] = defaultdict(list)
-    for path in sorted(root.rglob("*.py")):
-        if "tests" in path.relative_to(root).parts or path.name == "conftest.py":
-            continue
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-        parsed[path] = tree
-        for node in ast.walk(tree):
-            if isinstance(node, ast.AsyncFunctionDef | ast.FunctionDef):
-                index[node.name].append(MethodDef(path=path, node=node))
-    return parsed, index
-
-
-def _analyze(
-    entry: MethodDef, index: dict[str, list[MethodDef]], visited: frozenset[str]
+def _reachable_raw_sends(
+    entry: FunctionDef, index: dict[str, list[FunctionDef]]
 ) -> tuple[list[tuple[Path, int, str]], bool]:
-    """Walk one function's reachable subgraph (following `self.<name>(...)`
-    calls into same-named methods elsewhere in the package). Returns every
-    raw ctx/interaction send found, plus whether corridor's reply renderer
-    was consulted anywhere in that subgraph."""
-
-    if entry.node.name in visited:
-        return [], False
-    visited = visited | {entry.node.name}
+    """Crawl `entry`'s reachable call graph, returning every raw
+    ctx/interaction send found plus whether corridor's reply renderer was
+    consulted anywhere in that same reachable subgraph."""
 
     raw_sends: list[tuple[Path, int, str]] = []
     corridor_consulted = False
-    for call in ast.walk(entry.node):
-        if not isinstance(call, ast.Call) or not isinstance(call.func, ast.Attribute):
-            continue
-        dotted = _dotted_name(call.func)
-        if dotted is None:
-            continue
 
+    def on_call(caller: FunctionDef, call: ast.Call, dotted: str) -> None:
+        nonlocal corridor_consulted
         if dotted in _CORRIDOR_REPLY_CALLS:
             corridor_consulted = True
-            continue
+            return
+        attr = dotted.rsplit(".", 1)[-1]
+        root = dotted.split(".", 1)[0]
+        if attr in _SEND_ATTRS and root in _SEND_ROOTS and not _is_view_only_send(call):
+            raw_sends.append((caller.path, call.lineno, dotted))
 
-        if call.func.attr in _SEND_ATTRS and dotted.split(".", 1)[0] in _SEND_ROOTS:
-            if not _is_view_only_send(call):
-                raw_sends.append((entry.path, call.lineno, dotted))
-            continue
+    def follow(dotted: str) -> bool:
+        return dotted.startswith("self.") and dotted not in _CORRIDOR_REPLY_CALLS
 
-        if dotted.startswith("self."):
-            for callee in index.get(call.func.attr, ()):
-                sub_sends, sub_consulted = _analyze(callee, index, visited)
-                raw_sends.extend(sub_sends)
-                corridor_consulted = corridor_consulted or sub_consulted
-
+    crawl_call_graph(entry, index, follow=follow, on_call=on_call)
     return raw_sends, corridor_consulted
 
 
@@ -183,21 +137,19 @@ def find_violations(package: str) -> list[tuple[Path, int, str, str]]:
     command handler in `package` that reaches a raw send without ever
     reaching a corridor reply-render call."""
 
-    parsed, index = _index_package(package)
+    root = REPO_ROOT / package
+    index = index_functions(root)
     violations: list[tuple[Path, int, str, str]] = []
-    for path, tree in parsed.items():
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.AsyncFunctionDef | ast.FunctionDef):
+    for defs in index.values():
+        for entry in defs:
+            if not _is_command_handler(entry.node):
                 continue
-            if not _is_command_handler(node):
-                continue
-            raw_sends, corridor_consulted = _analyze(
-                MethodDef(path=path, node=node), index, frozenset()
-            )
+            raw_sends, corridor_consulted = _reachable_raw_sends(entry, index)
             if corridor_consulted:
                 continue
             violations.extend(
-                (send_path, lineno, node.name, dotted) for send_path, lineno, dotted in raw_sends
+                (send_path, lineno, entry.node.name, dotted)
+                for send_path, lineno, dotted in raw_sends
             )
     return violations
 

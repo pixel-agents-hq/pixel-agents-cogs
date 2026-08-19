@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
-"""Generate the current Pixel Index contract status site and JSON API.
+"""Generate the current Pixel Agents contract status site and JSON API.
 
 The input directory contains one structured result per environment, produced
-by verify.py. The output is a self-contained GitHub Pages artifact: it keeps no
-history and exposes the same snapshot as accessible HTML, a versioned JSON API,
-and Shields-compatible endpoint documents.
+by verify.py -- today that's always exactly one, "production" (see verify.py's
+module docstring for why there's no "staging" leg here). The output is a
+self-contained tree meant to be nested under the shared status site's
+`pixel-agents/` path, published alongside contracts/pixel_index's site: it
+keeps no history and exposes the same snapshot as accessible HTML, a
+versioned JSON API, and Shields-compatible endpoint documents.
 """
 from __future__ import annotations
 
@@ -18,15 +21,15 @@ from typing import Any, Iterable
 from urllib.parse import quote
 
 RESULT_STATUSES = {"pass", "fail", "unknown"}
-ENDPOINT_STATUSES = {"pass", "fail", "skipped"}
+CHECK_STATUSES = {"pass", "fail", "skipped"}
 STATUS_PRIORITY = {"fail": 0, "unknown": 1, "pass": 2}
-ENVIRONMENT_PRIORITY = {"production": 0, "staging": 1}
+ENVIRONMENT_PRIORITY = {"production": 0}
 STATUS_PRESENTATION = {
     "pass": {"icon": "✓", "label": "Compatible", "badge": "compatible", "color": "brightgreen"},
     "fail": {"icon": "×", "label": "Incompatible", "badge": "incompatible", "color": "red"},
     "unknown": {"icon": "?", "label": "Unknown", "badge": "unknown", "color": "lightgrey"},
 }
-ENDPOINT_PRESENTATION = {
+CHECK_PRESENTATION = {
     "pass": ("✓", "Pass"),
     "fail": ("×", "Fail"),
     "skipped": ("!", "Skipped"),
@@ -68,20 +71,20 @@ def load_results(results_dir: Path) -> list[dict]:
             result["status"] = "unknown"
             result["detail"] = f"Unrecognized contract result status: {status!r}"
 
-        endpoints = result.get("endpoints")
-        if not isinstance(endpoints, list):
-            result["endpoints"] = []
+        checks = result.get("checks")
+        if not isinstance(checks, list):
+            result["checks"] = []
             result["status"] = "unknown"
-            result["detail"] = "Contract result did not contain endpoint results."
+            result["detail"] = "Contract result did not contain check results."
         else:
-            for endpoint in endpoints:
-                if endpoint.get("status") not in ENDPOINT_STATUSES:
-                    endpoint["status"] = "unknown"
+            for check in checks:
+                if check.get("status") not in CHECK_STATUSES:
+                    check["status"] = "unknown"
                     result["status"] = "unknown"
-                    result["detail"] = "Contract result contained an unrecognized endpoint status."
+                    result["detail"] = "Contract result contained an unrecognized check status."
 
         result["counts"] = {
-            name: sum(endpoint.get("status") == name for endpoint in result["endpoints"])
+            name: sum(check.get("status") == name for check in result["checks"])
             for name in ("pass", "fail", "skipped")
         }
         results[environment] = result
@@ -109,7 +112,7 @@ def build_snapshot(
     environments = {result["environment"]: result for result in results}
     return {
         "schema_version": 1,
-        "service": "pixel-index-contract",
+        "service": "pixel-agents-contract",
         "repository": {"name": repository, "url": repository_url},
         "default_branch": {
             "name": branch,
@@ -151,6 +154,8 @@ def render_environment_cards(environments: Iterable[dict]) -> str:
         counts = environment["counts"]
         checked_at = environment.get("checked_at")
         checked = f'<time datetime="{escape(checked_at)}">{escape(checked_at)}</time>' if checked_at else "Not completed"
+        source = environment.get("source")
+        source_cell = f'<a href="{escape(source)}">{escape(source)}</a>' if source else "Unknown"
         cards.append(
             f"""
             <article class="environment-card status-{escape(status)}">
@@ -164,7 +169,7 @@ def render_environment_cards(environments: Iterable[dict]) -> str:
               <p class="counts"><strong>{counts['pass']}</strong> passed · <strong>{counts['fail']}</strong> failed · <strong>{counts['skipped']}</strong> skipped</p>
               <dl>
                 <div><dt>Checked</dt><dd>{checked}</dd></div>
-                <div><dt>Target</dt><dd><a href="{escape(environment.get('base_url', ''))}">{escape(environment.get('base_url', 'Unknown'))}</a></dd></div>
+                <div><dt>Source</dt><dd>{source_cell}</dd></div>
               </dl>
               {f'<p class="environment-detail">{escape(environment.get("detail"))}</p>' if environment.get('detail') else ''}
             </article>
@@ -173,39 +178,39 @@ def render_environment_cards(environments: Iterable[dict]) -> str:
     return "\n".join(cards)
 
 
-def endpoint_names(environments: Iterable[dict]) -> list[str]:
+def check_names(environments: Iterable[dict]) -> list[str]:
     names: list[str] = []
     for environment in environments:
-        for endpoint in environment["endpoints"]:
-            name = str(endpoint.get("name", "unknown"))
+        for check in environment["checks"]:
+            name = str(check.get("name", "unknown"))
             if name not in names:
                 names.append(name)
     return names
 
 
-def render_endpoint_table(environments: list[dict]) -> str:
-    names = endpoint_names(environments)
+def render_check_table(environments: list[dict]) -> str:
+    names = check_names(environments)
     headers = "".join(f"<th scope=\"col\">{escape(environment['environment'].title())}</th>" for environment in environments)
     rows = []
     for name in names:
         cells = []
         for environment in environments:
-            endpoint = next((item for item in environment["endpoints"] if item.get("name") == name), None)
-            status = endpoint.get("status", "unknown") if endpoint else "unknown"
-            icon, label = ENDPOINT_PRESENTATION[status]
-            detail = endpoint.get("detail", "") if endpoint else "No endpoint result was produced."
-            details = f'<span class="endpoint-detail">{escape(detail)}</span>' if detail else ""
+            check = next((item for item in environment["checks"] if item.get("name") == name), None)
+            status = check.get("status", "unknown") if check else "unknown"
+            icon, label = CHECK_PRESENTATION[status]
+            detail = check.get("detail", "") if check else "No check result was produced."
+            details = f'<span class="check-detail">{escape(detail)}</span>' if detail else ""
             cells.append(
-                f'<td class="endpoint-status status-{escape(status)}"><span class="endpoint-label"><span aria-hidden="true">{icon}</span> {label}</span>{details}</td>'
+                f'<td class="check-status status-{escape(status)}"><span class="check-label"><span aria-hidden="true">{icon}</span> {label}</span>{details}</td>'
             )
         rows.append(f'<tr><th scope="row"><code>{escape(name)}</code></th>{"".join(cells)}</tr>')
 
     if not rows:
-        rows.append(f'<tr><td colspan="{len(environments) + 1}" class="empty">No endpoint results were produced.</td></tr>')
+        rows.append(f'<tr><td colspan="{len(environments) + 1}" class="empty">No check results were produced.</td></tr>')
     return f"""
       <div class="table-scroll">
         <table>
-          <thead><tr><th scope="col">Endpoint</th>{headers}</tr></thead>
+          <thead><tr><th scope="col">Check</th>{headers}</tr></thead>
           <tbody>{''.join(rows)}</tbody>
         </table>
       </div>
@@ -223,8 +228,8 @@ def render_html(snapshot: dict) -> str:
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Current office-cogs compatibility with the Pixel Index production and staging APIs.">
-  <title>Pixel Index contract status</title>
+  <meta name="description" content="Current pixelagents cog compatibility with the pinned Pixel Agents commit.">
+  <title>Pixel Agents contract status</title>
   <style>
     :root {{ color-scheme: light dark; --bg: #f4f6f8; --surface: #fff; --text: #172033; --muted: #657087; --line: #dce1e8; --pass: #137333; --pass-bg: #e6f4ea; --fail: #b3261e; --fail-bg: #fce8e6; --unknown: #5f6368; --unknown-bg: #eef0f2; --skipped: #8a5d00; --skipped-bg: #fff4ce; --link: #0969da; --shadow: 0 12px 32px rgba(30, 42, 62, .08); }}
     * {{ box-sizing: border-box; }}
@@ -237,15 +242,15 @@ def render_html(snapshot: dict) -> str:
     h2 {{ font-size: 1.3rem; }}
     .eyebrow {{ color: var(--muted); font-size: .74rem; font-weight: 750; letter-spacing: .12em; margin: 0 0 7px; text-transform: uppercase; }}
     .lede {{ color: var(--muted); font-size: 1.05rem; max-width: 700px; }}
-    .forward-link {{ display: inline-block; margin-bottom: 14px; }}
+    .back-link {{ display: inline-block; margin-bottom: 14px; }}
     .overall {{ align-items: center; background: var(--surface); border: 1px solid var(--line); border-left: 6px solid var(--unknown); border-radius: 16px; box-shadow: var(--shadow); display: flex; gap: 18px; justify-content: space-between; margin: 28px 0; padding: 20px 22px; }}
     .overall.status-pass {{ border-left-color: var(--pass); }} .overall.status-fail {{ border-left-color: var(--fail); }}
     .overall strong {{ display: block; font-size: 1.15rem; }} .overall p {{ color: var(--muted); margin: 2px 0 0; }}
-    .status-pill, .endpoint-label {{ align-items: center; border-radius: 999px; display: inline-flex; font-size: .85rem; font-weight: 720; gap: 6px; padding: 5px 10px; white-space: nowrap; }}
-    .status-pass .status-pill, .endpoint-status.status-pass .endpoint-label {{ background: var(--pass-bg); color: var(--pass); }}
-    .status-fail .status-pill, .endpoint-status.status-fail .endpoint-label {{ background: var(--fail-bg); color: var(--fail); }}
-    .status-unknown .status-pill, .endpoint-status.status-unknown .endpoint-label {{ background: var(--unknown-bg); color: var(--unknown); }}
-    .endpoint-status.status-skipped .endpoint-label {{ background: var(--skipped-bg); color: var(--skipped); }}
+    .status-pill, .check-label {{ align-items: center; border-radius: 999px; display: inline-flex; font-size: .85rem; font-weight: 720; gap: 6px; padding: 5px 10px; white-space: nowrap; }}
+    .status-pass .status-pill, .check-status.status-pass .check-label {{ background: var(--pass-bg); color: var(--pass); }}
+    .status-fail .status-pill, .check-status.status-fail .check-label {{ background: var(--fail-bg); color: var(--fail); }}
+    .status-unknown .status-pill, .check-status.status-unknown .check-label {{ background: var(--unknown-bg); color: var(--unknown); }}
+    .check-status.status-skipped .check-label {{ background: var(--skipped-bg); color: var(--skipped); }}
     .environment-grid {{ display: grid; gap: 18px; grid-template-columns: repeat(auto-fit, minmax(290px, 1fr)); margin-bottom: 36px; }}
     .environment-card {{ background: var(--surface); border: 1px solid var(--line); border-radius: 16px; box-shadow: var(--shadow); padding: 22px; }}
     .card-heading {{ align-items: flex-start; display: flex; gap: 15px; justify-content: space-between; }}
@@ -257,7 +262,7 @@ def render_html(snapshot: dict) -> str:
     .table-scroll {{ background: var(--surface); border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow); overflow-x: auto; }}
     table {{ border-collapse: collapse; min-width: 680px; width: 100%; }} th, td {{ border-bottom: 1px solid var(--line); padding: 14px 16px; text-align: left; vertical-align: top; }} thead th {{ color: var(--muted); font-size: .8rem; letter-spacing: .04em; text-transform: uppercase; }} tbody tr:last-child th, tbody tr:last-child td {{ border-bottom: 0; }}
     code {{ background: var(--unknown-bg); border-radius: 5px; padding: 2px 5px; }}
-    .endpoint-detail {{ color: var(--muted); display: block; font-size: .84rem; margin-top: 7px; max-width: 360px; overflow-wrap: anywhere; }}
+    .check-detail {{ color: var(--muted); display: block; font-size: .84rem; margin-top: 7px; max-width: 360px; overflow-wrap: anywhere; }}
     .metadata {{ color: var(--muted); display: flex; flex-wrap: wrap; gap: 8px 18px; list-style: none; padding: 0; }}
     .api-links {{ display: flex; flex-wrap: wrap; gap: 10px; }} .api-links a {{ background: var(--surface); border: 1px solid var(--line); border-radius: 9px; padding: 8px 11px; text-decoration: none; }}
     .stale-banner {{ background: var(--skipped-bg); border: 1px solid #dfbd69; border-radius: 10px; color: #604400; display: none; margin: 18px 0; padding: 12px 15px; }} body.is-stale .stale-banner {{ display: block; }}
@@ -269,10 +274,10 @@ def render_html(snapshot: dict) -> str:
 <body data-generated-at="{escape(snapshot['generated_at'])}" data-valid-until="{escape(snapshot['valid_until'])}">
   <main>
     <header>
-      <a class="forward-link" href="pixel-agents/">Pixel Agents contract status →</a>
-      <p class="eyebrow">office-cogs · consumer contract</p>
-      <h1>Pixel Index compatibility</h1>
-      <p class="lede">The latest contract check from the repository's default branch against the production and staging APIs.</p>
+      <a class="back-link" href="../">← Pixel Index contract status</a>
+      <p class="eyebrow">pixelagents · consumer contract</p>
+      <h1>Pixel Agents compatibility</h1>
+      <p class="lede">The latest contract check from the repository's default branch against the commit pinned in webview_vendor.commit.</p>
       <div class="stale-banner" role="alert"><strong>This result is stale.</strong> The expected refresh window has passed; follow the workflow link before relying on it.</div>
     </header>
 
@@ -285,9 +290,9 @@ def render_html(snapshot: dict) -> str:
       {render_environment_cards(environments)}
     </div>
 
-    <section aria-labelledby="endpoint-heading">
-      <h2 id="endpoint-heading">Endpoint results</h2>
-      {render_endpoint_table(environments)}
+    <section aria-labelledby="check-heading">
+      <h2 id="check-heading">Check results</h2>
+      {render_check_table(environments)}
     </section>
 
     <section aria-labelledby="run-heading">
@@ -311,7 +316,7 @@ def render_html(snapshot: dict) -> str:
       </div>
     </section>
 
-    <footer>This is a consumer-driven compatibility check for office-cogs, not a complete Pixel Index availability monitor.</footer>
+    <footer>This is a consumer-driven compatibility check for the pixelagents cog's vendored Pixel Agents webview, not a complete Pixel Agents test suite.</footer>
   </main>
   <script>
     (() => {{
@@ -374,9 +379,9 @@ def generate_site(
             "environment": environment,
         }
         write_json(output_dir / "api" / "v1" / "environments" / f"{name}.json", environment_document)
-        write_json(output_dir / "api" / "v1" / "badges" / f"{name}.json", badge_document(f"Pixel Index {name}", environment["status"]))
+        write_json(output_dir / "api" / "v1" / "badges" / f"{name}.json", badge_document(f"Pixel Agents {name}", environment["status"]))
 
-    write_json(output_dir / "api" / "v1" / "badges" / "overall.json", badge_document("Pixel Index contract", snapshot["overall"]))
+    write_json(output_dir / "api" / "v1" / "badges" / "overall.json", badge_document("Pixel Agents contract", snapshot["overall"]))
     (output_dir / "index.html").write_text(render_html(snapshot), encoding="utf-8")
     return snapshot
 

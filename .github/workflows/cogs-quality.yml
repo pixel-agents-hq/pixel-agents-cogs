@@ -9,6 +9,7 @@ on:
       - "pixelagents/infrastructure/webview_build_scripts/**"
       - "toolbox/**/*.py"
       - "contracts/pixel_index/**"
+      - "contracts/pixel_agents/**"
       - "ui_limits.py"
       - "test_ui_limits.py"
       - "pyproject.toml"
@@ -21,6 +22,7 @@ on:
       - "pixelagents/infrastructure/webview_build_scripts/**"
       - "toolbox/**/*.py"
       - "contracts/pixel_index/**"
+      - "contracts/pixel_agents/**"
       - "ui_limits.py"
       - "test_ui_limits.py"
       - "pyproject.toml"
@@ -126,3 +128,7 @@ jobs:
       - name: Test contract reporting
         if: matrix.pixel_index_contracts
         run: python -m unittest discover -s contracts/pixel_index/tests
+
+      - name: Test Pixel Agents contract reporting
+        if: matrix.cog == 'pixelagents'
+        run: python -m unittest discover -s contracts/pixel_agents/tests

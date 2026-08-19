@@ -1,8 +1,11 @@
 """Install stubs before any pixelagents module is imported."""
 from __future__ import annotations
 
+import json
 import sys
+import tempfile
 import types
+from pathlib import Path
 from unittest.mock import MagicMock
 
 from aiohttp import web as _aiohttp_web
@@ -585,10 +588,44 @@ class _FakeCogLoadError(RuntimeError):
 _redbot_core_errors = _make_stub_module("redbot.core.errors", CogLoadError=_FakeCogLoadError)
 _redbot_core.errors = _redbot_core_errors
 
+
+# --- redbot.core.data_manager ---
+# Real Red only initializes this once the bot process has started
+# (load_basic_configuration); tests construct cogs standalone, so this
+# stands in with a throwaway directory per (test-process, cog class name).
+# It pre-seeds a webview_dist already matching the packaged vendor pin, so
+# constructing a cog in a test never triggers a real clone+build -- see
+# infrastructure/webview_build.py's `.built_commit` marker convention.
+_FAKE_DATA_ROOT = Path(tempfile.mkdtemp(prefix="pixelagents-test-data-"))
+_PIN_COMMIT = (
+    (Path(__file__).parents[1] / "infrastructure" / "webview_vendor.commit")
+    .read_text(encoding="utf-8")
+    .strip()
+)
+
+
+def _fake_cog_data_path(cog_instance=None, raw_name=None):
+    name = raw_name or type(cog_instance).__name__
+    path = _FAKE_DATA_ROOT / name
+    if not path.exists():
+        path.mkdir(parents=True)
+        webview_dist = path / "webview_dist"
+        webview_dist.mkdir()
+        (webview_dist / "index.html").write_text("<html><head></head><body></body></html>")
+        (webview_dist / ".built_commit").write_text(_PIN_COMMIT + "\n")
+    return path
+
+
+_redbot_core_data_manager = _make_stub_module(
+    "redbot.core.data_manager", cog_data_path=_fake_cog_data_path
+)
+_redbot_core.data_manager = _redbot_core_data_manager
+
 sys.modules["redbot"] = _redbot
 sys.modules["redbot.core"] = _redbot_core
 sys.modules["redbot.core.bot"] = _redbot_core_bot
 sys.modules["redbot.core.errors"] = _redbot_core_errors
+sys.modules["redbot.core.data_manager"] = _redbot_core_data_manager
 
 
 class FakeCorridor:
@@ -619,3 +656,69 @@ class FakeCorridor:
         if group_key == "keyholder":
             return member_id in self._keyholders
         return False
+
+
+def write_fake_vite_build(build_out_dir: Path) -> None:
+    """Write a minimal Vite build output, shaped like a real one.
+
+    Used by test_webview_build.py and test_webview_dist_build.py to exercise
+    webview_build._sync_dist / the WebviewAssetProvider contract without a
+    real clone+npm+vite build. Covers only what _sync_dist reads -- index.html
+    referencing a hashed JS/CSS pair under the Dashboard subpath,
+    furniture-catalog.json / asset-index.json / the layout it points at,
+    decoded/*.json, and a font -- plus one raw per-tile PNG folder, so a test
+    can assert _sync_dist actually drops the passthrough files real Vite
+    output also carries, rather than happening to copy everything.
+    """
+
+    assets = build_out_dir / "assets"
+    (assets / "decoded").mkdir(parents=True)
+    (build_out_dir / "fonts").mkdir(parents=True)
+    (assets / "characters").mkdir(parents=True)
+
+    (build_out_dir / "index.html").write_text(
+        "<!doctype html><html><head>"
+        '<script type="module" '
+        'src="/third-party/pixelagents/static/assets/index-abc.js"></script>'
+        '<link rel="stylesheet" '
+        'href="/third-party/pixelagents/static/assets/index-abc.css">'
+        '</head><body><div id="root"></div></body></html>',
+        encoding="utf-8",
+    )
+    (assets / "index-abc.js").write_text("console.log('office');", encoding="utf-8")
+    (assets / "index-abc.css").write_text("body { margin: 0; }", encoding="utf-8")
+    (assets / "characters" / "char_0.png").write_bytes(b"not-a-real-png")
+
+    catalog = [
+        {
+            "id": "DESK",
+            "name": "Desk",
+            "category": "furniture",
+            "file": "DESK.png",
+            "width": 1,
+            "height": 1,
+            "footprintW": 1,
+            "footprintH": 1,
+        }
+    ]
+    (assets / "furniture-catalog.json").write_text(json.dumps(catalog), encoding="utf-8")
+    (assets / "asset-index.json").write_text(
+        json.dumps(
+            {"floors": [], "walls": [], "characters": [], "defaultLayout": "default-layout-1.json"}
+        ),
+        encoding="utf-8",
+    )
+    (assets / "default-layout-1.json").write_text(
+        json.dumps({"version": 1, "cols": 1, "rows": 1, "layoutRevision": 1, "tiles": [255]}),
+        encoding="utf-8",
+    )
+    decoded = {
+        "characters.json": [{"down": [], "up": [], "left": [], "right": []}],
+        "floors.json": [[["#ffffff"]]],
+        "walls.json": [[[["#ffffff"]]]],
+        "carpets.json": [[[["#ffffff"]]]],
+        "furniture.json": {"DESK": [["#8F6439"]]},
+    }
+    for name, data in decoded.items():
+        (assets / "decoded" / name).write_text(json.dumps(data), encoding="utf-8")
+    (build_out_dir / "fonts" / "Font.ttf").write_bytes(b"\x00\x01\x02\x03")

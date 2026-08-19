@@ -1,0 +1,247 @@
+name: Update vendored Pixel Agents
+
+# pixelagents/webview_dist is not committed -- it is cloned and built from
+# vendor/pixel-agents at cog_load time, from the commit pinned in
+# pixelagents/infrastructure/webview_vendor.commit (see
+# infrastructure/webview_build.py and issue #7). A pin that lags upstream is
+# the same untraceable-drift problem issue #7 removed, just moved from a
+# committed dist to a stale pin, so this bumps it, then proves the move is
+# safe by running the exact clone-build-serve path a bot host runs at
+# cog_load (pixelagents/tests/test_webview_build.py's
+# PIXELAGENTS_REAL_WEBVIEW_BUILD=1 gate) plus the full pixelagents suite.
+# The PR it opens is for a human to merge -- a green check means "the pinned
+# commit still builds and serves", not "the office still looks right", and
+# only a person loading the cog can judge the second one.
+
+on:
+  schedule:
+    # Daily, 07:00 UTC. The PR is reused across runs (see the branch comment
+    # below), so a quiet day costs about a minute and opens nothing.
+    - cron: "0 7 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+# A manual dispatch during a scheduled run must not race two force-pushes
+# onto the same branch. Never cancel-in-progress: a half-published branch is
+# worse than a late one.
+concurrency:
+  group: vendor-update
+  cancel-in-progress: false
+
+env:
+  PR_BRANCH: chore/vendor-pixel-agents
+  PIN_FILE: pixelagents/infrastructure/webview_vendor.commit
+  UPSTREAM_URL: https://github.com/pixel-agents-hq/pixel-agents.git
+
+jobs:
+  update:
+    name: Bump the pin and prove it still builds
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Record the baseline pin
+        id: baseline
+        run: echo "sha=$(cat "$PIN_FILE")" >> "$GITHUB_OUTPUT"
+
+      # Always develop's pin, never the open PR's -- a PR that already
+      # advanced aaa -> bbb and now advances to ccc has to report aaa -> ccc,
+      # because that is the diff a reviewer will merge.
+      - name: Resolve upstream HEAD
+        id: candidate
+        run: |
+          set -euo pipefail
+          sha="$(git ls-remote "$UPSTREAM_URL" HEAD | cut -f1)"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          if [ "$sha" = "${{ steps.baseline.outputs.sha }}" ]; then
+            echo "Already at upstream HEAD ($sha). Nothing to do."
+            echo "moved=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "moved=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Move the pin
+        if: steps.candidate.outputs.moved == 'true'
+        run: printf '%s\n' "${{ steps.candidate.outputs.sha }}" > "$PIN_FILE"
+
+      - name: Install PixelAgents test dependencies
+        if: steps.candidate.outputs.moved == 'true'
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pytest pytest-timeout aiohttp 'pydantic>=2.6,<2.11'
+
+      # The gate: does the newly pinned commit actually clone, build with
+      # npm/vite, and serve a working office? This runs the exact
+      # `ensure_webview_built` code path cog_load runs -- not a
+      # reimplementation of it. Captured rather than failing the step
+      # outright, so a broken bump still gets a PR to look at instead of
+      # vanishing into a red workflow run with nothing to click on.
+      - name: Run the real clone-build-serve gate
+        id: smoke
+        if: steps.candidate.outputs.moved == 'true'
+        run: |
+          set +e
+          PIXELAGENTS_REAL_WEBVIEW_BUILD=1 python -m pytest -q \
+            pixelagents/tests/test_webview_build.py -k RealWebviewBuild 2>&1 | tee gate-smoke.log
+          echo "code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+
+      # A broader regression net: the smoke gate only proves the pinned
+      # commit builds and serves, not that nothing consuming it (dashboard
+      # routes, settings, asset shape) regressed against upstream's shape.
+      - name: Run the full pixelagents suite
+        id: regression
+        if: steps.candidate.outputs.moved == 'true'
+        run: |
+          set +e
+          python -m pytest -q pixelagents/tests 2>&1 | tee gate-regression.log
+          echo "code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+
+      - name: Compose the pull request body
+        id: body
+        if: steps.candidate.outputs.moved == 'true'
+        env:
+          BASELINE: ${{ steps.baseline.outputs.sha }}
+          CANDIDATE: ${{ steps.candidate.outputs.sha }}
+        run: |
+          set -euo pipefail
+          short="$(printf '%s' "$CANDIDATE" | cut -c1-7)"
+          echo "title=chore(vendor): update pixel-agents to $short" >> "$GITHUB_OUTPUT"
+
+          upstream_web="${UPSTREAM_URL%.git}"
+          {
+            echo "Bumps \`$PIN_FILE\`, the commit \`webview_dist\` is cloned and built from"
+            echo "at \`cog_load\` (\`infrastructure/webview_build.py\`)."
+            echo
+            echo "[\`$BASELINE\` -> \`$CANDIDATE\`]($upstream_web/compare/$BASELINE...$CANDIDATE)"
+            echo
+            if [ "${{ steps.smoke.outputs.code }}" = "0" ]; then
+              echo "### ✅ Clone-build-serve gate: passed"
+              echo
+              echo "The candidate pin clones, builds with npm/vite, decodes every sprite"
+              echo "family, and serves an index.html whose bundled assets all resolve --"
+              echo "the exact path \`cog_load\` runs on a bot host."
+            else
+              echo "### ❌ Clone-build-serve gate: failed"
+              echo
+              echo '```'
+              tail -n 60 gate-smoke.log
+              echo '```'
+            fi
+            echo
+            if [ "${{ steps.regression.outputs.code }}" = "0" ]; then
+              echo "### ✅ pixelagents test suite: passed"
+            else
+              echo "### ❌ pixelagents test suite: failed"
+              echo
+              echo '```'
+              tail -n 60 gate-regression.log
+              echo '```'
+            fi
+          } > gate-report.md
+
+          if [ "${{ steps.smoke.outputs.code }}" != "0" ] || [ "${{ steps.regression.outputs.code }}" != "0" ]; then
+            echo "labels=vendor-update,vendor-breaking" >> "$GITHUB_OUTPUT"
+          else
+            echo "labels=vendor-update" >> "$GITHUB_OUTPUT"
+          fi
+
+      # `secrets` is not available in a step-level `if:`, so this is a shell
+      # check rather than a condition. The token is only ever tested for
+      # emptiness -- never echoed.
+      - name: Note if the pull request will arrive without CI
+        if: steps.candidate.outputs.moved == 'true'
+        env:
+          VENDOR_UPDATE_TOKEN: ${{ secrets.VENDOR_UPDATE_TOKEN }}
+        run: |
+          if [ -n "$VENDOR_UPDATE_TOKEN" ]; then exit 0; fi
+          {
+            echo
+            echo "### ⚠️ No checks will run on this pull request"
+            echo
+            echo "It was opened with \`GITHUB_TOKEN\`, and GitHub does not trigger"
+            echo "\`pull_request\` workflows for anything that token creates, so"
+            echo "\`pixelagents-quality.yml\` and \`check-cogs.yml\` are not running here,"
+            echo "however green the gates above look. Set a \`VENDOR_UPDATE_TOKEN\`"
+            echo "repository secret (a PAT on a machine account with \`repo\`) to get"
+            echo "real checks on this PR."
+          } >> gate-report.md
+
+      # Not fatal on its own: by the time this runs the pin bump is already
+      # committed to the branch, so a refused PR creation costs a click, not
+      # a rerun.
+      - name: Open or update the pull request
+        id: pr
+        continue-on-error: true
+        if: steps.candidate.outputs.moved == 'true'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          # Falls back to GITHUB_TOKEN so this still opens a PR before the
+          # secret exists -- just one without checks, which the step above
+          # says out loud rather than leaving as a mystery.
+          token: ${{ secrets.VENDOR_UPDATE_TOKEN || secrets.GITHUB_TOKEN }}
+          # A constant branch is what makes this reuse the open PR instead of
+          # opening a second one every time upstream moves.
+          branch: ${{ env.PR_BRANCH }}
+          base: ${{ github.ref_name }}
+          delete-branch: false
+          commit-message: |
+            ${{ steps.body.outputs.title }}
+
+            ${{ steps.baseline.outputs.sha }} -> ${{ steps.candidate.outputs.sha }}
+
+            Opened by .github/workflows/vendor-update.yml. Refs #7.
+          title: ${{ steps.body.outputs.title }}
+          body-path: gate-report.md
+          labels: ${{ steps.body.outputs.labels }}
+          add-paths: ${{ env.PIN_FILE }}
+
+      - name: Summarise
+        if: always() && steps.candidate.outputs.moved == 'true'
+        run: |
+          cat gate-report.md >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+          if [ -n "${{ steps.pr.outputs.pull-request-url }}" ]; then
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "PR: ${{ steps.pr.outputs.pull-request-url }}" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Explain a pull request that could not be opened
+        if: always() && steps.pr.outcome == 'failure'
+        run: |
+          {
+            echo "::error::The pull-request action failed; its log above has the specific cause."
+            echo "The pin bump was committed to $PR_BRANCH, but the branch may not have been"
+            echo "pushed. Common causes:"
+            echo "  * \"not permitted to create or approve pull requests\" -- enable Settings ->"
+            echo "    Actions -> General -> Workflow permissions -> \"Allow GitHub Actions to"
+            echo "    create and approve pull requests\"."
+            echo "  * 401 or 403 -- VENDOR_UPDATE_TOKEN has expired or lost access."
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          exit 1
+
+      # Last, so the PR always exists to be read even when this fails the run.
+      - name: Fail if the update broke something
+        if: steps.candidate.outputs.moved == 'true'
+        run: |
+          if [ "${{ steps.smoke.outputs.code }}" != "0" ]; then
+            echo "::error::The candidate pin failed the clone-build-serve gate. See the PR body."
+            exit 1
+          fi
+          if [ "${{ steps.regression.outputs.code }}" != "0" ]; then
+            echo "::error::The candidate pin broke the pixelagents test suite. See the PR body."
+            exit 1
+          fi
+          echo "The candidate pin builds and serves cleanly."

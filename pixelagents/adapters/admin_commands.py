@@ -59,7 +59,7 @@ class AdminCommandsMixin(PixelAgentsBase):
         )
         embed.add_field(
             name="Assets",
-            value="✅ loaded" if self._assets.get("characters") else "⚠️ missing",
+            value=self._webview_assets_status(),
             inline=True,
         )
         embed.add_field(
@@ -226,3 +226,26 @@ class AdminCommandsMixin(PixelAgentsBase):
         await self._reply(ctx, "Despawning all tracked agents for this guild…")
         await self._despawn_guild(guild)
         await self._reply(ctx, "Done.")
+
+    @pixelagents_group.group(name="webview", invoke_without_command=True)
+    @commands.admin_or_permissions(administrator=True)
+    async def cmd_webview(self, ctx: commands.Context) -> None:
+        """Manage the built Pixel Agents webview assets."""
+
+        send_help: Callable[[], Awaitable[object]] = ctx.send_help
+        await send_help()
+
+    @cmd_webview.command(name="rebuild")
+    @commands.admin_or_permissions(administrator=True)
+    async def cmd_webview_rebuild(self, ctx: commands.Context) -> None:
+        """Re-clone and rebuild the webview from the pinned Pixel Agents commit.
+
+        Runs the same routine `cog_load` runs automatically -- useful after
+        installing a missing build tool, or to pick up a pin bump without a
+        full cog reload.
+        """
+
+        if ctx.interaction:
+            await ctx.interaction.response.defer(ephemeral=True)
+        await self._reply(ctx, "Rebuilding the Pixel Agents webview…")
+        await self._reply(ctx, await self._rebuild_webview(force=True))

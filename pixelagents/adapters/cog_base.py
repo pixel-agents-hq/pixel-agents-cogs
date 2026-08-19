@@ -10,7 +10,7 @@ from typing import Any
 
 import discord
 from aiohttp import web
-from redbot.core import commands
+from redbot.core import commands, data_manager
 from redbot.core.bot import Red
 
 from ..application import (
@@ -29,6 +29,7 @@ from ..infrastructure.settings import RedSettingsRepository
 from ..infrastructure.tickets import TicketStore
 from ..infrastructure.websocket import WebSocketServer
 from ..infrastructure.webview import WebviewAssetProvider
+from ..infrastructure.webview_build import BuildOutcome, build_webview, owner_notification_for
 
 log = logging.getLogger("red.d_cogs.pixelagents")
 
@@ -72,9 +73,14 @@ class PixelAgentsBase:
             publish_layout=self._publish_catalogue_layout,
         )
         self._sync_task = None
-        self._webview_assets = WebviewAssetProvider(
-            Path(__file__).parents[1] / "webview_dist", logger=log
-        )
+        # Not the installed pixelagents/ tree: Downloader never copies a
+        # frontend build for us (docs/red-downloader-submodules.md), so the
+        # webview is cloned and built into Red's per-cog data directory --
+        # writable, and persists across cog updates/reloads -- the first
+        # time cog_load runs. See infrastructure/webview_build.py.
+        self._cog_data_dir: Path = data_manager.cog_data_path(self)
+        self._webview_assets = WebviewAssetProvider(self._cog_data_dir / "webview_dist", logger=log)
+        self._webview_build_outcome: BuildOutcome | None = None
         self._assets = self._webview_assets.assets
         self._ticket_store = TicketStore()
         self._client_hub = ClientHub(logger=log)
@@ -140,11 +146,54 @@ class PixelAgentsBase:
     def _load_assets(self) -> None:
         self._webview_assets.load_assets()
 
+    async def _rebuild_webview(self, *, force: bool) -> str:
+        """Build the webview off the event loop; return a status line.
+
+        The formatting and never-raises guarantee live in
+        `infrastructure.webview_build.build_webview` -- this just runs it on
+        a worker thread and records the outcome for `_webview_assets_status`
+        and the owner-DM path.
+        """
+
+        outcome = await asyncio.to_thread(
+            build_webview, self._cog_data_dir, logger=log, force=force
+        )
+        self._webview_build_outcome = outcome
+        self._webview_assets.build_status = None if outcome.ok else outcome.status_line
+        return outcome.status_line
+
+    def _webview_assets_status(self) -> str:
+        """Short, embed-field-sized summary of webview asset health."""
+
+        if self._assets.get("characters"):
+            return "✅ loaded"
+        outcome = self._webview_build_outcome
+        if outcome is not None and outcome.missing_tools:
+            return f"⚠️ missing tool(s): {', '.join(outcome.missing_tools)}"
+        if outcome is not None and not outcome.ok:
+            return "⚠️ build failed — see `[p]pixelagents webview rebuild`"
+        return "⚠️ missing"
+
+    async def _notify_owners_webview_build_failed(self) -> None:
+        outcome = self._webview_build_outcome
+        if outcome is None or outcome.ok:
+            return
+        try:
+            await self.bot.send_to_owners(owner_notification_for(outcome))
+        except Exception:  # best-effort notification only, must never raise
+            log.exception("pixelagents: could not notify owners about the webview build failure")
+
     async def cog_load(self) -> None:
         self._closing = False
         self._corridor = await ensure_corridor_loaded(self.bot)
         self._corridor.register_dependent("pixelagents")
         self._task_supervisor.open()
+        log.info("pixelagents: %s", await self._rebuild_webview(force=False))
+        if self._webview_build_outcome is not None and not self._webview_build_outcome.ok:
+            self._task_supervisor.create(
+                self._notify_owners_webview_build_failed(),
+                name="pixelagents-webview-build-owner-dm",
+            )
         await asyncio.to_thread(self._load_assets)
         await self._pixel_index_client.start()
         await self._start_server()

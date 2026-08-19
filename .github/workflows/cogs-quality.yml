@@ -1,0 +1,112 @@
+name: "Cogs Quality"
+
+on:
+  push:
+    paths:
+      - "corridor/**/*.py"
+      - "pixelagents/**/*.py"
+      - "toolbox/**/*.py"
+      - "contracts/pixel_index/**"
+      - "ui_limits.py"
+      - "test_ui_limits.py"
+      - "pyproject.toml"
+      - ".github/workflows/cogs-quality.yml"
+  pull_request:
+    paths:
+      - "corridor/**/*.py"
+      - "pixelagents/**/*.py"
+      - "toolbox/**/*.py"
+      - "contracts/pixel_index/**"
+      - "ui_limits.py"
+      - "test_ui_limits.py"
+      - "pyproject.toml"
+      - ".github/workflows/cogs-quality.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cogs-quality-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Tests, lint, and types (${{ matrix.cog }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # corridor and toolbox both only need discord.py's stub surface
+          # (neither talks to aiohttp or the Pixel Index contracts) -- their
+          # suites, lint scope, and type-check scope are otherwise identical.
+          - cog: corridor
+            test_target: "corridor/ test_ui_limits.py"
+            lint_target: "corridor ui_limits.py test_ui_limits.py"
+            mypy_target: "corridor ui_limits.py"
+            extra_deps: ""
+            pixel_index_contracts: false
+          - cog: toolbox
+            test_target: "toolbox/"
+            lint_target: "toolbox"
+            mypy_target: "toolbox"
+            extra_deps: ""
+            pixel_index_contracts: false
+          - cog: pixelagents
+            test_target: "pixelagents/tests"
+            lint_target: "pixelagents"
+            mypy_target: "pixelagents"
+            extra_deps: "aiohttp"
+            pixel_index_contracts: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install 'discord.py>=2.7,<2.8' pytest pytest-timeout ruff mypy ${{ matrix.extra_deps }}
+
+      - name: Install Pixel Index contract dependencies
+        if: matrix.pixel_index_contracts
+        run: python -m pip install -r contracts/pixel_index/requirements.txt
+
+      - name: Run ${{ matrix.cog }} tests
+        # Each cog installs its own, mutually incompatible
+        # `sys.modules["redbot.core"]` stub -- running more than one cog's
+        # suite in the same pytest process makes whichever collects first
+        # silently win for the whole session. The matrix keeps each cog in
+        # its own job/process instead of one combined run.
+        run: python -m pytest -q ${{ matrix.test_target }}
+
+      - name: Check formatting
+        run: ruff format --check ${{ matrix.lint_target }}
+
+      - name: Run Ruff
+        run: ruff check ${{ matrix.lint_target }}
+
+      - name: Check production typing
+        # Scoped to this cog's own files: an unscoped `python -m mypy` would
+        # check pyproject.toml's full `files` list, which spans every cog --
+        # pulling in dependencies (aiohttp/pydantic) a corridor/toolbox-only
+        # job has no other reason to install.
+        run: python -m mypy ${{ matrix.mypy_target }}
+
+      - name: Check Pixel Index endpoint registration
+        if: matrix.pixel_index_contracts
+        run: python -m contracts.pixel_index.lint_endpoints
+
+      - name: Check Pixel Index model usage
+        if: matrix.pixel_index_contracts
+        run: python -m contracts.pixel_index.lint_model_usage
+
+      - name: Test contract reporting
+        if: matrix.pixel_index_contracts
+        run: python -m unittest discover -s contracts/pixel_index/tests

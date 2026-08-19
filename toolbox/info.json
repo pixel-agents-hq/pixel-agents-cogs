@@ -7,7 +7,7 @@
     "install_msg": "Requires corridor (auto-loaded). Bot owner only: `[p]toolbox node install` to install Node.js/npm, `[p]toolbox node uninstall` to remove it, `[p]toolbox node version` to check what's installed.",
     "author": ["Tin Nguyen"],
     "required_cogs": {
-        "corridor": "https://github.com/NNTin/office-cogs"
+        "corridor": "https://github.com/pixel-agents-hq/pixel-agents-cogs"
     },
     "requirements": [],
     "tags": ["toolbox", "node", "npm", "tooling"],

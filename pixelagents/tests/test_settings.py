@@ -70,6 +70,25 @@ class TestRedSettingsRepository(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(guild_settings.enabled)
         self.assertTrue(guild_settings.include_bots)
 
+    async def test_webview_commit_override_round_trips_and_validates(self) -> None:
+        repository, _ = make_repository()
+
+        self.assertIsNone(await repository.webview_commit_override())
+
+        clean = await repository.set_webview_commit_override(
+            "https://github.com/pixel-agents-hq/pixel-agents/tree/" + "a" * 40
+        )
+
+        self.assertEqual(clean, "a" * 40)
+        self.assertEqual(await repository.webview_commit_override(), "a" * 40)
+
+        await repository.reset_webview_commit_override()
+        self.assertIsNone(await repository.webview_commit_override())
+
+        with self.assertRaises(ValueError):
+            await repository.set_webview_commit_override("not-a-commit")
+        self.assertIsNone(await repository.webview_commit_override())
+
     async def test_seat_mutations_are_serialized_without_lost_updates(self) -> None:
         repository, _ = make_repository()
 
@@ -148,6 +167,22 @@ class TestSettingsService(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await repository.global_settings(), before)
         self.assertEqual(await repository.ws_port(), 3210)
         self.assertEqual(await repository.message_tool_clear_delay(), 2.0)
+
+    async def test_webview_commit_override_delegates_to_the_repository(self) -> None:
+        repository, _ = make_repository()
+        service, _, _, _, _ = make_service(repository)
+
+        self.assertIsNone(await service.webview_commit_override())
+
+        clean = await service.set_webview_commit_override("A" * 40)
+        self.assertEqual(clean, "a" * 40)
+        self.assertEqual(await service.webview_commit_override(), "a" * 40)
+
+        await service.reset_webview_commit_override()
+        self.assertIsNone(await service.webview_commit_override())
+
+        with self.assertRaises(ValueError):
+            await service.set_webview_commit_override("nope")
 
     async def test_repository_rejects_non_finite_delay_defensively(self) -> None:
         repository, _ = make_repository()

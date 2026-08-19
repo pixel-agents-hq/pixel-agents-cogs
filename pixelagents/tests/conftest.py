@@ -549,6 +549,13 @@ class _FakeCommands:
         return deco
 
     @staticmethod
+    def is_owner():
+        def deco(f):
+            f.__is_owner__ = True
+            return f
+        return deco
+
+    @staticmethod
     def group(**kw):
         def deco(f):
             return _FakeGroup(f, **kw)

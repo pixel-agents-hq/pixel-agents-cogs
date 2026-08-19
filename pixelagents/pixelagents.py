@@ -13,6 +13,7 @@ from .adapters.discord_gateway import VISIBLE_STATUSES, DiscordGatewayMixin
 from .adapters.layout_views import LayoutBrowseView, LayoutDetailView, absolute_url
 from .adapters.office_gateway import OfficeGatewayMixin
 from .adapters.replies import ReplyMixin
+from .adapters.webview_commands import WebviewCommandsMixin
 from .application import LAYOUT_SORT_CHOICES
 from .application.office import DEFAULT_PALETTE_COUNT, JS_MAX_SAFE, discord_id_to_agent_id
 
@@ -41,6 +42,7 @@ class PixelAgents(
     ReplyMixin,
     AdminCommandsMixin,
     CatalogueCommandsMixin,
+    WebviewCommandsMixin,
     commands.Cog,
 ):
     """Serve the Pixel Agents office and mirror Discord presence into it."""

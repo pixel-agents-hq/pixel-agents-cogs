@@ -7,7 +7,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
-from ..domain import IconSource, RenderedReply, ReplyMode, ReplyPreferences
+from ..domain import IconSource, RenderedReply, ReplyField, ReplyMode, ReplyPreferences
 
 
 class IconResolver(Protocol):
@@ -24,6 +24,7 @@ class ReplyContent:
     title: str | None = None
     description: str | None = None
     content: str | None = None
+    fields: tuple[ReplyField, ...] = ()
 
 
 class ReplyService:
@@ -34,12 +35,18 @@ class ReplyService:
         self, guild_id: int, preferences: ReplyPreferences, content: ReplyContent
     ) -> RenderedReply:
         if preferences.mode is ReplyMode.TEXT:
-            text = content.content or content.description or content.title or ""
+            base = content.content or content.description or content.title or ""
+            # An embed field has no text-mode equivalent, so it isn't
+            # dropped -- it becomes an extra "**name:** value" line instead,
+            # after whatever base text there is.
+            lines = [base] if base else []
+            lines.extend(f"**{field.name}:** {field.value}" for field in content.fields)
             return RenderedReply(
                 mode=ReplyMode.TEXT,
-                content=text,
+                content="\n".join(lines),
                 embed_title=None,
                 embed_description=None,
+                fields=(),
                 footer_text=None,
                 show_timestamp=False,
                 icon_url=None,
@@ -51,6 +58,7 @@ class ReplyService:
             content=None,
             embed_title=content.title,
             embed_description=content.description or content.content,
+            fields=content.fields,
             footer_text=preferences.footer_text,
             show_timestamp=preferences.show_timestamp,
             icon_url=icon_url,

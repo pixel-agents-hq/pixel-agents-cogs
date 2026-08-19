@@ -7,7 +7,7 @@ from __future__ import annotations
 import unittest
 
 from ..corridor import Corridor
-from ..domain import ReplyMode
+from ..domain import ReplyField, ReplyMode
 from .conftest import FakeBot, FakeContext, FakeGuild, FakeMember
 
 
@@ -37,6 +37,34 @@ class TestCorridorApi(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(ctx.sent[0]["content"], "Body")
         self.assertIsNone(ctx.sent[0]["embed"])
+
+    async def test_send_reply_embed_carries_fields(self) -> None:
+        member = FakeMember(2, self.guild)
+        ctx = FakeContext(author=member, guild=self.guild)
+
+        await self.corridor.send_reply(
+            ctx,
+            title="Status",
+            fields=[ReplyField("Serving", "yes", False), ReplyField("Clients", "3")],
+        )
+
+        embed = ctx.sent[0]["embed"]
+        self.assertEqual(
+            [call.kwargs for call in embed.add_field.call_args_list],
+            [
+                {"name": "Serving", "value": "yes", "inline": False},
+                {"name": "Clients", "value": "3", "inline": True},
+            ],
+        )
+
+    async def test_send_reply_text_mode_flattens_fields(self) -> None:
+        await self.corridor.set_reply_mode(self.guild.id, ReplyMode.TEXT)
+        member = FakeMember(2, self.guild)
+        ctx = FakeContext(author=member, guild=self.guild)
+
+        await self.corridor.send_reply(ctx, title="Status", fields=[ReplyField("Serving", "yes")])
+
+        self.assertEqual(ctx.sent[0]["content"], "Status\n**Serving:** yes")
 
     async def test_require_permission_denies_by_default(self) -> None:
         member = FakeMember(2, self.guild)

@@ -53,6 +53,8 @@ async def send_rendered_reply(ctx: commands.Context, reply: RenderedReply) -> di
         return await ctx.send(content=reply.content)
 
     embed = discord.Embed(title=reply.embed_title, description=reply.embed_description)
+    for field in reply.fields:
+        embed.add_field(name=field.name, value=field.value, inline=field.inline)
     if reply.icon_url:
         embed.set_author(name=reply.embed_title or "", icon_url=reply.icon_url)
     if reply.footer_text:

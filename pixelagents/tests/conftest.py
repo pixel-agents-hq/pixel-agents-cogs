@@ -631,7 +631,9 @@ sys.modules["redbot.core.data_manager"] = _redbot_core_data_manager
 class _FakeRenderedReply:
     """Test double for corridor's RenderedReply DTO -- pixelagents' ReplyMixin
     only reads these attributes, duck-typed the same way it reads FakeCorridor
-    itself (no static import of corridor's domain types)."""
+    itself (no static import of corridor's domain types, `fields` aside --
+    ReplyMixin imports the real corridor.domain.ReplyField as its own field
+    type, so this double's `fields` are real ReplyField instances too)."""
 
     def __init__(
         self,
@@ -640,6 +642,7 @@ class _FakeRenderedReply:
         content=None,
         embed_title=None,
         embed_description=None,
+        fields=(),
         footer_text=None,
         show_timestamp=False,
         icon_url=None,
@@ -648,6 +651,7 @@ class _FakeRenderedReply:
         self.content = content
         self.embed_title = embed_title
         self.embed_description = embed_description
+        self.fields = fields
         self.footer_text = footer_text
         self.show_timestamp = show_timestamp
         self.icon_url = icon_url
@@ -688,14 +692,18 @@ class FakeCorridor:
             return member_id in self._keyholders
         return False
 
-    async def render_reply(self, guild_id, *, title=None, description=None, content=None):
-        self.rendered_replies.append((guild_id, title, description, content))
+    async def render_reply(self, guild_id, *, title=None, description=None, content=None, fields=()):
+        self.rendered_replies.append((guild_id, title, description, content, tuple(fields)))
         if self.reply_mode == "text":
-            return _FakeRenderedReply(mode="text", content=content or description or title or "")
+            base = content or description or title or ""
+            lines = [base] if base else []
+            lines.extend(f"**{field.name}:** {field.value}" for field in fields)
+            return _FakeRenderedReply(mode="text", content="\n".join(lines))
         return _FakeRenderedReply(
             mode="embed",
             embed_title=title,
             embed_description=description or content,
+            fields=tuple(fields),
         )
 
 

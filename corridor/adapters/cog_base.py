@@ -7,6 +7,7 @@ stable contract they depend on through `required_cogs`.
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from typing import Any
 
 import discord
@@ -14,7 +15,14 @@ from redbot.core import commands
 from redbot.core.bot import Red
 
 from ..application import PermissionService, ReplyContent, ReplyService
-from ..domain import GuildSettings, IconPreference, PermissionGroupDef, RenderedReply, ReplyMode
+from ..domain import (
+    GuildSettings,
+    IconPreference,
+    PermissionGroupDef,
+    RenderedReply,
+    ReplyField,
+    ReplyMode,
+)
 from ..infrastructure import RedCorridorRepository
 from .api import BotIconResolver, BotOwnerRegistry, DiscordMemberRef, send_rendered_reply
 
@@ -85,18 +93,30 @@ class CogBase:
         title: str | None = None,
         description: str | None = None,
         content: str | None = None,
+        fields: Sequence[ReplyField] = (),
     ) -> RenderedReply:
-        """Render title/description/content against a guild's `ReplyMode`
-        without sending anything -- the single source of truth other cogs
-        use when they need their own interaction-aware dispatch (ephemeral
-        responses, hybrid-command followups, ...) instead of `send_reply`'s
-        plain `ctx.send`. See pixelagents' `ReplyMixin` for that use."""
+        """Render title/description/content -- plus any embed `fields`
+        (name/value/inline, discord.Embed.add_field-shaped) -- against a
+        guild's `ReplyMode` without sending anything. `fields` render as
+        structured embed fields in ReplyMode.EMBED, or as extra
+        "**name:** value" text lines in ReplyMode.TEXT (see
+        ReplyService.render); this is the single place that decision is
+        made, so a cog that wants a rich multi-field reply -- not just a
+        title/description -- still gets exactly one send call and still
+        respects ReplyMode, instead of hand-building its own discord.Embed.
+
+        The single source of truth other cogs use when they need their own
+        interaction-aware dispatch (ephemeral responses, hybrid-command
+        followups, ...) instead of `send_reply`'s plain `ctx.send`. See
+        pixelagents' `ReplyMixin` for that use."""
 
         settings = await self._repository.guild_settings(guild_id)
         return await self._reply_service.render(
             guild_id,
             settings.reply,
-            ReplyContent(title=title, description=description, content=content),
+            ReplyContent(
+                title=title, description=description, content=content, fields=tuple(fields)
+            ),
         )
 
     async def send_reply(
@@ -106,10 +126,11 @@ class CogBase:
         title: str | None = None,
         description: str | None = None,
         content: str | None = None,
+        fields: Sequence[ReplyField] = (),
     ) -> discord.Message:
         assert ctx.guild is not None, "send_reply needs a guild context"
         rendered = await self.render_reply(
-            ctx.guild.id, title=title, description=description, content=content
+            ctx.guild.id, title=title, description=description, content=content, fields=fields
         )
         return await send_rendered_reply(ctx, rendered)
 

@@ -8,6 +8,8 @@ import discord
 from discord import app_commands
 from redbot.core import commands
 
+from corridor.domain import ReplyField
+
 from .cog_base import PixelAgentsBase
 from .settings_panel import SettingsPanelView, SettingsRuntimeSnapshot
 
@@ -45,22 +47,26 @@ class AdminCommandsMixin(PixelAgentsBase):
         def yn(value: bool) -> str:
             return "✅" if value else "🛑"
 
-        lines = [
-            f"**Office Server:** {global_settings.ws_host}:{global_settings.ws_port}/ws",
-            f"**Serving:** {yn(self._websocket_server.running)}",
-            "**Office Clients:** "
-            f"{self._client_hub.client_count} ({self._client_hub.editor_count} editor)",
-            f"**Assets:** {self._webview_assets_status()}",
-            f"**Msg Tool Clear Delay:** {global_settings.message_tool_clear_delay}s",
-            f"**Guild Enabled:** {yn(guild_settings.enabled)}",
-            f"**Include Bots:** {yn(guild_settings.include_bots)}",
-            f"**Tracked Agents:** {tracked}",
-            f"**Broadcast Rich Presence:** {yn(global_settings.broadcast_rich_presence)}",
-            f"**Broadcast Messages:** {yn(global_settings.broadcast_messages)}",
-            f"**Pixel Index API:** {global_settings.pixel_index_api_url}",
-            f"**Pixel Index Web:** {global_settings.pixel_index_web_url}",
+        fields = [
+            ReplyField(
+                "Office Server", f"{global_settings.ws_host}:{global_settings.ws_port}/ws", False
+            ),
+            ReplyField("Serving", yn(self._websocket_server.running)),
+            ReplyField(
+                "Office Clients",
+                f"{self._client_hub.client_count} ({self._client_hub.editor_count} editor)",
+            ),
+            ReplyField("Assets", self._webview_assets_status()),
+            ReplyField("Msg Tool Clear Delay", f"{global_settings.message_tool_clear_delay}s"),
+            ReplyField("Guild Enabled", yn(guild_settings.enabled)),
+            ReplyField("Include Bots", yn(guild_settings.include_bots)),
+            ReplyField("Tracked Agents", str(tracked)),
+            ReplyField("Broadcast Rich Presence", yn(global_settings.broadcast_rich_presence)),
+            ReplyField("Broadcast Messages", yn(global_settings.broadcast_messages)),
+            ReplyField("Pixel Index API", global_settings.pixel_index_api_url, False),
+            ReplyField("Pixel Index Web", global_settings.pixel_index_web_url, False),
         ]
-        await self._reply(ctx, "\n".join(lines), title="Pixelagents Status")
+        await self._reply(ctx, title="Pixelagents Status", fields=fields)
 
     def _settings_runtime_snapshot(self, guild_id: int) -> SettingsRuntimeSnapshot:
         return SettingsRuntimeSnapshot(

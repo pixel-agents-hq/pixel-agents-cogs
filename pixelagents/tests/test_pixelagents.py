@@ -11,6 +11,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from corridor.domain import ReplyField
 from pixelagents.application.catalogue import CatalogueResult
 from pixelagents.models import LayoutDetail, LayoutListResponse
 from pixelagents.pixelagents import (
@@ -1279,7 +1280,8 @@ class TestReplyHelper(unittest.IsolatedAsyncioTestCase):
         await self.cog._reply(ctx, "hello", title="Pixel Agents")
         ctx.send.assert_awaited_once_with(content="hello")
         self.assertEqual(
-            self.cog._corridor.rendered_replies, [(ctx.guild.id, "Pixel Agents", "hello", None)]
+            self.cog._corridor.rendered_replies,
+            [(ctx.guild.id, "Pixel Agents", "hello", None, ())],
         )
 
     async def test_embed_mode_renders_through_corridor(self):
@@ -1291,6 +1293,37 @@ class TestReplyHelper(unittest.IsolatedAsyncioTestCase):
         ctx.send.assert_awaited_once()
         self.assertIn("embed", ctx.send.call_args.kwargs)
         self.assertNotIn("content", ctx.send.call_args.kwargs)
+
+    async def test_embed_mode_reply_carries_fields(self):
+        self.cog._corridor = FakeCorridor(reply_mode="embed")
+        ctx = MagicMock()
+        ctx.interaction = None
+        ctx.send = AsyncMock()
+        fields = [ReplyField("Serving", "yes", False), ReplyField("Clients", "3")]
+
+        await self.cog._reply(ctx, title="Status", fields=fields)
+
+        embed = ctx.send.call_args.kwargs["embed"]
+        self.assertEqual(
+            [call.kwargs for call in embed.add_field.call_args_list],
+            [
+                {"name": "Serving", "value": "yes", "inline": False},
+                {"name": "Clients", "value": "3", "inline": True},
+            ],
+        )
+
+    async def test_text_mode_reply_flattens_fields_to_lines(self):
+        self.cog._corridor = FakeCorridor(reply_mode="text")
+        ctx = MagicMock()
+        ctx.interaction = None
+        ctx.send = AsyncMock()
+        fields = [ReplyField("Serving", "yes"), ReplyField("Clients", "3")]
+
+        await self.cog._reply(ctx, title="Status", fields=fields)
+
+        ctx.send.assert_awaited_once_with(
+            content="Status\n**Serving:** yes\n**Clients:** 3"
+        )
 
     async def test_view_only_reply_bypasses_corridor(self):
         self.cog._corridor = FakeCorridor(reply_mode="embed")

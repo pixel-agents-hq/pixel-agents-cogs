@@ -28,15 +28,17 @@ python_version = "3.11"
 strict = true
 ignore_missing_imports = true
 follow_imports = "silent"
-# Every production Pixel Agents / corridor module, plus the shared
-# component-limit checker, is part of the strict type gate.
-files = ["pixelagents", "corridor", "ui_limits.py"]
+# Every production Pixel Agents / corridor / toolbox module, plus the
+# shared component-limit checker, is part of the strict type gate.
+files = ["pixelagents", "corridor", "toolbox", "ui_limits.py"]
 exclude = [
     "^pixelagents/conftest\\.py$",
     "^pixelagents/tests/",
     "^corridor/conftest\\.py$",
     "^corridor/testing\\.py$",
     "^corridor/tests/",
+    "^toolbox/conftest\\.py$",
+    "^toolbox/tests/",
     "^test_ui_limits\\.py$",
 ]
 
@@ -78,4 +80,17 @@ disable_error_code = ["no-any-return"]
 # Same as pixelagents.pixelagents above: `commands.Cog` resolves to Any
 # without Red's real Cog metaclass installed.
 module = ["corridor.corridor"]
+disable_error_code = ["misc"]
+
+[[tool.mypy.overrides]]
+# Same gap as pixelagents.adapters.admin_commands / corridor.adapters.commands
+# above, mirrored for toolbox: Red is absent from the lightweight CI type
+# environment, so its decorators are dynamically typed.
+module = ["toolbox.adapters.commands"]
+disable_error_code = ["untyped-decorator"]
+
+[[tool.mypy.overrides]]
+# Same as pixelagents.pixelagents / corridor.corridor above: `commands.Cog`
+# resolves to Any without Red's real Cog metaclass installed.
+module = ["toolbox.toolbox"]
 disable_error_code = ["misc"]

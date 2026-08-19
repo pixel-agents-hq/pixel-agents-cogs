@@ -1,0 +1,19 @@
+{
+    "$schema": "https://raw.githubusercontent.com/Cog-Creators/Red-DiscordBot/V3/develop/schema/red_cog.schema.json",
+    "name": "toolbox",
+    "short": "Install and manage Node.js/npm on the bot host from Discord.",
+    "description": "Downloads official Node.js prebuilt releases from nodejs.org into Red's per-cog data directory and puts them on PATH, so a bot owner can install, uninstall, or switch the Node.js/npm version their host uses -- without shell access to the machine. Defaults to the latest Node.js 22.x LTS release, the version pinned across this ecosystem (pixel-index's engines.node, pixel-agents' .nvmrc).",
+    "end_user_data_statement": "This cog does not persistently store any data or metadata about users.",
+    "install_msg": "Requires corridor (auto-loaded). Bot owner only: `[p]toolbox node install` to install Node.js/npm, `[p]toolbox node uninstall` to remove it, `[p]toolbox node version` to check what's installed.",
+    "author": ["Tin Nguyen"],
+    "required_cogs": {
+        "corridor": "https://github.com/pixel-agents-hq/pixel-agents-cogs"
+    },
+    "requirements": [],
+    "tags": ["toolbox", "node", "npm", "tooling"],
+    "min_bot_version": "3.5.24",
+    "min_python_version": [3, 11, 0],
+    "hidden": false,
+    "disabled": false,
+    "type": "COG"
+}

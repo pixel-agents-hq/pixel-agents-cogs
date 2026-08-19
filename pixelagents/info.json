@@ -9,7 +9,7 @@
         "Tin Nguyen"
     ],
     "required_cogs": {
-        "corridor": "https://github.com/NNTin/office-cogs"
+        "corridor": "https://github.com/pixel-agents-hq/pixel-agents-cogs"
     },
     "requirements": [
         "aiohttp",

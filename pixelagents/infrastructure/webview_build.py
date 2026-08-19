@@ -29,7 +29,10 @@ REPO_URL = "https://github.com/pixel-agents-hq/pixel-agents.git"
 
 
 def _commit_url(commit: str) -> str:
-    return f"{REPO_URL.removesuffix('.git')}/commit/{commit}"
+    # /tree/<sha> rather than /commit/<sha>: lets a reader browse the
+    # checkout at that pin, not just view the (irrelevant, single-commit)
+    # diff.
+    return f"{REPO_URL.removesuffix('.git')}/tree/{commit}"
 
 
 REQUIRED_TOOLS = ("git", "node", "npm")

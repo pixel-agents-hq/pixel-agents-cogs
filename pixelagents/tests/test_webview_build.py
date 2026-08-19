@@ -182,7 +182,7 @@ class TestBuildWebview(unittest.TestCase):
         # be one click from the reader, not something to copy-paste.
         expected_link = (
             f"[pixel-agents-hq/pixel-agents@{commit[:7]}]"
-            f"(https://github.com/pixel-agents-hq/pixel-agents/commit/{commit})"
+            f"(https://github.com/pixel-agents-hq/pixel-agents/tree/{commit})"
         )
         self.assertIn(expected_link, outcome.status_line)
 

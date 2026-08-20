@@ -16,9 +16,9 @@ workflow" under Pixel Agents below for why they aren't split into two.
 
 ## Pixel Index
 
-The Pixel Agents catalogue integration talks to Pixel Index over plain HTTP —
-there's no shared package between the two repos, just a configurable base URL
-(`[p]pixelagents index set`). That's deliberate: office-cogs shouldn't
+The Pixel Agents catalogue integration (`floorplan`) talks to Pixel Index over
+plain HTTP — there's no shared package between the two repos, just a
+configurable base URL (`[p]floorplan index set`). That's deliberate: office-cogs shouldn't
 hard-depend on pixel-index's code, but it does hard-depend on pixel-index's
 API *shape*. This section explains how office-cogs catches a breaking shape
 change before it breaks the bot.
@@ -30,7 +30,7 @@ not pixel-index. And within office-cogs, the contract isn't hand-written —
 it's generated from the same models the bot uses to parse responses, so it
 can't drift from what the code actually depends on.
 
-- [`pixelagents/contracts/pixel_index.py`](../pixelagents/contracts/pixel_index.py) —
+- [`floorplan/contracts/pixel_index.py`](../floorplan/contracts/pixel_index.py) —
   pydantic models
   describing only the fields the catalogue service and Discord views read from Pixel Index's
   layout list/detail responses. This is the real source of truth: fields
@@ -81,7 +81,7 @@ and both the bot and the CI check read it.
 The generated contract only covers what's registered in `endpoints.py` and
 modeled in `contracts/pixel_index.py` — it can't warn about a call site or a
 field that was never added there in the first place. Two lint checks close that gap, run on
-every PR that touches Python code under `pixelagents/` or anything under
+every PR that touches Python code under `floorplan/` or anything under
 `contracts/pixel_index/` (see
 [`.github/workflows/pixel-index-contract-lint.yml`](../.github/workflows/pixel-index-contract-lint.yml)):
 
@@ -95,7 +95,7 @@ every PR that touches Python code under `pixelagents/` or anything under
   it's hand-registered as a known exception rather than generalizing the
   walk for a call site unlikely to grow siblings.)
 - [`contracts/pixel_index/lint_model_usage.py`](../contracts/pixel_index/lint_model_usage.py)
-  — **new field read, not modeled.** Since PixelAgents views read
+  — **new field read, not modeled.** Since floorplan's views read
   parsed responses via attribute access on the pydantic models (`entry.slug`,
   `d.author.displayName`, …) rather than raw dict `.get()`, an unmodeled or
   mistyped field is a plain mypy `attr-defined` error — no bespoke schema
@@ -104,9 +104,8 @@ every PR that touches Python code under `pixelagents/` or anything under
   `ignore_missing_imports` so Red — not installed for this lightweight check —
   resolves to `Any` instead of erroring) and fails CI
   only on errors that name one of the canonical Pixel Index contract models.
-  Everything else is outside this focused field-drift check; the separate
-  PixelAgents quality workflow runs strict mypy across every production
-  module.
+  Everything else is outside this focused field-drift check; the floorplan
+  leg of `cogs-quality.yml` runs strict mypy across every production module.
 
 Together: `lint_endpoints.py` guards *which endpoints* the contract knows
 about, `lint_model_usage.py` guards *which fields* it knows about for each
@@ -128,7 +127,7 @@ Pact-style `can-i-deploy` check is the natural next step if that happens.
 
 [`.github/workflows/contract-checks.yml`](../.github/workflows/contract-checks.yml)
 runs the check on a schedule (every 8 hours), on `workflow_dispatch`, and on
-any PR touching Python under `pixelagents/` or `contracts/pixel_index/`. It runs
+any PR touching Python under `floorplan/` or `contracts/pixel_index/`. It runs
 as a matrix over known environments:
 
 | Environment | Base URL |
@@ -147,7 +146,7 @@ Add a new environment (e.g. a preview deploy) by adding a row to the
 - **Staging fails** → don't promote yet. Either pixel-index's change is
   breaking (fix it there) or office-cogs' usage needs to change first
   (update the catalogue implementation and
-  `pixelagents/contracts/pixel_index.py` together).
+  `floorplan/contracts/pixel_index.py` together).
 - **Production fails** (e.g. after a promotion, or the scheduled run catches
   something) → office-cogs is currently pointed at a broken contract; treat
   as an incident, not routine drift.
@@ -160,7 +159,7 @@ workflow uses, tagged with which environment broke.
 Whenever the catalogue integration starts reading a new field, stops using
 one, or changes how it calls an endpoint:
 
-1. Update `pixelagents/contracts/pixel_index.py` to match — this is also what validates
+1. Update `floorplan/contracts/pixel_index.py` to match — this is also what validates
    responses at runtime, so it should already reflect reality.
 2. If a new endpoint is called, or params/chaining change, update
    `contracts/pixel_index/endpoints.py` too.
@@ -194,8 +193,9 @@ just applied to a build instead of an HTTP call:
   — calls `pixelagents.infrastructure.webview_build.ensure_webview_built()`
   for real (a real `git clone`, `npm ci`, and `vite build` against the pinned
   commit) — not a reimplementation of it — into a scratch directory, then
-  runs the same checks a working office actually needs via
-  `WebviewAssetProvider`: every sprite family decodes
+  runs the same checks a working office actually needs via floorplan's
+  `WebviewAssetProvider` (pixelagents builds it, floorplan serves it — see
+  both cogs' Architecture.md for that split): every sprite family decodes
   (`characters`/`floors`/`walls`/`carpets`/`furniture`, plus the furniture
   catalog), a default layout is available, and every asset the built
   `index.html` references resolves on disk. A build failure reports one
@@ -214,8 +214,8 @@ already owns catching *upcoming* upstream drift: daily it resolves upstream
 HEAD, bumps the pin on a branch, and gates that bump with this exact
 clone-build-serve path
 (`pixelagents/tests/test_webview_build.py::TestRealWebviewBuild`, behind
-`PIXELAGENTS_REAL_WEBVIEW_BUILD=1`) plus the full pixelagents suite before
-opening a PR. `contract-checks.yml`'s Pixel Agents job runs on that PR too
+`PIXELAGENTS_REAL_WEBVIEW_BUILD=1`) plus the full pixelagents and floorplan
+suites before opening a PR. `contract-checks.yml`'s Pixel Agents job runs on that PR too
 (its `pull_request.paths` cover `webview_vendor.commit`), so the PR that
 bumps the pin also gets an independent, standardized-shape opinion — on top
 of `vendor-update.yml`'s own bespoke gate — the same way any other PR

@@ -41,7 +41,7 @@ class PermissionGroupDef:
     and/or a Discord permission -- whichever a member has either counts.
 
     `key` is the stable identifier dependent cogs reference in code (e.g.
-    pixelagents hardcodes "keyholder") and never changes once created --
+    floorplan hardcodes "keyholder") and never changes once created --
     admins may only rename `label`, the display name shown in UI/messages.
 
     `permission_names` holds `discord.Permissions` flag names (e.g.

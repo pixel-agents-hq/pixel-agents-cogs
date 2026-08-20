@@ -43,7 +43,7 @@ from the settings panel (see "Configuring it" below).
 | *(any admin-added group)* | *(admin-chosen at creation, stable thereafter)* | Members holding one of the roles, or one of the Discord permissions, a guild admin has assigned to that group. |
 
 Dependent cogs reference a group by its plain string `key` — e.g.
-pixelagents hardcodes `"keyholder"` — not an enum member.
+floorplan hardcodes `"keyholder"` — not an enum member.
 `corridor/adapters/cog_base.py`'s `capabilities_satisfy(member, group_key:
 str)` / `require_permission(ctx, group_key: str)` both take `str`.
 
@@ -128,16 +128,16 @@ extra `**name:** value` line. This is what lets a cog send one rich,
 multi-field reply through a single `send_reply`/`render_reply` call instead
 of hand-building its own `discord.Embed` (which would both duplicate
 corridor's rendering and silently stop respecting `ReplyMode` the moment
-someone does) — see `pixelagents/adapters/admin_commands.py`'s `cmd_status`.
+someone does) — see `floorplan/adapters/admin_commands.py`'s `cmd_status`.
 
 A cog that needs its own interaction-aware dispatch on top of that (an
 ephemeral slash-command response, a deferred followup, ...) — something
 `send_reply`'s plain `ctx.send()` doesn't support — calls the lower-level
 `corridor.render_reply(guild_id, title=..., description=..., fields=...)`
 instead: same `ReplyMode` rendering, returned as a `RenderedReply` DTO
-instead of sent, so the caller does its own send. pixelagents' `ReplyMixin`
-([`pixelagents/adapters/replies.py`](../pixelagents/adapters/replies.py)) is
-the reference example. Every command handler across corridor/pixelagents/
+instead of sent, so the caller does its own send. floorplan's `ReplyMixin`
+([`floorplan/adapters/replies.py`](../floorplan/adapters/replies.py)) is
+the reference example. Every command handler across corridor/floorplan/pixelagents/
 toolbox is checked for this by
 [`contracts/discord_replies/lint_reply_channel.py`](../contracts/discord_replies/lint_reply_channel.py)
 (run in CI by `cogs-quality.yml`), which fails on any raw

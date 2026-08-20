@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
-"""Verify the pixelagents -> Pixel Agents (vendored webview) contract.
+"""Verify the pixelagents+floorplan -> Pixel Agents (vendored webview) contract.
 
 Consumer-driven contract check: pixelagents/infrastructure/webview_build.py clones
 pixel-agents-hq/pixel-agents at the commit pinned in
 pixelagents/infrastructure/webview_vendor.commit, builds its webview with npm/vite,
-and pixelagents/infrastructure/webview.py's WebviewAssetProvider serves the result.
+and floorplan/infrastructure/webview.py's WebviewAssetProvider serves the result --
+pixelagents owns vendoring+building, floorplan owns serving what gets built (see
+pixelagents/adapters/cog_base.py::webview_bundle_status and
+floorplan/adapters/cog_base.py::_sync_webview_assets for the cross-cog handoff).
 This runs that exact production path -- not a reimplementation of it -- against
 the pinned commit and checks the same things a working office actually needs:
 every sprite family decodes, a default layout is available, and the built
@@ -32,13 +35,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-import pixelagents.tests.conftest  # noqa: F401  # stubs redbot before the import below
+import pixelagents.tests.conftest  # noqa: F401  # stubs redbot before the imports below
 from pixelagents.infrastructure import webview_build
-from pixelagents.infrastructure.webview import WebviewAssetProvider
+from floorplan.infrastructure.webview import WebviewAssetProvider
 
 SPRITE_FAMILIES = ("characters", "floors", "walls", "carpets", "furniture")
 _BUNDLE_ASSET_RE = re.compile(r'(?:src|href)="([^"]+)"')
-_BUNDLE_PREFIX = "/third-party/pixelagents/static/"
+_BUNDLE_PREFIX = "/third-party/floorplan/static/"
 
 
 def _utc_now() -> str:

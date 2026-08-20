@@ -1,6 +1,6 @@
 """Discord message-component limit checks, independent of any one cog.
 
-Both `corridor` and `pixelagents` build Components V2 UIs (Modals, Buttons,
+Both `corridor` and `floorplan` build Components V2 UIs (Modals, Buttons,
 Selects, TextInputs) by hand, and each cog stubs `discord.ui` differently for
 its own unit tests (see the collision warning in `corridor/testing.py`). A
 regression like a too-long modal label -- which discord.py does not validate

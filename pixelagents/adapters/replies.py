@@ -3,19 +3,12 @@
 Every text/title/description/fields reply renders through Corridor's shared
 `ReplyMode` (`self._corridor.render_reply`) -- see toolbox/adapters/commands.py
 for the same rule applied to a cog that doesn't need interaction-aware
-dispatch. pixelagents does, for hybrid slash-command ephemeral responses and
-deferred followups, which corridor's own `send_reply` doesn't support -- so
-rather than duplicate corridor's dispatch, this calls its lower-level
+dispatch. pixelagents does, for `[p]pixelagents webview rebuild`'s deferred
+followup, which corridor's own `send_reply` doesn't support -- so rather
+than duplicate corridor's dispatch, this calls its lower-level
 `render_reply` (title/description/fields in, a `RenderedReply` DTO out,
 nothing sent) and keeps doing its own ctx/interaction dispatch on top of
-that. `fields` (`corridor.domain.ReplyField`, discord.Embed.add_field-shaped)
-covers a multi-field status-style reply -- e.g. `cmd_status` -- without
-falling back to a hand-built discord.Embed that bypasses ReplyMode.
-
-A caller that already supplies a Discord Components V2 `view=` bypasses
-rendering entirely and is sent as-is: Discord rejects mixing Components V2
-with plain content or an embed, so `ReplyMode` structurally cannot apply to
-it -- see e.g. `cmd_settings`, `cmd_layout_search`.
+that.
 """
 
 from __future__ import annotations
@@ -43,33 +36,6 @@ class ReplyMixin(PixelAgentsBase):
         fields: Sequence[ReplyField] = (),
         **kwargs: Any,
     ) -> None:
-        await self._dispatch_reply(
-            ctx, ephemeral=True, content=content, title=title, fields=fields, **kwargs
-        )
-
-    async def _send_public(
-        self,
-        ctx: commands.Context,
-        content: str | None = None,
-        *,
-        title: str | None = None,
-        fields: Sequence[ReplyField] = (),
-        **kwargs: Any,
-    ) -> None:
-        await self._dispatch_reply(
-            ctx, ephemeral=False, content=content, title=title, fields=fields, **kwargs
-        )
-
-    async def _dispatch_reply(
-        self,
-        ctx: commands.Context,
-        *,
-        ephemeral: bool,
-        content: str | None = None,
-        title: str | None = None,
-        fields: Sequence[ReplyField] = (),
-        **kwargs: Any,
-    ) -> None:
         if "view" in kwargs:
             if content is not None:
                 kwargs["content"] = content
@@ -81,7 +47,7 @@ class ReplyMixin(PixelAgentsBase):
             )
 
         if ctx.interaction:
-            kwargs["ephemeral"] = ephemeral
+            kwargs["ephemeral"] = True
             if not ctx.interaction.response.is_done():
                 await ctx.interaction.response.send_message(**kwargs)
             else:

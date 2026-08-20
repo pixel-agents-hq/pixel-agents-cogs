@@ -19,7 +19,6 @@ from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from pixelagents.infrastructure import webview_build
-from pixelagents.infrastructure.webview import WebviewAssetProvider
 from pixelagents.tests.conftest import write_fake_vite_build
 
 _LOG = logging.getLogger("test.webview_build")
@@ -267,19 +266,23 @@ class TestRealWebviewBuild(unittest.TestCase):
     """Exercises the actual network/git/npm/vite path -- see the module docstring."""
 
     def test_ensure_webview_built_produces_a_working_dist(self) -> None:
+        # WebviewAssetProvider (which actually parses/serves this output) is
+        # floorplan's now -- contracts/pixel_agents/verify.py exercises the
+        # full clone-build-serve path across both packages. This stays
+        # scoped to what pixelagents itself owns: the build produces the
+        # files WebviewAssetProvider is documented to read.
         with TemporaryDirectory() as tmp:
             cog_data_dir = Path(tmp)
             result = webview_build.ensure_webview_built(cog_data_dir, logger=_LOG)
             self.assertTrue(result.rebuilt)
             self.assertEqual(result.commit, webview_build.pinned_commit())
 
-            provider = WebviewAssetProvider(cog_data_dir / "webview_dist")
-            provider.load_assets()
+            dist = cog_data_dir / "webview_dist"
+            self.assertTrue((dist / "index.html").is_file())
             for name in ("characters", "floors", "walls", "carpets", "furniture"):
-                self.assertTrue(provider.assets.get(name))
-
-            response = provider.dashboard_webview_response()
-            self.assertEqual(response.get("status"), 0, response)
+                self.assertTrue((dist / "assets" / "decoded" / f"{name}.json").is_file())
+            self.assertTrue((dist / "assets" / "furniture-catalog.json").is_file())
+            self.assertEqual(webview_build.built_commit(dist), webview_build.pinned_commit())
 
             second = webview_build.ensure_webview_built(cog_data_dir, logger=_LOG)
             self.assertFalse(second.rebuilt)

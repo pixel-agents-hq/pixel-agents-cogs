@@ -19,7 +19,7 @@ different, CI-only package).
 ## Installing
 
 corridor has no dependencies of its own. Other cogs in this repo (currently
-`pixelagents`, `toolbox`) declare it via `required_cogs` and auto-load it
+`floorplan`, `pixelagents`, `toolbox`) declare it via `required_cogs` and auto-load it
 through `dependency_loader.ensure_corridor_loaded()` if it isn't already
 running, so you don't need to load it manually — but you can:
 

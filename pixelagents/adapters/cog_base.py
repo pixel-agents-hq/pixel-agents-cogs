@@ -1,179 +1,111 @@
-"""Dependency composition and lifecycle for the Pixel Agents Cog."""
+"""Dependency composition and lifecycle for the Pixel Agents Cog.
+
+pixelagents owns exactly one thing now: vendoring and building the Pixel
+Agents webview (see Architecture.md). floorplan consumes the result through
+`webview_bundle_status()` below instead of resolving its own
+`cog_data_path` or running its own build.
+"""
 
 from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import discord
-from aiohttp import web
 from redbot.core import commands, data_manager
 from redbot.core.bot import Red
 
-from ..application import (
-    CatalogueService,
-    OfficeService,
-    PresenceService,
-    SettingsService,
-    TaskSupervisor,
-)
-from ..contracts.layout import RawOfficeLayout
-from ..contracts.websocket import ClientMessage
 from ..dependency_loader import ensure_corridor_loaded
-from ..infrastructure.client_hub import ClientHub, ClientState
-from ..infrastructure.pixel_index import PixelIndexClient
 from ..infrastructure.settings import RedSettingsRepository
-from ..infrastructure.tickets import TicketStore
-from ..infrastructure.websocket import WebSocketServer
-from ..infrastructure.webview import WebviewAssetProvider
-from ..infrastructure.webview_build import BuildOutcome, build_webview, owner_notification_for
+from ..infrastructure.webview_build import (
+    BuildOutcome,
+    build_webview,
+    built_commit,
+    owner_notification_for,
+)
 
 log = logging.getLogger("red.d_cogs.pixelagents")
 
 
+@dataclass(frozen=True)
+class WebviewBundleStatus:
+    """Read-only cross-cog view of the built webview bundle.
+
+    `built_commit` lets a consumer tell a rebuild-to-a-different-commit
+    apart from "nothing changed" without re-deriving that from `detail`'s
+    free text.
+    """
+
+    dist_path: Path
+    ready: bool
+    detail: str
+    built_commit: str | None
+
+
 class PixelAgentsBase:
-    """Wire services once and own resources spanning the Cog lifetime."""
+    """Wire the one remaining repository and own the build's lifecycle."""
 
     bot: Red
     config: Any
-    _closing: bool
-    _sync_task: asyncio.Task[object] | None
-    _assets: dict[str, object]
-    _clients: dict[web.WebSocketResponse, ClientState]
 
     def __init__(self, bot: Red) -> None:
         self.bot = bot
-        self._closing = False
         self._corridor: Any = None
-        self._task_supervisor = TaskSupervisor(logger=log)
         self._settings_repository = RedSettingsRepository.create(self)
         self.config = self._settings_repository.config
-        self._settings_service = SettingsService(
-            self._settings_repository,
-            clear_rich_presence=self._clear_rich_presence_bubbles,
-            reauthorize_editors=self._reauthorize_editors_after_settings_change,
-            sync_guild=self._sync_guild_from_settings,
-            despawn_guild=self._despawn_guild_from_settings,
-        )
-        self._presence_service = PresenceService(self._send)
-        self._office_service = OfficeService(
-            self._settings_repository,
-            self._send,
-            presence=self._presence_service,
-            logger=log,
-        )
-        self._pixel_index_client = PixelIndexClient(logger=log)
-        self._catalogue_service = CatalogueService(
-            self._settings_repository,
-            self._pixel_index_client,
-            can_edit_layout=self._can_edit_layout_user,
-            publish_layout=self._publish_catalogue_layout,
-        )
-        self._sync_task = None
         # Not the installed pixelagents/ tree: Downloader never copies a
         # frontend build for us (docs/red-downloader-submodules.md), so the
         # webview is cloned and built into Red's per-cog data directory --
         # writable, and persists across cog updates/reloads -- the first
         # time cog_load runs. See infrastructure/webview_build.py.
         self._cog_data_dir: Path = data_manager.cog_data_path(self)
-        self._webview_assets = WebviewAssetProvider(self._cog_data_dir / "webview_dist", logger=log)
         self._webview_build_outcome: BuildOutcome | None = None
-        self._assets = self._webview_assets.assets
-        self._ticket_store = TicketStore()
-        self._client_hub = ClientHub(logger=log)
-        self._clients = self._client_hub.clients
-        self._websocket_server = WebSocketServer(
-            clients=self._client_hub,
-            tickets=self._ticket_store,
-            authorize=self._authorize_office_client,
-            handle_application_message=self._handle_application_message,
-            health_snapshot=self._health_snapshot,
-            logger=log,
-        )
 
-    @property
-    def _agents(self) -> dict[tuple[int, int], tuple[str, str]]:
-        """Compatibility view of service-owned active agents."""
-
-        return self._office_service.active_agents
-
-    @_agents.setter
-    def _agents(self, value: dict[tuple[int, int], tuple[str, str]]) -> None:
-        self._office_service.replace_active_agents(value)
-
-    @property
-    def _presence_cache(self) -> dict[tuple[int, int], str]:
-        """Compatibility view of the presence service's transition cache."""
-
-        return self._presence_service.cache
-
-    @_presence_cache.setter
-    def _presence_cache(self, value: dict[tuple[int, int], str]) -> None:
-        self._presence_service.replace_cache(value)
-
-    @property
-    def _logged_collisions(self) -> set[int]:
-        return self._office_service.logged_collisions
-
-    async def _clear_rich_presence_bubbles(self) -> None:
-        await self._office_service.clear_presence()
-
-    async def _reauthorize_editors_after_settings_change(self) -> None:
-        await self._client_hub.reauthorize(self._check_auth)
-
-    async def _sync_guild_from_settings(self, guild_id: int) -> str:
-        guild = self.bot.get_guild(guild_id)
-        if guild is None:
-            return "Sync skipped: guild is no longer available."
-        return await self._full_sync(guild)
-
-    async def _despawn_guild_from_settings(self, guild_id: int) -> None:
-        guild = self.bot.get_guild(guild_id)
-        if guild is not None:
-            await self._despawn_guild(guild)
-
-    async def _send_to(self, socket: web.WebSocketResponse, message: Mapping[str, object]) -> None:
-        if not self._closing:
-            await self._client_hub.send_to(socket, message)
-
-    async def _send(self, message: Mapping[str, object]) -> None:
-        if not self._closing:
-            await self._client_hub.broadcast(message)
-
-    def _load_assets(self) -> None:
-        self._webview_assets.load_assets()
+    def _webview_dist_path(self) -> Path:
+        return self._cog_data_dir / "webview_dist"
 
     async def _rebuild_webview(self, *, force: bool) -> str:
         """Build the webview off the event loop; return a status line.
 
         The formatting and never-raises guarantee live in
         `infrastructure.webview_build.build_webview` -- this just runs it on
-        a worker thread and records the outcome for `_webview_assets_status`
+        a worker thread and records the outcome for `webview_bundle_status`
         and the owner-DM path.
         """
 
-        commit = await self._settings_service.webview_commit_override()
+        commit = await self._settings_repository.webview_commit_override()
         outcome = await asyncio.to_thread(
             build_webview, self._cog_data_dir, logger=log, force=force, commit=commit
         )
         self._webview_build_outcome = outcome
-        self._webview_assets.build_status = None if outcome.ok else outcome.status_line
         return outcome.status_line
 
-    def _webview_assets_status(self) -> str:
-        """Short, embed-field-sized summary of webview asset health."""
+    def webview_bundle_status(self) -> WebviewBundleStatus:
+        """Public, read-only cross-cog surface consumed by floorplan.
 
-        if self._assets.get("characters"):
-            return "✅ loaded"
+        No rebuild trigger here -- rebuilding stays
+        `[p]pixelagents webview rebuild`-only.
+        """
+
+        dist_path = self._webview_dist_path()
+        ready = (dist_path / "index.html").is_file()
         outcome = self._webview_build_outcome
-        if outcome is not None and outcome.missing_tools:
-            return f"⚠️ missing tool(s): {', '.join(outcome.missing_tools)}"
-        if outcome is not None and not outcome.ok:
-            return "⚠️ build failed — see `[p]pixelagents webview rebuild`"
-        return "⚠️ missing"
+        if ready:
+            detail = "✅ loaded"
+        elif outcome is not None and outcome.missing_tools:
+            detail = f"⚠️ missing tool(s): {', '.join(outcome.missing_tools)}"
+        elif outcome is not None and not outcome.ok:
+            detail = "⚠️ build failed — see `[p]pixelagents webview rebuild`"
+        else:
+            detail = "⚠️ missing"
+        return WebviewBundleStatus(
+            dist_path=dist_path,
+            ready=ready,
+            detail=detail,
+            built_commit=built_commit(dist_path) if ready else None,
+        )
 
     async def _notify_owners_webview_build_failed(self) -> None:
         outcome = self._webview_build_outcome
@@ -185,76 +117,18 @@ class PixelAgentsBase:
             log.exception("pixelagents: could not notify owners about the webview build failure")
 
     async def cog_load(self) -> None:
-        self._closing = False
         self._corridor = await ensure_corridor_loaded(self.bot)
         self._corridor.register_dependent("pixelagents")
-        self._task_supervisor.open()
         log.info("pixelagents: %s", await self._rebuild_webview(force=False))
         if self._webview_build_outcome is not None and not self._webview_build_outcome.ok:
-            self._task_supervisor.create(
-                self._notify_owners_webview_build_failed(),
-                name="pixelagents-webview-build-owner-dm",
-            )
-        await asyncio.to_thread(self._load_assets)
-        await self._pixel_index_client.start()
-        await self._start_server()
-        self._sync_task = self._task_supervisor.create(
-            self._initial_sync(), name="pixelagents-initial-sync"
-        )
-
-    async def _initial_sync(self) -> None:
-        wait_until_ready: Callable[[], Awaitable[None]] = self.bot.wait_until_red_ready
-        await wait_until_ready()
-        await self._sync_all_guilds()
+            await self._notify_owners_webview_build_failed()
 
     async def cog_unload(self) -> None:
-        self._closing = True
         if self._corridor is not None:
             self._corridor.unregister_dependent("pixelagents")
-        await self._task_supervisor.shutdown()
-        self._sync_task = None
-        await self._websocket_server.stop()
-        await self._pixel_index_client.close()
 
-    # Cross-adapter hooks resolved by the composed Cog's MRO.
-    async def _check_auth(self, user_id: int) -> bool:
-        raise NotImplementedError
-
-    async def _authorize_office_client(self, user_id: int) -> bool:
-        raise NotImplementedError
-
-    async def _can_edit_layout_user(self, user_id: int) -> bool:
-        raise NotImplementedError
-
-    async def _publish_catalogue_layout(self, layout: RawOfficeLayout) -> None:
-        raise NotImplementedError
-
-    async def _handle_application_message(
-        self, socket: web.WebSocketResponse, message: ClientMessage
-    ) -> None:
-        raise NotImplementedError
-
-    def _health_snapshot(self) -> Mapping[str, object]:
-        raise NotImplementedError
-
-    async def _start_server(self) -> None:
-        raise NotImplementedError
-
-    async def _sync_all_guilds(self) -> None:
-        raise NotImplementedError
-
-    async def _full_sync(self, guild: discord.Guild) -> str:
-        raise NotImplementedError
-
-    async def _despawn_guild(self, guild: discord.Guild) -> None:
-        raise NotImplementedError
-
+    # Cross-adapter hook resolved by the composed Cog's MRO.
     async def _reply(
-        self, ctx: commands.Context, content: str | None = None, **kwargs: Any
-    ) -> None:
-        raise NotImplementedError
-
-    async def _send_public(
         self, ctx: commands.Context, content: str | None = None, **kwargs: Any
     ) -> None:
         raise NotImplementedError

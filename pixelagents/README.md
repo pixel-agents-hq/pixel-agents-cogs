@@ -1,20 +1,32 @@
 # pixelagents
 
-Owns the Pixel Agents webview bundle — serves the office webview through
-Red's Web Dashboard and mirrors Discord presence into it.
+Vendors and builds the [Pixel Agents](https://github.com/pixel-agents-hq/pixel-agents)
+webview for [`floorplan`](../floorplan) to serve.
 
-`pixelagents` hosts the pre-built [Pixel Agents](https://github.com/pixel-agents-hq/pixel-agents)
-browser bundle as a Red Dashboard third-party page and serves its WebSocket
-protocol directly, turning Discord guild presence (online/idle/dnd status,
-rich presence, messages) into animated characters in a shared office. It
-also browses the public [Pixel Index](https://github.com/pixel-agents-hq/index)
-layout catalogue from Discord and can load a selected layout into the
-office. Editing the office layout is delegated to corridor's Keyholder
-permission tier — pixelagents holds no role IDs of its own.
+`pixelagents` clones the pinned Pixel Agents commit and builds its webview
+with `npm`/`vite` into Red's per-cog data directory, the first time
+`cog_load` runs and on demand via `[p]pixelagents webview rebuild`. It owns
+nothing else — no dashboard, no Discord presence mirroring, no WebSocket
+protocol, no Pixel Index integration. `floorplan` depends on this cog
+(`required_cogs`) and reads the build's path/status through
+`PixelAgents.webview_bundle_status()`; it never triggers a build itself.
+
+Requires `git`, `node`, and `npm` on the bot host — see
+[Architecture.md](Architecture.md#building-webview_dist) if the build fails
+or a tool is missing. The cog stays loadable either way and the bot owner
+gets a DM. [`toolbox`](../toolbox) can install Node.js/npm on the host if
+they're missing.
+
+All commands are bot-owner only (`@commands.is_owner()`), the same
+reasoning [`toolbox`](../toolbox) uses: the built webview is one shared
+artifact on the host, not per-guild data, so a guild-scoped permission tier
+would be the wrong fit regardless of how it's granted.
 
 ## Installing
 
-Requires [`corridor`](../corridor) (auto-loaded via `required_cogs`):
+Requires [`corridor`](../corridor) (auto-loaded via `required_cogs`), purely
+for reply-formatting consistency — pixelagents holds no permission checks of
+its own:
 
 ```
 [p]repo add pixel-agents-cogs https://github.com/pixel-agents-hq/pixel-agents-cogs
@@ -22,42 +34,19 @@ Requires [`corridor`](../corridor) (auto-loaded via `required_cogs`):
 [p]load pixelagents
 ```
 
-First `cog_load` clones and builds the pinned Pixel Agents webview commit
-into Red's per-cog data directory — this requires `git`, `node`, and `npm`
-on the host. See [Architecture.md](Architecture.md#building-webview_dist)
-if that build fails or a tool is missing; the cog stays loadable either way
-and the bot owner gets a DM.
-
-## Configuring
-
-1. Set who may edit the office layout via corridor:
-   `[p]corridorsettings` (the Keyholder permission tier).
-2. Enable a guild: `[p]pixelagents enable`.
-3. The office is served at `/third-party/pixelagents`; route `/ws` on that
-   host to the port from `[p]pixelagents wsport` (default `3210`).
-
 ## Commands
 
 | Command | Description |
 |---|---|
-| `[p]pixelagents status` | Configuration, client count, asset state |
-| `[p]pixelagents settings` | Components V2 administration panel |
-| `[p]pixelagents enable` / `disable` | Guild mirroring on/off |
-| `[p]pixelagents sync` / `despawnall` | Reconcile / clear agents |
-| `[p]pixelagents wsport <port>` | Office server port |
-| `[p]pixelagents index` | Pixel Index endpoints and API health |
-| `[p]pixelagents layout search [query] [tag] [sort]` | Browse Pixel Index layouts |
-| `[p]pixelagents layout view <slug>` | View and optionally load a layout |
-
-See [Architecture.md](Architecture.md) for the full command list and
-configuration keys.
+| `[p]pixelagents webview commit` | Show which Pixel Agents commit the webview builds from |
+| `[p]pixelagents webview setcommit <commit>` | Pin webview builds to a specific commit or link |
+| `[p]pixelagents webview resetcommit` | Revert to the source-pinned default commit |
+| `[p]pixelagents webview rebuild` | Re-clone and rebuild the webview now |
 
 ## Docs
 
-- [Architecture.md](Architecture.md) — internal structure, routing, the
-  webview build pipeline, and the WebSocket bootstrap sequence.
-- [PERMISSIONS.md](PERMISSIONS.md) — how corridor's permission tiers gate
-  layout editing here.
-- [`docs/contract-testing.md`](../docs/contract-testing.md) — how this cog's
-  dependency on the Pixel Index API and the Pixel Agents webview source is
-  verified in CI.
+- [Architecture.md](Architecture.md) — the vendor pin, the build pipeline,
+  and the `webview_bundle_status()` cross-cog surface floorplan consumes.
+- [`docs/contract-testing.md`](../docs/contract-testing.md) — how the
+  pinned Pixel Agents commit is verified in CI, across both this cog's
+  build and floorplan's `WebviewAssetProvider`.

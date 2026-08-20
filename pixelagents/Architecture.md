@@ -1,312 +1,112 @@
 # Pixelagents Architecture
 
-`pixelagents` is a Red DiscordBot cog that does three things:
-
-1. **Serves the Pixel Agents office** — hosts the pre-built browser bundle
-   through the Red Web Dashboard third-party page system, and serves the office
-   WebSocket protocol itself.
-2. **Mirrors Discord presence** — turns guild presence, activity, and message
-   events into the office's `ServerMessage` protocol.
-3. **Integrates with Pixel Index** — browses the public layout catalogue from
-   Discord and loads selected layouts into the shared office.
-
-The cog is the Pixel Agents runtime adapter for Red: it serves the browser
-bundle and implements the office WebSocket protocol directly. It does not
-depend on a separate producer-ingress service.
+`pixelagents` is a small Red DiscordBot utility cog, the same shape as
+[`toolbox`](../toolbox): it vendors and builds the
+[Pixel Agents](https://github.com/pixel-agents-hq/pixel-agents) webview so
+[`floorplan`](../floorplan) can serve it. It owns nothing runtime-facing —
+no dashboard routes, no Discord presence mirroring, no WebSocket protocol,
+no Pixel Index integration. Those all moved to `floorplan` in
+[issue #21](https://github.com/pixel-agents-hq/pixel-agents-cogs/issues/21),
+which split the original combined cog along exactly this line: "owns the
+vendor and the build" vs. "owns everything that consumes the result."
 
 ## Internal structure
 
-`pixelagents.py` is deliberately only the stable composition and compatibility
-entrypoint. Runtime behavior is organized by responsibility:
-
-| Area | Responsibility |
+| File | Responsibility |
 |---|---|
-| `domain/` | Immutable, framework-free agent, activity, message, seat, and settings snapshots |
-| `contracts/` | Validated WebSocket ingress, outbound message builders, layout schema, and Pixel Index response models |
-| `application/` | Office reconciliation, presence projection, settings side effects, catalogue use cases, and supervised tasks |
-| `infrastructure/` | Red Config, Discord normalization, aiohttp/WebSocket lifecycle, connected clients, tickets, Pixel Index HTTP, and webview assets |
-| `adapters/` | Red commands, Discord listeners, Dashboard routes, Discord views, WebSocket application dispatch, and response policy |
-| `pixelagents.py` | The `PixelAgents` Cog composition plus historical import aliases |
+| `domain/settings.py` | `parse_commit_ref` — validates a user-supplied commit hash/link |
+| `infrastructure/settings.py` | `RedSettingsRepository` — the one Config key this cog owns, `webview_commit_override` |
+| `infrastructure/webview_build.py` | Clone-and-build orchestration: `ensure_webview_built`, `build_webview`, `built_commit` |
+| `infrastructure/webview_build_scripts/` | Upstream's own PNG-decoder script, invoked against the runtime clone |
+| `adapters/cog_base.py` | Composition root: wires the repository, runs the build at `cog_load`, exposes `webview_bundle_status()` |
+| `adapters/commands.py` | The whole `[p]pixelagents webview ...` command surface |
+| `adapters/replies.py` | Interaction-aware reply dispatch through corridor's `ReplyMode` (`[p]pixelagents webview rebuild` defers, then follows up) |
+| `pixelagents.py` | Cog composition plus the historical lowercase-alias export |
 
-`adapters/cog_base.py` is the composition root. It constructs each long-lived
-service once and coordinates `cog_load`/`cog_unload`; the other adapter mixins
-contain only their framework-facing surface. The lowercase historical class
-name remains an alias of the canonical `PixelAgents` class, so Red and existing
-integrations see the same Cog.
+`required_cogs: corridor` stays declared, purely so replies respect
+whatever `ReplyMode` a guild has configured — pixelagents holds no
+permission checks of corridor's, unlike floorplan's Keyholder-gated layout
+editing.
 
-Resource ownership is intentionally singular:
+## The `webview_bundle_status()` cross-cog surface
 
-| Resource | Owner |
-|---|---|
-| Red `Config` | `RedSettingsRepository` |
-| Pixel Index `ClientSession` | `PixelIndexClient` |
-| Office listener and connected sockets | `WebSocketServer` and `ClientHub` |
-| Delayed clears and initial synchronization | `TaskSupervisor` |
-| Decoded bundle assets | `WebviewAssetProvider` |
-| Editor session tickets | `TicketStore` |
+`floorplan` depends on this cog (`required_cogs`) and resolves it at
+`cog_load` via `dependency_loader.ensure_pixelagents_loaded` (mirroring how
+every cog here resolves corridor). It never triggers a build itself —
+rebuilding stays `[p]pixelagents webview rebuild`-only — it only reads:
 
-Shutdown first prevents new sends, then cancels and awaits supervised tasks,
-closes the office listener and sockets, and finally closes the shared Pixel
-Index client. This keeps reloads from leaking sessions, ports, or delayed work.
-
-### Layer boundaries
-
-```mermaid
-flowchart TB
-    domain["domain/<br/><small>pure value objects</small>"]
-    contracts["contracts/<br/><small>wire schemas</small>"]
-    application["application/<br/><small>use cases</small>"]
-    infrastructure["infrastructure/<br/><small>I/O adapters</small>"]
-    adapters["adapters/<br/><small>Cog mixins</small>"]
-    entry["pixelagents.py<br/><small>composition root, &lt;200 lines</small>"]
-
-    contracts --> domain
-    application --> domain
-    application --> contracts
-    infrastructure --> domain
-    infrastructure --> contracts
-    adapters --> application
-    adapters --> infrastructure
-    adapters --> contracts
-    adapters --> domain
-    entry --> adapters
-    entry --> application
-
-    infrastructure -. "infrastructure/pixel_index.py reaches up to<br/>application/catalogue.py for its error<br/>vocabulary — allowed, not enforced" .-> application
+```python
+@dataclass(frozen=True)
+class WebviewBundleStatus:
+    dist_path: Path  # <pixelagents cog_data_path>/webview_dist
+    ready: bool  # index.html present on disk
+    detail: str  # human-readable status line
+    built_commit: str | None  # the commit actually on disk, if ready
 ```
 
-`pixelagents/tests/test_architecture.py::test_application_layer_does_not_import_infrastructure_or_adapters`
-enforces the one rule that actually matters for keeping this acyclic: it
-AST-walks every file directly under `application/` and fails if any has a
-two-level relative import (`from ..infrastructure ...` / `from ..adapters
-...`) reaching outward into a layer meant to depend on it, not the other way
-around. Nothing currently checks the reverse direction, which is why
-`infrastructure/pixel_index.py` importing `CatalogueError`,
-`CatalogueErrorCode`, and `CatalogueResult` from `application/catalogue.py`
-(reusing application's result vocabulary as its own return type, rather than
-defining its own and letting application translate) is allowed today — it's
-a known, deliberate asymmetry, not an oversight to silently "fix" without
-also updating the test's intent.
-
-## pixelagents/ and the repo-root `contracts/`
-
-There are two differently-scoped things named "contracts" in this repo, and
-they are not the same thing:
-
-- **`pixelagents/contracts/`** — the in-package wire-schema layer described
-  above (`layout.py`, `outbound.py`, `pixel_index.py`, `websocket.py`): part
-  of the cog's own runtime, deployed with it.
-- **`contracts/`** (repo root) — a separate top-level package that exists
-  purely for CI: it generates and checks a consumer-driven contract for the
-  Pixel Index HTTP API. It ships in this repo but is never loaded by Red —
-  `contracts/info.json` declares `"type": "SHARED_LIBRARY"` specifically so
-  Red's Downloader excludes it from cog discovery. Without that marker, Red's
-  Downloader treats any top-level package with no `info.json` type as a cog
-  by default, tries `bot.load_extension("contracts")`, and fails since it has
-  no `setup()`.
-
-```mermaid
-flowchart LR
-    subgraph root["contracts/ (repo root) — CI only"]
-        EP["endpoints.py"]
-        LE["lint_endpoints.py"]
-        LM["lint_model_usage.py"]
-        GC["generate_contract.py"]
-        VER["verify.py"]
-        GS["generate_status_site.py"]
-    end
-
-    subgraph pa["pixelagents/ — the Red cog"]
-        PICM["contracts/pixel_index.py<br/><small>canonical pydantic models</small>"]
-        INFRA["infrastructure/pixel_index.py<br/><small>PixelIndexClient</small>"]
-        SHIM["models.py<br/><small>legacy re-export shim</small>"]
-        SRC["every *.py under pixelagents/"]
-    end
-
-    EP -- "imports LayoutDetail,<br/>LayoutListResponse" --> PICM
-    GC --> EP
-    VER --> GC
-    GS -. "reads verify.py's JSON<br/>results only" .-> VER
-    LE -- "AST-scans source text for<br/>_pixel_index_get(...) call sites" --> SRC
-    LM -- "introspects model class names" --> PICM
-    LM -- "runs mypy over pixelagents/,<br/>filters errors by model name" --> SRC
-    INFRA -- "imports" --> PICM
-    SHIM -- "re-exports" --> PICM
-```
-
-The dependency runs one way: the repo-root `contracts/` package imports and
-inspects `pixelagents/`, but nothing under `pixelagents/` imports from
-`contracts/`. That's possible without an install step because both are
-plain top-level Python packages in the same checkout — CI runs
-`python -m contracts.pixel_index.X` from the repo root, and the repo root
-being on `sys.path` is enough for `contracts/*` to resolve
-`pixelagents.contracts.pixel_index` directly. `pixelagents/models.py` is a
-legacy compatibility shim that re-exports the same models under the old
-`pixelagents.models` path; current CI tooling imports
-`pixelagents.contracts.pixel_index` directly instead, but the shim stays for
-older callers. See [`docs/contract-testing.md`](../docs/contract-testing.md)
-for how the contract-testing methodology itself works — this section is
-only about the structural dependency between the two packages.
+`floorplan/adapters/cog_base.py::_sync_webview_assets` re-reads this before
+every public webview page render (and at its own `cog_load`) rather than
+caching a snapshot, and reloads its decoded sprite assets only when
+`built_commit` changes — so a `[p]pixelagents webview rebuild` to a new
+commit is picked up without floorplan needing a reload of its own.
 
 ## Ecosystem integration
 
 ```mermaid
 flowchart TD
     PA["pixel agents<br/><small>core product</small>"]
-    IDX["index<br/><small>layout index</small>"]
     RED["Red-DiscordBot<br/><small>bot framework</small>"]
-    OC["office-cogs<br/><small>red cogs for pixel agents</small>"]
-    DOCS["docs<br/><small>doc page of pixel agents</small>"]
+    PIX["pixelagents<br/><small>this cog: vendor + build</small>"]
+    FP["floorplan<br/><small>serves the built bundle</small>"]
 
-    IDX -->|git submodule for UI rendering| PA
-    OC -->|cloned at cog_load, into cog_data_path| PA
-    OC -->|public HTTP API| IDX
-    OC -->|Downloader cog package| RED
+    PIX -->|clones + builds at cog_load| PA
+    PIX -->|webview_bundle_status| FP
+    PIX -->|Downloader cog package| RED
 ```
 
-Pixel Agents supplies the office UI and WebSocket message contract. Pixel
-Index pins that UI as a git submodule so its gallery can render layouts with
-the same code as the core product. The docs site describes the core product
-but is not part of the office-cogs runtime path.
-
-office-cogs pins the same upstream commit
+office-cogs pins the upstream commit
 (`pixelagents/infrastructure/webview_vendor.commit`) but cannot vendor it as
-a submodule the way Pixel Index does: Red's Downloader clones a cog
-repository with `--recurse-submodules`, but it does not recursively update
-submodules on later revision checkouts, has no hook to run a frontend build,
-and copies only the selected cog directory (`pixelagents/`) to Red's install
-path — a top-level `vendor/` submodule would not even be copied, and nothing
-would ever build it for an installed cog. So instead of vendoring the
-source, office-cogs vendors *the build*: `pixelagents/infrastructure/
-webview_build.py` clones the pinned commit and runs the same subpath Vite
-build directly from inside the installed cog, the first time `cog_load`
-runs, into Red's per-cog data directory (see "Building `webview_dist`"
-below) — never into the installed package tree, which stays read-only from
-Downloader's point of view. The exact Downloader behavior this works around
-is documented in
+a submodule the way [Pixel Index](https://github.com/pixel-agents-hq/index)
+does: Red's Downloader clones a cog repository with `--recurse-submodules`,
+but it does not recursively update submodules on later revision checkouts,
+has no hook to run a frontend build, and copies only the selected cog
+directory (`pixelagents/`) to Red's install path — a top-level `vendor/`
+submodule would not even be copied, and nothing would ever build it for an
+installed cog. So instead of vendoring the source, this cog vendors *the
+build*: `infrastructure/webview_build.py` clones the pinned commit and runs
+the same subpath Vite build directly from inside the installed cog, the
+first time `cog_load` runs, into Red's per-cog data directory (see
+"Building `webview_dist`" below) — never into the installed package tree,
+which stays read-only from Downloader's point of view. The exact Downloader
+behavior this works around is documented in
 [Downloader and Git submodules](../docs/red-downloader-submodules.md).
 
-At runtime, office-cogs integrates with Pixel Index over its public HTTP API;
-it does not connect to the index database or renderer directly:
+## `pixelagents/` and the repo-root `contracts/`
 
-```text
-[p]pixelagents layout search
-  -> GET <pixel_index_api_url>/api/v1/layouts
+There are two differently-scoped things named "contracts" in this repo, and
+they are not the same thing:
 
-[p]pixelagents layout view <slug>
-  -> GET <pixel_index_api_url>/api/v1/layouts/<slug>
-  -> use <pixel_index_web_url>/layouts/<slug> for "View on site"
+- **`floorplan/contracts/`** — the office WebSocket protocol and Pixel
+  Index wire-schema layer, part of floorplan's own runtime now. This cog
+  has no `contracts/` package of its own — it has nothing to model, only
+  files to build.
+- **`contracts/`** (repo root) — a separate top-level package that exists
+  purely for CI. `contracts/pixel_agents/` generates and checks a
+  consumer-driven contract for the vendored Pixel Agents webview, running
+  the exact `ensure_webview_built` path this cog runs at `cog_load`, then
+  handing the result to floorplan's `WebviewAssetProvider` the same way
+  floorplan itself would. It ships in this repo but is never loaded by
+  Red — `contracts/info.json` declares `"type": "SHARED_LIBRARY"`
+  specifically so Red's Downloader excludes it from cog discovery.
 
-authorized "Load layout"
-  -> validate the layout returned by Pixel Index
-  -> persist it in Red's cog configuration
-  -> broadcast layoutLoaded to every connected office client
-```
-
-Browsing is public. Loading a layout uses the same editor authorization as
-local layout changes. The API and web origins are separate configuration keys,
-so deployments can point the cog at production, staging, or a self-hosted
-Pixel Index without rebuilding it.
-
-One public entry point:
-
-```text
-https://pico.nntin.xyz/third-party/pixelagents
-```
-
-```mermaid
-flowchart TD
-    Browser(["Browser"])
-    Discord(["Discord Gateway"])
-
-    subgraph docker["Docker host"]
-        Traefik["Traefik<br/>pico.nntin.xyz"]
-
-        subgraph ns["network namespace of red-pico"]
-            Dashboard["Red Dashboard<br/>Flask/Waitress :42356"]
-            Bot["Red Bot"]
-            Cog["pixelagents cog<br/>dashboard_webview()<br/>dashboard_static()<br/>office server :3210"]
-        end
-    end
-
-    Browser -- "① GET /third-party/pixelagents" --> Traefik
-    Traefik -- "② default rule → :42356" --> Dashboard
-    Dashboard -- "③ RPC :6133" --> Bot
-    Bot --> Cog
-    Cog -- "④ index.html + authorize shim" --> Dashboard
-    Dashboard -- "⑤ HTML/JS bundle" --> Browser
-
-    Browser -- "⑥ GET /static/assets/*" --> Traefik
-    Traefik --> Dashboard
-
-    Browser -- "⑦ wss://pico.nntin.xyz/ws" --> Traefik
-    Traefik -- "Path(/ws) priority 100 → :3210" --> Cog
-    Browser -- "⑧ background GET /third-party/pixelagents/session (if logged in)" --> Traefik
-    Browser -- "⑨ {type:authorize, ticket} over the open socket" --> Cog
-
-    Discord -- "presence · member · message" --> Bot
-```
-
-## Routing
-
-| Router | Rule | Target |
-|---|---|---|
-| `red-pico` | ``Host(`pico.nntin.xyz`)`` | `:42356` Red Dashboard |
-| `red-pico-ws` | ``Host(`pico.nntin.xyz`) && Path(`/ws`)`` — priority 100 | `:3210` this cog |
-
-Both routers point at the same container: `red-dashboard-pico` runs with
-`network_mode: "service:red-pico"`, so the dashboard and the cog share one
-network namespace.
-
-`/ws` has to sit at the origin root because upstream's webview hardcodes
-`<origin>/ws` (`webview-ui/src/transport/index.ts`) and is not subpath-aware.
-
-> **Both routers must name their service explicitly.** Once a container
-> declares two Traefik services, Traefik cannot infer a default and silently
-> drops the router that lacks `traefik.http.routers.<name>.service=`. The
-> symptom is the dashboard 404ing on every path, which reads like a dead app
-> rather than a routing problem.
-
-## Serving the bundle
-
-```text
-GET /third-party/pixelagents            (public — no login required)
-  → third_parties_blueprint.third_party
-  → DASHBOARDRPC_THIRDPARTIES__DATA_RECEIVE over RPC
-  → dashboard_webview() → index.html + authorize shim
-  → rendered with standalone: true
-
-GET /third-party/pixelagents/session    (login required)
-  → dashboard_session(user_id=…) → {"ticket": "…"} as JSON
-  → fetched in the background by the shim, not navigated to directly
-
-GET /third-party/pixelagents/static/<asset_path>
-  → third_party_static()  (a redstack patch, not upstream reddash)
-  → dashboard_static() → base64 of webview_dist/<asset_path>
-  → Cache-Control: public, max-age=3600
-```
-
-`_resolve_webview_asset` enforces a path-traversal guard
-(`candidate.relative_to(root)`), so a crafted `asset_path` cannot escape
-`webview_dist/`.
-
-> **`dashboard_page` infers `context_ids` from the function signature**: any
-> parameter with no default named `user_id` (or `guild_id`, `member_id`, …)
-> becomes a context ID, which makes the dashboard require login before
-> serving that page and hand back the visitor's Discord ID. `dashboard_webview`
-> deliberately has no such parameter — that's what keeps the office public.
-> `dashboard_session` deliberately does — that's the only login-gated route.
-> Never pass `context_ids` explicitly to the decorator: it skips the
-> inference branch and files the same-named parameter under
-> `required_kwargs` instead, which 404s unless the caller appends the id as a
-> query string (e.g. `?user_id=`).
+See [`docs/contract-testing.md`](../docs/contract-testing.md) for how that
+contract-testing methodology works.
 
 ## Building `webview_dist`
 
 `webview_dist/` is not committed and does not exist anywhere in this
 repository's tree. It is cloned and built at runtime, the first time
-`cog_load` runs on a given bot host, by
-`pixelagents/infrastructure/webview_build.py`:
+`cog_load` runs on a given bot host, by `infrastructure/webview_build.py`:
 
 ```text
 ensure_webview_built(cog_data_path(self))
@@ -314,215 +114,74 @@ ensure_webview_built(cog_data_path(self))
   → git missing/node missing/npm missing? raise WebviewBuildError
   → git clone/fetch + checkout <pinned commit>   → <data>/vendor/pixel-agents
   → npm ci --workspace=webview-ui --ignore-scripts
-  → vite build --base /third-party/pixelagents/static/
+  → vite build --base /third-party/floorplan/static/
   → emit_decoded_assets.ts (upstream's own PNG decoders)
   → sync the trimmed result                      → <data>/webview_dist
 ```
 
 `<data>` is `redbot.core.data_manager.cog_data_path(self)` — Red's per-cog
-data directory, writable and persisted across cog reloads/updates, *not* the
-installed `pixelagents/` package tree Downloader manages. That distinction
-is the whole reason this builds at runtime instead of vendoring a submodule
-the way Pixel Index does: Downloader copies only `pixelagents/` on install
-and has no hook to run a frontend build (see
-[Downloader and Git submodules](../docs/red-downloader-submodules.md)), so
-nothing outside the cog's own `cog_load` could ever produce `webview_dist`
-for an installed cog. `pixelagents/infrastructure/webview_vendor.commit`
-ships the pin *inside* `pixelagents/` for exactly that reason — a
-repo-root file, like the old `vendor/pixel-agents.commit`, would share the
-same problem a repo-root submodule has.
+data directory, writable and persisted across cog reloads/updates, *not*
+the installed `pixelagents/` package tree Downloader manages.
 
-The sync step trims Vite's output to what `WebviewAssetProvider` and the
-served bundle actually read: the entry HTML, the hashed JS/CSS bundle, the
-font it references, and the specific `assets/*.json` files below. Vite's
-`public/` passthrough also copies upstream's raw per-tile PNGs and unrelated
-promo images that nothing here serves; `_sync_dist` drops them rather than
-copying everything.
+The Vite build's `--base` is rooted at floorplan's own third-party
+Dashboard route (`/third-party/floorplan/static/`, derived from the
+`Floorplan` Cog's name), not this cog's — the bundle is built here but
+served there, and its asset URLs have to be rooted wherever it actually
+ends up.
+
+The sync step trims Vite's output to what `WebviewAssetProvider` (floorplan)
+and the served bundle actually read: the entry HTML, the hashed JS/CSS
+bundle, the font it references, and the specific `assets/*.json` files
+below. Vite's `public/` passthrough also copies upstream's raw per-tile
+PNGs and unrelated promo images that nothing here serves; `_sync_dist` drops
+them rather than copying everything.
 
 Two failure modes both have to leave the cog usable rather than breaking
 `cog_load`, since a bot host may simply not have Node.js:
 
-- **A required tool is missing.** `[p]pixelagents status`'s Assets field
-  names which one; the bot owner gets an unsolicited DM (`Red.send_to_owners`)
-  the first time this happens, since a silently-broken webview is easy to
-  miss; and the public office page returns a friendly explanation instead of
-  a bare 503.
+- **A required tool is missing.** `webview_bundle_status().detail` names
+  which one (surfaced by floorplan's own status field); the bot owner gets
+  an unsolicited DM (`Red.send_to_owners`) the first time this happens,
+  since a silently-broken webview is easy to miss.
 - **The build itself fails** (network, a broken npm registry, upstream
-  shipping something the pinned Vite/tsx can't parse) -- same three
-  surfaces, with the captured error instead of a tool name.
+  shipping something the pinned Vite/tsx can't parse) — same DM, with the
+  captured error instead of a tool name.
 
 `[p]pixelagents webview rebuild` re-runs the same `ensure_webview_built`
-routine (forced, bypassing the already-built check), off the event loop --
-useful after installing a missing tool, or to pick up a pin bump without a
-full cog reload.
+routine (forced, bypassing the already-built check), off the event loop —
+useful after installing a missing build tool, or to pick up a pin bump
+without a full cog reload.
 
 The production bundle decodes **no** assets itself — `initBrowserMock()` is
 DEV-gated in `main.tsx` — so sprites must arrive over the socket as pixel
 arrays. Upstream decodes PNGs in Node; rather than port that to Python, the
 build runs upstream's own decoders
 (`infrastructure/webview_build_scripts/emit_decoded_assets.ts`, invoked
-against the runtime clone) and writes `assets/decoded/*.json`, which the cog
-reads at load and forwards verbatim.
-
-## The `webviewReady` bootstrap
-
-Order matters and mirrors upstream's `handleWebviewReady`:
-
-```text
-providerCapabilities
-  → characterSpritesLoaded → floorTilesLoaded → wallTilesLoaded
-  → carpetTilesLoaded → furnitureAssetsLoaded
-  → settingsLoaded → areaMappingsLoaded
-  → existingAgents → agentTeamInfo…
-  → layoutLoaded            ← LAST
-  → agentToolStart…         ← after the layout flush
-```
-
-`layoutLoaded` must come after `existingAgents`: the webview buffers agents and
-only materializes characters when the layout arrives, so a layout-first
-bootstrap renders an empty office. Activity bubbles reference those characters,
-so they are replayed after it.
-
-`petSpritesLoaded` is not sent — upstream's pet decoder lives in `server/`
-rather than `core/`, so the build-time emitter does not cover it. The bundled
-default layout has no pets.
-
-## Editor authorization
-
-The office page (`dashboard_webview`) is public — anyone can load it without a
-dashboard login, and every socket starts out as a read-only viewer. Knowing
-who a visitor *is* still requires a dashboard login, though, so identifying an
-editor happens out-of-band:
-
-1. The injected shim opens the office `/ws` socket immediately (viewers never
-   wait on anything).
-2. In parallel, the shim does a background `fetch()` of the `session` page.
-   That page is login-gated (`dashboard_session(user_id=…)`), so an
-   already-logged-in visitor gets back `{"ticket": "…"}` (8 h TTL, minted
-   bound to their Discord ID); an anonymous visitor's fetch gets redirected to
-   the dashboard's login HTML, which fails to parse as the expected JSON and
-   is swallowed silently — no navigation, no prompt.
-3. If a ticket comes back, the shim sends `{"type": "authorize", "ticket":
-   "…"}` over the already-open socket.
-
-Upstream offers no hook for a credential, and Traefik routes `/ws` past the
-dashboard so the session cookie never reaches the socket — the ticket is the
-only channel. The vendored bundle stays byte-identical to upstream's build;
-none of this touches it.
-
-On receiving `authorize` the cog resolves the ticket and applies:
-
-```text
-Allow if ANY of:
-  1. the user is a bot owner
-  2. the user satisfies corridor's "keyholder" permission group in an
-     enabled guild (corridor's Owner tier -- bot owner or guild
-     Administrator permission -- always satisfies this)
-Deny otherwise
-```
-
-Permission configuration (which Discord roles count as Keyholder, and the
-Owner/Employee tier display names) lives entirely in corridor, configured
-via `[p]corridorsettings`; pixelagents holds no role IDs of its own and
-depends on corridor (`required_cogs`) to resolve the check.
-
-Sockets that never authorize (or fail the check above) stay **read-only
-viewers**; `saveLayout`, `saveAgentSeats`, and `importLayout` are dropped
-server-side regardless of what the client claims.
+against the runtime clone) and writes `assets/decoded/*.json`, which
+floorplan reads at load and forwards verbatim.
 
 ## Configuration
 
-Global:
-
-| Key | Default | Description |
-|---|---|---|
-| `ws_host` | `0.0.0.0` | Office server bind address |
-| `ws_port` | `3210` | Office server port (must match the Traefik `/ws` route) |
-| `message_tool_clear_delay` | `2.0` | Seconds the message bubble stays visible |
-| `broadcast_rich_presence` | `True` | Send Spotify/game activity as bubbles |
-| `broadcast_messages` | `True` | Send messages as bubbles |
-| `layout` | `None` | The office layout; falls back to the bundled default |
-| `seats` | `{}` | agent ID → `{palette, hueShift, seatId}` |
-| `pixel_index_api_url` | `https://pixel-index-api-staging.nntin.xyz` | Pixel Index API used for health checks, search, and layout retrieval |
-| `pixel_index_web_url` | `https://pixel-index.vercel.app` | Pixel Index frontend used for layout links |
-
-Guild: `enabled` (`False`), `include_bots` (`True`). No user-scoped values are
-registered.
-
-## Agent identity
-
-```python
-def _discord_id_to_agent_id(user_id: int) -> int:
-    mapped = user_id % _JS_MAX_SAFE
-    return -(mapped if mapped != 0 else _JS_MAX_SAFE)
-```
-
-Always negative, stable across restarts, JavaScript-safe. The negative
-namespace keeps Discord agents clear of upstream's sub-agent IDs (−1 downward)
-and shadow-store IDs (1 000 000 up). Collisions are logged at WARNING.
-
-## Presence mapping
-
-| Discord signal | Office effect |
-|---|---|
-| `online` / `idle` / `dnd` | `agentCreated` (with palette) → `agentTeamInfo` → `agentStatus` |
-| `offline` / `invisible` / left / excluded | `agentClosed` |
-| status change | `agentClosed` + fresh `agentCreated` (`folderName` is immutable) |
-| display-name change | `agentTeamInfo` |
-| non-custom rich presence | `agentStatus: "active"` + `agentToolStart` |
-| no rich presence | `agentStatus: "waiting"` |
-| message sent | `agentToolStart` (`msg-<id>`, 40 chars), cleared after the delay |
-
-After every change the cog re-broadcasts `existingAgents`.
-
-Palettes follow upstream's diverse assignment: count the palettes in use, pick
-randomly among the least-used, and hue-shift once all six are taken.
-
-## Commands
-
-| Command | Description |
-|---|---|
-| `[p]pixelagents status` | Configuration, client count, asset state |
-| `[p]pixelagents settings` | Components V2 administration panel for all settings and runtime status |
-| `[p]pixelagents enable` / `disable` | Guild mirroring on/off |
-| `[p]pixelagents sync` / `despawnall` | Reconcile / clear agents |
-| `[p]pixelagents includebots <bool>` | Mirror bot users |
-| `[p]pixelagents wsport <port>` | Office server port |
-| `[p]pixelagents toolcleardelay <s>` | Message bubble duration |
-| `[p]pixelagents richpresence <bool>` | Activity bubbles |
-| `[p]pixelagents messages <bool>` | Message bubbles |
-| `[p]corridorsettings` | Configure the Keyholder role (and other permission tiers) that gates layout editing |
-| `[p]pixelagents index` | Pixel Index endpoints and API health |
-| `[p]pixelagents index set <url>` / `setweb <url>` | Configure the Pixel Index API/frontend |
-| `[p]pixelagents layout search [query] [tag] [sort]` | Browse Pixel Index layouts |
-| `[p]pixelagents layout view <slug>` | View and optionally load a Pixel Index layout |
-
-Loading a Pixel Index layout writes it to the shared configuration and
-broadcasts `layoutLoaded` to every open tab.
-
-The settings panel and individual settings commands call the same
-`SettingsService`; neither writes Config directly. Changes that affect live
-state are applied immediately: guild enable/disable synchronizes or despawns,
-editor authorization is refreshed, and disabling rich presence clears visible
-and cached activity.
+Global: `webview_commit_override` (`None` by default) — an admin-set
+override of `webview_vendor.commit`, set via
+`[p]pixelagents webview setcommit`.
 
 ## Boundary enforcement and validation
 
-[`.github/workflows/pixelagents-quality.yml`](../.github/workflows/pixelagents-quality.yml)
-runs on every push/PR touching `pixelagents/**/*.py`, `contracts/pixel_index/**`,
-or `pyproject.toml`. It is the CI check that verifies the boundaries described
-above — `check-cogs.yml` is a separate Red-downloader load smoke test and does
-not run any of this.
+[`.github/workflows/cogs-quality.yml`](../.github/workflows/cogs-quality.yml)
+runs on every push/PR touching `pixelagents/**/*.py`,
+`contracts/pixel_agents/**`, or `pyproject.toml`. It is the CI check that
+verifies the boundaries described above — `check-cogs.yml` is a separate
+Red-downloader load smoke test and does not run any of this.
 
-| Rule (in `pixelagents/tests/test_architecture.py`) | Checks | Mechanism |
-|---|---|---|
-| `test_composition_entrypoint_is_genuinely_thin` | `pixelagents.py` stays under 200 lines | line count |
-| `test_split_did_not_create_a_replacement_adapter_monolith` | no file under `adapters/` exceeds 260 lines | line count |
-| `test_framework_resources_have_one_owner` | `Config.get_conf(`, `aiohttp.ClientSession`, and `asyncio.create_task(` are each constructed in exactly one file | source-text scan |
-| `test_application_layer_does_not_import_infrastructure_or_adapters` | `application/*.py` never reaches into `infrastructure/` or `adapters/` | AST (`ast.ImportFrom.level == 2`) |
-| `test_production_config_access_does_not_bypass_repository` | no file outside `infrastructure/settings.py` calls `something.config.xxx(...)` directly | AST (`ast.Call` on a `.config` attribute) |
-| `test_pascalcase_and_lowercase_public_classes_are_identical` | `PixelAgents`/`pixelagents` aliases are the same object, `PixelAgents.__init__` is inherited unmodified | object identity |
-| `test_discord_cogmeta_reverse_mro_scan_finds_each_listener_once` / `test_command_root_and_dashboard_routes_are_inherited_once` | each listener/command-tree root/dashboard route is owned exactly once across the mixin MRO | MRO reflection |
+| Rule (in `pixelagents/tests/test_architecture.py`) | Checks |
+|---|---|
+| `test_composition_entrypoint_is_genuinely_thin` | `pixelagents.py` stays under 200 lines |
+| `test_framework_resources_have_one_owner` | `Config.get_conf(` is constructed in exactly one file |
+| `test_pascalcase_and_lowercase_public_classes_are_identical` | `PixelAgents`/`pixelagents` aliases are the same object |
+| `test_command_root_is_inherited_once` | `pixelagents_group` is owned exactly once across the mixin MRO |
+| `test_production_config_access_does_not_bypass_repository` | no file outside `infrastructure/settings.py` calls `something.config.xxx(...)` directly |
+| `test_no_leftover_runtime_dependency_on_aiohttp_or_pydantic` | nothing under production code still imports `aiohttp`/`pydantic` — those moved to floorplan with the office runtime |
 
 The local quality gate is:
 
@@ -530,21 +189,12 @@ The local quality gate is:
 python -m pytest -q pixelagents/tests
 python -m ruff format --check pixelagents
 python -m ruff check pixelagents
-python -m mypy
-python -m contracts.pixel_index.lint_endpoints
-python -m contracts.pixel_index.lint_model_usage
-python -m unittest discover -s contracts/pixel_index/tests -v
+python -m mypy pixelagents
 ```
 
 ## Rebuilding after changes
 
 | What changed | Action |
 |---|---|
-| Python under `pixelagents/` or `webview_dist/` | None — `/cogs` is bind-mounted; hot-reload or `[p]reload pixelagents` |
-| `vendor/pixel-agents` (webview source) | `./scripts/build-webview`, then reload the cog |
-| `vendor/red-web-dashboard` (routes patch) | `docker compose build red-dashboard-pico && docker compose up -d red-dashboard-pico` |
-| Traefik labels / instance env | `./scripts/update-compose && docker compose up -d` |
-
-Third-party registration is cached by the dashboard process: after changing a
-`dashboard_page` signature, restart `red-dashboard-pico` so its
-`app.variables["third_parties"]` resyncs.
+| Python under `pixelagents/` | None — `/cogs` is bind-mounted; hot-reload or `[p]reload pixelagents` |
+| `vendor/pixel-agents` (webview source) | `[p]pixelagents webview rebuild`, or wait for the next `cog_load` |

@@ -3,18 +3,6 @@
 from __future__ import annotations
 
 import re
-from urllib.parse import urlparse
-
-
-def normalize_http_url(value: str) -> str:
-    """Normalize an absolute HTTP(S) base URL or reject it."""
-
-    clean = value.strip().rstrip("/")
-    parsed = urlparse(clean)
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        raise ValueError("URL must be an absolute HTTP or HTTPS URL.")
-    return clean
-
 
 _COMMIT_HASH_RE = re.compile(r"^[0-9a-fA-F]{7,40}$")
 _COMMIT_URL_RE = re.compile(
@@ -42,4 +30,4 @@ def parse_commit_ref(value: str) -> str:
     return candidate.lower()
 
 
-__all__ = ["normalize_http_url", "parse_commit_ref"]
+__all__ = ["parse_commit_ref"]

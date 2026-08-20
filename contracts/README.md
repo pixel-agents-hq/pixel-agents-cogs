@@ -9,17 +9,19 @@ environments. **Not a runtime-loaded cog.**
 Downloader excludes it from cog discovery — without that marker, Red would
 try `bot.load_extension("contracts")` and fail since it has no `setup()`.
 
-It owns the contract for two dependencies `pixelagents` doesn't control:
+It owns the contract for two external dependencies neither `pixelagents`
+nor `floorplan` controls:
 
 - **[Pixel Index](https://github.com/pixel-agents-hq/index)** — a plain
   HTTP API. The contract is generated from the same pydantic models
-  (`pixelagents/contracts/pixel_index.py`) that validate real responses at
+  (`floorplan/contracts/pixel_index.py`) that validate real responses at
   runtime, so it can't drift from what the code actually depends on.
 - **[Pixel Agents](https://github.com/pixel-agents-hq/pixel-agents)** — a
   build-time source dependency (`pixelagents` clones and builds its webview
-  at the commit pinned in `webview_vendor.commit`). The "contract" here is a
-  real clone + `npm ci` + `vite build`, checked against the same asset
-  decoding the office actually needs.
+  at the commit pinned in `webview_vendor.commit`, and `floorplan` serves
+  the result). The "contract" here is a real clone + `npm ci` + `vite
+  build`, checked against the same asset decoding the office actually
+  needs.
 
 Both are checked live on a schedule and on relevant PRs, and published to a
 shared status site so a break is visible before it reaches a bot host.

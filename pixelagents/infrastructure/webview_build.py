@@ -106,6 +106,22 @@ def is_up_to_date(webview_dist: Path, commit: str) -> bool:
         return False
 
 
+def built_commit(webview_dist: Path) -> str | None:
+    """The commit `webview_dist` was actually built from, if known.
+
+    Used by `PixelAgentsBase.webview_bundle_status()` so floorplan can tell
+    a rebuild-to-a-different-commit apart from "still the same bundle" --
+    same marker file `is_up_to_date` checks, just exposed for a reader
+    outside this module.
+    """
+
+    marker = webview_dist / _BUILT_COMMIT_MARKER
+    try:
+        return marker.read_text(encoding="utf-8").strip() or None
+    except OSError:
+        return None
+
+
 def ensure_webview_built(
     cog_data_dir: Path,
     *,
@@ -262,15 +278,16 @@ def _install_dependencies(vendor_dir: Path, log: logging.Logger) -> None:
 
 
 def _build_bundle(vendor_dir: Path, log: logging.Logger) -> Path:
-    # Upstream serves the office through Red Dashboard's third-party static
-    # router (pixelagents/adapters/dashboard.py), so the bundle's asset URLs
-    # must be rooted there rather than at the site root Vite assumes by
-    # default. This is a subpath build (`--base`), supported upstream and
-    # covered by its own build-subpath test -- everything else (outDir,
-    # emptyOutDir) still comes from webview-ui/vite.config.ts.
+    # Upstream is served through Red Dashboard's third-party static router,
+    # which floorplan owns (floorplan/adapters/dashboard.py) -- the bundle's
+    # asset URLs must be rooted at floorplan's third-party route rather than
+    # the site root Vite assumes by default. This is a subpath build
+    # (`--base`), supported upstream and covered by its own build-subpath
+    # test -- everything else (outDir, emptyOutDir) still comes from
+    # webview-ui/vite.config.ts.
     vite_bin = vendor_dir / "node_modules" / ".bin" / "vite"
     _run(
-        [str(vite_bin), "build", "--base", "/third-party/pixelagents/static/"],
+        [str(vite_bin), "build", "--base", "/third-party/floorplan/static/"],
         cwd=vendor_dir / "webview-ui",
         timeout=180,
         log=log,

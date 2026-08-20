@@ -1,7 +1,7 @@
 """Discord-facing commands. Thin: translate ctx <-> service calls only.
 
 Bot-owner only (`@commands.is_owner()`) throughout, not corridor's per-guild
-`require_permission` tiers (Keyholder, Moderator, ...) or pixelagents'
+`require_permission` tiers (Keyholder, Moderator, ...) or floorplan's
 `admin_or_permissions(administrator=True)` pattern: installing/uninstalling
 Node.js on the bot host affects every guild the bot serves, not just the
 guild the command was run from, so a guild-scoped permission -- however

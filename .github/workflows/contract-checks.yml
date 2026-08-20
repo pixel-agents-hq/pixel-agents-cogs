@@ -18,6 +18,7 @@ on:
       - "pixelagents/**/*.py"
       - "pixelagents/infrastructure/webview_vendor.commit"
       - "pixelagents/infrastructure/webview_build_scripts/**"
+      - "floorplan/**/*.py"
       - ".github/workflows/contract-checks.yml"
 
 permissions:
@@ -75,7 +76,7 @@ jobs:
         run: pip install -r contracts/pixel_index/requirements.txt
 
       - name: Run contract check
-        # Regenerates contract.yaml from pixelagents/contracts/pixel_index.py + endpoints.py
+        # Regenerates contract.yaml from floorplan/contracts/pixel_index.py + endpoints.py
         # before checking — see contracts/pixel_index/generate_contract.py.
         run: |
           python -m contracts.pixel_index.verify \
@@ -101,7 +102,7 @@ jobs:
           title: "❌ Pixel Index contract check failed (${{ matrix.name }})"
           description: >-
             office-cogs' contract against ${{ matrix.base_url }} failed. Do not
-            switch `[p]pixelagents index set` to this environment until this
+            switch `[p]floorplan index set` to this environment until this
             is resolved — see the run for which endpoint/field broke.
           color: "15158332"
           fields: >-
@@ -144,13 +145,16 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        # aiohttp/pydantic are what pixelagents.infrastructure's own imports need
-        # (pixel_index.py imports both) once contracts.pixel_agents.verify reaches
-        # it via webview_build. discord.py itself is not required: importing
-        # pixelagents.tests.conftest first (for its redbot stub) also stubs
-        # `discord` in sys.modules before anything does a real `import discord`.
-        # Matches the dependency set vendor-update.yml's real-build gate installs
-        # for this same code path.
+        # aiohttp/pydantic are what floorplan's own imports need (its
+        # WebviewAssetProvider pulls in floorplan/contracts/layout.py, a
+        # pydantic model) once contracts.pixel_agents.verify reaches it --
+        # see contracts/pixel_agents/verify.py's module docstring for the
+        # pixelagents-builds/floorplan-serves split. discord.py itself is not
+        # required: importing pixelagents.tests.conftest first (for its
+        # redbot stub) also stubs `discord` in sys.modules before anything
+        # does a real `import discord`. Matches the dependency set
+        # vendor-update.yml's real-build gate installs for this same code
+        # path.
         run: pip install aiohttp 'pydantic>=2.6,<2.11'
 
       - name: Run contract check

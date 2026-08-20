@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""Fail if PixelAgents reads a field from a Pixel Index response model
+"""Fail if floorplan reads a field from a Pixel Index response model
 that doesn't exist on it — the field-level counterpart to lint_endpoints.py.
 
-The PixelAgents package parses Pixel Index responses into the pydantic models
-in pixelagents/contracts/pixel_index.py and accesses them by attribute (entry.furniture,
+The floorplan package parses Pixel Index responses into the pydantic models
+in floorplan/contracts/pixel_index.py and accesses them by attribute (entry.furniture,
 d.author.displayName, ...). That means a typo, a renamed field, or reading a
 field nobody added to the model shows up to mypy as a plain attr-defined
 error ("LayoutSummary has no attribute ...") — no bespoke schema-drift
 tooling needed for this half of the problem.
 
-We don't adopt mypy for the whole file: pixelagents.py imports discord.py
+We don't adopt mypy for the whole file: floorplan.py imports discord.py
 and redbot, which aren't installed for this lightweight check and would
 otherwise need real type stubs to check meaningfully. Running with
 ignore_missing_imports resolves that cleanly — those modules become `Any`
@@ -30,11 +30,11 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
-from pixelagents.contracts import pixel_index as _models
+from floorplan.contracts import pixel_index as _models
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 MYPY_CONFIG = Path(__file__).with_name("mypy.ini")
-TARGET = REPO_ROOT / "pixelagents"
+TARGET = REPO_ROOT / "floorplan"
 
 # Only fail on mypy errors that mention one of our contract models by name —
 # that's the signal that a field read doesn't exist on the modeled response
@@ -57,7 +57,7 @@ def main() -> int:
             "--config-file",
             str(MYPY_CONFIG),
             "--exclude",
-            r"pixelagents/(?:tests|conftest\.py)",
+            r"floorplan/(?:tests|conftest\.py)",
             str(TARGET),
         ],
         capture_output=True,
@@ -73,20 +73,20 @@ def main() -> int:
     if model_errors:
         print(
             "\nContract model field drift detected "
-            "(PixelAgents reads a field its model doesn't declare):"
+            "(floorplan reads a field its model doesn't declare):"
         )
         for line in model_errors:
             print(f"  {line}")
         print(
-            "\nEither PixelAgents has a typo, or pixelagents/contracts/pixel_index.py needs "
+            "\nEither floorplan has a typo, or floorplan/contracts/pixel_index.py needs "
             "the field added — "
             "see docs/contract-testing.md."
         )
         return 1
 
     print(
-        "No field-level drift between PixelAgents and "
-        "pixelagents/contracts/pixel_index.py."
+        "No field-level drift between floorplan and "
+        "floorplan/contracts/pixel_index.py."
     )
     return 0
 

@@ -8,11 +8,13 @@ vs `ReplyMode.EMBED`, plus icon/footer/timestamp -- see
 meant to respect. A command handler that calls `ctx.send(...)`,
 `ctx.interaction.response.send_message(...)`, or
 `ctx.interaction.followup.send(...)` -- directly, or one level removed
-through a cog-local reply helper like pixelagents' `ReplyMixin._reply` --
-without that helper ever consulting `self._corridor.send_reply(...)` /
-`render_reply(...)` bypasses the guild's configured style entirely. That's
-exactly the bug this script exists to catch (a prior version of
-pixelagents' `ReplyMixin` did precisely this).
+through a cog-local reply helper like floorplan's (or pixelagents')
+`ReplyMixin._reply` -- without that helper ever consulting
+`self._corridor.send_reply(...)` / `render_reply(...)` bypasses the guild's
+configured style entirely. That's exactly the bug this script exists to
+catch (a prior version of pixelagents' `ReplyMixin` did precisely this,
+before the office/dashboard/catalogue half of that Cog split into
+floorplan).
 
 Approach: for each cog package, index every function/method definition by
 name (`contracts.ast_call_graph.index_functions`), then for each Red command
@@ -42,8 +44,8 @@ about what it does and doesn't catch.
 Two things are deliberately NOT flagged:
 
   - `discord.Interaction` component/view callbacks (buttons, selects,
-    modals -- e.g. `pixelagents/adapters/layout_views.py`,
-    `pixelagents/adapters/settings_panel.py`,
+    modals -- e.g. `floorplan/adapters/layout_views.py`,
+    `floorplan/adapters/settings_panel.py`,
     `corridor/adapters/settings_ui.py`). These aren't Red command handlers
     (no `.command()`/`.group()` decorator), so the traversal never starts
     from them in the first place -- they're out of scope by construction,
@@ -55,7 +57,7 @@ Two things are deliberately NOT flagged:
     mixed with plain content or an embed (Discord rejects it), so it is
     structurally impossible for these to honor `ReplyMode`; each of
     `corridor/adapters/commands.py`'s `[p]corridorsettings` and
-    `pixelagents/adapters/admin_commands.py`'s `[p]pixelagents settings`
+    `floorplan/adapters/admin_commands.py`'s `[p]floorplan settings`
     sends its whole interactive panel this way, deliberately unrendered.
 
 Run: python -m contracts.discord_replies.lint_reply_channel
@@ -76,7 +78,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 # graph walked) independently -- add a new cog here when it's created (the
 # cookiecutter template's `commands.py` already follows the compliant
 # pattern this check enforces).
-COG_PACKAGES = ("corridor", "pixelagents", "toolbox")
+COG_PACKAGES = ("corridor", "floorplan", "pixelagents", "toolbox")
 
 _COMMAND_DECORATOR_ATTRS = {"command", "group", "hybrid_command", "hybrid_group"}
 _SEND_ATTRS = {"send", "send_message"}
@@ -177,7 +179,10 @@ def main() -> int:
         )
         return 1
 
-    print("Every command handler in corridor/pixelagents/toolbox respects corridor's ReplyMode.")
+    print(
+        "Every command handler in corridor/floorplan/pixelagents/toolbox respects "
+        "corridor's ReplyMode."
+    )
     return 0
 
 

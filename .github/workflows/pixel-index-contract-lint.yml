@@ -3,12 +3,12 @@ name: "Pixel Index Contract Lint"
 on:
   push:
     paths:
-      - "pixelagents/**/*.py"
+      - "floorplan/**/*.py"
       - "contracts/pixel_index/**"
       - ".github/workflows/pixel-index-contract-lint.yml"
   pull_request:
     paths:
-      - "pixelagents/**/*.py"
+      - "floorplan/**/*.py"
       - "contracts/pixel_index/**"
       - ".github/workflows/pixel-index-contract-lint.yml"
 

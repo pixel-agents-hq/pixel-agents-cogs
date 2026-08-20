@@ -8,7 +8,10 @@ name: Update vendored Pixel Agents
 # committed dist to a stale pin, so this bumps it, then proves the move is
 # safe by running the exact clone-build-serve path a bot host runs at
 # cog_load (pixelagents/tests/test_webview_build.py's
-# PIXELAGENTS_REAL_WEBVIEW_BUILD=1 gate) plus the full pixelagents suite.
+# PIXELAGENTS_REAL_WEBVIEW_BUILD=1 gate) plus the full pixelagents and
+# floorplan suites -- floorplan's WebviewAssetProvider is what actually
+# serves the bundle pixelagents builds (see issue #21's pixelagents/floorplan
+# split).
 # The PR it opens is for a human to merge -- a green check means "the pinned
 # commit still builds and serves", not "the office still looks right", and
 # only a person loading the cog can judge the second one.
@@ -78,7 +81,7 @@ jobs:
         if: steps.candidate.outputs.moved == 'true'
         run: printf '%s\n' "${{ steps.candidate.outputs.sha }}" > "$PIN_FILE"
 
-      - name: Install PixelAgents test dependencies
+      - name: Install PixelAgents/floorplan test dependencies
         if: steps.candidate.outputs.moved == 'true'
         run: |
           python -m pip install --upgrade pip
@@ -102,13 +105,26 @@ jobs:
       # A broader regression net: the smoke gate only proves the pinned
       # commit builds and serves, not that nothing consuming it (dashboard
       # routes, settings, asset shape) regressed against upstream's shape.
-      - name: Run the full pixelagents suite
+      # pixelagents and floorplan each install their own, mutually
+      # incompatible `sys.modules["redbot.core"]` stub (see
+      # cogs-quality.yml), so these run as two separate pytest processes,
+      # not one combined invocation.
+      - name: Run the full pixelagents and floorplan suites
         id: regression
         if: steps.candidate.outputs.moved == 'true'
         run: |
           set +e
-          python -m pytest -q pixelagents/tests 2>&1 | tee gate-regression.log
-          echo "code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+          echo "--- pixelagents ---" | tee gate-regression.log
+          python -m pytest -q pixelagents/tests 2>&1 | tee -a gate-regression.log
+          pixelagents_code=${PIPESTATUS[0]}
+          echo "--- floorplan ---" | tee -a gate-regression.log
+          python -m pytest -q floorplan/tests 2>&1 | tee -a gate-regression.log
+          floorplan_code=${PIPESTATUS[0]}
+          if [ "$pixelagents_code" = "0" ] && [ "$floorplan_code" = "0" ]; then
+            echo "code=0" >> "$GITHUB_OUTPUT"
+          else
+            echo "code=1" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Compose the pull request body
         id: body
@@ -143,9 +159,9 @@ jobs:
             fi
             echo
             if [ "${{ steps.regression.outputs.code }}" = "0" ]; then
-              echo "### ✅ pixelagents test suite: passed"
+              echo "### ✅ pixelagents and floorplan test suites: passed"
             else
-              echo "### ❌ pixelagents test suite: failed"
+              echo "### ❌ pixelagents and floorplan test suites: failed"
               echo
               echo '```'
               tail -n 60 gate-regression.log
@@ -174,7 +190,7 @@ jobs:
             echo
             echo "It was opened with \`GITHUB_TOKEN\`, and GitHub does not trigger"
             echo "\`pull_request\` workflows for anything that token creates, so"
-            echo "\`pixelagents-quality.yml\` and \`check-cogs.yml\` are not running here,"
+            echo "\`cogs-quality.yml\` and \`check-cogs.yml\` are not running here,"
             echo "however green the gates above look. Set a \`VENDOR_UPDATE_TOKEN\`"
             echo "repository secret (a PAT on a machine account with \`repo\`) to get"
             echo "real checks on this PR."
@@ -241,7 +257,7 @@ jobs:
             exit 1
           fi
           if [ "${{ steps.regression.outputs.code }}" != "0" ]; then
-            echo "::error::The candidate pin broke the pixelagents test suite. See the PR body."
+            echo "::error::The candidate pin broke the pixelagents or floorplan test suite. See the PR body."
             exit 1
           fi
           echo "The candidate pin builds and serves cleanly."

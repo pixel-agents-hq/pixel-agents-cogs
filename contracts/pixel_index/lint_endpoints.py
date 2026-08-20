@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Fail if PixelAgents calls a Pixel Index endpoint that isn't registered
+"""Fail if floorplan calls a Pixel Index endpoint that isn't registered
 in contracts/pixel_index/endpoints.py.
 
-Every JSON endpoint PixelAgents hits goes through the client's single
+Every JSON endpoint floorplan hits goes through the client's single
 `_pixel_index_get(path)` chokepoint, so this walks the package's AST for
 those call sites, extracts the literal path (including f-string
 templates like f"/api/v1/layouts/{slug}"), and diffs against ENDPOINTS.
@@ -15,7 +15,7 @@ This catches "a new endpoint was added but nobody registered it" — it does
 NOT catch "an existing endpoint's response now has a field we read but
 never modeled." That's a separate, harder static-analysis problem; see
 contracts/pixel_index/mypy.ini and docs/contract-testing.md for how that one
-is handled instead (via pixelagents/contracts/pixel_index.py + mypy).
+is handled instead (via floorplan/contracts/pixel_index.py + mypy).
 
 Run: python -m contracts.pixel_index.lint_endpoints
 """
@@ -28,7 +28,7 @@ from pathlib import Path
 
 from contracts.pixel_index.endpoints import ENDPOINTS
 
-PIXELAGENTS_PACKAGE = Path(__file__).resolve().parents[2] / "pixelagents"
+FLOORPLAN_PACKAGE = Path(__file__).resolve().parents[2] / "floorplan"
 
 _HAND_REGISTERED_PATHS = {"/health"}
 
@@ -75,8 +75,8 @@ def production_sources() -> list[Path]:
     """Return every production module, including modules added by the refactor."""
     return sorted(
         path
-        for path in PIXELAGENTS_PACKAGE.rglob("*.py")
-        if "tests" not in path.relative_to(PIXELAGENTS_PACKAGE).parts
+        for path in FLOORPLAN_PACKAGE.rglob("*.py")
+        if "tests" not in path.relative_to(FLOORPLAN_PACKAGE).parts
         and path.name != "conftest.py"
     )
 
@@ -90,7 +90,7 @@ def main() -> int:
     missing = called - registered
     if missing:
         print(
-            "Pixel Index endpoint(s) called by the pixelagents package but not "
+            "Pixel Index endpoint(s) called by the floorplan package but not "
             "registered in contracts/pixel_index/endpoints.py:"
         )
         for path in sorted(missing):
@@ -98,7 +98,7 @@ def main() -> int:
         print("\nAdd an EndpointContract entry for each in contracts/pixel_index/endpoints.py.")
         return 1
 
-    print("All Pixel Index endpoints called by the pixelagents package are registered.")
+    print("All Pixel Index endpoints called by the floorplan package are registered.")
     return 0
 
 

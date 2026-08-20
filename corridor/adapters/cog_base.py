@@ -108,7 +108,7 @@ class CogBase:
         The single source of truth other cogs use when they need their own
         interaction-aware dispatch (ephemeral responses, hybrid-command
         followups, ...) instead of `send_reply`'s plain `ctx.send`. See
-        pixelagents' `ReplyMixin` for that use."""
+        floorplan's (or pixelagents') `ReplyMixin` for that use."""
 
         settings = await self._repository.guild_settings(guild_id)
         return await self._reply_service.render(

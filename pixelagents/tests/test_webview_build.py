@@ -19,7 +19,6 @@ from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from pixelagents.infrastructure import webview_build
-from pixelagents.infrastructure.webview import WebviewAssetProvider
 from pixelagents.tests.conftest import write_fake_vite_build
 
 _LOG = logging.getLogger("test.webview_build")
@@ -46,21 +45,39 @@ class TestMissingTools(unittest.TestCase):
 class TestIsUpToDate(unittest.TestCase):
     def test_false_when_index_html_missing(self) -> None:
         with TemporaryDirectory() as tmp:
-            self.assertFalse(webview_build.is_up_to_date(Path(tmp), "abc"))
+            self.assertFalse(
+                webview_build.is_up_to_date(Path(tmp), "abc", webview_build.RELATIVE_BASE_PATH)
+            )
 
-    def test_false_when_marker_does_not_match(self) -> None:
+    def test_false_when_commit_marker_does_not_match(self) -> None:
         with TemporaryDirectory() as tmp:
             dist = Path(tmp)
             (dist / "index.html").write_text("x")
             (dist / ".built_commit").write_text("old")
-            self.assertFalse(webview_build.is_up_to_date(dist, "new"))
+            (dist / ".built_base_path").write_text(webview_build.RELATIVE_BASE_PATH)
+            self.assertFalse(
+                webview_build.is_up_to_date(dist, "new", webview_build.RELATIVE_BASE_PATH)
+            )
 
-    def test_true_when_marker_matches(self) -> None:
+    def test_false_when_base_path_marker_does_not_match(self) -> None:
         with TemporaryDirectory() as tmp:
             dist = Path(tmp)
             (dist / "index.html").write_text("x")
             (dist / ".built_commit").write_text("abc\n")
-            self.assertTrue(webview_build.is_up_to_date(dist, "abc"))
+            (dist / ".built_base_path").write_text("/third-party/other/static/\n")
+            self.assertFalse(
+                webview_build.is_up_to_date(dist, "abc", webview_build.RELATIVE_BASE_PATH)
+            )
+
+    def test_true_when_both_markers_match(self) -> None:
+        with TemporaryDirectory() as tmp:
+            dist = Path(tmp)
+            (dist / "index.html").write_text("x")
+            (dist / ".built_commit").write_text("abc\n")
+            (dist / ".built_base_path").write_text(webview_build.RELATIVE_BASE_PATH + "\n")
+            self.assertTrue(
+                webview_build.is_up_to_date(dist, "abc", webview_build.RELATIVE_BASE_PATH)
+            )
 
 
 class TestEnsureWebviewBuilt(unittest.TestCase):
@@ -72,6 +89,7 @@ class TestEnsureWebviewBuilt(unittest.TestCase):
             (dist / "index.html").write_text("x")
             commit = webview_build.pinned_commit()
             (dist / ".built_commit").write_text(commit + "\n")
+            (dist / ".built_base_path").write_text(webview_build.RELATIVE_BASE_PATH + "\n")
 
             with patch.object(webview_build, "_checkout") as checkout:
                 result = webview_build.ensure_webview_built(cog_data_dir, logger=_LOG)
@@ -154,6 +172,10 @@ class TestEnsureWebviewBuilt(unittest.TestCase):
             self.assertEqual(
                 (dist / ".built_commit").read_text(encoding="utf-8").strip(), result.commit
             )
+            self.assertEqual(
+                (dist / ".built_base_path").read_text(encoding="utf-8").strip(),
+                result.base_path,
+            )
 
 
 class TestEnsureWebviewBuiltWithCommitOverride(unittest.TestCase):
@@ -218,6 +240,7 @@ class TestBuildWebview(unittest.TestCase):
             (dist / "index.html").write_text("x")
             commit = webview_build.pinned_commit()
             (dist / ".built_commit").write_text(commit + "\n")
+            (dist / ".built_base_path").write_text(webview_build.RELATIVE_BASE_PATH + "\n")
             outcome = webview_build.build_webview(cog_data_dir, logger=_LOG)
         self.assertTrue(outcome.ok)
         self.assertIn("up to date", outcome.status_line)
@@ -237,6 +260,7 @@ class TestBuildWebview(unittest.TestCase):
             dist.mkdir(parents=True)
             (dist / "index.html").write_text("x")
             (dist / ".built_commit").write_text(override + "\n")
+            (dist / ".built_base_path").write_text(webview_build.RELATIVE_BASE_PATH + "\n")
             outcome = webview_build.build_webview(cog_data_dir, logger=_LOG, commit=override)
         self.assertTrue(outcome.ok)
         self.assertIn(override[:7], outcome.status_line)
@@ -267,19 +291,24 @@ class TestRealWebviewBuild(unittest.TestCase):
     """Exercises the actual network/git/npm/vite path -- see the module docstring."""
 
     def test_ensure_webview_built_produces_a_working_dist(self) -> None:
+        # WebviewAssetProvider (which actually parses/serves this output) is
+        # floorplan's now -- contracts/pixel_agents/verify.py exercises the
+        # full clone-build-serve path across both packages. This stays
+        # scoped to what pixelagents itself owns: the build produces the
+        # files WebviewAssetProvider is documented to read.
         with TemporaryDirectory() as tmp:
             cog_data_dir = Path(tmp)
             result = webview_build.ensure_webview_built(cog_data_dir, logger=_LOG)
             self.assertTrue(result.rebuilt)
             self.assertEqual(result.commit, webview_build.pinned_commit())
 
-            provider = WebviewAssetProvider(cog_data_dir / "webview_dist")
-            provider.load_assets()
+            dist = cog_data_dir / "webview_dist"
+            self.assertTrue((dist / "index.html").is_file())
             for name in ("characters", "floors", "walls", "carpets", "furniture"):
-                self.assertTrue(provider.assets.get(name))
-
-            response = provider.dashboard_webview_response()
-            self.assertEqual(response.get("status"), 0, response)
+                self.assertTrue((dist / "assets" / "decoded" / f"{name}.json").is_file())
+            self.assertTrue((dist / "assets" / "furniture-catalog.json").is_file())
+            self.assertEqual(webview_build.built_commit(dist), webview_build.pinned_commit())
+            self.assertEqual(webview_build.built_base_path(dist), webview_build.RELATIVE_BASE_PATH)
 
             second = webview_build.ensure_webview_built(cog_data_dir, logger=_LOG)
             self.assertFalse(second.rebuilt)

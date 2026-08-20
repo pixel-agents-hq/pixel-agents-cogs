@@ -13,7 +13,9 @@ line-length = 100
 extend-exclude = [
     "pixelagents/conftest.py",
     "pixelagents/tests/conftest.py",
-    "pixelagents/tests/test_pixelagents.py",
+    "floorplan/conftest.py",
+    "floorplan/tests/conftest.py",
+    "floorplan/tests/test_floorplan.py",
 ]
 
 [tool.ruff.lint]
@@ -28,12 +30,14 @@ python_version = "3.11"
 strict = true
 ignore_missing_imports = true
 follow_imports = "silent"
-# Every production Pixel Agents / corridor / toolbox module, plus the
-# shared component-limit checker, is part of the strict type gate.
-files = ["pixelagents", "corridor", "toolbox", "ui_limits.py"]
+# Every production Pixel Agents / floorplan / corridor / toolbox module,
+# plus the shared component-limit checker, is part of the strict type gate.
+files = ["pixelagents", "floorplan", "corridor", "toolbox", "ui_limits.py"]
 exclude = [
     "^pixelagents/conftest\\.py$",
     "^pixelagents/tests/",
+    "^floorplan/conftest\\.py$",
+    "^floorplan/tests/",
     "^corridor/conftest\\.py$",
     "^corridor/testing\\.py$",
     "^corridor/tests/",
@@ -43,26 +47,38 @@ exclude = [
 ]
 
 [[tool.mypy.overrides]]
-# Red is intentionally absent from the lightweight CI type environment, so
-# its decorators are dynamically typed. Keep the adapters otherwise strict.
-module = [
-    "pixelagents.adapters.catalogue_commands",
-    "pixelagents.adapters.dashboard",
-    "pixelagents.adapters.discord_gateway",
-    "pixelagents.adapters.webview_commands",
-]
-disable_error_code = ["untyped-decorator"]
-
-[[tool.mypy.overrides]]
 # Red's HybridGroup decorator loses the mixin callback type, and its untyped
 # Context leaks Any from `ctx.guild` when Red is absent from the type job.
-module = ["pixelagents.adapters.admin_commands"]
+module = ["pixelagents.adapters.commands"]
 disable_error_code = ["arg-type", "no-any-return", "untyped-decorator"]
 
 [[tool.mypy.overrides]]
 # The real Red Cog metaclass is not installed in the lightweight type job, so
 # `commands.Cog` resolves to Any there. The composition module remains checked.
 module = ["pixelagents.pixelagents"]
+disable_error_code = ["misc"]
+
+[[tool.mypy.overrides]]
+# Same gap as pixelagents.adapters.commands above, mirrored for floorplan:
+# Red is absent from the lightweight CI type environment, so its decorators
+# are dynamically typed. Keep the adapters otherwise strict.
+module = [
+    "floorplan.adapters.catalogue_commands",
+    "floorplan.adapters.dashboard",
+    "floorplan.adapters.discord_gateway",
+]
+disable_error_code = ["untyped-decorator"]
+
+[[tool.mypy.overrides]]
+# Red's HybridGroup decorator loses the mixin callback type, and its untyped
+# Context leaks Any from `ctx.guild` when Red is absent from the type job.
+module = ["floorplan.adapters.admin_commands"]
+disable_error_code = ["arg-type", "no-any-return", "untyped-decorator"]
+
+[[tool.mypy.overrides]]
+# The real Red Cog metaclass is not installed in the lightweight type job, so
+# `commands.Cog` resolves to Any there. The composition module remains checked.
+module = ["floorplan.floorplan"]
 disable_error_code = ["misc"]
 
 [[tool.mypy.overrides]]

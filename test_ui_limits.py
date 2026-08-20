@@ -177,7 +177,7 @@ class TestSelectLimits(unittest.TestCase):
 
 class TestLabelLimits(unittest.TestCase):
     """discord.ui.Label is the Components V2 replacement for the deprecated
-    TextInput(label=...) pattern -- pixelagents uses it, corridor doesn't."""
+    TextInput(label=...) pattern -- floorplan uses it, corridor doesn't."""
 
     def test_text_at_45_passes(self) -> None:
         self.assertEqual(ui_limits.check_label(_label(text="x" * 45)), [])

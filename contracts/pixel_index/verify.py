@@ -2,13 +2,13 @@
 """Verify the office-cogs -> Pixel Index contract against a live environment.
 
 Consumer-driven contract check: this only exercises the endpoints/fields
-office-cogs actually depends on, so a pass here means "safe for pixelagents.py
+office-cogs actually depends on, so a pass here means "safe for floorplan
 to point at this environment" — not "this environment's full API is
 unchanged." See docs/contract-testing.md.
 
-The contract itself (contract.yaml) is generated from pixelagents/contracts/pixel_index.py +
+The contract itself (contract.yaml) is generated from floorplan/contracts/pixel_index.py +
 endpoints.py on every run — see generate_contract.py — rather than hand
-maintained, so it can't drift from what pixelagents.py actually parses.
+maintained, so it can't drift from what floorplan actually parses.
 
 Run: python -m contracts.pixel_index.verify --base-url https://pixel-index-api-staging.nntin.xyz
 """
@@ -142,7 +142,7 @@ def main() -> int:
         "--contract",
         default=None,
         help="Path to a pre-generated contract.yaml. Default: regenerate it from "
-        "pixelagents/contracts/pixel_index.py + endpoints.py before checking.",
+        "floorplan/contracts/pixel_index.py + endpoints.py before checking.",
     )
     parser.add_argument("--env-name", default=None, help="Label for output, defaults to --base-url")
     parser.add_argument(

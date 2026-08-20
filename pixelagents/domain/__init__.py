@@ -1,36 +1,5 @@
-"""Framework-independent business data used by Pixel Agents services."""
+"""Framework-independent validation used by the Pixel Agents build cog."""
 
-from .models import (
-    ActivityKind,
-    ActivitySnapshot,
-    AgentId,
-    AgentKey,
-    AgentSnapshot,
-    GlobalSettings,
-    GuildSettings,
-    MessageSnapshot,
-    PresenceStatus,
-    SeatAssignment,
-    SettingsSnapshot,
-    SnowflakeId,
-    TrackedAgent,
-)
-from .settings import normalize_http_url, parse_commit_ref
+from .settings import parse_commit_ref
 
-__all__ = [
-    "ActivityKind",
-    "ActivitySnapshot",
-    "AgentId",
-    "AgentKey",
-    "AgentSnapshot",
-    "GlobalSettings",
-    "GuildSettings",
-    "MessageSnapshot",
-    "PresenceStatus",
-    "SeatAssignment",
-    "SettingsSnapshot",
-    "SnowflakeId",
-    "TrackedAgent",
-    "normalize_http_url",
-    "parse_commit_ref",
-]
+__all__ = ["parse_commit_ref"]

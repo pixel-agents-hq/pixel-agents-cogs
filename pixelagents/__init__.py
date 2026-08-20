@@ -27,11 +27,7 @@ def _publish_cog(cog_class: type[object]) -> type[object]:
     return cog_class
 
 
-_DATA_STATEMENT = (
-    "This cog transmits Discord user IDs, guild IDs, display names, presence status, and "
-    "short message activity snippets to browsers connected to the Pixel Agents office. "
-    "It stores one shared office layout and seat assignments globally."
-)
+_DATA_STATEMENT = "This cog does not persistently store any data or metadata about users."
 
 try:
     from redbot.core.utils import get_end_user_data_statement_or_raise

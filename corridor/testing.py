@@ -466,8 +466,13 @@ def _install_redbot() -> None:
             return decorator
 
         @staticmethod
-        def admin_or_permissions(**_kwargs: object) -> Any:
+        def admin_or_permissions(**kwargs: object) -> Any:
+            # Tags the raw function (not just checked-and-discarded) so a
+            # cog's own tests can assert which commands are admin-gated
+            # without re-implementing Red's actual check machinery here --
+            # see e.g. pico/tests/test_cog_commands.py.
             def decorator(func: Any) -> Any:
+                func.__admin_or_permissions__ = kwargs
                 return func
 
             return decorator
@@ -475,6 +480,7 @@ def _install_redbot() -> None:
         @staticmethod
         def is_owner() -> Any:
             def decorator(func: Any) -> Any:
+                func.__is_owner__ = True
                 return func
 
             return decorator

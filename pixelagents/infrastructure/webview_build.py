@@ -109,18 +109,23 @@ def is_up_to_date(webview_dist: Path, commit: str) -> bool:
 def ensure_webview_built(
     cog_data_dir: Path,
     *,
+    commit: str | None = None,
     logger: logging.Logger | None = None,
     force: bool = False,
 ) -> BuildResult:
     """Build `<cog_data_dir>/webview_dist` if it is missing or stale.
 
-    Raises `WebviewBuildError` if the pinned commit cannot be built --
-    including when a required tool is missing -- and never partially
-    overwrites a previously working `webview_dist`.
+    Builds from `commit` when given (an admin-set override -- see
+    `[p]pixelagents webview setcommit`), otherwise from the source-pinned
+    `pinned_commit()`.
+
+    Raises `WebviewBuildError` if the commit cannot be built -- including
+    when a required tool is missing -- and never partially overwrites a
+    previously working `webview_dist`.
     """
 
     log = logger or logging.getLogger(__name__)
-    commit = pinned_commit()
+    commit = commit or pinned_commit()
     webview_dist = cog_data_dir / "webview_dist"
 
     if not force and is_up_to_date(webview_dist, commit):
@@ -143,7 +148,11 @@ def ensure_webview_built(
 
 
 def build_webview(
-    cog_data_dir: Path, *, logger: logging.Logger, force: bool = False
+    cog_data_dir: Path,
+    *,
+    logger: logging.Logger,
+    force: bool = False,
+    commit: str | None = None,
 ) -> BuildOutcome:
     """`ensure_webview_built`, but reports rather than raises.
 
@@ -153,7 +162,7 @@ def build_webview(
     """
 
     try:
-        result = ensure_webview_built(cog_data_dir, logger=logger, force=force)
+        result = ensure_webview_built(cog_data_dir, commit=commit, logger=logger, force=force)
     except WebviewBuildError as exc:
         logger.error("pixelagents: could not build webview assets: %s", exc)
         return BuildOutcome(

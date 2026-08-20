@@ -22,6 +22,7 @@ COMPOSED_ADAPTERS = (
     "discord_gateway.py",
     "office_gateway.py",
     "replies.py",
+    "webview_commands.py",
 )
 
 

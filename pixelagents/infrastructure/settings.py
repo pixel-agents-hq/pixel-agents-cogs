@@ -10,7 +10,7 @@ from typing import Any, Protocol, TypeAlias, TypeVar, cast
 
 from redbot.core import Config
 
-from ..domain import GlobalSettings, GuildSettings, normalize_http_url
+from ..domain import GlobalSettings, GuildSettings, normalize_http_url, parse_commit_ref
 
 CONFIG_IDENTIFIER = 0x706978656C61
 DEFAULT_PIXEL_INDEX_API_URL = "https://pixel-index-api-staging.nntin.xyz"
@@ -29,6 +29,7 @@ GLOBAL_DEFAULTS: dict[str, object] = {
     "seats": {},
     "pixel_index_api_url": DEFAULT_PIXEL_INDEX_API_URL,
     "pixel_index_web_url": DEFAULT_PIXEL_INDEX_WEB_URL,
+    "webview_commit_override": None,
 }
 GUILD_DEFAULTS: dict[str, object] = {
     "enabled": False,
@@ -146,6 +147,9 @@ class RedSettingsRepository:
     async def pixel_index_web_url(self) -> str:
         return cast(str, await self._config.pixel_index_web_url())
 
+    async def webview_commit_override(self) -> str | None:
+        return cast(str | None, await self._config.webview_commit_override())
+
     async def layout(self) -> JsonObject | None:
         value = cast(JsonObject | None, await self._config.layout())
         return deepcopy(value)
@@ -183,6 +187,14 @@ class RedSettingsRepository:
         clean = normalize_http_url(value)
         await self._config.pixel_index_web_url.set(clean)
         return clean
+
+    async def set_webview_commit_override(self, value: str) -> str:
+        clean = parse_commit_ref(value)
+        await self._config.webview_commit_override.set(clean)
+        return clean
+
+    async def reset_webview_commit_override(self) -> None:
+        await self._config.webview_commit_override.set(None)
 
     async def set_guild_enabled(self, guild_id: int, value: bool) -> None:
         if not isinstance(value, bool):

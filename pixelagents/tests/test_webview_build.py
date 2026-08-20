@@ -156,6 +156,49 @@ class TestEnsureWebviewBuilt(unittest.TestCase):
             )
 
 
+class TestEnsureWebviewBuiltWithCommitOverride(unittest.TestCase):
+    def test_builds_from_the_override_instead_of_the_pin(self) -> None:
+        override = "b" * 40
+        with TemporaryDirectory() as tmp:
+            cog_data_dir = Path(tmp)
+            build_out_dir = cog_data_dir / "vendor" / "pixel-agents" / "dist" / "webview"
+
+            with (
+                patch.object(webview_build, "_checkout") as checkout,
+                patch.object(webview_build, "_install_dependencies"),
+                patch.object(
+                    webview_build,
+                    "_build_bundle",
+                    side_effect=lambda *a, **k: (
+                        write_fake_vite_build(build_out_dir) or build_out_dir
+                    ),
+                ),
+                patch.object(webview_build, "_emit_decoded_assets"),
+            ):
+                result = webview_build.ensure_webview_built(
+                    cog_data_dir, commit=override, logger=_LOG
+                )
+
+            checkout.assert_called_once_with(
+                cog_data_dir / "vendor" / "pixel-agents", override, _LOG
+            )
+            self.assertEqual(result.commit, override)
+            dist = cog_data_dir / "webview_dist"
+            self.assertEqual((dist / ".built_commit").read_text(encoding="utf-8").strip(), override)
+
+    def test_a_dist_built_from_the_default_pin_is_stale_once_an_override_is_set(self) -> None:
+        with TemporaryDirectory() as tmp:
+            cog_data_dir = Path(tmp)
+            dist = cog_data_dir / "webview_dist"
+            dist.mkdir(parents=True)
+            (dist / "index.html").write_text("x")
+            (dist / ".built_commit").write_text(webview_build.pinned_commit() + "\n")
+
+            with patch.object(webview_build, "missing_tools", return_value=("git", "npm")):
+                with self.assertRaises(webview_build.WebviewBuildError):
+                    webview_build.ensure_webview_built(cog_data_dir, commit="c" * 40, logger=_LOG)
+
+
 class TestBuildWebview(unittest.TestCase):
     """`build_webview` wraps ensure_webview_built and must never raise."""
 
@@ -185,6 +228,18 @@ class TestBuildWebview(unittest.TestCase):
             f"(https://github.com/pixel-agents-hq/pixel-agents/tree/{commit})"
         )
         self.assertIn(expected_link, outcome.status_line)
+
+    def test_reports_success_for_a_commit_override(self) -> None:
+        override = "d" * 40
+        with TemporaryDirectory() as tmp:
+            cog_data_dir = Path(tmp)
+            dist = cog_data_dir / "webview_dist"
+            dist.mkdir(parents=True)
+            (dist / "index.html").write_text("x")
+            (dist / ".built_commit").write_text(override + "\n")
+            outcome = webview_build.build_webview(cog_data_dir, logger=_LOG, commit=override)
+        self.assertTrue(outcome.ok)
+        self.assertIn(override[:7], outcome.status_line)
 
 
 class TestOwnerNotificationFor(unittest.TestCase):

@@ -49,6 +49,7 @@ module = [
     "pixelagents.adapters.catalogue_commands",
     "pixelagents.adapters.dashboard",
     "pixelagents.adapters.discord_gateway",
+    "pixelagents.adapters.webview_commands",
 ]
 disable_error_code = ["untyped-decorator"]
 

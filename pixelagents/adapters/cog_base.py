@@ -155,8 +155,9 @@ class PixelAgentsBase:
         and the owner-DM path.
         """
 
+        commit = await self._settings_service.webview_commit_override()
         outcome = await asyncio.to_thread(
-            build_webview, self._cog_data_dir, logger=log, force=force
+            build_webview, self._cog_data_dir, logger=log, force=force, commit=commit
         )
         self._webview_build_outcome = outcome
         self._webview_assets.build_status = None if outcome.ok else outcome.status_line

@@ -30,6 +30,7 @@ GLOBAL_DEFAULTS = {
     "seats": {},
     "pixel_index_api_url": "https://pixel-index-api-staging.nntin.xyz",
     "pixel_index_web_url": "https://pixel-index.vercel.app",
+    "webview_commit_override": None,
 }
 GUILD_DEFAULTS = {"enabled": False, "include_bots": True}
 
@@ -295,7 +296,12 @@ class TestCommandContract:
         }
         assert set(root.subcommands["index"].subcommands) == {"set", "setweb"}
         assert set(root.subcommands["layout"].subcommands) == {"search", "view"}
-        assert set(root.subcommands["webview"].subcommands) == {"rebuild"}
+        assert set(root.subcommands["webview"].subcommands) == {
+            "rebuild",
+            "commit",
+            "setcommit",
+            "resetcommit",
+        }
 
     def test_administrative_permissions_are_stable(self):
         root = PixelAgentsCog.pixelagents_group
@@ -328,3 +334,7 @@ class TestCommandContract:
         assert root.subcommands["webview"].subcommands["rebuild"].__permissions__ == {
             "administrator": True
         }
+        assert not hasattr(root.subcommands["webview"].subcommands["commit"], "__permissions__")
+        assert not hasattr(root.subcommands["webview"].subcommands["commit"], "__is_owner__")
+        assert root.subcommands["webview"].subcommands["setcommit"].__is_owner__ is True
+        assert root.subcommands["webview"].subcommands["resetcommit"].__is_owner__ is True

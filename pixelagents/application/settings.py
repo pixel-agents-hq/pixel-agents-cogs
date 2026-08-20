@@ -37,6 +37,12 @@ class SettingsRepository(Protocol):
 
     async def set_pixel_index_web_url(self, value: str) -> str: ...
 
+    async def webview_commit_override(self) -> str | None: ...
+
+    async def set_webview_commit_override(self, value: str) -> str: ...
+
+    async def reset_webview_commit_override(self) -> None: ...
+
 
 class SettingsService:
     """Validate setting changes and coordinate their required runtime effects."""
@@ -110,3 +116,12 @@ class SettingsService:
     async def set_pixel_index_web_url(self, value: str) -> str:
         clean = normalize_http_url(value)
         return await self._repository.set_pixel_index_web_url(clean)
+
+    async def webview_commit_override(self) -> str | None:
+        return await self._repository.webview_commit_override()
+
+    async def set_webview_commit_override(self, value: str) -> str:
+        return await self._repository.set_webview_commit_override(value)
+
+    async def reset_webview_commit_override(self) -> None:
+        await self._repository.reset_webview_commit_override()

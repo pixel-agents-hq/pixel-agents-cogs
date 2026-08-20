@@ -69,9 +69,10 @@ def _make_cog():
     # floorplan/adapters/replies.py) -- default to a text-mode double so
     # tests that don't care about ReplyMode still get a working `_corridor`.
     cog._corridor = FakeCorridor()
-    # cog_load() normally resolves this via ensure_pixelagents_loaded(); tests
-    # construct the cog directly, bypassing cog_load, so default it to a
-    # ready-and-loaded double the same way _corridor is defaulted above.
+    # _sync_webview_assets() normally resolves this lazily via
+    # ensure_pixelagents_loaded() on first use; default it to a
+    # ready-and-loaded double the same way _corridor is defaulted above so
+    # tests that don't care about the webview still get a working one.
     cog._pixelagents = FakePixelAgents()
     return cog
 
@@ -290,6 +291,54 @@ class TestBootstrap(unittest.IsolatedAsyncioTestCase):
         await self.cog._send_bootstrap(self.ws)
         types = _sent_types(self.ws)
         self.assertGreater(types.index("agentToolStart"), types.index("layoutLoaded"))
+
+
+class TestPixelagentsResolutionIsLazy(unittest.IsolatedAsyncioTestCase):
+    """cog_load() must never resolve (and so never auto-load) pixelagents --
+    see adapters/cog_base.py::_sync_webview_assets' docstring. A cog that
+    eagerly cross-loads a dependency at cog_load makes its own load/unload
+    cycle no longer self-contained, which broke the Downloader RPC smoke
+    test (check-cogs.yml): pixelagents got auto-loaded as a side effect of
+    loading floorplan, so when the harness later loaded pixelagents
+    explicitly (its own cogs are tested alphabetically, independently of
+    each other), Red reported it under `alreadyloaded_packages` instead of
+    `loaded_packages` and the harness treated that as a failure."""
+
+    async def test_cog_load_never_touches_pixelagents(self) -> None:
+        bot = MagicMock()
+        bot.guilds = []
+        bot.is_owner = AsyncMock(return_value=False)
+        bot.wait_until_red_ready = AsyncMock()
+        cog = FloorplanCog(bot)
+        cog._corridor = FakeCorridor()
+
+        with (
+            patch(
+                "floorplan.adapters.cog_base.ensure_pixelagents_loaded", new=AsyncMock()
+            ) as ensure_loaded,
+            patch.object(cog, "_start_server", new=AsyncMock()),
+            patch.object(cog._pixel_index_client, "start", new=AsyncMock()),
+        ):
+            await cog.cog_load()
+
+        ensure_loaded.assert_not_awaited()
+        self.assertIsNone(cog._pixelagents)
+        await cog.cog_unload()
+
+    async def test_sync_webview_assets_resolves_pixelagents_on_first_use_only(self) -> None:
+        cog = _make_cog()
+        cog._pixelagents = None
+        pixelagents_double = FakePixelAgents()
+
+        with patch(
+            "floorplan.adapters.cog_base.ensure_pixelagents_loaded",
+            new=AsyncMock(return_value=pixelagents_double),
+        ) as ensure_loaded:
+            await cog._sync_webview_assets()
+            await cog._sync_webview_assets()
+
+        ensure_loaded.assert_awaited_once_with(cog.bot)
+        self.assertIs(cog._pixelagents, pixelagents_double)
 
 
 # ---------------------------------------------------------------------------

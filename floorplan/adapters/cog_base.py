@@ -155,10 +155,18 @@ class PixelAgentsBase:
 
         pixelagents owns the clone-and-build pipeline and can rebuild
         independently of floorplan (`[p]pixelagents webview rebuild`), so
-        this re-reads its status rather than caching a snapshot -- called on
-        cog_load and before every public webview page render.
+        this re-reads its status rather than caching a snapshot -- called
+        before every public webview page render and status check, not at
+        cog_load. Resolving pixelagents lazily here (rather than eagerly in
+        cog_load, like corridor) keeps cog_load from blocking on -- or, if
+        pixelagents isn't loaded yet, silently auto-loading -- another cog's
+        potentially slow webview build; it also keeps floorplan's own
+        load/unload cycle side-effect-free when nothing has actually asked
+        for the webview yet.
         """
 
+        if self._pixelagents is None:
+            self._pixelagents = await ensure_pixelagents_loaded(self.bot)
         status = self._pixelagents.webview_bundle_status()
         self._webview_assets.root = status.dist_path.resolve()
         self._webview_assets.build_status = None if status.ready else status.detail
@@ -177,9 +185,7 @@ class PixelAgentsBase:
         self._closing = False
         self._corridor = await ensure_corridor_loaded(self.bot)
         self._corridor.register_dependent("floorplan")
-        self._pixelagents = await ensure_pixelagents_loaded(self.bot)
         self._task_supervisor.open()
-        await self._sync_webview_assets()
         await self._pixel_index_client.start()
         await self._start_server()
         self._sync_task = self._task_supervisor.create(

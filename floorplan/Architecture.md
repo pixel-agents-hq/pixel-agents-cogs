@@ -99,19 +99,24 @@ status = self._pixelagents.webview_bundle_status()  # WebviewBundleStatus
 # status.dist_path, status.ready, status.detail, status.built_commit
 ```
 
-`adapters/cog_base.py::_sync_webview_assets` calls this at `cog_load` and
-before every public webview page render, points `WebviewAssetProvider` at
-`status.dist_path`, and reloads its decoded sprite assets only when
-`status.built_commit` changes — so `[p]pixelagents webview rebuild`
-(pixelagents-only; floorplan has no rebuild trigger of its own) is picked
-up without a floorplan reload. `[p]floorplan status`'s Assets field and the
-public office page's "not installed yet" message both read
-`status.detail` this way.
+`adapters/cog_base.py::_sync_webview_assets` calls this before every public
+webview page render and `[p]floorplan status` check, points
+`WebviewAssetProvider` at `status.dist_path`, and reloads its decoded
+sprite assets only when `status.built_commit` changes — so
+`[p]pixelagents webview rebuild` (pixelagents-only; floorplan has no
+rebuild trigger of its own) is picked up without a floorplan reload.
+`[p]floorplan status`'s Assets field and the public office page's "not
+installed yet" message both read `status.detail` this way.
 
-`self._pixelagents` is resolved once at `cog_load`, the same way corridor
-is, via `dependency_loader.ensure_pixelagents_loaded` — `required_cogs` in
+`self._pixelagents` is resolved lazily, the first time
+`_sync_webview_assets` actually runs, via
+`dependency_loader.ensure_pixelagents_loaded` — not eagerly in `cog_load`
+the way corridor is. `cog_load` never blocks on, or silently auto-loads,
+another cog's potentially slow webview build; deliberately deferred rather
+than mirroring corridor's own resolution timing here. `required_cogs` in
 `info.json` is only a Downloader install hint, so this pulls pixelagents
-back in if it was ever unloaded independently.
+back in if it was never loaded, or was unloaded independently, whenever it
+first turns out to be needed.
 
 ## Ecosystem integration
 

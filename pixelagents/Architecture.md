@@ -30,9 +30,12 @@ editing.
 
 ## The `webview_bundle_status()` cross-cog surface
 
-`floorplan` depends on this cog (`required_cogs`) and resolves it at
-`cog_load` via `dependency_loader.ensure_pixelagents_loaded` (mirroring how
-every cog here resolves corridor). It never triggers a build itself —
+`floorplan` depends on this cog (`required_cogs`) and resolves it lazily,
+the first time it actually needs the webview (a page render or status
+check), via `dependency_loader.ensure_pixelagents_loaded` — deliberately
+not at its own `cog_load`, unlike how every cog here resolves corridor, so
+that loading floorplan never blocks on (or silently auto-loads) this cog's
+potentially slow clone-and-build. It never triggers a build itself —
 rebuilding stays `[p]pixelagents webview rebuild`-only — it only reads:
 
 ```python
@@ -45,9 +48,9 @@ class WebviewBundleStatus:
 ```
 
 `floorplan/adapters/cog_base.py::_sync_webview_assets` re-reads this before
-every public webview page render (and at its own `cog_load`) rather than
-caching a snapshot, and reloads its decoded sprite assets only when
-`built_commit` changes — so a `[p]pixelagents webview rebuild` to a new
+every public webview page render and status check rather than caching a
+snapshot, and reloads its decoded sprite assets only when `built_commit`
+changes — so a `[p]pixelagents webview rebuild` to a new
 commit is picked up without floorplan needing a reload of its own.
 
 ## Ecosystem integration

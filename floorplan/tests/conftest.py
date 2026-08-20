@@ -713,11 +713,20 @@ class FakePixelAgents:
     `adapters/cog_base.py::_sync_webview_assets`).
     """
 
-    def __init__(self, *, ready=True, dist_path=None, detail="✅ loaded", built_commit="a" * 40):
+    def __init__(
+        self,
+        *,
+        ready=True,
+        dist_path=None,
+        detail="✅ loaded",
+        built_commit="a" * 40,
+        built_base_path="/third-party/floorplan/static/",
+    ):
         self.dist_path = dist_path or Path(tempfile.mkdtemp(prefix="fake-pixelagents-dist-"))
         self.ready = ready
         self.detail = detail
         self.built_commit = built_commit if ready else None
+        self.built_base_path = built_base_path if ready else None
         self.registered_dependents = set()
 
     def register_dependent(self, extension_name):
@@ -732,6 +741,7 @@ class FakePixelAgents:
             ready=self.ready,
             detail=self.detail,
             built_commit=self.built_commit,
+            built_base_path=self.built_base_path,
         )
 
 

@@ -32,14 +32,17 @@ from ..infrastructure.webview import WebviewAssetProvider
 
 log = logging.getLogger("red.d_cogs.floorplan")
 
+# Purely diagnostic: the route Red Dashboard derives from the `Floorplan`
+# Cog's own name. Compared against WebviewBundleStatus.built_base_path so a
+# build/serve mismatch surfaces in `[p]floorplan status`, not just a 404.
+EXPECTED_WEBVIEW_BASE_PATH = "/third-party/floorplan/static/"
+
 
 class PixelAgentsBase:
     """Wire services once and own resources spanning the Cog lifetime.
 
-    Named for the office runtime it composes (agents, presence, the office
-    protocol) rather than the Cog class -- `PixelAgents` is the vendor+build
-    cog now; this stays `PixelAgentsBase` only as the shared name for the
-    moved mixins' `self` type, matching their unchanged internal contract.
+    Named for the office runtime it composes, not the Cog class -- kept as
+    `PixelAgentsBase` as the shared `self` type the moved mixins already use.
     """
 
     bot: Red
@@ -79,12 +82,11 @@ class PixelAgentsBase:
             publish_layout=self._publish_catalogue_layout,
         )
         self._sync_task = None
-        # Root is a placeholder until cog_load() resolves pixelagents and
-        # learns the real built-bundle path -- see _sync_webview_assets().
-        # pixelagents owns building/vendoring; floorplan only ever reads
-        # the result through PixelAgents.webview_bundle_status().
+        # Root is a placeholder until _sync_webview_assets() first resolves
+        # pixelagents and learns the real built-bundle path.
         self._webview_assets = WebviewAssetProvider(Path(), logger=log)
         self._webview_built_commit: str | None = None
+        self._webview_base_path_mismatch: str | None = None
         self._assets = self._webview_assets.assets
         self._ticket_store = TicketStore()
         self._client_hub = ClientHub(logger=log)
@@ -153,16 +155,10 @@ class PixelAgentsBase:
     async def _sync_webview_assets(self) -> None:
         """Refresh the built-bundle path/status from pixelagents.
 
-        pixelagents owns the clone-and-build pipeline and can rebuild
-        independently of floorplan (`[p]pixelagents webview rebuild`), so
-        this re-reads its status rather than caching a snapshot -- called
-        before every public webview page render and status check, not at
-        cog_load. Resolving pixelagents lazily here (rather than eagerly in
-        cog_load, like corridor) keeps cog_load from blocking on -- or, if
-        pixelagents isn't loaded yet, silently auto-loading -- another cog's
-        potentially slow webview build; it also keeps floorplan's own
-        load/unload cycle side-effect-free when nothing has actually asked
-        for the webview yet.
+        Re-reads pixelagents' status rather than caching a snapshot, since
+        it can rebuild independently. Resolves pixelagents lazily (not at
+        cog_load, unlike corridor) so loading floorplan never blocks on, or
+        auto-loads, another cog's potentially slow webview build.
         """
 
         if self._pixelagents is None:
@@ -173,10 +169,23 @@ class PixelAgentsBase:
         if status.ready and status.built_commit != self._webview_built_commit:
             await asyncio.to_thread(self._load_assets)
             self._webview_built_commit = status.built_commit
+            built_base_path = getattr(status, "built_base_path", None)
+            mismatched = built_base_path and built_base_path != EXPECTED_WEBVIEW_BASE_PATH
+            self._webview_base_path_mismatch = built_base_path if mismatched else None
+            if mismatched:
+                log.warning(
+                    "floorplan: webview built for %s, not %s -- assets will 404. "
+                    "Run [p]pixelagents webview setbasepath then rebuild.",
+                    built_base_path,
+                    EXPECTED_WEBVIEW_BASE_PATH,
+                )
 
     def _webview_assets_status(self) -> str:
         """Short, embed-field-sized summary of webview asset health."""
 
+        mismatch = self._webview_base_path_mismatch
+        if mismatch:
+            return f"⚠️ built for {mismatch}, not {EXPECTED_WEBVIEW_BASE_PATH}"
         if self._assets.get("characters"):
             return "✅ loaded"
         return self._webview_assets.build_status or "⚠️ missing"

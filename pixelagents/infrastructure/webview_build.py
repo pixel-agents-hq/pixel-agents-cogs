@@ -40,6 +40,17 @@ REQUIRED_TOOLS = ("git", "node", "npm")
 _PIN_FILE = Path(__file__).with_name("webview_vendor.commit")
 _EMIT_SCRIPT = Path(__file__).parent / "webview_build_scripts" / "emit_decoded_assets.ts"
 _BUILT_COMMIT_MARKER = ".built_commit"
+_BUILT_BASE_PATH_MARKER = ".built_base_path"
+
+# pixelagents only builds the webview -- it does not serve it. Vite bakes
+# the base path into every asset URL at build time, so whichever cog
+# actually registers the Dashboard third-party page (floorplan today) has
+# to be built for, by name, since Red derives that page's route from the
+# serving Cog's own name. Configurable (see infrastructure/settings.py's
+# webview_base_path) rather than hardcoded here, precisely so a future
+# consumer other than floorplan doesn't need a pixelagents code change --
+# just `[p]pixelagents webview setbasepath` and a rebuild.
+DEFAULT_BASE_PATH = "/third-party/floorplan/static/"
 
 # Vite's `public/` passthrough also copies upstream's raw per-tile PNGs and a
 # handful of unrelated promo images into the build output. Nothing in the
@@ -66,6 +77,7 @@ class WebviewBuildError(RuntimeError):
 class BuildResult:
     rebuilt: bool
     commit: str
+    base_path: str
 
 
 @dataclass(frozen=True)
@@ -96,14 +108,23 @@ def missing_tools() -> tuple[str, ...]:
     return tuple(tool for tool in REQUIRED_TOOLS if shutil.which(tool) is None)
 
 
-def is_up_to_date(webview_dist: Path, commit: str) -> bool:
+def is_up_to_date(webview_dist: Path, commit: str, base_path: str) -> bool:
+    """Whether `webview_dist` already matches both `commit` and `base_path`.
+
+    Both matter: a rebuild-worthy change isn't only a new commit -- Vite
+    bakes `base_path` into every asset URL at build time too, so a base
+    path change (e.g. reconfiguring which cog serves the bundle) has to
+    invalidate the cache exactly the same way a commit change does. Missing
+    this was the original bug: the base path moved from
+    `/third-party/pixelagents/` to `/third-party/floorplan/` in the
+    pixelagents/floorplan split, but a host whose pinned commit hadn't
+    changed kept serving the stale, wrongly-based build until forced to
+    rebuild.
+    """
+
     if not (webview_dist / "index.html").is_file():
         return False
-    marker = webview_dist / _BUILT_COMMIT_MARKER
-    try:
-        return marker.read_text(encoding="utf-8").strip() == commit
-    except OSError:
-        return False
+    return built_commit(webview_dist) == commit and built_base_path(webview_dist) == base_path
 
 
 def built_commit(webview_dist: Path) -> str | None:
@@ -115,7 +136,21 @@ def built_commit(webview_dist: Path) -> str | None:
     outside this module.
     """
 
-    marker = webview_dist / _BUILT_COMMIT_MARKER
+    return _read_marker(webview_dist / _BUILT_COMMIT_MARKER)
+
+
+def built_base_path(webview_dist: Path) -> str | None:
+    """The `--base` `webview_dist` was actually built with, if known.
+
+    Lets a consumer (or an operator debugging a 404 on stale asset URLs)
+    confirm the on-disk build actually matches the path it's being served
+    at -- see `is_up_to_date`.
+    """
+
+    return _read_marker(webview_dist / _BUILT_BASE_PATH_MARKER)
+
+
+def _read_marker(marker: Path) -> str | None:
     try:
         return marker.read_text(encoding="utf-8").strip() or None
     except OSError:
@@ -126,6 +161,7 @@ def ensure_webview_built(
     cog_data_dir: Path,
     *,
     commit: str | None = None,
+    base_path: str | None = None,
     logger: logging.Logger | None = None,
     force: bool = False,
 ) -> BuildResult:
@@ -133,7 +169,9 @@ def ensure_webview_built(
 
     Builds from `commit` when given (an admin-set override -- see
     `[p]pixelagents webview setcommit`), otherwise from the source-pinned
-    `pinned_commit()`.
+    `pinned_commit()`. Builds for `base_path` when given (an admin-set
+    override -- see `[p]pixelagents webview setbasepath`), otherwise
+    `DEFAULT_BASE_PATH`.
 
     Raises `WebviewBuildError` if the commit cannot be built -- including
     when a required tool is missing -- and never partially overwrites a
@@ -142,10 +180,11 @@ def ensure_webview_built(
 
     log = logger or logging.getLogger(__name__)
     commit = commit or pinned_commit()
+    base_path = base_path or DEFAULT_BASE_PATH
     webview_dist = cog_data_dir / "webview_dist"
 
-    if not force and is_up_to_date(webview_dist, commit):
-        return BuildResult(rebuilt=False, commit=commit)
+    if not force and is_up_to_date(webview_dist, commit, base_path):
+        return BuildResult(rebuilt=False, commit=commit, base_path=base_path)
 
     missing = missing_tools()
     if missing:
@@ -157,10 +196,10 @@ def ensure_webview_built(
     vendor_dir = cog_data_dir / "vendor" / "pixel-agents"
     _checkout(vendor_dir, commit, log)
     _install_dependencies(vendor_dir, log)
-    build_out_dir = _build_bundle(vendor_dir, log)
+    build_out_dir = _build_bundle(vendor_dir, base_path, log)
     _emit_decoded_assets(vendor_dir, build_out_dir, log)
-    _sync_dist(build_out_dir, webview_dist, commit, log)
-    return BuildResult(rebuilt=True, commit=commit)
+    _sync_dist(build_out_dir, webview_dist, commit, base_path, log)
+    return BuildResult(rebuilt=True, commit=commit, base_path=base_path)
 
 
 def build_webview(
@@ -169,6 +208,7 @@ def build_webview(
     logger: logging.Logger,
     force: bool = False,
     commit: str | None = None,
+    base_path: str | None = None,
 ) -> BuildOutcome:
     """`ensure_webview_built`, but reports rather than raises.
 
@@ -178,7 +218,9 @@ def build_webview(
     """
 
     try:
-        result = ensure_webview_built(cog_data_dir, commit=commit, logger=logger, force=force)
+        result = ensure_webview_built(
+            cog_data_dir, commit=commit, base_path=base_path, logger=logger, force=force
+        )
     except WebviewBuildError as exc:
         logger.error("pixelagents: could not build webview assets: %s", exc)
         return BuildOutcome(
@@ -277,17 +319,17 @@ def _install_dependencies(vendor_dir: Path, log: logging.Logger) -> None:
     )
 
 
-def _build_bundle(vendor_dir: Path, log: logging.Logger) -> Path:
+def _build_bundle(vendor_dir: Path, base_path: str, log: logging.Logger) -> Path:
     # Upstream is served through Red Dashboard's third-party static router,
-    # which floorplan owns (floorplan/adapters/dashboard.py) -- the bundle's
-    # asset URLs must be rooted at floorplan's third-party route rather than
-    # the site root Vite assumes by default. This is a subpath build
-    # (`--base`), supported upstream and covered by its own build-subpath
-    # test -- everything else (outDir, emptyOutDir) still comes from
-    # webview-ui/vite.config.ts.
+    # owned by whichever cog is currently configured to serve it (floorplan
+    # by default -- see DEFAULT_BASE_PATH) -- the bundle's asset URLs must be
+    # rooted at that cog's third-party route rather than the site root Vite
+    # assumes by default. This is a subpath build (`--base`), supported
+    # upstream and covered by its own build-subpath test -- everything else
+    # (outDir, emptyOutDir) still comes from webview-ui/vite.config.ts.
     vite_bin = vendor_dir / "node_modules" / ".bin" / "vite"
     _run(
-        [str(vite_bin), "build", "--base", "/third-party/floorplan/static/"],
+        [str(vite_bin), "build", "--base", base_path],
         cwd=vendor_dir / "webview-ui",
         timeout=180,
         log=log,
@@ -307,7 +349,9 @@ def _emit_decoded_assets(vendor_dir: Path, build_out_dir: Path, log: logging.Log
     )
 
 
-def _sync_dist(build_out_dir: Path, webview_dist: Path, commit: str, log: logging.Logger) -> None:
+def _sync_dist(
+    build_out_dir: Path, webview_dist: Path, commit: str, base_path: str, log: logging.Logger
+) -> None:
     if webview_dist.exists():
         shutil.rmtree(webview_dist)
     (webview_dist / "assets" / "decoded").mkdir(parents=True)
@@ -333,4 +377,9 @@ def _sync_dist(build_out_dir: Path, webview_dist: Path, commit: str, log: loggin
     )
 
     (webview_dist / _BUILT_COMMIT_MARKER).write_text(commit + "\n", encoding="utf-8")
-    log.info("pixelagents: webview built from pixel-agents-hq/pixel-agents@%s", commit)
+    (webview_dist / _BUILT_BASE_PATH_MARKER).write_text(base_path + "\n", encoding="utf-8")
+    log.info(
+        "pixelagents: webview built from pixel-agents-hq/pixel-agents@%s (base %s)",
+        commit,
+        base_path,
+    )

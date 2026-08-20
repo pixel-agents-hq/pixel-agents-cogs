@@ -117,22 +117,26 @@ class TestRebuildUsesTheConfiguredCommit(unittest.IsolatedAsyncioTestCase):
 
         with patch.object(webview_build, "ensure_webview_built") as ensure_webview_built:
             ensure_webview_built.return_value = webview_build.BuildResult(
-                rebuilt=True, commit=commit
+                rebuilt=True, commit=commit, base_path=webview_build.DEFAULT_BASE_PATH
             )
             await cog._rebuild_webview(force=True)
 
         self.assertEqual(ensure_webview_built.call_args.kwargs["commit"], commit)
+        self.assertIsNone(ensure_webview_built.call_args.kwargs["base_path"])
 
     async def test_rebuild_builds_from_the_default_pin_without_an_override(self) -> None:
         cog = _make_cog()
 
         with patch.object(webview_build, "ensure_webview_built") as ensure_webview_built:
             ensure_webview_built.return_value = webview_build.BuildResult(
-                rebuilt=True, commit=webview_build.pinned_commit()
+                rebuilt=True,
+                commit=webview_build.pinned_commit(),
+                base_path=webview_build.DEFAULT_BASE_PATH,
             )
             await cog._rebuild_webview(force=True)
 
         self.assertIsNone(ensure_webview_built.call_args.kwargs["commit"])
+        self.assertIsNone(ensure_webview_built.call_args.kwargs["base_path"])
 
 
 class TestWebviewBuildSurfaces(unittest.IsolatedAsyncioTestCase):
@@ -170,7 +174,7 @@ class TestWebviewBuildSurfaces(unittest.IsolatedAsyncioTestCase):
             patch.object(
                 webview_build,
                 "_build_bundle",
-                side_effect=lambda vendor_dir, log: vendor_dir / "dist" / "webview",
+                side_effect=lambda vendor_dir, base_path, log: vendor_dir / "dist" / "webview",
             ),
             patch.object(webview_build, "_emit_decoded_assets"),
             patch.object(webview_build, "_sync_dist") as sync_dist,

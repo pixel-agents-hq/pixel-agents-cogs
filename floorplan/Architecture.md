@@ -96,7 +96,8 @@ cross-cog surface:
 
 ```python
 status = self._pixelagents.webview_bundle_status()  # WebviewBundleStatus
-# status.dist_path, status.ready, status.detail, status.built_commit
+# status.dist_path, status.ready, status.detail,
+# status.built_commit, status.built_base_path
 ```
 
 `adapters/cog_base.py::_sync_webview_assets` calls this before every public
@@ -107,6 +108,16 @@ sprite assets only when `status.built_commit` changes — so
 rebuild trigger of its own) is picked up without a floorplan reload.
 `[p]floorplan status`'s Assets field and the public office page's "not
 installed yet" message both read `status.detail` this way.
+
+It also compares `status.built_base_path` against
+`EXPECTED_WEBVIEW_BASE_PATH` (`/third-party/floorplan/static/`, the route
+Red Dashboard actually derives from the `Floorplan` Cog's own name) each
+time it picks up a new `built_commit`. A mismatch — e.g. pixelagents still
+built for the pre-split `/third-party/pixelagents/static/` — replaces the
+Assets field with the mismatch instead of a false "✅ loaded", and logs a
+`floorplan:` warning naming the fix (`[p]pixelagents webview setbasepath`
+then rebuild), so a stale build shows up in `[p]floorplan status` rather
+than only as a 404 in a browser console.
 
 `self._pixelagents` is resolved lazily, the first time
 `_sync_webview_assets` actually runs, via

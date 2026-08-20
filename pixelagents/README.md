@@ -41,7 +41,17 @@ its own:
 | `[p]pixelagents webview commit` | Show which Pixel Agents commit the webview builds from |
 | `[p]pixelagents webview setcommit <commit>` | Pin webview builds to a specific commit or link |
 | `[p]pixelagents webview resetcommit` | Revert to the source-pinned default commit |
+| `[p]pixelagents webview basepath` | Show which Dashboard route the webview builds asset URLs for |
+| `[p]pixelagents webview setbasepath <path>` | Build for a different cog's Dashboard route (default: floorplan's) |
+| `[p]pixelagents webview resetbasepath` | Revert to the default (floorplan's) Dashboard route |
 | `[p]pixelagents webview rebuild` | Re-clone and rebuild the webview now |
+
+`setbasepath` only matters if something other than floorplan is serving the
+built bundle — see [Architecture.md](Architecture.md#the-webview_bundle_status-cross-cog-surface).
+The build cache invalidates automatically on either a commit or a base path
+change, so the next `cog_load` (bot restart, `[p]reload pixelagents`) picks
+either up on its own — `[p]pixelagents webview rebuild` just does it now
+instead of waiting.
 
 ## Docs
 

@@ -30,4 +30,23 @@ def parse_commit_ref(value: str) -> str:
     return candidate.lower()
 
 
-__all__ = ["parse_commit_ref"]
+def parse_webview_base_path(value: str) -> str:
+    """Validate and normalize the Vite `--base` the webview builds for.
+
+    This is the Red Dashboard third-party route of whichever cog currently
+    serves the built bundle (floorplan by default) -- an absolute path,
+    with a leading and trailing slash, the shape Vite requires for a
+    subpath base and Red Dashboard's `/third-party/<cog>/static/` routes
+    always have.
+    """
+
+    clean = value.strip()
+    if not clean.startswith("/") or not clean.endswith("/") or " " in clean or clean == "/":
+        raise ValueError(
+            "Expected an absolute path with a leading and trailing slash, e.g. "
+            "/third-party/<cog>/static/."
+        )
+    return clean
+
+
+__all__ = ["parse_commit_ref", "parse_webview_base_path"]

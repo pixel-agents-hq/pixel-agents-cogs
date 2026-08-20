@@ -45,13 +45,19 @@ class WebviewBundleStatus:
     ready: bool  # index.html present on disk
     detail: str  # human-readable status line
     built_commit: str | None  # the commit actually on disk, if ready
+    built_base_path: str | None  # the --base it was actually built for, if ready
 ```
 
 `floorplan/adapters/cog_base.py::_sync_webview_assets` re-reads this before
 every public webview page render and status check rather than caching a
 snapshot, and reloads its decoded sprite assets only when `built_commit`
-changes — so a `[p]pixelagents webview rebuild` to a new
-commit is picked up without floorplan needing a reload of its own.
+changes — so a `[p]pixelagents webview rebuild` to a new commit is picked up
+without floorplan needing a reload of its own. It also compares
+`built_base_path` against its own expected route
+(`/third-party/floorplan/static/`) and surfaces a mismatch in
+`[p]floorplan status` instead of only as a 404 in a browser console — the
+exact failure mode that motivated adding this field (see "Building
+`webview_dist`" below).
 
 ## Ecosystem integration
 
@@ -113,11 +119,11 @@ repository's tree. It is cloned and built at runtime, the first time
 
 ```text
 ensure_webview_built(cog_data_path(self))
-  → already built at the pinned commit? return -- see is_up_to_date()
+  → already built at the pinned commit AND base path? return -- see is_up_to_date()
   → git missing/node missing/npm missing? raise WebviewBuildError
   → git clone/fetch + checkout <pinned commit>   → <data>/vendor/pixel-agents
   → npm ci --workspace=webview-ui --ignore-scripts
-  → vite build --base /third-party/floorplan/static/
+  → vite build --base <webview_base_path>
   → emit_decoded_assets.ts (upstream's own PNG decoders)
   → sync the trimmed result                      → <data>/webview_dist
 ```
@@ -126,11 +132,22 @@ ensure_webview_built(cog_data_path(self))
 data directory, writable and persisted across cog reloads/updates, *not*
 the installed `pixelagents/` package tree Downloader manages.
 
-The Vite build's `--base` is rooted at floorplan's own third-party
-Dashboard route (`/third-party/floorplan/static/`, derived from the
-`Floorplan` Cog's name), not this cog's — the bundle is built here but
-served there, and its asset URLs have to be rooted wherever it actually
-ends up.
+The Vite build's `--base` is rooted at whichever cog's own third-party
+Dashboard route is currently configured to serve the bundle
+(`webview_base_path`, `/third-party/floorplan/static/` by default — see
+Configuration below), not this cog's — the bundle is built here but served
+there, and its asset URLs have to be rooted wherever it actually ends up.
+`is_up_to_date` treats a base path change exactly like a commit change: it
+invalidates the cache and forces a rebuild, so reconfiguring which cog
+serves the bundle self-heals on the next `cog_load` without anyone needing
+to know a rebuild is required. This is also why the marker on disk
+(`.built_base_path`, alongside the existing `.built_commit`) exists at
+all — the original version of this cog only tracked the commit, so
+changing `--base` from `/third-party/pixelagents/` to
+`/third-party/floorplan/` in the pixelagents/floorplan split (issue #21)
+didn't invalidate an already-built `webview_dist` on any host whose pinned
+commit hadn't also changed, and kept serving asset URLs 404ing against the
+new route until someone force-rebuilt it by hand.
 
 The sync step trims Vite's output to what `WebviewAssetProvider` (floorplan)
 and the served bundle actually read: the entry HTML, the hashed JS/CSS
@@ -165,9 +182,12 @@ floorplan reads at load and forwards verbatim.
 
 ## Configuration
 
-Global: `webview_commit_override` (`None` by default) — an admin-set
-override of `webview_vendor.commit`, set via
-`[p]pixelagents webview setcommit`.
+Global:
+
+| Key | Default | Description |
+|---|---|---|
+| `webview_commit_override` | `None` | Admin-set override of `webview_vendor.commit`, set via `[p]pixelagents webview setcommit` |
+| `webview_base_path` | `None` (→ `infrastructure.webview_build.DEFAULT_BASE_PATH`, `/third-party/floorplan/static/`) | Admin-set override of which cog's Dashboard route the webview builds asset URLs for, set via `[p]pixelagents webview setbasepath` |
 
 ## Boundary enforcement and validation
 

@@ -35,8 +35,11 @@ class TestWebviewDistBuild(unittest.TestCase):
         write_fake_vite_build(build_out_dir)
 
         self.commit = "a" * 40
+        self.base_path = webview_build.DEFAULT_BASE_PATH
         self.webview_dist = root / "webview_dist"
-        webview_build._sync_dist(build_out_dir, self.webview_dist, self.commit, _LOG)
+        webview_build._sync_dist(
+            build_out_dir, self.webview_dist, self.commit, self.base_path, _LOG
+        )
         self.provider = WebviewAssetProvider(self.webview_dist)
 
     def test_sync_dist_drops_unserved_raw_passthrough_files(self) -> None:
@@ -85,6 +88,10 @@ class TestWebviewDistBuild(unittest.TestCase):
     def test_sync_dist_writes_the_built_commit_marker(self) -> None:
         marker = self.webview_dist / ".built_commit"
         self.assertEqual(marker.read_text(encoding="utf-8").strip(), self.commit)
+
+    def test_sync_dist_writes_the_built_base_path_marker(self) -> None:
+        marker = self.webview_dist / ".built_base_path"
+        self.assertEqual(marker.read_text(encoding="utf-8").strip(), self.base_path)
 
 
 if __name__ == "__main__":

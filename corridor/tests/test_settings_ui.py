@@ -9,7 +9,7 @@ import unittest
 
 import discord
 
-import ui_limits
+from corridor import ui_limits
 
 from ..adapters.settings_ui import (
     AddGroupModal,

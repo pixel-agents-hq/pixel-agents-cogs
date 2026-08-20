@@ -1,5 +1,5 @@
 """Every Modal/View floorplan defines must respect Discord's component
-limits -- see `ui_limits.py` at the repo root for what's checked and why
+limits -- see `corridor/ui_limits.py` for what's checked and why
 (discord.py itself never validates these; a violation only surfaces at
 runtime as an opaque HTTPException / "didn't respond in time").
 
@@ -17,7 +17,7 @@ import unittest
 
 import discord
 
-import ui_limits
+from corridor import ui_limits
 from floorplan.adapters import layout_views, settings_panel
 from floorplan.adapters.layout_views import LayoutBrowseView, LayoutDetailView
 from floorplan.adapters.settings_panel import SettingsPanelView, SettingsValueModal

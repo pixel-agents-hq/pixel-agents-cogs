@@ -1,4 +1,4 @@
-"""Unit tests for the pure component-limit checker in `ui_limits.py`.
+"""Unit tests for the pure component-limit checker in `corridor/ui_limits.py`.
 
 These use plain `types.SimpleNamespace` stand-ins instead of any cog's
 discord stub, so they verify the checker's own logic in isolation from
@@ -10,7 +10,7 @@ from __future__ import annotations
 import unittest
 from types import SimpleNamespace
 
-import ui_limits
+from corridor import ui_limits
 
 
 def _modal(**overrides: object) -> SimpleNamespace:

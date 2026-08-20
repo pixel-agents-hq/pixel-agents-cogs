@@ -8,21 +8,21 @@
             "name": "Add Cog",
             "type": "PowerShell",
             "request": "launch",
-            "script": "${workspaceFolder}/InteractRed.ps1 -AddCog",
+            "script": "${workspaceFolder}/.vscode/InteractRed.ps1 -AddCog",
             "cwd": "${cwd}"
         },
         {
             "name": "Start Discord Bot",
             "type": "PowerShell",
             "request": "launch",
-            "script": "${workspaceFolder}/InteractRed.ps1 -StartBot",
+            "script": "${workspaceFolder}/.vscode/InteractRed.ps1 -StartBot",
             "cwd": "${cwd}"
         },
         {
             "name": "Start Dashboard",
             "type": "PowerShell",
             "request": "launch",
-            "script": "${workspaceFolder}/InteractRed.ps1 -StartDashboard",
+            "script": "${workspaceFolder}/.vscode/InteractRed.ps1 -StartDashboard",
             "cwd": "${cwd}"
         }
     ]

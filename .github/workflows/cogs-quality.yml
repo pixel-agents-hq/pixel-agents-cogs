@@ -11,8 +11,6 @@ on:
       - "toolbox/**/*.py"
       - "contracts/pixel_index/**"
       - "contracts/pixel_agents/**"
-      - "ui_limits.py"
-      - "test_ui_limits.py"
       - "pyproject.toml"
       - ".github/workflows/cogs-quality.yml"
   pull_request:
@@ -25,8 +23,6 @@ on:
       - "toolbox/**/*.py"
       - "contracts/pixel_index/**"
       - "contracts/pixel_agents/**"
-      - "ui_limits.py"
-      - "test_ui_limits.py"
       - "pyproject.toml"
       - ".github/workflows/cogs-quality.yml"
 
@@ -49,9 +45,9 @@ jobs:
           # (neither talks to aiohttp or the Pixel Index contracts) -- their
           # suites, lint scope, and type-check scope are otherwise identical.
           - cog: corridor
-            test_target: "corridor/ test_ui_limits.py"
-            lint_target: "corridor ui_limits.py test_ui_limits.py"
-            mypy_target: "corridor ui_limits.py"
+            test_target: "corridor/"
+            lint_target: "corridor"
+            mypy_target: "corridor"
             extra_deps: ""
             pixel_index_contracts: false
           - cog: toolbox

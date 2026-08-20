@@ -416,7 +416,7 @@ if ($AddCog) {
     if (-not (Ensure-PythonPackages -PythonPath $python -Packages @("cookiecutter"))) {
         exit 1
     }
-    $cookiecutterTemplate = Join-Path $PSScriptRoot ".cookiecutter/cog-cookiecutter"
+    $cookiecutterTemplate = Join-Path $PSScriptRoot "../.cookiecutter/cog-cookiecutter"
     Assert-Errors $python -m cookiecutter $cookiecutterTemplate
 }
 

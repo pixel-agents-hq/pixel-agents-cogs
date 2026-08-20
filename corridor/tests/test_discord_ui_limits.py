@@ -1,6 +1,6 @@
 """Every Modal/View corridor defines must respect Discord's component
-limits (see `ui_limits.py` at the repo root for the limits themselves and
-why discord.py alone won't catch a violation).
+limits (see `corridor/ui_limits.py` for the limits themselves and why
+discord.py alone won't catch a violation).
 
 This file discovers every `discord.ui.Modal`/`discord.ui.LayoutView`
 subclass declared in `corridor.adapters.settings_ui` and cross-checks that
@@ -18,7 +18,7 @@ import unittest
 
 import discord
 
-import ui_limits
+from corridor import ui_limits
 
 from ..adapters import settings_ui
 from ..domain import (

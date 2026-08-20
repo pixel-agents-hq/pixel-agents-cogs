@@ -340,6 +340,26 @@ class TestPixelagentsResolutionIsLazy(unittest.IsolatedAsyncioTestCase):
         ensure_loaded.assert_awaited_once_with(cog.bot)
         self.assertIs(cog._pixelagents, pixelagents_double)
 
+    async def test_setup_never_touches_pixelagents_either(self) -> None:
+        """The same bug also lived one layer up: floorplan/__init__.py's
+        setup() -- Red's actual `[p]load floorplan` entrypoint -- used to
+        call ensure_pixelagents_loaded(bot) directly, before cog_load even
+        runs. Fixing only cog_base.py's cog_load() was not sufficient."""
+
+        import floorplan as floorplan_package
+
+        bot = MagicMock()
+        bot.guilds = []
+        bot.is_owner = AsyncMock(return_value=False)
+        bot.add_cog = AsyncMock()
+
+        with patch(
+            "floorplan.dependency_loader.ensure_pixelagents_loaded", new=AsyncMock()
+        ) as ensure_loaded:
+            await floorplan_package.setup(bot)
+
+        ensure_loaded.assert_not_awaited()
+
 
 # ---------------------------------------------------------------------------
 # Tests: dashboard webview hosting

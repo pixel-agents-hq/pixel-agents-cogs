@@ -43,12 +43,24 @@ def __getattr__(name: str) -> object:
 
 
 async def setup(bot: Red) -> None:
-    """Load the canonical Cog class through Red's standard extension hook."""
+    """Load the canonical Cog class through Red's standard extension hook.
 
-    from .dependency_loader import ensure_corridor_loaded, ensure_pixelagents_loaded
+    Only corridor is ensured here: floorplan's adapters import Corridor's
+    public domain API at module scope (e.g. `from corridor.domain import
+    ReplyField`), so corridor has to be genuinely loaded before importing
+    `.floorplan` below. There is no equivalent static import of pixelagents
+    anywhere in this package -- the only dependency on it is the runtime
+    cross-cog call in `adapters/cog_base.py::_sync_webview_assets`, resolved
+    lazily there via `ensure_pixelagents_loaded` on first actual use (a
+    dashboard render or status check), not eagerly here. Loading it this
+    early would auto-load pixelagents as a side effect of loading floorplan
+    -- exactly what broke the Downloader RPC smoke test's isolated
+    load/unload cycle for whichever cog alphabetically follows floorplan.
+    """
+
+    from .dependency_loader import ensure_corridor_loaded
 
     await ensure_corridor_loaded(bot)
-    await ensure_pixelagents_loaded(bot)
     from .floorplan import Floorplan
 
     await bot.add_cog(Floorplan(bot))

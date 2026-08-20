@@ -16,6 +16,9 @@ class DiscordMemberRef:
     def __init__(self, member: discord.Member) -> None:
         self.id = member.id
         self.role_ids: frozenset[int] = frozenset(role.id for role in member.roles)
+        self.permission_names: frozenset[str] = frozenset(
+            name for name, value in member.guild_permissions if value
+        )
         self.is_administrator: bool = member.guild_permissions.administrator
 
 

@@ -8,6 +8,7 @@ from ..domain import (
     IconPreference,
     IconSource,
     MemberCapabilities,
+    PermissionGroupDef,
 )
 
 
@@ -50,3 +51,22 @@ def test_icon_preference_holds_custom_url() -> None:
 
     assert icon.source is IconSource.CUSTOM
     assert icon.custom_url == "https://example.com/icon.png"
+
+
+def test_permission_group_def_defaults_to_no_roles_or_permissions() -> None:
+    group = PermissionGroupDef(key="hr", label="HR")
+
+    assert group.role_ids == frozenset()
+    assert group.permission_names == frozenset()
+
+
+def test_permission_group_def_holds_both_roles_and_permissions() -> None:
+    group = PermissionGroupDef(
+        key="security",
+        label="Security",
+        role_ids=frozenset({100}),
+        permission_names=frozenset({"kick_members", "ban_members"}),
+    )
+
+    assert group.role_ids == frozenset({100})
+    assert group.permission_names == frozenset({"kick_members", "ban_members"})

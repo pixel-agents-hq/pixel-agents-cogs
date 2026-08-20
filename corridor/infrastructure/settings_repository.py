@@ -24,8 +24,13 @@ from ..domain import (
 CONFIG_IDENTIFIER = 0x636F72726964  # "corrid" in hex
 
 DEFAULT_PERMISSION_GROUPS: list[dict[str, object]] = [
-    {"key": "building_manager", "label": "Building Manager", "role_ids": []},
-    {"key": "keyholder", "label": "Keyholder", "role_ids": []},
+    {
+        "key": "building_manager",
+        "label": "Building Manager",
+        "role_ids": [],
+        "permission_names": [],
+    },
+    {"key": "keyholder", "label": "Keyholder", "role_ids": [], "permission_names": []},
 ]
 
 GUILD_DEFAULTS: dict[str, object] = {
@@ -45,11 +50,17 @@ def _group_from_dict(data: dict[str, object]) -> PermissionGroupDef:
         key=cast(str, data["key"]),
         label=cast(str, data["label"]),
         role_ids=frozenset(cast("list[int]", data.get("role_ids", []))),
+        permission_names=frozenset(cast("list[str]", data.get("permission_names", []))),
     )
 
 
 def _group_to_dict(group: PermissionGroupDef) -> dict[str, object]:
-    return {"key": group.key, "label": group.label, "role_ids": sorted(group.role_ids)}
+    return {
+        "key": group.key,
+        "label": group.label,
+        "role_ids": sorted(group.role_ids),
+        "permission_names": sorted(group.permission_names),
+    }
 
 
 class RedCorridorRepository:
@@ -131,14 +142,23 @@ class RedCorridorRepository:
         return tuple(await self._load_groups(guild_id))
 
     async def add_permission_group(
-        self, guild_id: int, key: str, label: str, role_ids: frozenset[int] = frozenset()
+        self,
+        guild_id: int,
+        key: str,
+        label: str,
+        role_ids: frozenset[int] = frozenset(),
+        permission_names: frozenset[str] = frozenset(),
     ) -> None:
         if key in RESERVED_GROUP_KEYS:
             raise ValueError(f"{key!r} is a reserved group key")
         groups = await self._load_groups(guild_id)
         if any(group.key == key for group in groups):
             raise ValueError(f"a group with key {key!r} already exists")
-        groups.append(PermissionGroupDef(key=key, label=label, role_ids=role_ids))
+        groups.append(
+            PermissionGroupDef(
+                key=key, label=label, role_ids=role_ids, permission_names=permission_names
+            )
+        )
         await self._save_groups(guild_id, groups)
 
     async def remove_permission_group(self, guild_id: int, key: str) -> None:
@@ -149,7 +169,29 @@ class RedCorridorRepository:
     async def set_group_role_ids(self, guild_id: int, key: str, role_ids: frozenset[int]) -> None:
         groups = await self._load_groups(guild_id)
         updated = [
-            PermissionGroupDef(key=group.key, label=group.label, role_ids=role_ids)
+            PermissionGroupDef(
+                key=group.key,
+                label=group.label,
+                role_ids=role_ids,
+                permission_names=group.permission_names,
+            )
+            if group.key == key
+            else group
+            for group in groups
+        ]
+        await self._save_groups(guild_id, updated)
+
+    async def set_group_permissions(
+        self, guild_id: int, key: str, permission_names: frozenset[str]
+    ) -> None:
+        groups = await self._load_groups(guild_id)
+        updated = [
+            PermissionGroupDef(
+                key=group.key,
+                label=group.label,
+                role_ids=group.role_ids,
+                permission_names=permission_names,
+            )
             if group.key == key
             else group
             for group in groups
@@ -159,7 +201,12 @@ class RedCorridorRepository:
     async def set_group_label(self, guild_id: int, key: str, label: str) -> None:
         groups = await self._load_groups(guild_id)
         updated = [
-            PermissionGroupDef(key=group.key, label=label, role_ids=group.role_ids)
+            PermissionGroupDef(
+                key=group.key,
+                label=label,
+                role_ids=group.role_ids,
+                permission_names=group.permission_names,
+            )
             if group.key == key
             else group
             for group in groups

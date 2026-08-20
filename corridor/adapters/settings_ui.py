@@ -38,6 +38,22 @@ if TYPE_CHECKING:
 
 MAX_PERMISSION_GROUPS = 10
 
+# A curated subset of discord.Permissions' ~40 flags, not all of them: a
+# single discord.ui.Select maxes out at 25 options, and most flags (e.g.
+# "stream", "use_soundboard") aren't relevant to a moderation/management
+# permission tier anyway. Value is the discord.Permissions flag name stored
+# on PermissionGroupDef.permission_names; label is what the admin sees.
+CURATED_PERMISSIONS: tuple[tuple[str, str], ...] = (
+    ("kick_members", "Kick Members"),
+    ("ban_members", "Ban Members"),
+    ("moderate_members", "Timeout Members"),
+    ("manage_messages", "Manage Messages"),
+    ("manage_roles", "Manage Roles"),
+    ("manage_channels", "Manage Channels"),
+    ("manage_guild", "Manage Server"),
+    ("mention_everyone", "Mention @everyone"),
+)
+
 
 def _get_corridor(interaction: discord.Interaction) -> CogBase:
     # `interaction.client` is typed as `discord.Client`, which has no
@@ -235,9 +251,11 @@ def build_shared_settings_container(
             "**Permission tiers**\n"
             f"`{permissions.owner_label}` (bot owner or Administrator) and "
             f"`{permissions.employee_label}` (everyone) are fixed and can only be renamed. "
-            "The groups below are role-backed, independent tiers you can add, rename, "
-            "reassign roles for, or delete. Deleting a group a cog depends on denies "
-            "access for that check rather than erroring."
+            "The groups below are independent tiers you can add, rename, or delete. Each "
+            "is satisfied by roles and/or Discord permissions -- a member matching either "
+            "one (any assigned role, or any selected permission) satisfies the group. "
+            "Deleting a group a cog depends on denies access for that check rather than "
+            "erroring."
         )
     )
 
@@ -250,6 +268,10 @@ def build_shared_settings_container(
         role_row: discord.ui.ActionRow[discord.ui.LayoutView] = discord.ui.ActionRow()
         role_row.add_item(_role_select(group))
         container.add_item(role_row)
+
+        permission_row: discord.ui.ActionRow[discord.ui.LayoutView] = discord.ui.ActionRow()
+        permission_row.add_item(_permission_select(group))
+        container.add_item(permission_row)
 
         manage_row: discord.ui.ActionRow[discord.ui.LayoutView] = discord.ui.ActionRow()
         manage_row.add_item(_rename_group_button(group))
@@ -378,6 +400,28 @@ def _role_select(group: PermissionGroupDef) -> discord.ui.RoleSelect[discord.ui.
         role_ids = frozenset(role.id for role in select.values)
         await corridor.set_group_role_ids(interaction.guild.id, group.key, role_ids)
         await _refresh(interaction, f"{group.label} roles updated.")
+
+    select.callback = callback  # type: ignore[method-assign]
+    return select
+
+
+def _permission_select(group: PermissionGroupDef) -> discord.ui.Select[discord.ui.LayoutView]:
+    select: discord.ui.Select[discord.ui.LayoutView] = discord.ui.Select(
+        placeholder=f"{group.label}: Discord permissions",
+        min_values=0,
+        max_values=len(CURATED_PERMISSIONS),
+        options=[
+            discord.SelectOption(label=label, value=name, default=name in group.permission_names)
+            for name, label in CURATED_PERMISSIONS
+        ],
+    )
+
+    async def callback(interaction: discord.Interaction) -> None:
+        assert interaction.guild is not None
+        corridor = _get_corridor(interaction)
+        permission_names = frozenset(select.values)
+        await corridor.set_group_permissions(interaction.guild.id, group.key, permission_names)
+        await _refresh(interaction, f"{group.label} permissions updated.")
 
     select.callback = callback  # type: ignore[method-assign]
     return select

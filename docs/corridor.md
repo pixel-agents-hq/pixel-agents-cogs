@@ -1,9 +1,9 @@
 # corridor: shared permissions and reply style
 
-[`corridor/`](../corridor/) is a `SHARED_LIBRARY`-type cog (hidden, but
-actually loaded and running — unlike [`contracts/`](../contracts/), which
-is a consumer-driven contract *testing* package other cogs never import at
-runtime). Every cog generated from [`.cookiecutter/cog-cookiecutter`](../.cookiecutter/cog-cookiecutter)
+[`corridor/`](../corridor/) is a hidden, `COG`-type cog that's actually
+loaded and running — unlike [`contracts/`](../contracts/), which is a
+`SHARED_LIBRARY`-type consumer-driven contract *testing* package other cogs
+never import at runtime. Every cog generated from [`.cookiecutter/cog-cookiecutter`](../.cookiecutter/cog-cookiecutter)
 declares it as a `required_cogs` dependency and calls into it for two
 things: **who is allowed to run a command**, and **how a reply gets
 formatted**. Neither is reinvented per cog.

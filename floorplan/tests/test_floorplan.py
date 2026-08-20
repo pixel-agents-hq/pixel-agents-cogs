@@ -362,28 +362,28 @@ class TestPixelagentsResolutionIsLazy(unittest.IsolatedAsyncioTestCase):
 
 
 class TestWebviewBasePathMismatch(unittest.IsolatedAsyncioTestCase):
-    """A build for the wrong Dashboard route must surface visibly, not just
-    404 quietly in a browser console -- see adapters/cog_base.py's
-    EXPECTED_WEBVIEW_BASE_PATH."""
+    """A build that predates the shared relative-asset convention must
+    surface visibly, not just 404 quietly in a browser console -- see
+    adapters/cog_base.py's EXPECTED_RELATIVE_BASE_PATH."""
 
-    async def test_matching_base_path_reports_loaded(self) -> None:
+    async def test_current_convention_reports_loaded(self) -> None:
         cog = _make_cog()
-        cog._pixelagents = FakePixelAgents(built_base_path="/third-party/floorplan/static/")
+        cog._pixelagents = FakePixelAgents(built_base_path="./")
 
         await cog._sync_webview_assets()
         cog._assets["characters"] = ["fake"]  # bypass the empty fixture dist's real (empty) load
 
         self.assertEqual(cog._webview_assets_status(), "✅ loaded")
 
-    async def test_mismatched_base_path_is_reported_instead_of_loaded(self) -> None:
+    async def test_outdated_convention_is_reported_instead_of_loaded(self) -> None:
         cog = _make_cog()
         cog._pixelagents = FakePixelAgents(built_base_path="/third-party/pixelagents/static/")
 
         await cog._sync_webview_assets()
 
         status = cog._webview_assets_status()
-        self.assertIn("/third-party/pixelagents/static/", status)
-        self.assertIn("/third-party/floorplan/static/", status)
+        self.assertIn("outdated convention", status)
+        self.assertIn("[p]pixelagents webview rebuild", status)
 
     async def test_a_missing_built_base_path_is_not_treated_as_a_mismatch(self) -> None:
         """Defensive: an older pixelagents that predates built_base_path

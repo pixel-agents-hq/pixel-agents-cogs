@@ -42,15 +42,26 @@ _EMIT_SCRIPT = Path(__file__).parent / "webview_build_scripts" / "emit_decoded_a
 _BUILT_COMMIT_MARKER = ".built_commit"
 _BUILT_BASE_PATH_MARKER = ".built_base_path"
 
-# pixelagents only builds the webview -- it does not serve it. Vite bakes
-# the base path into every asset URL at build time, so whichever cog
-# actually registers the Dashboard third-party page (floorplan today) has
-# to be built for, by name, since Red derives that page's route from the
-# serving Cog's own name. Configurable (see infrastructure/settings.py's
-# webview_base_path) rather than hardcoded here, precisely so a future
-# consumer other than floorplan doesn't need a pixelagents code change --
-# just `[p]pixelagents webview setbasepath` and a rebuild.
-DEFAULT_BASE_PATH = "/third-party/floorplan/static/"
+# pixelagents builds ONE bundle that any number of cogs can serve -- it owns
+# the distribution, not any particular route it's served from. A Discord
+# Dashboard third-party route is derived from the SERVING cog's own name
+# (`/third-party/<cog>/static/...`), which pixelagents has no business
+# knowing about at build time; baking one specific cog's absolute route
+# into the bundle (an earlier version of this file did, hardcoding
+# floorplan's) would mean only that one cog could ever serve it correctly,
+# defeating the entire point of a shared, centrally-built distribution.
+# Building relative instead lets any consuming cog serve the exact same
+# bundle under its own route -- each just injects a `<base href>` for its
+# own `/third-party/<cog>/static/` at serve time (see
+# floorplan/infrastructure/webview.py::WebviewAssetProvider.base_href).
+# Bare "./", not "./static/": the "static" path segment is a routing
+# artifact of Red Dashboard's third-party static route
+# (`/third-party/<cog>/static/<asset_path>`), which the consuming cog's
+# injected `<base href>` already ends with -- the physical files this
+# module writes into `webview_dist/` (assets/, fonts/, index.html) have no
+# "static/" subfolder of their own, so doubling it here would break every
+# asset URL instead of fixing them.
+RELATIVE_BASE_PATH = "./"
 
 # Vite's `public/` passthrough also copies upstream's raw per-tile PNGs and a
 # handful of unrelated promo images into the build output. Nothing in the
@@ -112,14 +123,13 @@ def is_up_to_date(webview_dist: Path, commit: str, base_path: str) -> bool:
     """Whether `webview_dist` already matches both `commit` and `base_path`.
 
     Both matter: a rebuild-worthy change isn't only a new commit -- Vite
-    bakes `base_path` into every asset URL at build time too, so a base
-    path change (e.g. reconfiguring which cog serves the bundle) has to
-    invalidate the cache exactly the same way a commit change does. Missing
-    this was the original bug: the base path moved from
-    `/third-party/pixelagents/` to `/third-party/floorplan/` in the
-    pixelagents/floorplan split, but a host whose pinned commit hadn't
-    changed kept serving the stale, wrongly-based build until forced to
-    rebuild.
+    bakes `base_path` into every asset URL at build time too, so a change to
+    the build convention itself (e.g. this codebase's original hardcoded
+    `/third-party/pixelagents/`, later `/third-party/floorplan/`, now
+    `RELATIVE_BASE_PATH`) has to invalidate the cache exactly the same way a
+    commit change does -- a host whose pinned commit hadn't also changed
+    would otherwise keep serving a build with the old convention baked in
+    indefinitely, 404ing against whatever route actually tried to serve it.
     """
 
     if not (webview_dist / "index.html").is_file():
@@ -161,7 +171,6 @@ def ensure_webview_built(
     cog_data_dir: Path,
     *,
     commit: str | None = None,
-    base_path: str | None = None,
     logger: logging.Logger | None = None,
     force: bool = False,
 ) -> BuildResult:
@@ -169,9 +178,8 @@ def ensure_webview_built(
 
     Builds from `commit` when given (an admin-set override -- see
     `[p]pixelagents webview setcommit`), otherwise from the source-pinned
-    `pinned_commit()`. Builds for `base_path` when given (an admin-set
-    override -- see `[p]pixelagents webview setbasepath`), otherwise
-    `DEFAULT_BASE_PATH`.
+    `pinned_commit()`. Always builds relative (`RELATIVE_BASE_PATH`) -- see
+    its own docstring for why that isn't a caller-supplied option.
 
     Raises `WebviewBuildError` if the commit cannot be built -- including
     when a required tool is missing -- and never partially overwrites a
@@ -180,11 +188,10 @@ def ensure_webview_built(
 
     log = logger or logging.getLogger(__name__)
     commit = commit or pinned_commit()
-    base_path = base_path or DEFAULT_BASE_PATH
     webview_dist = cog_data_dir / "webview_dist"
 
-    if not force and is_up_to_date(webview_dist, commit, base_path):
-        return BuildResult(rebuilt=False, commit=commit, base_path=base_path)
+    if not force and is_up_to_date(webview_dist, commit, RELATIVE_BASE_PATH):
+        return BuildResult(rebuilt=False, commit=commit, base_path=RELATIVE_BASE_PATH)
 
     missing = missing_tools()
     if missing:
@@ -196,10 +203,10 @@ def ensure_webview_built(
     vendor_dir = cog_data_dir / "vendor" / "pixel-agents"
     _checkout(vendor_dir, commit, log)
     _install_dependencies(vendor_dir, log)
-    build_out_dir = _build_bundle(vendor_dir, base_path, log)
+    build_out_dir = _build_bundle(vendor_dir, log)
     _emit_decoded_assets(vendor_dir, build_out_dir, log)
-    _sync_dist(build_out_dir, webview_dist, commit, base_path, log)
-    return BuildResult(rebuilt=True, commit=commit, base_path=base_path)
+    _sync_dist(build_out_dir, webview_dist, commit, RELATIVE_BASE_PATH, log)
+    return BuildResult(rebuilt=True, commit=commit, base_path=RELATIVE_BASE_PATH)
 
 
 def build_webview(
@@ -208,7 +215,6 @@ def build_webview(
     logger: logging.Logger,
     force: bool = False,
     commit: str | None = None,
-    base_path: str | None = None,
 ) -> BuildOutcome:
     """`ensure_webview_built`, but reports rather than raises.
 
@@ -218,9 +224,7 @@ def build_webview(
     """
 
     try:
-        result = ensure_webview_built(
-            cog_data_dir, commit=commit, base_path=base_path, logger=logger, force=force
-        )
+        result = ensure_webview_built(cog_data_dir, commit=commit, logger=logger, force=force)
     except WebviewBuildError as exc:
         logger.error("pixelagents: could not build webview assets: %s", exc)
         return BuildOutcome(
@@ -319,17 +323,16 @@ def _install_dependencies(vendor_dir: Path, log: logging.Logger) -> None:
     )
 
 
-def _build_bundle(vendor_dir: Path, base_path: str, log: logging.Logger) -> Path:
-    # Upstream is served through Red Dashboard's third-party static router,
-    # owned by whichever cog is currently configured to serve it (floorplan
-    # by default -- see DEFAULT_BASE_PATH) -- the bundle's asset URLs must be
-    # rooted at that cog's third-party route rather than the site root Vite
-    # assumes by default. This is a subpath build (`--base`), supported
-    # upstream and covered by its own build-subpath test -- everything else
-    # (outDir, emptyOutDir) still comes from webview-ui/vite.config.ts.
+def _build_bundle(vendor_dir: Path, log: logging.Logger) -> Path:
+    # Relative (`RELATIVE_BASE_PATH`), not rooted at any one cog's Dashboard
+    # route -- pixelagents owns the distribution, not where it's served, so
+    # the bundle must stay servable by whichever cog(s) end up consuming it.
+    # This is a subpath-relative build (`--base`), supported upstream and
+    # covered by its own build-subpath test -- everything else (outDir,
+    # emptyOutDir) still comes from webview-ui/vite.config.ts.
     vite_bin = vendor_dir / "node_modules" / ".bin" / "vite"
     _run(
-        [str(vite_bin), "build", "--base", base_path],
+        [str(vite_bin), "build", "--base", RELATIVE_BASE_PATH],
         cwd=vendor_dir / "webview-ui",
         timeout=180,
         log=log,

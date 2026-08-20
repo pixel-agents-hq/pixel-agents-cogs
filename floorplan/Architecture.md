@@ -109,15 +109,28 @@ rebuild trigger of its own) is picked up without a floorplan reload.
 `[p]floorplan status`'s Assets field and the public office page's "not
 installed yet" message both read `status.detail` this way.
 
-It also compares `status.built_base_path` against
-`EXPECTED_WEBVIEW_BASE_PATH` (`/third-party/floorplan/static/`, the route
-Red Dashboard actually derives from the `Floorplan` Cog's own name) each
-time it picks up a new `built_commit`. A mismatch — e.g. pixelagents still
-built for the pre-split `/third-party/pixelagents/static/` — replaces the
+**The build itself is asset-URL-relative, not rooted at floorplan's route.**
+pixelagents owns the distribution, not any one consumer of it — a future
+cog could serve the identical build under its own route without a
+pixelagents code change (see pixelagents' own README for why). That means
+floorplan is responsible for making the relative references resolve
+correctly *here*: `WEBVIEW_BASE_PATH` (`/third-party/floorplan/static/`,
+the route Red Dashboard actually derives from the `Floorplan` Cog's own
+name) is set once as `WebviewAssetProvider.base_href`, and
+`dashboard_webview_response()` injects it as `<base href="...">` at the
+top of `<head>` on every response — the same thing any other consuming cog
+would inject for its own route.
+
+Each time `_sync_webview_assets` picks up a new `built_commit`, it also
+compares `status.built_base_path` against `EXPECTED_RELATIVE_BASE_PATH`
+(`"./"`, pixelagents' `RELATIVE_BASE_PATH`) — a mismatch means the on-disk
+build predates the relative-asset convention (an old absolute,
+cog-specific build), so `<base href>` alone can't fix it: an already-
+absolute `src`/`href` ignores `<base>` entirely. That case replaces the
 Assets field with the mismatch instead of a false "✅ loaded", and logs a
-`floorplan:` warning naming the fix (`[p]pixelagents webview setbasepath`
-then rebuild), so a stale build shows up in `[p]floorplan status` rather
-than only as a 404 in a browser console.
+`floorplan:` warning naming the fix (`[p]pixelagents webview rebuild`), so
+a stale build shows up in `[p]floorplan status` rather than only as a 404
+in a browser console.
 
 `self._pixelagents` is resolved lazily, the first time
 `_sync_webview_assets` actually runs, via
@@ -256,10 +269,12 @@ GET /third-party/floorplan/static/<asset_path>
 `/third-party/floorplan` — not `pixelagents` — because Red Dashboard's
 third-party router derives the base path from the serving Cog's own name,
 and floorplan is the Cog that registers `dashboard_page`/`on_dashboard_cog_add`.
-pixelagents' Vite build is rooted at this same path (`--base
-/third-party/floorplan/static/`, see pixelagents' Architecture.md) so the
-two stay in sync without floorplan needing to tell pixelagents its route
-name at runtime.
+pixelagents' Vite build doesn't know this path at all: it builds asset URLs
+relative (see pixelagents' Architecture.md), and floorplan injects this
+exact route as `<base href>` at serve time (see "The webview bundle"
+above) — the two stay in sync without floorplan needing to tell pixelagents
+its route name at build time, which is what lets any other cog serve the
+identical build under its own route instead.
 
 `_resolve_webview_asset` enforces a path-traversal guard
 (`candidate.relative_to(root)`), so a crafted `asset_path` cannot escape

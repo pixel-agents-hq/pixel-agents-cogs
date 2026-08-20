@@ -46,7 +46,7 @@ class TestIsUpToDate(unittest.TestCase):
     def test_false_when_index_html_missing(self) -> None:
         with TemporaryDirectory() as tmp:
             self.assertFalse(
-                webview_build.is_up_to_date(Path(tmp), "abc", webview_build.DEFAULT_BASE_PATH)
+                webview_build.is_up_to_date(Path(tmp), "abc", webview_build.RELATIVE_BASE_PATH)
             )
 
     def test_false_when_commit_marker_does_not_match(self) -> None:
@@ -54,9 +54,9 @@ class TestIsUpToDate(unittest.TestCase):
             dist = Path(tmp)
             (dist / "index.html").write_text("x")
             (dist / ".built_commit").write_text("old")
-            (dist / ".built_base_path").write_text(webview_build.DEFAULT_BASE_PATH)
+            (dist / ".built_base_path").write_text(webview_build.RELATIVE_BASE_PATH)
             self.assertFalse(
-                webview_build.is_up_to_date(dist, "new", webview_build.DEFAULT_BASE_PATH)
+                webview_build.is_up_to_date(dist, "new", webview_build.RELATIVE_BASE_PATH)
             )
 
     def test_false_when_base_path_marker_does_not_match(self) -> None:
@@ -66,7 +66,7 @@ class TestIsUpToDate(unittest.TestCase):
             (dist / ".built_commit").write_text("abc\n")
             (dist / ".built_base_path").write_text("/third-party/other/static/\n")
             self.assertFalse(
-                webview_build.is_up_to_date(dist, "abc", webview_build.DEFAULT_BASE_PATH)
+                webview_build.is_up_to_date(dist, "abc", webview_build.RELATIVE_BASE_PATH)
             )
 
     def test_true_when_both_markers_match(self) -> None:
@@ -74,9 +74,9 @@ class TestIsUpToDate(unittest.TestCase):
             dist = Path(tmp)
             (dist / "index.html").write_text("x")
             (dist / ".built_commit").write_text("abc\n")
-            (dist / ".built_base_path").write_text(webview_build.DEFAULT_BASE_PATH + "\n")
+            (dist / ".built_base_path").write_text(webview_build.RELATIVE_BASE_PATH + "\n")
             self.assertTrue(
-                webview_build.is_up_to_date(dist, "abc", webview_build.DEFAULT_BASE_PATH)
+                webview_build.is_up_to_date(dist, "abc", webview_build.RELATIVE_BASE_PATH)
             )
 
 
@@ -89,7 +89,7 @@ class TestEnsureWebviewBuilt(unittest.TestCase):
             (dist / "index.html").write_text("x")
             commit = webview_build.pinned_commit()
             (dist / ".built_commit").write_text(commit + "\n")
-            (dist / ".built_base_path").write_text(webview_build.DEFAULT_BASE_PATH + "\n")
+            (dist / ".built_base_path").write_text(webview_build.RELATIVE_BASE_PATH + "\n")
 
             with patch.object(webview_build, "_checkout") as checkout:
                 result = webview_build.ensure_webview_built(cog_data_dir, logger=_LOG)
@@ -148,7 +148,7 @@ class TestEnsureWebviewBuilt(unittest.TestCase):
             def fake_install(vendor_dir, log):
                 calls.append("install")
 
-            def fake_build(vendor_dir, base_path, log):
+            def fake_build(vendor_dir, log):
                 calls.append("build")
                 write_fake_vite_build(build_out_dir)
                 return build_out_dir
@@ -240,7 +240,7 @@ class TestBuildWebview(unittest.TestCase):
             (dist / "index.html").write_text("x")
             commit = webview_build.pinned_commit()
             (dist / ".built_commit").write_text(commit + "\n")
-            (dist / ".built_base_path").write_text(webview_build.DEFAULT_BASE_PATH + "\n")
+            (dist / ".built_base_path").write_text(webview_build.RELATIVE_BASE_PATH + "\n")
             outcome = webview_build.build_webview(cog_data_dir, logger=_LOG)
         self.assertTrue(outcome.ok)
         self.assertIn("up to date", outcome.status_line)
@@ -260,7 +260,7 @@ class TestBuildWebview(unittest.TestCase):
             dist.mkdir(parents=True)
             (dist / "index.html").write_text("x")
             (dist / ".built_commit").write_text(override + "\n")
-            (dist / ".built_base_path").write_text(webview_build.DEFAULT_BASE_PATH + "\n")
+            (dist / ".built_base_path").write_text(webview_build.RELATIVE_BASE_PATH + "\n")
             outcome = webview_build.build_webview(cog_data_dir, logger=_LOG, commit=override)
         self.assertTrue(outcome.ok)
         self.assertIn(override[:7], outcome.status_line)
@@ -308,7 +308,7 @@ class TestRealWebviewBuild(unittest.TestCase):
                 self.assertTrue((dist / "assets" / "decoded" / f"{name}.json").is_file())
             self.assertTrue((dist / "assets" / "furniture-catalog.json").is_file())
             self.assertEqual(webview_build.built_commit(dist), webview_build.pinned_commit())
-            self.assertEqual(webview_build.built_base_path(dist), webview_build.DEFAULT_BASE_PATH)
+            self.assertEqual(webview_build.built_base_path(dist), webview_build.RELATIVE_BASE_PATH)
 
             second = webview_build.ensure_webview_built(cog_data_dir, logger=_LOG)
             self.assertFalse(second.rebuilt)

@@ -720,7 +720,7 @@ class FakePixelAgents:
         dist_path=None,
         detail="✅ loaded",
         built_commit="a" * 40,
-        built_base_path="/third-party/floorplan/static/",
+        built_base_path="./",
     ):
         self.dist_path = dist_path or Path(tempfile.mkdtemp(prefix="fake-pixelagents-dist-"))
         self.ready = ready
@@ -766,9 +766,9 @@ def write_fake_vite_build(build_out_dir: Path) -> None:
     (build_out_dir / "index.html").write_text(
         "<!doctype html><html><head>"
         '<script type="module" '
-        'src="/third-party/floorplan/static/assets/index-abc.js"></script>'
+        'src="./assets/index-abc.js"></script>'
         '<link rel="stylesheet" '
-        'href="/third-party/floorplan/static/assets/index-abc.css">'
+        'href="./assets/index-abc.css">'
         '</head><body><div id="root"></div></body></html>',
         encoding="utf-8",
     )

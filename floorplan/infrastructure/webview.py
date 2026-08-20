@@ -99,6 +99,13 @@ class WebviewAssetProvider:
         # (a specific missing tool, a build failure) instead of a bare
         # "not installed". None once a build has actually succeeded.
         self.build_status: str | None = None
+        # pixelagents builds one bundle with relative asset URLs (see
+        # infrastructure.webview_build.RELATIVE_BASE_PATH in pixelagents) so
+        # any cog can serve it under its own route -- this cog's own route
+        # is injected as a `<base href>` at serve time (see
+        # dashboard_webview_response) rather than baked into the build, the
+        # same way any other consuming cog would inject its own.
+        self.base_href: str | None = None
 
     def resolve(self, asset_path: str) -> Path | None:
         """Resolve a regular file without allowing traversal outside the root."""
@@ -147,11 +154,16 @@ class WebviewAssetProvider:
                 "error_message": message,
             }
         source = index_path.read_text(encoding="utf-8")
+        # <base> first: it must precede any relative URL reference in <head>
+        # (including the bundle's own <script>/<link> tags further down) to
+        # affect how they resolve, per the HTML spec.
+        base_tag = f'<base href="{self.base_href}">' if self.base_href else ""
+        injection = base_tag + TICKET_SHIM
         match = re.search(r"<head[^>]*>", source, re.IGNORECASE)
         if match:
-            source = source[: match.end()] + "\n" + TICKET_SHIM + source[match.end() :]
+            source = source[: match.end()] + "\n" + injection + source[match.end() :]
         else:
-            source = TICKET_SHIM + source
+            source = injection + source
         return {"status": 0, "web_content": {"standalone": True, "source": source}}
 
     def dashboard_static_response(

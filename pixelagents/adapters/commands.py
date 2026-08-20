@@ -18,7 +18,7 @@ from collections.abc import Awaitable, Callable
 from discord import app_commands
 from redbot.core import commands
 
-from ..infrastructure.webview_build import DEFAULT_BASE_PATH, pinned_commit
+from ..infrastructure.webview_build import pinned_commit
 from .cog_base import PixelAgentsBase
 
 
@@ -113,65 +113,5 @@ class CommandsMixin(PixelAgentsBase):
         await self._reply(
             ctx,
             f"Webview builds will use the default pinned commit `{pinned_commit()}`. "
-            "Run `[p]pixelagents webview rebuild` to build it now.",
-        )
-
-    @cmd_webview.command(name="basepath")
-    @commands.guild_only()
-    @commands.is_owner()
-    async def cmd_webview_basepath(self, ctx: commands.Context) -> None:
-        """Show which Dashboard route the webview builds asset URLs for.
-
-        pixelagents only builds the bundle; whichever cog registers this
-        path as its own Red Dashboard third-party route is the one that
-        actually has to serve it (floorplan by default) -- see Architecture.md.
-        """
-
-        override = await self._settings_repository.webview_base_path()
-        if override:
-            await self._reply(
-                ctx,
-                f"Building for `{override}` "
-                f"(default is `{DEFAULT_BASE_PATH}`). "
-                "Use `[p]pixelagents webview resetbasepath` to revert.",
-            )
-        else:
-            await self._reply(ctx, f"Building for the default path `{DEFAULT_BASE_PATH}`.")
-
-    @cmd_webview.command(name="setbasepath")
-    @commands.guild_only()
-    @commands.is_owner()
-    @app_commands.describe(
-        base_path="The serving cog's Dashboard route, e.g. /third-party/<cog>/static/"
-    )
-    async def cmd_webview_setbasepath(self, ctx: commands.Context, base_path: str) -> None:
-        """Point webview builds at a different cog's Dashboard route.
-
-        Only needed if something other than floorplan is serving the built
-        bundle -- an absolute path with a leading and trailing slash, e.g.
-        `/third-party/<cog>/static/`.
-        """
-
-        try:
-            clean = await self._settings_repository.set_webview_base_path(base_path)
-        except ValueError as exc:
-            await self._reply(ctx, str(exc))
-            return
-        await self._reply(
-            ctx,
-            f"Webview builds will target `{clean}`. "
-            "Run `[p]pixelagents webview rebuild` to build it now.",
-        )
-
-    @cmd_webview.command(name="resetbasepath")
-    @commands.guild_only()
-    @commands.is_owner()
-    async def cmd_webview_resetbasepath(self, ctx: commands.Context) -> None:
-        """Revert webview builds to the default (floorplan's) Dashboard route."""
-
-        await self._settings_repository.reset_webview_base_path()
-        await self._reply(
-            ctx,
-            f"Webview builds will target the default path `{DEFAULT_BASE_PATH}`. "
             "Run `[p]pixelagents webview rebuild` to build it now.",
         )

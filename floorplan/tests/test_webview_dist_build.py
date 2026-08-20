@@ -35,12 +35,14 @@ class TestWebviewDistBuild(unittest.TestCase):
         write_fake_vite_build(build_out_dir)
 
         self.commit = "a" * 40
-        self.base_path = webview_build.DEFAULT_BASE_PATH
+        self.base_path = webview_build.RELATIVE_BASE_PATH
         self.webview_dist = root / "webview_dist"
         webview_build._sync_dist(
             build_out_dir, self.webview_dist, self.commit, self.base_path, _LOG
         )
         self.provider = WebviewAssetProvider(self.webview_dist)
+        self.base_href = "/third-party/floorplan/static/"
+        self.provider.base_href = self.base_href
 
     def test_sync_dist_drops_unserved_raw_passthrough_files(self) -> None:
         # Vite's public/ passthrough also copies raw per-tile PNGs nothing
@@ -58,15 +60,20 @@ class TestWebviewDistBuild(unittest.TestCase):
         self.assertTrue(self.provider.assets["catalog"])
 
     def test_dashboard_webview_response_serves_a_resolvable_bundle(self) -> None:
+        # pixelagents builds relative asset URLs (RELATIVE_BASE_PATH) so any
+        # cog can serve the same bundle; this cog resolves them against its
+        # own injected <base href> (self.base_href), the same way a browser
+        # would -- not against the physical webview_dist root directly.
         response = self.provider.dashboard_webview_response()
         self.assertEqual(response.get("status"), 0, response)
         source = str(response["web_content"]["source"])  # type: ignore[index]
 
+        self.assertIn(f'<base href="{self.base_href}">', source)
         srcs = re.findall(r'(?:src|href)="([^"]+)"', source)
-        bundle_paths = [s for s in srcs if s.startswith("/third-party/floorplan/static/")]
-        self.assertTrue(bundle_paths, "index.html referenced no bundled asset")
+        bundle_paths = [s for s in srcs if s.startswith("./")]
+        self.assertTrue(bundle_paths, "index.html referenced no relative bundled asset")
         for path in bundle_paths:
-            asset_path = path.removeprefix("/third-party/floorplan/static/")
+            asset_path = path.removeprefix("./")
             with self.subTest(asset=asset_path):
                 self.assertIsNotNone(self.provider.resolve(asset_path))
 

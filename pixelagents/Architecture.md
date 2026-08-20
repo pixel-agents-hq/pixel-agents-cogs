@@ -3,12 +3,16 @@
 `pixelagents` is a small Red DiscordBot utility cog, the same shape as
 [`toolbox`](../toolbox): it vendors and builds the
 [Pixel Agents](https://github.com/pixel-agents-hq/pixel-agents) webview so
-[`floorplan`](../floorplan) can serve it. It owns nothing runtime-facing —
-no dashboard routes, no Discord presence mirroring, no WebSocket protocol,
-no Pixel Index integration. Those all moved to `floorplan` in
+any cog that wants to serve it can —
+[`floorplan`](../floorplan) today, potentially others later. It owns
+nothing runtime-facing — no dashboard routes, no Discord presence
+mirroring, no WebSocket protocol, no Pixel Index integration. Those all
+moved to `floorplan` in
 [issue #21](https://github.com/pixel-agents-hq/pixel-agents-cogs/issues/21),
 which split the original combined cog along exactly this line: "owns the
-vendor and the build" vs. "owns everything that consumes the result."
+vendor and the build" vs. "owns everything that consumes the result." See
+[README.md](README.md#why-a-separate-cog-just-for-this) for why that split
+is more than tidiness.
 
 ## Internal structure
 
@@ -53,11 +57,16 @@ every public webview page render and status check rather than caching a
 snapshot, and reloads its decoded sprite assets only when `built_commit`
 changes — so a `[p]pixelagents webview rebuild` to a new commit is picked up
 without floorplan needing a reload of its own. It also compares
-`built_base_path` against its own expected route
-(`/third-party/floorplan/static/`) and surfaces a mismatch in
-`[p]floorplan status` instead of only as a 404 in a browser console — the
-exact failure mode that motivated adding this field (see "Building
-`webview_dist`" below).
+`built_base_path` against the current build convention
+(`infrastructure.webview_build.RELATIVE_BASE_PATH`) and surfaces a mismatch
+in `[p]floorplan status` instead of only as a 404 in a browser console —
+see "Building `webview_dist`" below for why that comparison exists at all.
+
+Any other cog can consume this exact surface the same way: declare
+`pixelagents` in `required_cogs`, resolve it via `bot.get_cog("PixelAgents")`
+(or mirror `ensure_pixelagents_loaded`), and read `webview_bundle_status()`
+to serve the same build under its own route — see "Why a separate cog"
+in [README.md](README.md).
 
 ## Ecosystem integration
 
@@ -119,11 +128,11 @@ repository's tree. It is cloned and built at runtime, the first time
 
 ```text
 ensure_webview_built(cog_data_path(self))
-  → already built at the pinned commit AND base path? return -- see is_up_to_date()
+  → already built at the pinned commit AND current convention? return -- see is_up_to_date()
   → git missing/node missing/npm missing? raise WebviewBuildError
   → git clone/fetch + checkout <pinned commit>   → <data>/vendor/pixel-agents
   → npm ci --workspace=webview-ui --ignore-scripts
-  → vite build --base <webview_base_path>
+  → vite build --base RELATIVE_BASE_PATH ("./")
   → emit_decoded_assets.ts (upstream's own PNG decoders)
   → sync the trimmed result                      → <data>/webview_dist
 ```
@@ -132,22 +141,33 @@ ensure_webview_built(cog_data_path(self))
 data directory, writable and persisted across cog reloads/updates, *not*
 the installed `pixelagents/` package tree Downloader manages.
 
-The Vite build's `--base` is rooted at whichever cog's own third-party
-Dashboard route is currently configured to serve the bundle
-(`webview_base_path`, `/third-party/floorplan/static/` by default — see
-Configuration below), not this cog's — the bundle is built here but served
-there, and its asset URLs have to be rooted wherever it actually ends up.
-`is_up_to_date` treats a base path change exactly like a commit change: it
-invalidates the cache and forces a rebuild, so reconfiguring which cog
-serves the bundle self-heals on the next `cog_load` without anyone needing
-to know a rebuild is required. This is also why the marker on disk
-(`.built_base_path`, alongside the existing `.built_commit`) exists at
-all — the original version of this cog only tracked the commit, so
-changing `--base` from `/third-party/pixelagents/` to
-`/third-party/floorplan/` in the pixelagents/floorplan split (issue #21)
-didn't invalidate an already-built `webview_dist` on any host whose pinned
-commit hadn't also changed, and kept serving asset URLs 404ing against the
-new route until someone force-rebuilt it by hand.
+**The build is asset-URL-relative, not rooted at any one cog's route.**
+pixelagents owns the distribution, not where it's served from, and it has
+no way to know that in advance — a Red Dashboard third-party route is
+derived from the *serving* cog's own name
+(`/third-party/<cog>/static/...`), and a future consumer might not be
+floorplan. Vite bakes whatever `--base` is given into every asset URL at
+build time, so baking in one specific cog's absolute route (an earlier
+version of this file hardcoded floorplan's) would mean only that one cog
+could ever serve the bundle correctly — defeating the entire point of a
+shared, centrally-built distribution the moment a second consumer showed
+up. Building relative (`RELATIVE_BASE_PATH = "./"`) instead means every
+consuming cog serves the *identical* build; each is responsible only for
+injecting its own `<base href="/third-party/<cog>/static/">` into the HTML
+at serve time (see `floorplan/infrastructure/webview.py`'s
+`WebviewAssetProvider.base_href` for the reference implementation) so the
+relative references resolve against wherever it's actually being served.
+
+`is_up_to_date` treats a change to that convention exactly like a commit
+change: it invalidates the cache and forces a rebuild, tracked on disk via
+a `.built_base_path` marker alongside the existing `.built_commit`. This
+exists because of a real incident: the very first version of this split
+hardcoded `--base /third-party/floorplan/static/` directly (still cog-
+specific, just floorplan's now instead of the pre-split cog's own
+`/third-party/pixelagents/`), and since only the commit was tracked, a host
+whose pinned commit hadn't changed kept serving the old, wrongly-rooted
+build indefinitely. Tracking the convention itself closes that gap for any
+future change to it, not just this one.
 
 The sync step trims Vite's output to what `WebviewAssetProvider` (floorplan)
 and the served bundle actually read: the entry HTML, the hashed JS/CSS
@@ -182,12 +202,13 @@ floorplan reads at load and forwards verbatim.
 
 ## Configuration
 
-Global:
+Global: `webview_commit_override` (`None` by default) — an admin-set
+override of `webview_vendor.commit`, set via
+`[p]pixelagents webview setcommit`.
 
-| Key | Default | Description |
-|---|---|---|
-| `webview_commit_override` | `None` | Admin-set override of `webview_vendor.commit`, set via `[p]pixelagents webview setcommit` |
-| `webview_base_path` | `None` (→ `infrastructure.webview_build.DEFAULT_BASE_PATH`, `/third-party/floorplan/static/`) | Admin-set override of which cog's Dashboard route the webview builds asset URLs for, set via `[p]pixelagents webview setbasepath` |
+There is no equivalent setting for the build's base path: it's a fixed
+constant (`RELATIVE_BASE_PATH`), not something an operator configures — see
+"Building `webview_dist`" above for why.
 
 ## Boundary enforcement and validation
 

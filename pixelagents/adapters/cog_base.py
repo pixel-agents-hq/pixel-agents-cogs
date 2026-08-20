@@ -37,11 +37,9 @@ class WebviewBundleStatus:
     `built_commit` lets a consumer tell a rebuild-to-a-different-commit
     apart from "nothing changed" without re-deriving that from `detail`'s
     free text. `built_base_path` lets a consumer confirm the on-disk build
-    actually matches the route it's serving assets at -- the exact mismatch
-    (bundle built for `/third-party/pixelagents/...`, served from
-    `/third-party/floorplan/...`) that first exposed the need for this
-    field: a stale build whose pinned commit hadn't changed, so it was never
-    invalidated by commit alone.
+    actually uses the current, consumer-agnostic build convention
+    (`infrastructure.webview_build.RELATIVE_BASE_PATH`) rather than a stale
+    build from before it existed -- see that module's docstring.
     """
 
     dist_path: Path
@@ -83,14 +81,8 @@ class PixelAgentsBase:
         """
 
         commit = await self._settings_repository.webview_commit_override()
-        base_path = await self._settings_repository.webview_base_path()
         outcome = await asyncio.to_thread(
-            build_webview,
-            self._cog_data_dir,
-            logger=log,
-            force=force,
-            commit=commit,
-            base_path=base_path,
+            build_webview, self._cog_data_dir, logger=log, force=force, commit=commit
         )
         self._webview_build_outcome = outcome
         return outcome.status_line

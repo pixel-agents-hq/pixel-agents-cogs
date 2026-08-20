@@ -2,7 +2,7 @@
 
 from .settings import CONFIG_IDENTIFIER, GLOBAL_DEFAULTS, RedSettingsRepository
 from .webview_build import (
-    DEFAULT_BASE_PATH,
+    RELATIVE_BASE_PATH,
     BuildOutcome,
     BuildResult,
     WebviewBuildError,
@@ -17,7 +17,7 @@ from .webview_build import (
 
 __all__ = [
     "CONFIG_IDENTIFIER",
-    "DEFAULT_BASE_PATH",
+    "RELATIVE_BASE_PATH",
     "BuildOutcome",
     "BuildResult",
     "GLOBAL_DEFAULTS",

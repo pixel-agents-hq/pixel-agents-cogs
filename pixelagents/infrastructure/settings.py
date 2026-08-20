@@ -6,7 +6,7 @@ from typing import Any, cast
 
 from redbot.core import Config
 
-from ..domain import parse_commit_ref, parse_webview_base_path
+from ..domain import parse_commit_ref
 
 # Freshly rolled for this cog's shrunk scope -- the runtime settings that
 # used to share this identifier (ws_port, layout, seats, guild
@@ -17,9 +17,6 @@ CONFIG_IDENTIFIER = 0x7069786C6167656E7473
 
 GLOBAL_DEFAULTS: dict[str, object] = {
     "webview_commit_override": None,
-    # None means "use infrastructure.webview_build.DEFAULT_BASE_PATH" --
-    # same None-means-default convention as webview_commit_override above.
-    "webview_base_path": None,
 }
 
 
@@ -58,14 +55,3 @@ class RedSettingsRepository:
 
     async def reset_webview_commit_override(self) -> None:
         await self._config.webview_commit_override.set(None)
-
-    async def webview_base_path(self) -> str | None:
-        return cast(str | None, await self._config.webview_base_path())
-
-    async def set_webview_base_path(self, value: str) -> str:
-        clean = parse_webview_base_path(value)
-        await self._config.webview_base_path.set(clean)
-        return clean
-
-    async def reset_webview_base_path(self) -> None:
-        await self._config.webview_base_path.set(None)

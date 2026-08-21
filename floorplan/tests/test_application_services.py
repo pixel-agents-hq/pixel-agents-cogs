@@ -194,6 +194,25 @@ class TestOfficeService(unittest.IsolatedAsyncioTestCase):
             ["agentCreated", "agentTeamInfo", "agentStatus"],
         )
 
+    async def test_clear_message_activity_pings_a_waiting_checkmark(self) -> None:
+        """clear_message_activity must send an agentStatus:"waiting" ping — the
+        checkmark bubble pixel-agents draws unconditionally on canvas, bypassing
+        the alwaysShowLabels/hover/select gate that hides the Message tool label
+        itself — so something visibly happens even when labels aren't shown."""
+        await self.service.reconcile(agent(), include_bots=True, rich_presence_enabled=True)
+        self.sent.clear()
+
+        await self.service.clear_message_activity(AgentKey(1, 2))
+
+        types = [message["type"] for message in self.sent]
+        self.assertIn("agentStatus", types)
+        status_message = next(m for m in self.sent if m["type"] == "agentStatus")
+        self.assertEqual(status_message["status"], "waiting")
+        self.assertEqual(status_message["id"], self.service.agent_id(2))
+        # The clear must precede the ping so it reads as "a message landed"
+        # after the label disappears, not overlapping it.
+        self.assertLess(types.index("agentToolsClear"), types.index("agentStatus"))
+
     async def test_same_user_in_two_guilds_has_one_rendered_agent(self) -> None:
         await self.service.spawn(agent(guild_id=1), rich_presence_enabled=False)
         self.sent.clear()
@@ -237,6 +256,23 @@ class TestOfficeService(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(types[0], "providerCapabilities")
         self.assertLess(types.index("existingAgents"), types.index("layoutLoaded"))
+
+    async def test_bootstrap_sends_agent_team_info_after_layout(self) -> None:
+        """The webview only creates character objects for existingAgents once it
+        processes layoutLoaded (buffering restored agents until then). Sent any
+        earlier, the webview's setTeamInfo silently no-ops on the not-yet-created
+        character and the display name never appears — see pixel-agents'
+        existingAgents.ts and the VS Code adapter's "Send agent statuses AFTER
+        layoutLoaded so characters exist when messages arrive" convention."""
+        self.service.active_agents[(1, 2)] = ("online", "Agent")
+        messages = self.service.bootstrap_messages(
+            assets={"characters": []},
+            seats={},
+            layout={"version": 1},
+        )
+        types = [message["type"] for message in messages]
+
+        self.assertLess(types.index("layoutLoaded"), types.index("agentTeamInfo"))
 
 
 class TestTaskSupervisor(unittest.IsolatedAsyncioTestCase):

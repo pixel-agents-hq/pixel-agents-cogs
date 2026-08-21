@@ -201,20 +201,23 @@ class DiscordGatewayMixin(PixelAgentsBase):
         snapshot = message_snapshot(message)
         if snapshot is None:
             return
-        if not await self._settings_repository.guild_enabled(guild):
-            return
-        if not self._office_service.is_tracked(snapshot.key):
-            return
-        if not await self._settings_repository.broadcast_messages():
-            return
-        await self._office_service.send_message_activity(snapshot)
-        delay = await self._settings_repository.message_tool_clear_delay()
-        self._task_supervisor.create(
-            self._clear_tool_after_delay(
-                self._office_service.agent_id(snapshot.key.user_id),
-                delay,
-                snapshot.key.guild_id,
-                snapshot.key.user_id,
-            ),
-            name=f"floorplan-message-clear-{snapshot.message_id}",
-        )
+        try:
+            if not await self._settings_repository.guild_enabled(guild):
+                return
+            if not self._office_service.is_tracked(snapshot.key):
+                return
+            if not await self._settings_repository.broadcast_messages():
+                return
+            await self._office_service.send_message_activity(snapshot)
+            delay = await self._settings_repository.message_tool_clear_delay()
+            self._task_supervisor.create(
+                self._clear_tool_after_delay(
+                    self._office_service.agent_id(snapshot.key.user_id),
+                    delay,
+                    snapshot.key.guild_id,
+                    snapshot.key.user_id,
+                ),
+                name=f"floorplan-message-clear-{snapshot.message_id}",
+            )
+        except Exception as exc:
+            log.error("on_message error for %s: %s", message.id, exc)

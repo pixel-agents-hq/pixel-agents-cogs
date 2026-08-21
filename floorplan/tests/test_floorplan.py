@@ -1002,6 +1002,20 @@ class TestOnMessage(unittest.IsolatedAsyncioTestCase):
         await self.cog.on_message(msg)
         self.assertEqual(len(self.ws._sent), 0)
 
+    async def test_message_error_is_logged_not_raised(self):
+        self.cog._agents[(100, 1)] = ("online", "Tin")
+        msg = MagicMock()
+        msg.guild.id = 100
+        msg.author.id = 1
+        msg.content = "Hello world"
+        msg.id = 999
+        self.cog._office_service.send_message_activity = AsyncMock(
+            side_effect=RuntimeError("boom")
+        )
+        with self.assertLogs("red.d_cogs.floorplan", level="ERROR") as logs:
+            await self.cog.on_message(msg)
+        self.assertIn("on_message error", logs.output[0])
+
 
 # ---------------------------------------------------------------------------
 # Tests: commands

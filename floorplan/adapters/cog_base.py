@@ -13,13 +13,14 @@ from aiohttp import web
 from redbot.core import commands
 from redbot.core.bot import Red
 
+from corridor.dependency_loader import ensure_loaded
 from pixelagents.application.office import OfficeService
 from pixelagents.application.presence import PresenceService
 
 from ..application import CatalogueService, SettingsService, TaskSupervisor
 from ..contracts.layout import RawOfficeLayout
 from ..contracts.websocket import ClientMessage
-from ..dependency_loader import ensure_corridor_loaded, ensure_pixelagents_loaded
+from ..dependency_loader import ensure_corridor_loaded
 from ..infrastructure.client_hub import ClientHub, ClientState
 from ..infrastructure.pixel_index import PixelIndexClient
 from ..infrastructure.settings import RedSettingsRepository
@@ -155,13 +156,13 @@ class PixelAgentsBase:
         """Refresh the built-bundle path/status from pixelagents.
 
         `setup()` only ensures the pixelagents *package* is importable, not
-        that the Cog is loaded (see `ensure_pixelagents_importable`'s
-        docstring). The real Cog instance is resolved here instead, lazily,
-        on first actual use.
+        that the Cog is loaded (see `corridor.dependency_loader.
+        ensure_importable`'s docstring). The real Cog instance is resolved
+        here instead, lazily, on first actual use.
         """
 
         if self._pixelagents is None:
-            self._pixelagents = await ensure_pixelagents_loaded(self.bot)
+            self._pixelagents = await ensure_loaded(self.bot, "pixelagents", "PixelAgents")
         status = self._pixelagents.webview_bundle_status()
         self._webview_assets.root = status.dist_path.resolve()
         self._webview_assets.build_status = None if status.ready else status.detail

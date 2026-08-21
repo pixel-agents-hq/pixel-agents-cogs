@@ -57,22 +57,27 @@ async def setup(bot: Red) -> None:
     before floorplan, so there is no later independent load of corridor left
     to pollute.
 
-    pixelagents is instead ensured via `ensure_pixelagents_importable`, which
+    pixelagents is instead ensured via corridor's generic `ensure_importable`
+    (pixelagents is not corridor's own dependent-loading concern -- this just
+    reuses the same package now that corridor is guaranteed loaded), which
     stops short of a full Cog load. pixelagents is tested *after* floorplan
     (alphabetically), so fully loading it here as a side effect would leave
     it registered as already-loaded when the harness gets to testing it on
-    its own -- see `ensure_pixelagents_importable`'s docstring and
+    its own -- see `ensure_importable`'s docstring in
+    `corridor/dependency_loader.py` and
     `test_setup_never_touches_pixelagents_either` in
     `floorplan/tests/test_floorplan.py` for the incident this guards against.
     pixelagents becoming a genuinely loaded Cog *instance* (needed for the
     real webview-bundle-status calls) stays lazy, resolved on first actual
-    use by `cog_base.py::_sync_webview_assets` via `ensure_pixelagents_loaded`.
+    use by `cog_base.py::_sync_webview_assets` via corridor's `ensure_loaded`.
     """
 
-    from .dependency_loader import ensure_corridor_loaded, ensure_pixelagents_importable
+    from .dependency_loader import ensure_corridor_loaded
 
     await ensure_corridor_loaded(bot)
-    await ensure_pixelagents_importable(bot)
+    from corridor.dependency_loader import ensure_importable
+
+    await ensure_importable(bot, "pixelagents")
     from .floorplan import Floorplan
 
     await bot.add_cog(Floorplan(bot))

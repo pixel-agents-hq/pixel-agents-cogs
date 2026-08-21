@@ -70,7 +70,7 @@ def _make_cog():
     # tests that don't care about ReplyMode still get a working `_corridor`.
     cog._corridor = FakeCorridor()
     # _sync_webview_assets() normally resolves this lazily via
-    # ensure_pixelagents_loaded() on first use; default it to a
+    # corridor.dependency_loader.ensure_loaded() on first use; default it to a
     # ready-and-loaded double the same way _corridor is defaulted above so
     # tests that don't care about the webview still get a working one.
     cog._pixelagents = FakePixelAgents()
@@ -314,7 +314,7 @@ class TestPixelagentsResolutionIsLazy(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                "floorplan.adapters.cog_base.ensure_pixelagents_loaded", new=AsyncMock()
+                "floorplan.adapters.cog_base.ensure_loaded", new=AsyncMock()
             ) as ensure_loaded,
             patch.object(cog, "_start_server", new=AsyncMock()),
             patch.object(cog._pixel_index_client, "start", new=AsyncMock()),
@@ -331,25 +331,25 @@ class TestPixelagentsResolutionIsLazy(unittest.IsolatedAsyncioTestCase):
         pixelagents_double = FakePixelAgents()
 
         with patch(
-            "floorplan.adapters.cog_base.ensure_pixelagents_loaded",
+            "floorplan.adapters.cog_base.ensure_loaded",
             new=AsyncMock(return_value=pixelagents_double),
         ) as ensure_loaded:
             await cog._sync_webview_assets()
             await cog._sync_webview_assets()
 
-        ensure_loaded.assert_awaited_once_with(cog.bot)
+        ensure_loaded.assert_awaited_once_with(cog.bot, "pixelagents", "PixelAgents")
         self.assertIs(cog._pixelagents, pixelagents_double)
 
     async def test_setup_never_touches_pixelagents_either(self) -> None:
         """The same bug also lived one layer up: floorplan/__init__.py's
         setup() -- Red's actual `[p]load floorplan` entrypoint -- used to
-        call ensure_pixelagents_loaded(bot) directly, before cog_load even
+        call the pixelagents full-loader directly, before cog_load even
         runs. Fixing only cog_base.py's cog_load() was not sufficient.
 
         setup() does need pixelagents genuinely *importable* though (its
         agent-visualization modules are imported at module scope by
-        `.floorplan`) -- see `ensure_pixelagents_importable`, which stops
-        short of the full Cog load this test guards against."""
+        `.floorplan`) -- see corridor.dependency_loader.ensure_importable,
+        which stops short of the full Cog load this test guards against."""
 
         import floorplan as floorplan_package
 
@@ -360,20 +360,20 @@ class TestPixelagentsResolutionIsLazy(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                "floorplan.dependency_loader.ensure_pixelagents_loaded", new=AsyncMock()
+                "corridor.dependency_loader.ensure_loaded", new=AsyncMock()
             ) as ensure_loaded,
             patch(
                 "floorplan.dependency_loader.ensure_corridor_loaded", new=AsyncMock()
             ),
             patch(
-                "floorplan.dependency_loader.ensure_pixelagents_importable",
+                "corridor.dependency_loader.ensure_importable",
                 new=AsyncMock(),
             ) as ensure_importable,
         ):
             await floorplan_package.setup(bot)
 
         ensure_loaded.assert_not_awaited()
-        ensure_importable.assert_awaited_once_with(bot)
+        ensure_importable.assert_awaited_once_with(bot, "pixelagents")
 
 
 class TestWebviewBasePathMismatch(unittest.IsolatedAsyncioTestCase):

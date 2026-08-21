@@ -36,7 +36,7 @@ editing.
 
 `floorplan` depends on this cog (`required_cogs`) and resolves it lazily,
 the first time it actually needs the webview (a page render or status
-check), via `dependency_loader.ensure_pixelagents_loaded` — deliberately
+check), via `corridor.dependency_loader.ensure_loaded` — deliberately
 not at its own `cog_load`, unlike how every cog here resolves corridor, so
 that loading floorplan never blocks on (or silently auto-loads) this cog's
 potentially slow clone-and-build. It never triggers a build itself —
@@ -64,9 +64,9 @@ see "Building `webview_dist`" below for why that comparison exists at all.
 
 Any other cog can consume this exact surface the same way: declare
 `pixelagents` in `required_cogs`, resolve it via `bot.get_cog("PixelAgents")`
-(or mirror `ensure_pixelagents_loaded`), and read `webview_bundle_status()`
-to serve the same build under its own route — see "Why a separate cog"
-in [README.md](README.md).
+(or `corridor.dependency_loader.ensure_loaded(bot, "pixelagents", "PixelAgents")`),
+and read `webview_bundle_status()` to serve the same build under its own
+route — see "Why a separate cog" in [README.md](README.md).
 
 ## Ecosystem integration
 

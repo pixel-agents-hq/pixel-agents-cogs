@@ -199,20 +199,27 @@ class LiteLLMClient:
             for choice in chunk.get("choices", []):
                 index = choice.get("index", 0)
                 entry = choices.setdefault(
-                    index, {"message": {"role": "assistant", "content": None}, "finish_reason": None}
+                    index,
+                    {"message": {"role": "assistant", "content": None}, "finish_reason": None},
                 )
                 delta = choice.get("delta", {})
                 if delta.get("role"):
                     entry["message"]["role"] = delta["role"]
                 if delta.get("content"):
-                    entry["message"]["content"] = (entry["message"]["content"] or "") + delta["content"]
+                    entry["message"]["content"] = (entry["message"]["content"] or "") + delta[
+                        "content"
+                    ]
                 if delta.get("tool_calls"):
                     tool_calls = entry["message"].setdefault("tool_calls", [])
                     for tc_delta in delta["tool_calls"]:
                         tc_index = tc_delta.get("index", 0)
                         while len(tool_calls) <= tc_index:
                             tool_calls.append(
-                                {"id": "", "type": "function", "function": {"name": "", "arguments": ""}}
+                                {
+                                    "id": "",
+                                    "type": "function",
+                                    "function": {"name": "", "arguments": ""},
+                                }
                             )
                         tool_call = tool_calls[tc_index]
                         if tc_delta.get("id"):

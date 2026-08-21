@@ -151,7 +151,12 @@ class TestLiteLLMClient(unittest.IsolatedAsyncioTestCase):
                         "delta": {
                             "role": "assistant",
                             "tool_calls": [
-                                {"index": 0, "id": "call_1", "type": "function", "function": {"name": "re"}}
+                                {
+                                    "index": 0,
+                                    "id": "call_1",
+                                    "type": "function",
+                                    "function": {"name": "re"},
+                                }
                             ],
                         },
                     }
@@ -162,14 +167,19 @@ class TestLiteLLMClient(unittest.IsolatedAsyncioTestCase):
                     {
                         "index": 0,
                         "delta": {
-                            "tool_calls": [{"index": 0, "function": {"name": "ply", "arguments": '{"a":'}}]
+                            "tool_calls": [
+                                {"index": 0, "function": {"name": "ply", "arguments": '{"a":'}}
+                            ]
                         },
                     }
                 ]
             },
             {
                 "choices": [
-                    {"index": 0, "delta": {"tool_calls": [{"index": 0, "function": {"arguments": "1}"}}]}}
+                    {
+                        "index": 0,
+                        "delta": {"tool_calls": [{"index": 0, "function": {"arguments": "1}"}}]},
+                    }
                 ]
             },
             {"choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}]},

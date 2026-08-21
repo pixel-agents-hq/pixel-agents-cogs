@@ -153,7 +153,9 @@ def _message_text(message: discord.Message) -> str:
         if embed.description:
             parts.append(str(embed.description))
         parts.extend(
-            f"**{field.name}:** {field.value}" for field in embed.fields if field.name or field.value
+            f"**{field.name}:** {field.value}"
+            for field in embed.fields
+            if field.name or field.value
         )
     return "\n".join(parts)
 

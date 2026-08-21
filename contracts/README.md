@@ -7,7 +7,11 @@ environments. **Not a runtime-loaded cog.**
 `contracts` is a separate top-level package that exists purely for CI. Its
 `info.json` declares `"type": "SHARED_LIBRARY"` specifically so Red's
 Downloader excludes it from cog discovery — without that marker, Red would
-try `bot.load_extension("contracts")` and fail since it has no `setup()`.
+offer it as an installable cog. `contracts/__init__.py` does define a
+no-op `setup()`, but not because it's a real cog: it's there only so
+dev-time hot reload tooling (which infers "reloadable cog" from any
+top-level package with an `info.json`, without checking `type`/`hidden`)
+doesn't report a spurious reload failure — see that function's docstring.
 
 It owns the contract for two external dependencies neither `pixelagents`
 nor `floorplan` controls:

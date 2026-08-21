@@ -11,7 +11,12 @@ floorplan/adapters/cog_base.py::_sync_webview_assets for the cross-cog handoff).
 This runs that exact production path -- not a reimplementation of it -- against
 the pinned commit and checks the same things a working office actually needs:
 every sprite family decodes, a default layout is available, and the built
-bundle's asset references all resolve.
+bundle's asset references all resolve. It also validates the websocket half
+of the contract: pixelagents/contracts/outbound.py's builders and the
+OfficeService/PresenceService application classes that call them, driven
+through a realistic sequence and checked against the real
+core/asyncapi.yaml this same clone already has on disk (see
+verify_outbound.py).
 
 Unlike Pixel Index there is only one environment here ("production": whatever
 commit webview_vendor.commit currently names). Catching *upcoming* upstream
@@ -39,6 +44,8 @@ from tempfile import TemporaryDirectory
 import pixelagents.tests.conftest  # noqa: F401  # stubs redbot before the imports below
 from floorplan.infrastructure.webview import WebviewAssetProvider
 from pixelagents.infrastructure import webview_build
+
+from . import verify_outbound
 
 SPRITE_FAMILIES = ("characters", "floors", "walls", "carpets", "furniture")
 _BUNDLE_ASSET_RE = re.compile(r'(?:src|href)="([^"]+)"')
@@ -132,7 +139,13 @@ def run(env_name: str) -> tuple[bool, str, list[dict]]:
             webview_build.ensure_webview_built(Path(tmp))
         except webview_build.WebviewBuildError as exc:
             checks = [{"name": "build", "status": "fail", "detail": str(exc)}]
-            for name in ("load_assets", "default_layout", "dashboard_bundle"):
+            for name in (
+                "load_assets",
+                "default_layout",
+                "dashboard_bundle",
+                "outbound_messages",
+                "helper_smoke",
+            ):
                 checks.append(
                     {"name": name, "status": "skipped", "detail": "build did not complete"}
                 )
@@ -150,6 +163,11 @@ def run(env_name: str) -> tuple[bool, str, list[dict]]:
             ok, detail = check(provider)
             overall_ok = overall_ok and ok
             checks.append({"name": name, "status": "pass" if ok else "fail", "detail": detail})
+
+        vendor_dir = Path(tmp) / "vendor" / "pixel-agents"
+        for check_result in verify_outbound.run(vendor_dir):
+            overall_ok = overall_ok and check_result["status"] == "pass"
+            checks.append(check_result)
 
         return overall_ok, source, checks
 

@@ -154,8 +154,10 @@ class PixelAgentsBase:
     async def _sync_webview_assets(self) -> None:
         """Refresh the built-bundle path/status from pixelagents.
 
-        Resolved lazily (not at cog_load, unlike corridor) so loading
-        floorplan never blocks on another cog's potentially slow build.
+        `setup()` only ensures the pixelagents *package* is importable, not
+        that the Cog is loaded (see `ensure_pixelagents_importable`'s
+        docstring). The real Cog instance is resolved here instead, lazily,
+        on first actual use.
         """
 
         if self._pixelagents is None:

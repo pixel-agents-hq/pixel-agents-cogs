@@ -45,22 +45,34 @@ def __getattr__(name: str) -> object:
 async def setup(bot: Red) -> None:
     """Load the canonical Cog class through Red's standard extension hook.
 
-    Only corridor is ensured here: floorplan's adapters import Corridor's
-    public domain API at module scope (e.g. `from corridor.domain import
-    ReplyField`), so corridor has to be genuinely loaded before importing
-    `.floorplan` below. There is no equivalent static import of pixelagents
-    anywhere in this package -- the only dependency on it is the runtime
-    cross-cog call in `adapters/cog_base.py::_sync_webview_assets`, resolved
-    lazily there via `ensure_pixelagents_loaded` on first actual use (a
-    dashboard render or status check), not eagerly here. Loading it this
-    early would auto-load pixelagents as a side effect of loading floorplan
-    -- exactly what broke the Downloader RPC smoke test's isolated
-    load/unload cycle for whichever cog alphabetically follows floorplan.
+    Both corridor and pixelagents are ensured *importable* here: floorplan's
+    adapters import each one's public API at module scope (`from
+    corridor.domain import ReplyField`, `from pixelagents.application.office
+    import OfficeService`), so both packages have to be genuinely resolvable
+    before `.floorplan` is imported below.
+
+    corridor is ensured via `ensure_corridor_loaded`, which fully loads it as
+    a registered Cog (`bot.load_extension` + `add_cog`) -- safe here because
+    the Downloader RPC smoke test (check-cogs.yml) tests corridor first,
+    before floorplan, so there is no later independent load of corridor left
+    to pollute.
+
+    pixelagents is instead ensured via `ensure_pixelagents_importable`, which
+    stops short of a full Cog load. pixelagents is tested *after* floorplan
+    (alphabetically), so fully loading it here as a side effect would leave
+    it registered as already-loaded when the harness gets to testing it on
+    its own -- see `ensure_pixelagents_importable`'s docstring and
+    `test_setup_never_touches_pixelagents_either` in
+    `floorplan/tests/test_floorplan.py` for the incident this guards against.
+    pixelagents becoming a genuinely loaded Cog *instance* (needed for the
+    real webview-bundle-status calls) stays lazy, resolved on first actual
+    use by `cog_base.py::_sync_webview_assets` via `ensure_pixelagents_loaded`.
     """
 
-    from .dependency_loader import ensure_corridor_loaded
+    from .dependency_loader import ensure_corridor_loaded, ensure_pixelagents_importable
 
     await ensure_corridor_loaded(bot)
+    await ensure_pixelagents_importable(bot)
     from .floorplan import Floorplan
 
     await bot.add_cog(Floorplan(bot))

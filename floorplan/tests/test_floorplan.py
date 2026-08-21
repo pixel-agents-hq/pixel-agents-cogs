@@ -344,7 +344,12 @@ class TestPixelagentsResolutionIsLazy(unittest.IsolatedAsyncioTestCase):
         """The same bug also lived one layer up: floorplan/__init__.py's
         setup() -- Red's actual `[p]load floorplan` entrypoint -- used to
         call ensure_pixelagents_loaded(bot) directly, before cog_load even
-        runs. Fixing only cog_base.py's cog_load() was not sufficient."""
+        runs. Fixing only cog_base.py's cog_load() was not sufficient.
+
+        setup() does need pixelagents genuinely *importable* though (its
+        agent-visualization modules are imported at module scope by
+        `.floorplan`) -- see `ensure_pixelagents_importable`, which stops
+        short of the full Cog load this test guards against."""
 
         import floorplan as floorplan_package
 
@@ -353,12 +358,22 @@ class TestPixelagentsResolutionIsLazy(unittest.IsolatedAsyncioTestCase):
         bot.is_owner = AsyncMock(return_value=False)
         bot.add_cog = AsyncMock()
 
-        with patch(
-            "floorplan.dependency_loader.ensure_pixelagents_loaded", new=AsyncMock()
-        ) as ensure_loaded:
+        with (
+            patch(
+                "floorplan.dependency_loader.ensure_pixelagents_loaded", new=AsyncMock()
+            ) as ensure_loaded,
+            patch(
+                "floorplan.dependency_loader.ensure_corridor_loaded", new=AsyncMock()
+            ),
+            patch(
+                "floorplan.dependency_loader.ensure_pixelagents_importable",
+                new=AsyncMock(),
+            ) as ensure_importable,
+        ):
             await floorplan_package.setup(bot)
 
         ensure_loaded.assert_not_awaited()
+        ensure_importable.assert_awaited_once_with(bot)
 
 
 class TestWebviewBasePathMismatch(unittest.IsolatedAsyncioTestCase):

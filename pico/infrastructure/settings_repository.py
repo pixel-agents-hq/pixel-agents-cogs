@@ -21,6 +21,7 @@ from ..domain import GlobalSettings, GuildSettings
 CONFIG_IDENTIFIER = 6416697433
 
 DEFAULT_LLM_BASE_URL = "https://litellm.nntin.xyz/"
+DEFAULT_LLM_MODEL = "chatgpt/gpt-5.4"
 DEFAULT_MAX_TOOL_CALLS = 5
 DEFAULT_SYSTEM_PROMPT = (
     "You are Pico, a helpful presence in this Discord server. You were just "
@@ -33,7 +34,7 @@ DEFAULT_SYSTEM_PROMPT = (
 GLOBAL_DEFAULTS: dict[str, object] = {
     "llm_base_url": DEFAULT_LLM_BASE_URL,
     "llm_api_key": None,
-    "llm_model": None,
+    "llm_model": DEFAULT_LLM_MODEL,
     "max_tool_calls": DEFAULT_MAX_TOOL_CALLS,
     "system_prompt": DEFAULT_SYSTEM_PROMPT,
 }

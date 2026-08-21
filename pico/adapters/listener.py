@@ -132,11 +132,30 @@ async def _recent_history(message: discord.Message, *, limit: int) -> tuple[Hist
             HistoryEntry(
                 author_name=historical.author.display_name,
                 author_is_bot=historical.author.bot,
-                content=historical.content or "",
+                content=_message_text(historical),
             )
         )
     entries.reverse()
     return tuple(entries)
+
+
+def _message_text(message: discord.Message) -> str:
+    """Plain `content` plus a text rendering of any embeds, so embed-only
+    messages don't show up as empty history entries. Covers both corridor's
+    own EMBED reply mode (see `corridor/application/reply_service.py` --
+    the same title/description/fields shape its TEXT mode falls back to)
+    and embeds posted by other bots."""
+
+    parts = [message.content] if message.content else []
+    for embed in message.embeds:
+        if embed.title:
+            parts.append(str(embed.title))
+        if embed.description:
+            parts.append(str(embed.description))
+        parts.extend(
+            f"**{field.name}:** {field.value}" for field in embed.fields if field.name or field.value
+        )
+    return "\n".join(parts)
 
 
 __all__ = ["ListenerMixin"]

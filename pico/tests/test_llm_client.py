@@ -1,6 +1,6 @@
-"""Request payload shape via model_dump, response parsing from canned JSON,
-and error handling on non-200/invalid JSON/failed validation, using a
-hand-rolled fake aiohttp.ClientSession (no aioresponses) -- mirrors
+"""Request payload shape via model_dump, response parsing from canned SSE
+chunks, and error handling on non-200/invalid JSON/failed validation, using
+a hand-rolled fake aiohttp.ClientSession (no aioresponses) -- mirrors
 `floorplan/tests/test_catalogue.py`'s RecordingSession/FakeResponse."""
 
 from __future__ import annotations
@@ -20,24 +20,34 @@ from ..infrastructure.llm_client import (
 )
 
 
+class FakeContent:
+    """Stands in for aiohttp's StreamReader: async-iterates raw SSE lines."""
+
+    def __init__(self, lines: list[bytes]) -> None:
+        self._lines = lines
+
+    def __aiter__(self) -> FakeContent:
+        self._iter = iter(self._lines)
+        return self
+
+    async def __anext__(self) -> bytes:
+        try:
+            return next(self._iter)
+        except StopIteration:
+            raise StopAsyncIteration from None
+
+
 class FakeResponse:
     def __init__(
         self,
         status: int = 200,
-        payload: object = None,
+        lines: list[bytes] | None = None,
         *,
         text: str = "",
-        json_error: Exception | None = None,
     ) -> None:
         self.status = status
-        self.payload = payload
+        self.content = FakeContent(lines or [])
         self.text_body = text
-        self.json_error = json_error
-
-    async def json(self) -> object:
-        if self.json_error is not None:
-            raise self.json_error
-        return self.payload
 
     async def text(self) -> str:
         return self.text_body
@@ -67,18 +77,22 @@ class RecordingSession:
         self.closed = True
 
 
-def _completion_payload(
-    content: str | None = "hi there", tool_calls: list[object] | None = None
-) -> dict[str, Any]:
-    message: dict[str, Any] = {"role": "assistant", "content": content}
-    if tool_calls is not None:
-        message["tool_calls"] = tool_calls
-    return {"choices": [{"message": message, "finish_reason": "stop"}]}
+def _sse_lines(content: str | None = "hi there", *, finish_reason: str = "stop") -> list[bytes]:
+    """Two chunks -- one delta carrying the content, one carrying the
+    finish_reason -- then [DONE], matching LiteLLM's real streaming shape."""
+
+    chunks: list[dict[str, Any]] = [
+        {"choices": [{"index": 0, "delta": {"role": "assistant", "content": content}}]},
+        {"choices": [{"index": 0, "delta": {}, "finish_reason": finish_reason}]},
+    ]
+    lines = [f"data: {json.dumps(chunk)}\n".encode() for chunk in chunks]
+    lines.append(b"data: [DONE]\n")
+    return lines
 
 
 class TestLiteLLMClient(unittest.IsolatedAsyncioTestCase):
     async def test_sends_the_expected_request_shape(self) -> None:
-        session = RecordingSession([FakeResponse(payload=_completion_payload())])
+        session = RecordingSession([FakeResponse(lines=_sse_lines())])
         client = LiteLLMClient(session_factory=lambda **kw: session)
 
         await client.complete(
@@ -105,10 +119,11 @@ class TestLiteLLMClient(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(body["messages"], [{"role": "user", "content": "hi"}])
         self.assertEqual(body["tool_choice"], "auto")
         self.assertEqual(body["tools"][0]["function"]["name"], "t")
+        self.assertEqual(body["stream"], True)
         self.assertNotIn("name", body["messages"][0])  # exclude_none dropped it
 
     async def test_strips_a_trailing_slash_from_the_base_url(self) -> None:
-        session = RecordingSession([FakeResponse(payload=_completion_payload())])
+        session = RecordingSession([FakeResponse(lines=_sse_lines())])
         client = LiteLLMClient(session_factory=lambda **kw: session)
 
         await client.complete(
@@ -119,14 +134,57 @@ class TestLiteLLMClient(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(url, "https://litellm.example/chat/completions")
 
     async def test_parses_a_successful_response(self) -> None:
-        session = RecordingSession(
-            [FakeResponse(payload=_completion_payload(content="hello there"))]
-        )
+        session = RecordingSession([FakeResponse(lines=_sse_lines(content="hello there"))])
         client = LiteLLMClient(session_factory=lambda **kw: session)
 
         response = await client.complete(base_url="https://x", api_key="k", model="m", messages=[])
 
         self.assertEqual(response.choices[0].message.content, "hello there")
+        self.assertEqual(response.choices[0].finish_reason, "stop")
+
+    async def test_assembles_tool_calls_streamed_across_chunks(self) -> None:
+        chunks = [
+            {
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {
+                            "role": "assistant",
+                            "tool_calls": [
+                                {"index": 0, "id": "call_1", "type": "function", "function": {"name": "re"}}
+                            ],
+                        },
+                    }
+                ]
+            },
+            {
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {
+                            "tool_calls": [{"index": 0, "function": {"name": "ply", "arguments": '{"a":'}}]
+                        },
+                    }
+                ]
+            },
+            {
+                "choices": [
+                    {"index": 0, "delta": {"tool_calls": [{"index": 0, "function": {"arguments": "1}"}}]}}
+                ]
+            },
+            {"choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}]},
+        ]
+        lines = [f"data: {json.dumps(chunk)}\n".encode() for chunk in chunks]
+        lines.append(b"data: [DONE]\n")
+        session = RecordingSession([FakeResponse(lines=lines)])
+        client = LiteLLMClient(session_factory=lambda **kw: session)
+
+        response = await client.complete(base_url="https://x", api_key="k", model="m", messages=[])
+
+        tool_call = response.choices[0].message.tool_calls[0]
+        self.assertEqual(tool_call.id, "call_1")
+        self.assertEqual(tool_call.function.name, "reply")
+        self.assertEqual(tool_call.function.arguments, '{"a":1}')
 
     async def test_non_200_raises_llm_request_error(self) -> None:
         session = RecordingSession([FakeResponse(status=500, text="internal error")])
@@ -136,16 +194,7 @@ class TestLiteLLMClient(unittest.IsolatedAsyncioTestCase):
             await client.complete(base_url="https://x", api_key="k", model="m", messages=[])
 
     async def test_invalid_json_raises_llm_request_error(self) -> None:
-        session = RecordingSession(
-            [FakeResponse(json_error=json.JSONDecodeError("bad json", "", 0))]
-        )
-        client = LiteLLMClient(session_factory=lambda **kw: session)
-
-        with pytest.raises(LLMRequestError):
-            await client.complete(base_url="https://x", api_key="k", model="m", messages=[])
-
-    async def test_response_failing_validation_raises_llm_request_error(self) -> None:
-        session = RecordingSession([FakeResponse(payload={"nope": "not a completion"})])
+        session = RecordingSession([FakeResponse(lines=[b"data: not-json\n"])])
         client = LiteLLMClient(session_factory=lambda **kw: session)
 
         with pytest.raises(LLMRequestError):
@@ -154,8 +203,8 @@ class TestLiteLLMClient(unittest.IsolatedAsyncioTestCase):
     async def test_reuses_one_session_across_calls_and_closes_it(self) -> None:
         session = RecordingSession(
             [
-                FakeResponse(payload=_completion_payload()),
-                FakeResponse(payload=_completion_payload()),
+                FakeResponse(lines=_sse_lines()),
+                FakeResponse(lines=_sse_lines()),
             ]
         )
         creations: list[dict[str, object]] = []

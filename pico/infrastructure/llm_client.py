@@ -2,7 +2,14 @@
 aiohttp client. Raw `aiohttp` POST to `/chat/completions` -- no `openai`
 SDK, no `litellm` pip package -- matches floorplan's existing aiohttp
 precedent (`floorplan/infrastructure/pixel_index.py`) instead of adding a
-new client dependency."""
+new client dependency.
+
+Always requests `stream=True` and reassembles the SSE chunks into a single
+response dict before validating it through the same wire models a
+non-streaming call would produce. This works around a LiteLLM bug in its
+`chatgpt/*` (ChatGPT-subscription/Codex) provider: its non-streaming path
+returns an empty `output` array even when the model generated text, so
+`stream=False` requests fail every time. Streaming is unaffected."""
 
 from __future__ import annotations
 
@@ -70,6 +77,7 @@ class ChatCompletionRequest(BaseModel):
     messages: list[ChatMessage]
     tools: list[ToolSpecWire] | None = None
     tool_choice: str | None = None
+    stream: bool = True
 
 
 class ChatCompletionResponseMessage(BaseModel):
@@ -161,8 +169,8 @@ class LiteLLMClient:
                     text = await response.text()
                     raise LLMRequestError(f"LiteLLM returned HTTP {response.status}: {text[:200]}")
                 try:
-                    payload = await response.json()
-                except (json.JSONDecodeError, aiohttp.ContentTypeError, UnicodeDecodeError) as exc:
+                    payload = await self._collect_stream(response)
+                except (json.JSONDecodeError, UnicodeDecodeError) as exc:
                     raise LLMRequestError(f"LiteLLM returned invalid JSON: {exc}") from exc
         except TimeoutError as exc:
             raise LLMRequestError(f"LiteLLM request timed out: {exc}") from exc
@@ -173,6 +181,52 @@ class LiteLLMClient:
             return ChatCompletionResponse.model_validate(payload)
         except ValidationError as exc:
             raise LLMRequestError(f"LiteLLM response failed validation: {exc}") from exc
+
+    @staticmethod
+    async def _collect_stream(response: aiohttp.ClientResponse) -> dict[str, Any]:
+        """Reassemble an SSE `chat/completions` stream into a single
+        OpenAI-shaped response dict (one entry per choice index)."""
+
+        choices: dict[int, dict[str, Any]] = {}
+        async for raw_line in response.content:
+            line = raw_line.decode("utf-8").strip()
+            if not line.startswith("data:"):
+                continue
+            data = line[len("data:") :].strip()
+            if data == "[DONE]":
+                break
+            chunk = json.loads(data)
+            for choice in chunk.get("choices", []):
+                index = choice.get("index", 0)
+                entry = choices.setdefault(
+                    index, {"message": {"role": "assistant", "content": None}, "finish_reason": None}
+                )
+                delta = choice.get("delta", {})
+                if delta.get("role"):
+                    entry["message"]["role"] = delta["role"]
+                if delta.get("content"):
+                    entry["message"]["content"] = (entry["message"]["content"] or "") + delta["content"]
+                if delta.get("tool_calls"):
+                    tool_calls = entry["message"].setdefault("tool_calls", [])
+                    for tc_delta in delta["tool_calls"]:
+                        tc_index = tc_delta.get("index", 0)
+                        while len(tool_calls) <= tc_index:
+                            tool_calls.append(
+                                {"id": "", "type": "function", "function": {"name": "", "arguments": ""}}
+                            )
+                        tool_call = tool_calls[tc_index]
+                        if tc_delta.get("id"):
+                            tool_call["id"] = tc_delta["id"]
+                        if tc_delta.get("type"):
+                            tool_call["type"] = tc_delta["type"]
+                        fn_delta = tc_delta.get("function") or {}
+                        if fn_delta.get("name"):
+                            tool_call["function"]["name"] += fn_delta["name"]
+                        if fn_delta.get("arguments"):
+                            tool_call["function"]["arguments"] += fn_delta["arguments"]
+                if choice.get("finish_reason"):
+                    entry["finish_reason"] = choice["finish_reason"]
+        return {"choices": [choices[index] for index in sorted(choices)]}
 
     async def _get_session(self) -> aiohttp.ClientSession:
         if not self.running:

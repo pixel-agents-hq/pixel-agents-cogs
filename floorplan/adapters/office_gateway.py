@@ -8,7 +8,8 @@ from typing import Any, cast
 import discord
 from aiohttp import web
 
-from ..application.office import DEFAULT_PALETTE_COUNT
+from pixelagents.application.office import DEFAULT_PALETTE_COUNT, merge_seat_patch
+
 from ..contracts.websocket import (
     ClientMessage,
     ImportLayoutMessage,
@@ -133,17 +134,7 @@ class OfficeGatewayMixin(PixelAgentsBase):
             for agent_id, value in incoming.items():
                 if not isinstance(value, dict):
                     continue
-                record = dict(seats.get(str(agent_id)) or {})
-                palette = value.get("palette")
-                hue_shift = value.get("hueShift")
-                seat_id = value.get("seatId")
-                if isinstance(palette, int) and 0 <= palette < palette_count:
-                    record["palette"] = palette
-                if isinstance(hue_shift, int) and 0 <= hue_shift <= 360:
-                    record["hueShift"] = hue_shift
-                if isinstance(seat_id, str):
-                    record["seatId"] = seat_id
-                seats[str(agent_id)] = record
+                merge_seat_patch(seats, str(agent_id), palette_count, value)
 
         await self._settings_repository.mutate_seats(merge)
 

@@ -9,14 +9,7 @@ from pydantic import ValidationError
 
 from floorplan import models as compatibility_models
 from floorplan.contracts.layout import OfficeLayout, RawOfficeLayout
-from floorplan.contracts.outbound import (
-    agent_closed,
-    agent_created,
-    agent_team_info,
-    agent_tool_start,
-    agent_tools_clear,
-    layout_loaded,
-)
+from floorplan.contracts.outbound import layout_loaded
 from floorplan.contracts.pixel_index import (
     LayoutDetail,
     LayoutFiles,
@@ -201,6 +194,10 @@ class TestWebSocketIngress:
 
 
 class TestOutboundBuilders:
+    """Agent-visualization builders (agentCreated, agentToolStart, etc.) moved
+    to `pixelagents.contracts.outbound` -- see
+    `pixelagents/tests/test_contracts_outbound.py` for their tests."""
+
     @pytest.mark.parametrize(
         ("builder", "expected"),
         [
@@ -208,32 +205,6 @@ class TestOutboundBuilders:
                 lambda: layout_loaded(valid_layout()),
                 {"type": "layoutLoaded", "layout": valid_layout()},
             ),
-            (
-                lambda: agent_created(-1, "online", 2, 45),
-                {
-                    "type": "agentCreated",
-                    "id": -1,
-                    "folderName": "online",
-                    "palette": 2,
-                    "hueShift": 45,
-                },
-            ),
-            (lambda: agent_closed(-1), {"type": "agentClosed", "id": -1}),
-            (
-                lambda: agent_team_info(-1, "Tin"),
-                {"type": "agentTeamInfo", "id": -1, "agentName": "Tin"},
-            ),
-            (
-                lambda: agent_tool_start(-1, "rp-1", "Activity", "Listening"),
-                {
-                    "type": "agentToolStart",
-                    "id": -1,
-                    "toolId": "rp-1",
-                    "toolName": "Activity",
-                    "status": "Listening",
-                },
-            ),
-            (lambda: agent_tools_clear(-1), {"type": "agentToolsClear", "id": -1}),
         ],
     )
     def test_builder_matches_wire_shape(

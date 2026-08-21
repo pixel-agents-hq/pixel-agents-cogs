@@ -977,6 +977,21 @@ class TestOnMessage(unittest.IsolatedAsyncioTestCase):
         sent_types = [json.loads(s)["type"] for s in self.ws._sent]
         self.assertIn("agentToolStart", sent_types)
 
+    async def test_message_selects_the_agent(self):
+        """agentSelected must accompany the Message tool bubble so the label
+        panel (with the message text) is visible immediately, without hover
+        or "Always Show Labels"."""
+        self.cog._agents[(100, 1)] = ("online", "Tin")
+        msg = MagicMock()
+        msg.guild.id = 100
+        msg.author.id = 1
+        msg.content = "Hello world"
+        msg.id = 999
+        await self.cog.on_message(msg)
+        sent = [json.loads(s) for s in self.ws._sent]
+        self.assertEqual([m["type"] for m in sent], ["agentToolStart", "agentSelected"])
+        self.assertEqual(sent[1]["id"], self.cog._office_service.agent_id(1))
+
     async def test_message_truncates_long_content(self):
         self.cog._agents[(100, 1)] = ("online", "Tin")
         msg = MagicMock()
@@ -988,11 +1003,11 @@ class TestOnMessage(unittest.IsolatedAsyncioTestCase):
         tool_msg = next(json.loads(s) for s in self.ws._sent if json.loads(s)["type"] == "agentToolStart")
         self.assertLessEqual(len(tool_msg["status"]), 45)
 
-    async def test_message_clear_pings_waiting_checkmark(self):
-        """After the message-clear delay, a waiting checkmark ping must follow
-        the agentToolsClear — the only pixel-agents signal drawn without the
-        alwaysShowLabels/hover/select gate, so a message is still visible even
-        when nobody is looking at that character."""
+    async def test_message_clear_does_not_reping(self):
+        """After the message-clear delay, only agentToolsClear is sent —
+        agentSelected (sent at message-start) already made the message
+        visible without needing hover, so clearing must not also emit a
+        status ping."""
         self.cog._agents[(100, 1)] = ("online", "Tin")
         msg = MagicMock()
         msg.guild.id = 100
@@ -1000,15 +1015,14 @@ class TestOnMessage(unittest.IsolatedAsyncioTestCase):
         msg.content = "Hello world"
         msg.id = 999
         await self.cog.on_message(msg)
+        self.ws._sent.clear()
 
         await self.cog._clear_tool_after_delay(
             self.cog._office_service.agent_id(1), 0, guild_id=100, user_id=1
         )
 
-        sent = [json.loads(s) for s in self.ws._sent]
-        self.assertIn("agentStatus", [m["type"] for m in sent])
-        status_msg = next(m for m in sent if m["type"] == "agentStatus")
-        self.assertEqual(status_msg["status"], "waiting")
+        sent_types = [json.loads(s)["type"] for s in self.ws._sent]
+        self.assertEqual(sent_types, ["agentToolsClear"])
 
     async def test_message_ignored_if_not_tracked(self):
         msg = MagicMock()

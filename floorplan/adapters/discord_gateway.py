@@ -7,7 +7,8 @@ import asyncio
 import discord
 from redbot.core import commands
 
-from ..domain import AgentKey, AgentSnapshot, PresenceStatus
+from pixelagents.domain import AgentKey, AgentSnapshot, PresenceStatus
+
 from ..infrastructure.discord import member_snapshot, message_snapshot
 from .cog_base import PixelAgentsBase, log
 

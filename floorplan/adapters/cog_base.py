@@ -13,13 +13,10 @@ from aiohttp import web
 from redbot.core import commands
 from redbot.core.bot import Red
 
-from ..application import (
-    CatalogueService,
-    OfficeService,
-    PresenceService,
-    SettingsService,
-    TaskSupervisor,
-)
+from pixelagents.application.office import OfficeService
+from pixelagents.application.presence import PresenceService
+
+from ..application import CatalogueService, SettingsService, TaskSupervisor
 from ..contracts.layout import RawOfficeLayout
 from ..contracts.websocket import ClientMessage
 from ..dependency_loader import ensure_corridor_loaded, ensure_pixelagents_loaded

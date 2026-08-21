@@ -6,7 +6,7 @@ from typing import Any, cast
 
 import discord
 
-from ..domain import (
+from pixelagents.domain import (
     ActivityKind,
     ActivitySnapshot,
     AgentKey,

@@ -63,6 +63,36 @@ def test_production_config_access_does_not_bypass_repository() -> None:
     assert offenders == []
 
 
+def test_agent_visualization_modules_do_not_import_frameworks() -> None:
+    """domain/office.py, application/office.py, application/presence.py, and
+    contracts/outbound.py are consumed directly by every cog that drives the
+    pixel-agents webview (floorplan today, more later) -- they must stay free
+    of any one consumer's framework (Discord, Red, aiohttp, pydantic)."""
+
+    banned_roots = {"aiohttp", "discord", "pydantic", "redbot"}
+    targets = (
+        PACKAGE_ROOT / "domain" / "office.py",
+        PACKAGE_ROOT / "application" / "office.py",
+        PACKAGE_ROOT / "application" / "presence.py",
+        PACKAGE_ROOT / "contracts" / "outbound.py",
+    )
+
+    for path in targets:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        imported_roots = {
+            alias.name.partition(".")[0]
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Import)
+            for alias in node.names
+        }
+        imported_roots.update(
+            node.module.partition(".")[0]
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ImportFrom) and node.module is not None
+        )
+        assert imported_roots.isdisjoint(banned_roots), path
+
+
 def test_no_leftover_runtime_dependency_on_aiohttp_or_pydantic() -> None:
     """pixelagents shrank to vendoring+building -- neither the office
     WebSocket server nor the Pixel Index client live here any more, so

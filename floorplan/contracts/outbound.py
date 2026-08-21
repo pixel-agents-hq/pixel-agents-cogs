@@ -31,6 +31,12 @@ class AgentTeamInfoMessage(TypedDict):
     agentName: str
 
 
+class AgentStatusMessage(TypedDict):
+    type: Literal["agentStatus"]
+    id: int
+    status: Literal["active", "waiting"]
+
+
 class AgentToolStartMessage(TypedDict):
     type: Literal["agentToolStart"]
     id: int
@@ -69,6 +75,10 @@ def agent_closed(agent_id: int) -> AgentClosedMessage:
 
 def agent_team_info(agent_id: int, display_name: str) -> AgentTeamInfoMessage:
     return {"type": "agentTeamInfo", "id": agent_id, "agentName": display_name}
+
+
+def agent_status(agent_id: int, status: Literal["active", "waiting"]) -> AgentStatusMessage:
+    return {"type": "agentStatus", "id": agent_id, "status": status}
 
 
 def agent_tool_start(

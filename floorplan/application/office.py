@@ -7,7 +7,13 @@ import random
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Protocol, TypeAlias, TypeVar
 
-from ..contracts.outbound import agent_closed, agent_created, agent_team_info, agent_tools_clear
+from ..contracts.outbound import (
+    agent_closed,
+    agent_created,
+    agent_status,
+    agent_team_info,
+    agent_tools_clear,
+)
 from ..domain import AgentKey, AgentSnapshot, MessageSnapshot
 from .presence import PresenceService, SendMessage, ServerMessage
 
@@ -221,13 +227,7 @@ class OfficeService:
             palette, hue_shift = await self.assign_palette(agent_id)
             await self._send(agent_created(agent_id, snapshot.status.value, palette, hue_shift))
             await self._send(agent_team_info(agent_id, snapshot.display_name))
-            await self._send(
-                {
-                    "type": "agentStatus",
-                    "id": agent_id,
-                    "status": self.presence.agent_status(snapshot),
-                }
-            )
+            await self._send(agent_status(agent_id, self.presence.agent_status(snapshot)))
         await self.send_existing_agents()
         await self.presence.start(snapshot, agent_id, enabled=rich_presence_enabled)
 
@@ -287,6 +287,13 @@ class OfficeService:
     async def clear_message_activity(self, key: AgentKey) -> None:
         agent_id = self.agent_id(key.user_id)
         await self._send(agent_tools_clear(agent_id))
+        # A "waiting" agentStatus triggers pixel-agents' checkmark bubble, drawn
+        # unconditionally on canvas (no alwaysShowLabels/hover/select gate) and
+        # auto-clearing after WAITING_BUBBLE_DURATION_SEC (2s) — the only
+        # built-in way to flash "something happened" without the always-show
+        # setting. Sent once the Message tool label itself has cleared, so it
+        # reads as "a message landed" rather than overlapping the label.
+        await self._send(agent_status(agent_id, "waiting"))
         label = self.presence.cached_label(key)
         if label:
             await self.presence.send_tool(agent_id, label)
@@ -343,9 +350,16 @@ class OfficeService:
                 self.existing_agents_message(seats),
             )
         )
+        messages.append({"type": "layoutLoaded", "layout": layout})
+        # agentTeamInfo (and the presence replay below) must be sent AFTER
+        # layoutLoaded: the webview only creates character objects for
+        # existingAgents once it processes layoutLoaded (buffering restored
+        # agents until then, see pixel-agents' existingAgents.ts). Sent any
+        # earlier, setTeamInfo silently no-ops on the not-yet-created
+        # character and the Discord display name is dropped for every agent
+        # that was already online before this client connected.
         for user_id, (_, name) in self._representative_agents().items():
             messages.append(agent_team_info(self.agent_id(user_id), name))
-        messages.append({"type": "layoutLoaded", "layout": layout})
         for key, label in self.presence.replay(set(self._agents)):
             agent_id = self.agent_id(key.user_id)
             messages.append(

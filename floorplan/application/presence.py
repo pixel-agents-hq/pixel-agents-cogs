@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Mapping
-from typing import TypeAlias
+from typing import Literal, TypeAlias
 
 from ..contracts.outbound import agent_tool_start, agent_tools_clear
 from ..domain import ActivityKind, ActivitySnapshot, AgentKey, AgentSnapshot, MessageSnapshot
@@ -51,7 +51,7 @@ class PresenceService:
         return activity.name or None
 
     @staticmethod
-    def agent_status(snapshot: AgentSnapshot) -> str:
+    def agent_status(snapshot: AgentSnapshot) -> Literal["active", "waiting"]:
         return (
             "active"
             if any(activity.kind is not ActivityKind.CUSTOM for activity in snapshot.activities)

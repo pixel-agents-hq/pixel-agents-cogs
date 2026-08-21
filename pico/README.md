@@ -76,6 +76,18 @@ classifier's call or its answer. A classifier `LLMRequestError`, or a response w
 no choices, is treated as `IGNORE` (fails closed); otherwise `RESPOND` iff the
 model's reply starts with "y".
 
+This is loose free-text parsing rather than schema-constrained structured output on
+purpose, not by omission: OpenAI-style `response_format: json_schema` was tried
+against `chatgpt/gpt-5.4` (LiteLLM's ChatGPT-subscription/Codex-backed provider, the
+model this deployment currently runs) and the backend silently ignores it -- the
+outbound request does carry `text.format: {"type": "json_schema", ...}`, confirmed
+via LiteLLM debug logs, but every response chunk reports `text.format: {"type":
+"text"}` back and the model replies with ordinary conversational text, not JSON. No
+error is raised, so a strict `model_validate_json` parse of that text would fail
+every single classification call and make the ambiguous-mention gate permanently
+fail closed to `IGNORE` on this backend. If a future model/provider swap does honor
+`response_format`, switching the classifier to it should be revisited then.
+
 ## What the LLM sees
 
 Pico has no persistent conversation store. Every time a message triggers it (see

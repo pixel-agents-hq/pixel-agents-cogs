@@ -13,6 +13,7 @@ together in one place.
 | [`pixelagents`](../pixelagents) | Vendors and builds the Pixel Agents webview (clone + `npm`/`vite`) for other cogs to serve. No runtime/Discord surface of its own. | [pixelagents/README.md](../pixelagents/README.md) |
 | [`floorplan`](../floorplan) | Serves the built webview as a Red Dashboard page, mirrors Discord presence into it, and browses the Pixel Index layout catalogue. | [floorplan/README.md](../floorplan/README.md) |
 | [`toolbox`](../toolbox) | Bot-owner Node.js/npm installation on the host. | [toolbox/README.md](../toolbox/README.md) |
+| [`pico`](../pico) | An LLM-backed Discord presence: decides whether to react to a message, then acts only via a bounded tool-calling loop (never a raw LLM text send). | [pico/README.md](../pico/README.md) |
 | [`contracts`](../contracts) | **Not a cog** — `"type": "SHARED_LIBRARY"` in its `info.json`, so Red's Downloader skips it. CI-only: consumer-driven contract tests against Pixel Index and Pixel Agents, plus the reply-channel lint. | [contracts/README.md](../contracts/README.md) |
 
 `pixelagents` and `floorplan` used to be one combined cog; [issue #21](https://github.com/pixel-agents-hq/pixel-agents-cogs/issues/21)
@@ -78,10 +79,11 @@ python -m pytest -q corridor/
 python -m pytest -q floorplan/tests
 python -m pytest -q pixelagents/tests
 python -m pytest -q toolbox/
+python -m pytest -q pico/
 
-python -m ruff format --check corridor floorplan pixelagents toolbox
-python -m ruff check corridor floorplan pixelagents toolbox
-python -m mypy corridor floorplan pixelagents toolbox
+python -m ruff format --check corridor floorplan pixelagents toolbox pico
+python -m ruff check corridor floorplan pixelagents toolbox pico
+python -m mypy corridor floorplan pixelagents toolbox pico
 python -m unittest discover -s contracts/tests
 python -m contracts.discord_replies.lint_reply_channel
 ```

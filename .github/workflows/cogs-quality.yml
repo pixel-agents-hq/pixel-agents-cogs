@@ -9,6 +9,7 @@ on:
       - "pixelagents/infrastructure/webview_build_scripts/**"
       - "floorplan/**/*.py"
       - "toolbox/**/*.py"
+      - "pico/**/*.py"
       - "contracts/pixel_index/**"
       - "contracts/pixel_agents/**"
       - "pyproject.toml"
@@ -21,6 +22,7 @@ on:
       - "pixelagents/infrastructure/webview_build_scripts/**"
       - "floorplan/**/*.py"
       - "toolbox/**/*.py"
+      - "pico/**/*.py"
       - "contracts/pixel_index/**"
       - "contracts/pixel_agents/**"
       - "pyproject.toml"
@@ -73,6 +75,16 @@ jobs:
             mypy_target: "floorplan"
             extra_deps: "aiohttp"
             pixel_index_contracts: true
+          # pico talks to aiohttp (LiteLLM proxy) and pydantic (wire/tool
+          # models) like floorplan, but has no Pixel Index integration of
+          # its own -- install pydantic directly rather than pulling in the
+          # unrelated Pixel Index contract dependencies for it.
+          - cog: pico
+            test_target: "pico/"
+            lint_target: "pico"
+            mypy_target: "pico"
+            extra_deps: "aiohttp 'pydantic>=2.6,<2.11'"
+            pixel_index_contracts: false
 
     steps:
       - name: Checkout

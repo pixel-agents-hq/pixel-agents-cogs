@@ -30,10 +30,10 @@ python_version = "3.11"
 strict = true
 ignore_missing_imports = true
 follow_imports = "silent"
-# Every production Pixel Agents / floorplan / corridor / toolbox module
-# is part of the strict type gate (corridor includes the shared
+# Every production Pixel Agents / floorplan / corridor / toolbox / pico
+# module is part of the strict type gate (corridor includes the shared
 # component-limit checker, ui_limits.py).
-files = ["pixelagents", "floorplan", "corridor", "toolbox"]
+files = ["pixelagents", "floorplan", "corridor", "toolbox", "pico"]
 exclude = [
     "^pixelagents/conftest\\.py$",
     "^pixelagents/tests/",
@@ -44,6 +44,8 @@ exclude = [
     "^corridor/tests/",
     "^toolbox/conftest\\.py$",
     "^toolbox/tests/",
+    "^pico/conftest\\.py$",
+    "^pico/tests/",
 ]
 
 [[tool.mypy.overrides]]
@@ -110,4 +112,23 @@ disable_error_code = ["untyped-decorator"]
 # Same as pixelagents.pixelagents / corridor.corridor above: `commands.Cog`
 # resolves to Any without Red's real Cog metaclass installed.
 module = ["toolbox.toolbox"]
+disable_error_code = ["misc"]
+
+[[tool.mypy.overrides]]
+# Same gap as floorplan.adapters.admin_commands above, mirrored for pico:
+# Red is absent from the lightweight CI type environment, so its decorators
+# and untyped Context leak Any.
+module = ["pico.adapters.commands"]
+disable_error_code = ["arg-type", "no-any-return", "untyped-decorator"]
+
+[[tool.mypy.overrides]]
+# Same gap as pico.adapters.commands above: `commands.Cog.listener()` is
+# dynamically typed without Red's real stubs installed.
+module = ["pico.adapters.listener"]
+disable_error_code = ["untyped-decorator"]
+
+[[tool.mypy.overrides]]
+# Same as toolbox.toolbox / corridor.corridor above: `commands.Cog` resolves
+# to Any without Red's real Cog metaclass installed.
+module = ["pico.pico"]
 disable_error_code = ["misc"]

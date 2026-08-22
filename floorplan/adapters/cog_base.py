@@ -48,13 +48,10 @@ class PixelAgentsBase:
     _clients: dict[web.WebSocketResponse, ClientState]
 
     def __init__(self, bot: Red) -> None:
-        # Deferred: see pixelagents/__init__.py's docstring on why a cached module-scope import here would be unsafe.
-        from corridor.dependency_loader import LazyDependency
-
         self.bot = bot
         self._closing = False
         self._corridor: Any = None
-        self._pixelagents = LazyDependency(bot, "pixelagents", "PixelAgents", logger=log)
+        self._pixelagents: Any = None
         self._task_supervisor = TaskSupervisor(logger=log)
         self._settings_repository = RedSettingsRepository.create(self)
         self.config = self._settings_repository.config
@@ -154,7 +151,7 @@ class PixelAgentsBase:
     async def _sync_webview_assets(self) -> None:
         """Refresh the built-bundle path/status from pixelagents."""
 
-        status = (await self._pixelagents.resolve()).webview_bundle_status()
+        status = self._pixelagents.webview_bundle_status()
         self._webview_assets.root = status.dist_path.resolve()
         self._webview_assets.build_status = None if status.ready else status.detail
         if status.ready and status.built_commit != self._webview_built_commit:
@@ -183,20 +180,21 @@ class PixelAgentsBase:
         return self._webview_assets.build_status or "⚠️ missing"
 
     async def cog_load(self) -> None:
+        # Deferred: see pixelagents/__init__.py's docstring on why a cached module-scope import here would be unsafe.
+        from corridor.dependency_loader import ensure_loaded
+
         # Red skips cog_unload() for a cog_load() that raised -- a crash
         # after _start_server() binds would leak that socket forever.
         self._closing = False
         try:
             self._corridor = await ensure_corridor_loaded(self.bot)
             self._corridor.register_dependent("floorplan")
+            self._pixelagents = await ensure_loaded(self.bot, "pixelagents", "PixelAgents")
             self._task_supervisor.open()
             await self._pixel_index_client.start()
             await self._start_server()
             self._sync_task = self._task_supervisor.create(
                 self._initial_sync(), name="floorplan-initial-sync"
-            )
-            self._task_supervisor.create(
-                self._pixelagents.eager_load_in_background(), name="floorplan-eager-pixelagents"
             )
         except Exception:
             await self.cog_unload()

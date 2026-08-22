@@ -99,7 +99,7 @@ Index lint/verify steps — see [`contracts/README.md`](../contracts/README.md).
 
 - [`docs/dependency-loading.md`](dependency-loading.md) — how cross-cog
   dependencies get loaded, why corridor's bootstrap is duplicated per cog,
-  and when to use `ensure_loaded` vs `ensure_importable` vs `LazyDependency`.
+  and when to use `ensure_loaded` vs `ensure_importable`.
 - [`docs/corridor.md`](corridor.md) — corridor's permission model in full.
 - [`docs/contract-testing.md`](contract-testing.md) — why/how Pixel Index
   and Pixel Agents contracts are generated and verified in CI.

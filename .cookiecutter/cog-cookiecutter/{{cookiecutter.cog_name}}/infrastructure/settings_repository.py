@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from typing import Any, cast
 
 from redbot.core import Config
@@ -22,7 +21,6 @@ class RedCounterRepository:
 
     def __init__(self, config: Any) -> None:
         self._config = config
-        self._lock = asyncio.Lock()
 
     @classmethod
     def create(cls, cog: object) -> RedCounterRepository:
@@ -45,7 +43,6 @@ class RedCounterRepository:
 
     async def increment(self, guild_id: int) -> int:
         guild = self._config.guild_from_id(guild_id)
-        async with self._lock:
-            count = cast(int, await guild.count()) + 1
-            await guild.count.set(count)
+        count = cast(int, await guild.count()) + 1
+        await guild.count.set(count)
         return count

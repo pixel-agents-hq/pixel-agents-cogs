@@ -29,10 +29,10 @@ from ..infrastructure.webview import WebviewAssetProvider
 
 log = logging.getLogger("red.d_cogs.floorplan")
 
-# This cog's route -- injected as a `<base href>` at serve time (WebviewAssetProvider.base_href).
+# Injected as a `<base href>` at serve time (WebviewAssetProvider.base_href).
 WEBVIEW_BASE_PATH = "/third-party/floorplan/static/"
 
-# What built_base_path reads once built; a mismatch surfaces in `[p]floorplan status`, not just a 404.
+# A mismatch surfaces in `[p]floorplan status`, not just a 404.
 EXPECTED_RELATIVE_BASE_PATH = "./"
 
 
@@ -48,11 +48,7 @@ class PixelAgentsBase:
     _clients: dict[web.WebSocketResponse, ClientState]
 
     def __init__(self, bot: Red) -> None:
-        # Deferred, not at module scope: this file is cached in sys.modules
-        # once floorplan has loaded once, and Red re-execs cached modules on
-        # every reload attempt before setup() runs -- see
-        # pixelagents/__init__.py's docstring for the incident a module-scope
-        # corridor import here would reintroduce.
+        # Deferred: see pixelagents/__init__.py's docstring on why a cached module-scope import here would be unsafe.
         from corridor.dependency_loader import LazyDependency
 
         self.bot = bot
@@ -187,18 +183,24 @@ class PixelAgentsBase:
         return self._webview_assets.build_status or "⚠️ missing"
 
     async def cog_load(self) -> None:
+        # Red skips cog_unload() for a cog_load() that raised -- a crash
+        # after _start_server() binds would leak that socket forever.
         self._closing = False
-        self._corridor = await ensure_corridor_loaded(self.bot)
-        self._corridor.register_dependent("floorplan")
-        self._task_supervisor.open()
-        await self._pixel_index_client.start()
-        await self._start_server()
-        self._sync_task = self._task_supervisor.create(
-            self._initial_sync(), name="floorplan-initial-sync"
-        )
-        self._task_supervisor.create(
-            self._pixelagents.eager_load_in_background(), name="floorplan-eager-load-pixelagents"
-        )
+        try:
+            self._corridor = await ensure_corridor_loaded(self.bot)
+            self._corridor.register_dependent("floorplan")
+            self._task_supervisor.open()
+            await self._pixel_index_client.start()
+            await self._start_server()
+            self._sync_task = self._task_supervisor.create(
+                self._initial_sync(), name="floorplan-initial-sync"
+            )
+            self._task_supervisor.create(
+                self._pixelagents.eager_load_in_background(), name="floorplan-eager-pixelagents"
+            )
+        except Exception:
+            await self.cog_unload()
+            raise
 
     async def _initial_sync(self) -> None:
         wait_until_ready: Callable[[], Awaitable[None]] = self.bot.wait_until_red_ready

@@ -408,6 +408,39 @@ class TestPixelagentsResolutionIsLazy(unittest.IsolatedAsyncioTestCase):
         ensure_importable.assert_awaited_once_with(bot, "pixelagents")
 
 
+class TestCogLoadCleansUpOnFailure(unittest.IsolatedAsyncioTestCase):
+    """Regression test for a real incident: Red only calls cog_unload() for
+    a cog_load() that returned without raising (bot.extensions[name] is set
+    *after* setup() succeeds) -- so a crash partway through cog_load(),
+    after _start_server() already bound the office port, used to leak that
+    socket forever, since nothing was ever left to call .stop() on it.
+    cog_load() now cleans up (via cog_unload()) anything it already
+    started before letting the error propagate."""
+
+    async def test_a_crash_after_start_server_still_stops_the_server(self) -> None:
+        bot = MagicMock()
+        bot.guilds = []
+        bot.is_owner = AsyncMock(return_value=False)
+        cog = FloorplanCog(bot)
+        cog._corridor = FakeCorridor()
+
+        def _boom(coroutine, **kwargs):
+            coroutine.close()  # avoid a "coroutine was never awaited" warning
+            raise RuntimeError("boom")
+
+        with (
+            patch.object(cog, "_start_server", new=AsyncMock()) as start_server,
+            patch.object(cog._pixel_index_client, "start", new=AsyncMock()),
+            patch.object(cog._websocket_server, "stop", new=AsyncMock()) as stop_server,
+            patch.object(cog._task_supervisor, "create", side_effect=_boom),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "boom"):
+                await cog.cog_load()
+
+        start_server.assert_awaited_once()
+        stop_server.assert_awaited_once()
+
+
 class TestWebviewBasePathMismatch(unittest.IsolatedAsyncioTestCase):
     """A build that predates the shared relative-asset convention must
     surface visibly, not just 404 quietly in a browser console -- see

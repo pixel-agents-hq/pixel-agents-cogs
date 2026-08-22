@@ -111,10 +111,8 @@ class ReplyMixin(PixelAgentsBase):
         fields: Sequence[ReplyField],
         code: Sequence[str] = (),
     ) -> dict[str, Any]:
-        assert ctx.guild is not None, "floorplan replies need a guild context"
         rendered = await self._corridor.render_reply(
-            ctx.guild.id,
-            prefix=ctx.clean_prefix,
+            ctx,
             title=title or _REPLY_TITLE,
             description=description,
             fields=fields,

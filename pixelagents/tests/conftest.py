@@ -676,10 +676,11 @@ class FakeCorridor:
     out, nothing sent -- see corridor/application/reply_service.py.
     """
 
-    def __init__(self, keyholders=frozenset(), owners=frozenset(), reply_mode="text"):
+    def __init__(self, keyholders=frozenset(), owners=frozenset(), reply_mode="text", default_prefix=";"):
         self._keyholders = keyholders
         self._owners = owners
         self.reply_mode = reply_mode
+        self._default_prefix = default_prefix
         self.registered_dependents = set()
         self.capability_checks = []
         self.rendered_replies = []
@@ -699,14 +700,24 @@ class FakeCorridor:
             return member_id in self._keyholders
         return False
 
+    async def default_prefix(self):
+        return self._default_prefix
+
+    async def substitute_default_prefix(self, text):
+        return text.replace("[p]", self._default_prefix)
+
     async def render_reply(
-        self, guild_id, *, prefix, title=None, description=None, content=None, fields=(), code=()
+        self, ctx, *, title=None, description=None, content=None, fields=(), code=()
     ):
-        """Mirrors corridor's real ReplyService.render, including its `[p]`
-        substitution and `code`/`ReplyField.code` fencing -- see
-        corridor/application/reply_service.py, the source of truth this
+        """Mirrors corridor's real render_reply, including resolving
+        `guild_id`/`prefix` from `ctx` itself (a caller never supplies
+        either) and ReplyService.render's `[p]` substitution and
+        `code`/`ReplyField.code` fencing -- see corridor/adapters/cog_base.py
+        and corridor/application/reply_service.py, the source of truth this
         double is kept in sync with."""
 
+        guild_id = ctx.guild.id
+        prefix = ctx.clean_prefix
         self.rendered_replies.append((guild_id, title, description, content, tuple(fields)))
 
         def subst(text):

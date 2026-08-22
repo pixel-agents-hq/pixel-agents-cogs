@@ -28,7 +28,6 @@ def _make_cog() -> PixelAgentsCog:
     bot = MagicMock()
     bot.guilds = []
     bot.is_owner = AsyncMock(return_value=False)
-    bot.get_valid_prefixes = AsyncMock(return_value=[";"])
     cog = PixelAgentsCog(bot)
     cog._corridor = FakeCorridor()
     return cog

@@ -6,7 +6,7 @@ import sys
 import tempfile
 import types
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 from aiohttp import web as _aiohttp_web
 
@@ -76,6 +76,29 @@ class _FakeInteraction:
 
 
 _discord.Interaction = _FakeInteraction
+
+
+def make_ctx(**overrides: object) -> MagicMock:
+    """A `commands.Context` double pre-configured the way every reply test
+    needs: a non-interaction command invocation with an awaitable `.send`
+    and a real `.clean_prefix` string.
+
+    `MagicMock()` auto-vivifies any attribute access into another
+    MagicMock, so a bare `MagicMock()` used directly as `ctx` gives
+    `.clean_prefix` a MagicMock, not a string -- corridor's `[p]`
+    substitution (`str.replace`) then crashes on it. Centralizing that one
+    fixed attribute here, instead of every test setting it individually,
+    is the only reason this helper exists. Pass keyword overrides for
+    anything a specific test needs to differ, e.g. `make_ctx(interaction=...)`.
+    """
+
+    ctx = MagicMock()
+    ctx.interaction = None
+    ctx.send = AsyncMock()
+    ctx.clean_prefix = ";"
+    for key, value in overrides.items():
+        setattr(ctx, key, value)
+    return ctx
 
 
 def _utcnow():

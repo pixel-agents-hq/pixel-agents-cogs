@@ -31,6 +31,7 @@ from floorplan.tests.conftest import (
     FakePixelAgents,
     _FakeClientWebSocketResponse,
     _FakeInteraction,
+    make_ctx,
 )
 
 import discord  # stubbed by conftest
@@ -1182,20 +1183,14 @@ class TestToolClearDelayCommand(unittest.IsolatedAsyncioTestCase):
         self.cog = _make_cog()
 
     async def test_set_valid_delay(self):
-        ctx = MagicMock()
-        ctx.clean_prefix = ";"
-        ctx.interaction = None
-        ctx.send = AsyncMock()
+        ctx = make_ctx()
         await self.cog.cmd_toolcleardelay(ctx, 5.0)
         self.assertEqual(await self.cog.config.message_tool_clear_delay(), 5.0)
         ctx.send.assert_awaited_once()
         self.assertIn("5.0", ctx.send.call_args.kwargs["content"])
 
     async def test_negative_delay_rejected(self):
-        ctx = MagicMock()
-        ctx.clean_prefix = ";"
-        ctx.interaction = None
-        ctx.send = AsyncMock()
+        ctx = make_ctx()
         await self.cog.cmd_toolcleardelay(ctx, -1.0)
         self.assertEqual(await self.cog.config.message_tool_clear_delay(), 2.0)
 
@@ -1205,11 +1200,7 @@ class TestWsPortCommand(unittest.IsolatedAsyncioTestCase):
         self.cog = _make_cog()
 
     def _ctx(self):
-        ctx = MagicMock()
-        ctx.clean_prefix = ";"
-        ctx.interaction = None
-        ctx.send = AsyncMock()
-        return ctx
+        return make_ctx()
 
     async def test_sets_port(self):
         await self.cog.cmd_wsport(self._ctx(), 4300)
@@ -1315,11 +1306,7 @@ class TestPixelIndexSetwebCommand(unittest.IsolatedAsyncioTestCase):
         self.cog = _make_cog()
 
     def _ctx(self):
-        ctx = MagicMock()
-        ctx.clean_prefix = ";"
-        ctx.interaction = None
-        ctx.send = AsyncMock()
-        return ctx
+        return make_ctx()
 
     async def test_sets_web_url(self):
         await self.cog.cmd_pixelindex_setweb(self._ctx(), "https://pixel-index.vercel.app/")
@@ -1559,19 +1546,13 @@ class TestReplyHelper(unittest.IsolatedAsyncioTestCase):
         self.cog = _make_cog()
 
     async def test_prefix_uses_ctx_send(self):
-        ctx = MagicMock()
-        ctx.clean_prefix = ";"
-        ctx.interaction = None
-        ctx.send = AsyncMock()
+        ctx = make_ctx()
         await self.cog._reply(ctx, "hello")
         ctx.send.assert_awaited_once_with(content="hello")
 
     async def test_text_mode_renders_through_corridor(self):
         self.cog._corridor = FakeCorridor(reply_mode="text")
-        ctx = MagicMock()
-        ctx.clean_prefix = ";"
-        ctx.interaction = None
-        ctx.send = AsyncMock()
+        ctx = make_ctx()
         await self.cog._reply(ctx, "hello", title="Pixel Agents")
         ctx.send.assert_awaited_once_with(content="hello")
         self.assertEqual(
@@ -1581,10 +1562,7 @@ class TestReplyHelper(unittest.IsolatedAsyncioTestCase):
 
     async def test_embed_mode_renders_through_corridor(self):
         self.cog._corridor = FakeCorridor(reply_mode="embed")
-        ctx = MagicMock()
-        ctx.clean_prefix = ";"
-        ctx.interaction = None
-        ctx.send = AsyncMock()
+        ctx = make_ctx()
         await self.cog._reply(ctx, "hello", title="Pixel Agents")
         ctx.send.assert_awaited_once()
         self.assertIn("embed", ctx.send.call_args.kwargs)
@@ -1592,10 +1570,7 @@ class TestReplyHelper(unittest.IsolatedAsyncioTestCase):
 
     async def test_embed_mode_reply_carries_fields(self):
         self.cog._corridor = FakeCorridor(reply_mode="embed")
-        ctx = MagicMock()
-        ctx.clean_prefix = ";"
-        ctx.interaction = None
-        ctx.send = AsyncMock()
+        ctx = make_ctx()
         fields = [ReplyField("Serving", "yes", False), ReplyField("Clients", "3")]
 
         await self.cog._reply(ctx, title="Status", fields=fields)
@@ -1611,10 +1586,7 @@ class TestReplyHelper(unittest.IsolatedAsyncioTestCase):
 
     async def test_text_mode_reply_flattens_fields_to_lines(self):
         self.cog._corridor = FakeCorridor(reply_mode="text")
-        ctx = MagicMock()
-        ctx.clean_prefix = ";"
-        ctx.interaction = None
-        ctx.send = AsyncMock()
+        ctx = make_ctx()
         fields = [ReplyField("Serving", "yes"), ReplyField("Clients", "3")]
 
         await self.cog._reply(ctx, title="Status", fields=fields)
@@ -1625,18 +1597,14 @@ class TestReplyHelper(unittest.IsolatedAsyncioTestCase):
 
     async def test_view_only_reply_bypasses_corridor(self):
         self.cog._corridor = FakeCorridor(reply_mode="embed")
-        ctx = MagicMock()
-        ctx.clean_prefix = ";"
-        ctx.interaction = None
-        ctx.send = AsyncMock()
+        ctx = make_ctx()
         view = object()
         await self.cog._reply(ctx, view=view)
         ctx.send.assert_awaited_once_with(view=view)
         self.assertEqual(self.cog._corridor.rendered_replies, [])
 
     async def test_slash_uses_response_send_message(self):
-        ctx = MagicMock()
-        ctx.clean_prefix = ";"
+        ctx = make_ctx()
         interaction = _FakeInteraction(guild=MagicMock())
         ctx.interaction = interaction
         sent = []
@@ -1652,8 +1620,7 @@ class TestReplyHelper(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(kwargs.get("ephemeral"))
 
     async def test_slash_after_defer_uses_followup(self):
-        ctx = MagicMock()
-        ctx.clean_prefix = ";"
+        ctx = make_ctx()
         interaction = _FakeInteraction(guild=MagicMock())
         interaction.response._done = True
         ctx.interaction = interaction

@@ -9,6 +9,9 @@ jobs:
   test-cogs:
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
@@ -18,7 +21,7 @@ jobs:
         run: pip install red-discordbot
 
       - name: Test Cogs
-        uses: nntin/d-flows/actions/test-red-discordbot-downloader@v1
+        uses: ./.github/actions/test-red-discordbot-downloader-local
         with:
           token: ${{ secrets.DISCORD_BOT_TOKEN }}
           repo_url: https://github.com/${{ github.repository }}

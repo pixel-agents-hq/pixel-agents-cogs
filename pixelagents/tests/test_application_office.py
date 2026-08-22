@@ -70,10 +70,13 @@ class TestOfficeService(unittest.IsolatedAsyncioTestCase):
             ["agentCreated", "agentTeamInfo", "agentStatus"],
         )
 
-    async def test_send_message_activity_selects_the_agent(self) -> None:
-        """send_message_activity must send agentSelected right alongside the
-        Message tool bubble, so the label panel (with the message text) is
-        visible immediately without hover or "Always Show Labels"."""
+    async def test_send_message_activity_sends_only_the_tool_start(self) -> None:
+        """send_message_activity only sends the Message tool-start bubble --
+        its visibility in pixel-agents' webview is gated by ToolOverlay
+        (hover, click-select, or the viewer's "Always Show Labels" setting)
+        like any other tracked tool activity. There is no way to force it
+        open per-agent from here (see office.py's send_message_activity
+        docstring-level comment)."""
         await self.service.reconcile(agent(), include_bots=True, rich_presence_enabled=True)
         self.sent.clear()
 
@@ -82,14 +85,12 @@ class TestOfficeService(unittest.IsolatedAsyncioTestCase):
         )
 
         types = [message["type"] for message in self.sent]
-        self.assertEqual(types, ["agentToolStart", "agentSelected"])
-        self.assertEqual(self.sent[1]["id"], self.service.agent_id(2))
+        self.assertEqual(types, ["agentToolStart"])
+        self.assertEqual(self.sent[0]["id"], self.service.agent_id(2))
 
     async def test_clear_message_activity_does_not_reping(self) -> None:
         """clear_message_activity only clears the tool bubble (and replays any
-        cached rich-presence label) — it must not also send a status ping,
-        since agentSelected (sent at message-start) already made the message
-        visible without needing hover."""
+        cached rich-presence label) — it must not also send a status ping."""
         await self.service.reconcile(agent(), include_bots=True, rich_presence_enabled=True)
         self.sent.clear()
 

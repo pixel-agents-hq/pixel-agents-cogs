@@ -10,7 +10,6 @@ from typing import Any, Protocol, TypeAlias, TypeVar
 from ..contracts.outbound import (
     agent_closed,
     agent_created,
-    agent_selected,
     agent_status,
     agent_team_info,
     agent_tools_clear,
@@ -313,12 +312,15 @@ class OfficeService:
 
     async def send_message_activity(self, snapshot: MessageSnapshot) -> None:
         agent_id = self.agent_id(snapshot.key.user_id)
+        # Visibility of the message text is gated by pixel-agents' own
+        # ToolOverlay like any other tracked tool activity (hover,
+        # click-select, or the viewer's "Always Show Labels" setting) --
+        # there is no way to force it open per-agent from here. An
+        # `agentSelected` message used to be sent for this, but it only ever
+        # updated pixel-agents' debug-view selection state, never the
+        # office canvas's `officeState.selectedAgentId` that ToolOverlay
+        # actually reads, so it never had the intended effect.
         await self._send(self.presence.message_start(snapshot, agent_id))
-        # Forces the full label panel open for this agent (bypassing the
-        # hover/alwaysShowLabels gate pixel-agents' ToolOverlay otherwise
-        # applies), so the message text above is visible immediately without
-        # requiring the viewer to hover or enable "Always Show Labels".
-        await self._send(agent_selected(agent_id))
 
     async def clear_message_activity(self, key: AgentKey) -> None:
         agent_id = self.agent_id(key.user_id)

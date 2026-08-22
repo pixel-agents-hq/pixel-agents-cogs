@@ -11,13 +11,13 @@ from contracts.pixel_agents.schema import SchemaLoadError, load_message_schemas
 _FAKE_SPEC = """
 components:
   schemas:
-    AgentSelected:
+    AgentClosed:
       type: object
       additionalProperties: false
       required: [type, id]
       properties:
         type:
-          const: agentSelected
+          const: agentClosed
         id:
           type: integer
     AgentSeatMeta:
@@ -58,8 +58,8 @@ class TestLoadMessageSchemas(unittest.TestCase):
             _write_spec(root)
             schemas = load_message_schemas(root)
 
-        self.assertIn("agentSelected", schemas.by_type)
-        self.assertEqual(schemas.by_type["agentSelected"]["required"], ["type", "id"])
+        self.assertIn("agentClosed", schemas.by_type)
+        self.assertEqual(schemas.by_type["agentClosed"]["required"], ["type", "id"])
 
     def test_excludes_schemas_without_a_const_discriminator(self) -> None:
         with TemporaryDirectory() as tmp:

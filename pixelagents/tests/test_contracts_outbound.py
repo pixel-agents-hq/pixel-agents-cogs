@@ -14,7 +14,6 @@ from pixelagents.contracts.outbound import (
     agent_closed,
     agent_context_usage,
     agent_created,
-    agent_selected,
     agent_status,
     agent_team_info,
     agent_tool_done,
@@ -55,7 +54,6 @@ class TestOutboundBuilders:
                 },
             ),
             (lambda: agent_closed(-1), {"type": "agentClosed", "id": -1}),
-            (lambda: agent_selected(-1), {"type": "agentSelected", "id": -1}),
             (
                 lambda: agent_team_info(-1, "Tin"),
                 {"type": "agentTeamInfo", "id": -1, "agentName": "Tin"},

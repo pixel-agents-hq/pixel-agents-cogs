@@ -158,9 +158,9 @@ class TestCogTaskLifecycle(unittest.IsolatedAsyncioTestCase):
         await cog.cog_unload()
 
         sent_types = [json.loads(payload)["type"] for payload in socket._sent]
-        self.assertEqual(sent_types, ["agentToolStart", "agentSelected"])
+        self.assertEqual(sent_types, ["agentToolStart"])
         self.assertTrue(socket.closed)
         self.assertEqual(cog._task_supervisor.tasks, frozenset())
 
         await cog.on_message(message)
-        self.assertEqual(len(socket._sent), 2)
+        self.assertEqual(len(socket._sent), 1)

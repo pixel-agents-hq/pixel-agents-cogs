@@ -27,11 +27,6 @@ class AgentClosedMessage(TypedDict):
     id: int
 
 
-class AgentSelectedMessage(TypedDict):
-    type: Literal["agentSelected"]
-    id: int
-
-
 class _AgentTeamInfoRequired(TypedDict):
     type: Literal["agentTeamInfo"]
     id: int
@@ -140,10 +135,6 @@ def agent_created(
 
 def agent_closed(agent_id: int) -> AgentClosedMessage:
     return {"type": "agentClosed", "id": agent_id}
-
-
-def agent_selected(agent_id: int) -> AgentSelectedMessage:
-    return {"type": "agentSelected", "id": agent_id}
 
 
 def agent_team_info(

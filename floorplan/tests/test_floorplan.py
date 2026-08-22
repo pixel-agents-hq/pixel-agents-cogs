@@ -1013,10 +1013,11 @@ class TestOnMessage(unittest.IsolatedAsyncioTestCase):
         sent_types = [json.loads(s)["type"] for s in self.ws._sent]
         self.assertIn("agentToolStart", sent_types)
 
-    async def test_message_selects_the_agent(self):
-        """agentSelected must accompany the Message tool bubble so the label
-        panel (with the message text) is visible immediately, without hover
-        or "Always Show Labels"."""
+    async def test_message_sends_only_tool_start(self):
+        """A message only sends the Message tool-start bubble -- its
+        visibility is gated by pixel-agents' own ToolOverlay (hover,
+        click-select, or the viewer's "Always Show Labels" setting) like any
+        other tracked tool activity."""
         self.cog._agents[(100, 1)] = ("online", "Tin")
         msg = MagicMock()
         msg.guild.id = 100
@@ -1025,8 +1026,8 @@ class TestOnMessage(unittest.IsolatedAsyncioTestCase):
         msg.id = 999
         await self.cog.on_message(msg)
         sent = [json.loads(s) for s in self.ws._sent]
-        self.assertEqual([m["type"] for m in sent], ["agentToolStart", "agentSelected"])
-        self.assertEqual(sent[1]["id"], self.cog._office_service.agent_id(1))
+        self.assertEqual([m["type"] for m in sent], ["agentToolStart"])
+        self.assertEqual(sent[0]["id"], self.cog._office_service.agent_id(1))
 
     async def test_message_truncates_long_content(self):
         self.cog._agents[(100, 1)] = ("online", "Tin")
@@ -1040,10 +1041,8 @@ class TestOnMessage(unittest.IsolatedAsyncioTestCase):
         self.assertLessEqual(len(tool_msg["status"]), 45)
 
     async def test_message_clear_does_not_reping(self):
-        """After the message-clear delay, only agentToolsClear is sent —
-        agentSelected (sent at message-start) already made the message
-        visible without needing hover, so clearing must not also emit a
-        status ping."""
+        """After the message-clear delay, only agentToolsClear is sent --
+        clearing must not also emit a status ping."""
         self.cog._agents[(100, 1)] = ("online", "Tin")
         msg = MagicMock()
         msg.guild.id = 100

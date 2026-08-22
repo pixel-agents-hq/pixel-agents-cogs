@@ -59,17 +59,17 @@ class TestCheckOutboundMessages(unittest.TestCase):
     def test_a_message_violating_its_schema_fails_with_the_validation_error(self) -> None:
         schemas = MessageSchemas(
             by_type={
-                "agentSelected": {
+                "agentClosed": {
                     "type": "object",
                     "required": ["type", "id"],
-                    "properties": {"type": {"const": "agentSelected"}, "id": {"type": "integer"}},
+                    "properties": {"type": {"const": "agentClosed"}, "id": {"type": "integer"}},
                 }
             },
             resolver=RefResolver.from_schema({}),
         )
 
         async def fake_capture() -> list[dict]:
-            return [{"type": "agentSelected", "id": "not-an-int"}]
+            return [{"type": "agentClosed", "id": "not-an-int"}]
 
         with (
             patch.object(verify_outbound, "load_message_schemas", return_value=schemas),
@@ -78,7 +78,7 @@ class TestCheckOutboundMessages(unittest.TestCase):
             ok, detail = verify_outbound._check_outbound_messages(Path("/unused"))
 
         self.assertFalse(ok)
-        self.assertIn("agentSelected", detail)
+        self.assertIn("agentClosed", detail)
 
 
 class TestCheckHelperSmoke(unittest.TestCase):

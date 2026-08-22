@@ -25,6 +25,10 @@ inputs:
     description: "TCP port exposed via `--rpc-port`; defaults to 6133 when not specified."
     required: false
     default: "6133"
+  unload_scope:
+    description: "What to force unloaded right before each cog's own load/unload test: 'cog' unloads only the cog under test (its dependencies may already be loaded, e.g. by an earlier cog -- the common 'warm' case); 'cog-and-dependencies' also unloads everything named in its info.json required_cogs (transitively), forcing a genuine cold-start dependency bootstrap. Defaults to 'cog'."
+    required: false
+    default: "cog"
 
 runs:
   using: "composite"
@@ -45,6 +49,7 @@ runs:
         REPO_URL: ${{ inputs.repo_url }}
         REPO_BRANCH: ${{ inputs.repo_branch }}
         DISCORD_TOKEN: ${{ inputs.token }}
+        UNLOAD_SCOPE: ${{ inputs.unload_scope }}
       run: |
         set -euo pipefail
 

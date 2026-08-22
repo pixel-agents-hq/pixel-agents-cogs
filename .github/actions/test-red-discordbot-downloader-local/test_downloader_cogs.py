@@ -10,7 +10,7 @@ import sys
 import time
 import urllib.request
 from pathlib import Path
-from typing import Iterable, List, Sequence
+from typing import Dict, Iterable, List, Mapping, Sequence
 
 import aiohttp
 import shutil
@@ -177,6 +177,25 @@ async def wait_for_rpc(session: aiohttp.ClientSession, url: str) -> None:
             await asyncio.sleep(RPC_WAIT_INTERVAL)
 
 
+UNLOAD_SCOPE_COG = "cog"
+UNLOAD_SCOPE_COG_AND_DEPENDENCIES = "cog-and-dependencies"
+_VALID_UNLOAD_SCOPES = {UNLOAD_SCOPE_COG, UNLOAD_SCOPE_COG_AND_DEPENDENCIES}
+
+
+def resolved_unload_scope() -> str:
+    """Which state a cog's dependencies should be forced into right before
+    its own load/unload cycle -- see the module docstring-level rationale in
+    exercise_cogs() for why this needs to be an explicit, driven scenario
+    rather than incidental test order."""
+
+    raw = os.environ.get("UNLOAD_SCOPE", UNLOAD_SCOPE_COG).strip()
+    if raw not in _VALID_UNLOAD_SCOPES:
+        raise RuntimeError(
+            f"UNLOAD_SCOPE must be one of {sorted(_VALID_UNLOAD_SCOPES)} (received {raw!r})"
+        )
+    return raw
+
+
 def cog_name_from_path(path: Path) -> str:
     cog_name = path.name
     if not cog_name:
@@ -203,6 +222,23 @@ async def unload_cog(client: JsonRpcClient, cog_name: str) -> None:
     if cog_name not in unloaded:
         raise RPCError(f"RPC did not report {cog_name} in unloaded_packages: {result}")
     print(f"♻️ Cog {cog_name} unloaded successfully")
+
+
+async def unload_quietly(client: JsonRpcClient, cog_name: str) -> None:
+    """Force `cog_name` into an unloaded state before testing it, whether or
+    not it happens to already be loaded (e.g. a real cross-cog dependency an
+    earlier-tested cog pulled in as a side effect). Red's own CORE__UNLOAD
+    reports a name that was never loaded under `notloaded_packages`, not as
+    an error (see redbot.core.core_commands.CoreLogic._unload) -- that is a
+    valid, expected outcome here, not something to raise on."""
+
+    result = await client.request(CORE_UNLOAD_METHOD, [[cog_name]])
+    unloaded = (result or {}).get("unloaded_packages", [])
+    not_loaded = (result or {}).get("notloaded_packages", [])
+    if cog_name in unloaded:
+        print(f"♻️ Pre-unloaded already-loaded cog {cog_name}")
+    elif cog_name not in not_loaded:
+        raise RPCError(f"RPC gave an unexpected response unloading {cog_name}: {result}")
 
 
 def normalize_repo_name(name: str) -> str:
@@ -339,13 +375,14 @@ async def install_cogs_from_repo(
     install_path: Path,
     requirements_path: Path,
     expected_names: Sequence[str],
-) -> List[str]:
+) -> tuple[List[str], Dict[str, Dict[str, str]]]:
     available = {cog.name: cog for cog in repo.available_cogs}
     missing = [name for name in expected_names if name not in available]
     if missing:
         raise RuntimeError(f"Repository did not contain expected cogs: {', '.join(missing)}")
 
     installed: List[str] = []
+    required_cogs_by_name: Dict[str, Dict[str, str]] = {}
     for name in expected_names:
         cog = available[name]
         
@@ -373,11 +410,50 @@ async def install_cogs_from_repo(
             if not ok:
                 raise RuntimeError(f"Failed to install requirements for {name}")
         installed.append(name)
-    return installed
+        required_cogs_by_name[name] = dict(cog.required_cogs)
+    return installed, required_cogs_by_name
 
 
-async def exercise_cogs(client: JsonRpcClient, names: Iterable[str]) -> None:
+def _transitive_dependencies(
+    name: str, required_cogs_by_name: Mapping[str, Mapping[str, str]]
+) -> List[str]:
+    """Every cog `name` (transitively) requires, restricted to cogs actually
+    installed in this run -- a `required_cogs` entry pointing at a cog this
+    run didn't install has nothing here to unload. Order doesn't matter:
+    each dependency is unloaded independently and idempotently."""
+
+    seen: set[str] = set()
+    to_visit = list(required_cogs_by_name.get(name, {}).keys())
+    while to_visit:
+        dep = to_visit.pop()
+        if dep in seen or dep not in required_cogs_by_name:
+            continue
+        seen.add(dep)
+        to_visit.extend(required_cogs_by_name.get(dep, {}).keys())
+    return sorted(seen)
+
+
+async def exercise_cogs(
+    client: JsonRpcClient,
+    names: Iterable[str],
+    required_cogs_by_name: Mapping[str, Mapping[str, str]],
+    unload_scope: str,
+) -> None:
+    """Load then unload each cog, having first forced it (and, in the
+    `cog-and-dependencies` scope, its dependencies) into an unloaded state --
+    see resolved_unload_scope()'s docstring for why this needs to be a
+    deliberate, driven scenario. This also incidentally fixes the case a
+    dependent cog (e.g. floorplan) already fully loaded a dependency (e.g.
+    pixelagents) as a real, synchronous side effect of its own load: by the
+    time that dependency's own turn comes, it's forced unloaded first, so it
+    always gets a genuine, fresh load/unload test regardless of what an
+    earlier cog's turn left loaded."""
+
     for name in names:
+        if unload_scope == UNLOAD_SCOPE_COG_AND_DEPENDENCIES:
+            for dep in _transitive_dependencies(name, required_cogs_by_name):
+                await unload_quietly(client, dep)
+        await unload_quietly(client, name)
         await load_cog(client, name)
         await unload_cog(client, name)
 
@@ -410,6 +486,9 @@ async def main_async() -> None:
     install_path = await get_cog_install_path()
     requirements_path = ensure_lib_paths()
 
+    unload_scope = resolved_unload_scope()
+    print(f"🧪 Unload scope: {unload_scope}")
+
     repo: Repo | None = None
     installed: List[str] = []
     try:
@@ -422,7 +501,7 @@ async def main_async() -> None:
                 f"🧭 No COG_PATHS specified; exercising all {len(expected_names)} cogs from {repo.name}"
             )
         assert expected_names is not None
-        installed = await install_cogs_from_repo(
+        installed, required_cogs_by_name = await install_cogs_from_repo(
             repo, install_path, requirements_path, expected_names
         )
 
@@ -431,7 +510,7 @@ async def main_async() -> None:
         async with aiohttp.ClientSession() as session:
             await wait_for_rpc(session, rpc_url)
             async with JsonRpcClient(session, rpc_url) as client:
-                await exercise_cogs(client, installed)
+                await exercise_cogs(client, installed, required_cogs_by_name, unload_scope)
 
         print("🎯 Downloader installation tests passed")
     finally:

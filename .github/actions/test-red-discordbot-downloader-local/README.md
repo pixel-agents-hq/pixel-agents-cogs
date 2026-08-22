@@ -1,6 +1,6 @@
 # test-red-discordbot-downloader-local
 
-Vendored copy of [`nntin/d-flows/actions/test-red-discordbot-downloader`](https://github.com/NNTin/d-flows/tree/873892e7d5f5fa19737b93e01f608f52a8f65a0f/actions/test-red-discordbot-downloader), pinned at `NNTin/d-flows@873892e7d5f5fa19737b93e01f608f52a8f65a0f`. Kept in this repo so a CI incident can be reproduced and iterated on locally without waiting on upstream changes to the shared action. This is a clean copy plus a name change only -- no behavioral changes yet.
+Vendored copy of [`nntin/d-flows/actions/test-red-discordbot-downloader`](https://github.com/NNTin/d-flows/tree/873892e7d5f5fa19737b93e01f608f52a8f65a0f/actions/test-red-discordbot-downloader), pinned at `NNTin/d-flows@873892e7d5f5fa19737b93e01f608f52a8f65a0f`. Kept in this repo so a CI incident can be reproduced and iterated on locally without waiting on upstream changes to the shared action. On top of the vendored copy, this adds the `unload_scope` input (see below) so `check-cogs.yml` can exercise both a cold-start and a warm-start dependency-loading scenario per cog.
 
 ## Overview
 This composite action provisions a temporary git repository containing your cogs, adds it to Red-DiscordBot through the Downloader cog, installs the cogs using `repo add`/`cog install`, and validates them via Red's RPC interface. Unlike [`test-red-discordbot`](../test-red-discordbot) which simply copies directories into the cog path, this action runs the full downloader flow end-to-end so you can catch metadata, dependency, and git issues earlier.
@@ -14,6 +14,7 @@ This composite action provisions a temporary git repository containing your cogs
 | `repo_url` | ❌ | `""` | When set, Downloader installs directly from this remote git URL and the action skips creating the temporary local repo. Leave empty to generate a throwaway repo from `cog_paths`. |
 | `repo_branch` | ❌ | `""` | Optional branch name to checkout after cloning. Leave empty to let Downloader detect the default branch or use the local repo's branch. |
 | `rpc_port` | ❌ | `6133` | Port the Red RPC server will listen on. Keep default unless you have networking conflicts. |
+| `unload_scope` | ❌ | `cog` | `cog` unloads only the cog under test before its load/unload cycle (its `required_cogs` may already be loaded from an earlier cog's turn -- the warm-start case). `cog-and-dependencies` also unloads everything in its `required_cogs` (transitively) first, forcing a genuine cold-start dependency bootstrap. |
 
 ## Usage example
 ```yaml

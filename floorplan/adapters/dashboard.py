@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, TypeVar
@@ -12,7 +13,48 @@ from redbot.core import commands
 
 from .cog_base import PixelAgentsBase
 
+log = logging.getLogger("red.d_cogs.floorplan")
+
 DashboardCallable = TypeVar("DashboardCallable", bound=Callable[..., Any])
+
+# Red Web Dashboard (AAA3A-cogs' `dashboard`) registers its Cog under this
+# name -- the same string Red's `[p]load dashboard` and `bot.get_cog(...)`
+# use for it elsewhere in the ecosystem. There is no cross-repo contract
+# test for this (dashboard lives outside this repo), so the shape check in
+# `dashboard_cog_loaded` below (mirroring `on_dashboard_cog_add`'s own
+# `.rpc.third_parties_handler` check) is the actual source of truth --
+# this name is just how we find a candidate to check.
+DASHBOARD_COG_NAME = "Dashboard"
+
+DASHBOARD_DOCS_URL = "https://red-web-dashboard.readthedocs.io/en/latest/"
+
+
+def dashboard_cog_loaded(bot: Any) -> bool:
+    """Whether Red Web Dashboard is loaded and ready to register third parties.
+
+    Checked the same way `on_dashboard_cog_add` already does when dashboard
+    broadcasts its own load event (`.rpc.third_parties_handler`) -- reusing
+    that shape check here means this stays correct even if it turns out
+    dashboard doesn't register under `DASHBOARD_COG_NAME` on some install:
+    a `bot.get_cog("Dashboard")` hit without that shape is treated the same
+    as not finding it at all, rather than assumed to be a working dashboard.
+    """
+
+    dashboard_cog = bot.get_cog(DASHBOARD_COG_NAME)
+    if dashboard_cog is None:
+        return False
+    third_parties = getattr(getattr(dashboard_cog, "rpc", None), "third_parties_handler", None)
+    return third_parties is not None
+
+
+def dashboard_not_loaded_notification() -> str:
+    """DM text for `Red.send_to_owners` when dashboard isn't loaded yet."""
+
+    return (
+        "⚠️ Pixel Agents floorplan could not find the Red Web Dashboard cog "
+        "loaded, so the office webview has nowhere to be served from. Set it "
+        f"up, then load/reload floorplan: {DASHBOARD_DOCS_URL}"
+    )
 
 
 def dashboard_page(
@@ -37,6 +79,25 @@ class DashboardMixin(PixelAgentsBase):
         third_parties = getattr(dashboard_cog.rpc, "third_parties_handler", None)
         if third_parties is not None:
             third_parties.add_third_party(self, overwrite=True)
+
+    async def _notify_owners_dashboard_missing_if_unloaded(self) -> None:
+        """DM the owner once, at `cog_load` time, if dashboard isn't loaded yet.
+
+        Deliberately a one-shot check here, not a recurring one: dashboard
+        loading *after* floorplan is already handled by
+        `on_dashboard_cog_add` above (Red Dashboard's own registration
+        broadcast), so this only needs to catch the case that listener can
+        never see -- dashboard still missing at the moment floorplan itself
+        loads. Must never raise: a missing/unreachable owner DM is not a
+        reason to fail floorplan's own load.
+        """
+
+        if dashboard_cog_loaded(self.bot):
+            return
+        try:
+            await self.bot.send_to_owners(dashboard_not_loaded_notification())
+        except Exception:
+            log.exception("floorplan: could not notify owners about the missing dashboard cog")
 
     def _webview_dist_root(self) -> Path:
         return self._webview_assets.root

@@ -283,7 +283,14 @@ def build_webview(
 
 
 def owner_notification_for(outcome: BuildOutcome) -> str:
-    """DM text for `Red.send_to_owners` when `outcome.ok` is False."""
+    """DM text for `Red.send_to_owners` when `outcome.ok` is False.
+
+    Leaves the literal `[p]` placeholder in place -- this is a pure,
+    framework-agnostic function with no `ctx`/bot to resolve a real prefix
+    from, and substituting one is corridor's job, not this infrastructure
+    module's. The caller passes this through
+    `corridor.substitute_default_prefix(...)` before sending it.
+    """
 
     if outcome.missing_tools:
         return (

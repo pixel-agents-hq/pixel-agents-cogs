@@ -16,7 +16,12 @@ from floorplan.infrastructure.settings import (
     GUILD_DEFAULTS,
     RedSettingsRepository,
 )
-from floorplan.tests.conftest import FakeCorridor, _FakeClientWebSocketResponse, _FakeConfig
+from floorplan.tests.conftest import (
+    FakeCorridor,
+    _FakeClientWebSocketResponse,
+    _FakeConfig,
+    make_ctx,
+)
 
 
 def make_repository() -> tuple[RedSettingsRepository, _FakeConfig]:
@@ -184,10 +189,7 @@ class TestSettingsCommandParity(unittest.IsolatedAsyncioTestCase):
 
     @staticmethod
     def context() -> MagicMock:
-        ctx = MagicMock()
-        ctx.interaction = None
-        ctx.send = AsyncMock()
-        return ctx
+        return make_ctx()
 
     async def test_existing_commands_delegate_to_the_shared_service(self) -> None:
         ctx = self.context()

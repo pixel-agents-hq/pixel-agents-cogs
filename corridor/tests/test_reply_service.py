@@ -30,7 +30,7 @@ class TestReplyService(unittest.IsolatedAsyncioTestCase):
         )
 
         rendered = await self.service.render(
-            1, preferences, ReplyContent(title="Title", description="Body")
+            1, preferences, ReplyContent(title="Title", description="Body"), prefix=";"
         )
 
         self.assertEqual(rendered.mode, ReplyMode.TEXT)
@@ -46,7 +46,7 @@ class TestReplyService(unittest.IsolatedAsyncioTestCase):
         )
 
         rendered = await self.service.render(
-            1, preferences, ReplyContent(title="Title", description="Body")
+            1, preferences, ReplyContent(title="Title", description="Body"), prefix=";"
         )
 
         self.assertEqual(rendered.embed_title, "Title")
@@ -61,7 +61,9 @@ class TestReplyService(unittest.IsolatedAsyncioTestCase):
             icon=IconPreference(source=IconSource.SERVER),
         )
 
-        rendered = await self.service.render(42, preferences, ReplyContent(description="Body"))
+        rendered = await self.service.render(
+            42, preferences, ReplyContent(description="Body"), prefix=";"
+        )
 
         self.assertEqual(rendered.icon_url, "https://example.com/guild/42.png")
 
@@ -73,7 +75,9 @@ class TestReplyService(unittest.IsolatedAsyncioTestCase):
             icon=IconPreference(source=IconSource.CUSTOM, custom_url="https://example.com/x.png"),
         )
 
-        rendered = await self.service.render(1, preferences, ReplyContent(description="Body"))
+        rendered = await self.service.render(
+            1, preferences, ReplyContent(description="Body"), prefix=";"
+        )
 
         self.assertEqual(rendered.icon_url, "https://example.com/x.png")
 
@@ -87,7 +91,7 @@ class TestReplyService(unittest.IsolatedAsyncioTestCase):
         fields = (ReplyField("Serving", "yes", False), ReplyField("Clients", "3"))
 
         rendered = await self.service.render(
-            1, preferences, ReplyContent(title="Status", fields=fields)
+            1, preferences, ReplyContent(title="Status", fields=fields), prefix=";"
         )
 
         self.assertEqual(rendered.fields, fields)
@@ -102,7 +106,7 @@ class TestReplyService(unittest.IsolatedAsyncioTestCase):
         fields = (ReplyField("Serving", "yes"), ReplyField("Clients", "3"))
 
         rendered = await self.service.render(
-            1, preferences, ReplyContent(description="Status", fields=fields)
+            1, preferences, ReplyContent(description="Status", fields=fields), prefix=";"
         )
 
         self.assertEqual(rendered.content, "Status\n**Serving:** yes\n**Clients:** 3")
@@ -117,6 +121,94 @@ class TestReplyService(unittest.IsolatedAsyncioTestCase):
         )
         fields = (ReplyField("Serving", "yes"),)
 
-        rendered = await self.service.render(1, preferences, ReplyContent(fields=fields))
+        rendered = await self.service.render(
+            1, preferences, ReplyContent(fields=fields), prefix=";"
+        )
 
         self.assertEqual(rendered.content, "**Serving:** yes")
+
+    async def test_prefix_replaces_p_placeholder_everywhere(self) -> None:
+        preferences = ReplyPreferences(
+            mode=ReplyMode.EMBED,
+            show_timestamp=False,
+            footer_text=None,
+            icon=IconPreference(source=IconSource.BOT),
+        )
+        fields = (ReplyField("Hint", "run [p]foo"),)
+
+        rendered = await self.service.render(
+            1,
+            preferences,
+            ReplyContent(title="[p]title", description="See [p]bar", fields=fields),
+            prefix=";",
+        )
+
+        self.assertEqual(rendered.embed_title, ";title")
+        self.assertEqual(rendered.embed_description, "See ;bar")
+        self.assertEqual(rendered.fields[0].value, "run ;foo")
+
+    async def test_embed_mode_appends_code_blocks_after_description(self) -> None:
+        preferences = ReplyPreferences(
+            mode=ReplyMode.EMBED,
+            show_timestamp=False,
+            footer_text=None,
+            icon=IconPreference(source=IconSource.BOT),
+        )
+
+        rendered = await self.service.render(
+            1,
+            preferences,
+            ReplyContent(description="Do this:", code=["[p]foo bar"]),
+            prefix=";",
+        )
+
+        self.assertEqual(rendered.embed_description, "Do this:\n\n```\n;foo bar\n```")
+
+    async def test_text_mode_appends_code_blocks(self) -> None:
+        preferences = ReplyPreferences(
+            mode=ReplyMode.TEXT,
+            show_timestamp=False,
+            footer_text=None,
+            icon=IconPreference(source=IconSource.BOT),
+        )
+
+        rendered = await self.service.render(
+            1,
+            preferences,
+            ReplyContent(description="Do this:", code=["[p]foo bar"]),
+            prefix=";",
+        )
+
+        self.assertEqual(rendered.content, "Do this:\n```\n;foo bar\n```")
+
+    async def test_embed_mode_fences_code_field_and_forces_non_inline(self) -> None:
+        preferences = ReplyPreferences(
+            mode=ReplyMode.EMBED,
+            show_timestamp=False,
+            footer_text=None,
+            icon=IconPreference(source=IconSource.BOT),
+        )
+        fields = (ReplyField("Fix", "[p]foo bar", True, code=True),)
+
+        rendered = await self.service.render(
+            1, preferences, ReplyContent(fields=fields), prefix=";"
+        )
+
+        field = rendered.fields[0]
+        self.assertEqual(field.value, "```\n;foo bar\n```")
+        self.assertFalse(field.inline)
+
+    async def test_text_mode_fences_code_field_on_its_own_line(self) -> None:
+        preferences = ReplyPreferences(
+            mode=ReplyMode.TEXT,
+            show_timestamp=False,
+            footer_text=None,
+            icon=IconPreference(source=IconSource.BOT),
+        )
+        fields = (ReplyField("Fix", "[p]foo bar", code=True),)
+
+        rendered = await self.service.render(
+            1, preferences, ReplyContent(fields=fields), prefix=";"
+        )
+
+        self.assertEqual(rendered.content, "**Fix:**\n```\n;foo bar\n```")

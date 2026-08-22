@@ -130,10 +130,32 @@ of hand-building its own `discord.Embed` (which would both duplicate
 corridor's rendering and silently stop respecting `ReplyMode` the moment
 someone does) — see `floorplan/adapters/admin_commands.py`'s `cmd_status`.
 
+### `[p]` substitution and copy-pastable text
+
+Both `send_reply` and `render_reply` resolve `ctx.clean_prefix` themselves
+and substitute it for any literal `[p]` in `title`/`description`/`content`/
+every field value — Red only expands `[p]` in command docstrings (what
+`[p]help` shows), never in reply text a cog builds by hand, so a
+hand-written `` `[p]foo` `` would otherwise reach Discord unexpanded. This
+is why `render_reply` takes `ctx` rather than a bare `guild_id`: resolving
+the prefix is corridor's job alone, not something every caller should have
+to remember to do itself.
+
+An optional `code=["[p]floorplan enable"]` (or `ReplyField(..., code=True)`
+for a whole field's value) renders that string in its own fenced Discord
+code block instead of inline text, after prefix substitution — giving the
+client's native copy button. Keep prose describing *why* to run a command
+in `description`/`content` as plain text, and pass only the exact
+copy-pastable string itself via `code`: a fenced block is always
+block-level, so folding it into the middle of a sentence would force ugly
+line breaks around it instead of a clean button. `ReplyField(..., code=True)`
+also forces that field to render non-inline in `ReplyMode.EMBED`, since a
+fenced block doesn't fit a narrow inline column.
+
 A cog that needs its own interaction-aware dispatch on top of that (an
 ephemeral slash-command response, a deferred followup, ...) — something
 `send_reply`'s plain `ctx.send()` doesn't support — calls the lower-level
-`corridor.render_reply(guild_id, title=..., description=..., fields=...)`
+`corridor.render_reply(ctx, title=..., description=..., fields=...)`
 instead: same `ReplyMode` rendering, returned as a `RenderedReply` DTO
 instead of sent, so the caller does its own send. floorplan's `ReplyMixin`
 ([`floorplan/adapters/replies.py`](../floorplan/adapters/replies.py)) is

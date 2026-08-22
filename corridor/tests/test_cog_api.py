@@ -66,6 +66,46 @@ class TestCorridorApi(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(ctx.sent[0]["content"], "Status\n**Serving:** yes")
 
+    async def test_send_reply_substitutes_p_with_ctx_clean_prefix(self) -> None:
+        member = FakeMember(2, self.guild)
+        ctx = FakeContext(author=member, guild=self.guild, clean_prefix=";")
+
+        await self.corridor.send_reply(ctx, title="Hi", description="Run [p]foo")
+
+        embed = ctx.sent[0]["embed"]
+        self.assertEqual(embed.description, "Run ;foo")
+
+    async def test_send_reply_code_renders_a_fenced_block(self) -> None:
+        await self.corridor.set_reply_mode(self.guild.id, ReplyMode.TEXT)
+        member = FakeMember(2, self.guild)
+        ctx = FakeContext(author=member, guild=self.guild, clean_prefix=";")
+
+        await self.corridor.send_reply(ctx, description="Do this:", code=["[p]foo"])
+
+        self.assertEqual(ctx.sent[0]["content"], "Do this:\n```\n;foo\n```")
+
+    async def test_render_reply_resolves_prefix_from_ctx_without_a_prefix_argument(self) -> None:
+        member = FakeMember(2, self.guild)
+        ctx = FakeContext(author=member, guild=self.guild, clean_prefix=";")
+
+        rendered = await self.corridor.render_reply(ctx, description="Run [p]foo")
+
+        self.assertEqual(rendered.embed_description, "Run ;foo")
+
+    async def test_default_prefix_uses_the_bots_first_valid_prefix(self) -> None:
+        self.bot = FakeBot(owner_ids=frozenset({1}), valid_prefixes=("!", "?"))
+        self.corridor = Corridor(bot=self.bot)
+
+        self.assertEqual(await self.corridor.default_prefix(), "!")
+
+    async def test_substitute_default_prefix_replaces_p_with_no_ctx_needed(self) -> None:
+        self.bot = FakeBot(owner_ids=frozenset({1}), valid_prefixes=("!",))
+        self.corridor = Corridor(bot=self.bot)
+
+        message = await self.corridor.substitute_default_prefix("Run [p]foo")
+
+        self.assertEqual(message, "Run !foo")
+
     async def test_require_permission_denies_by_default(self) -> None:
         member = FakeMember(2, self.guild)
         ctx = FakeContext(author=member, guild=self.guild)

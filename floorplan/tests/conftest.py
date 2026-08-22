@@ -6,7 +6,7 @@ import sys
 import tempfile
 import types
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 from aiohttp import web as _aiohttp_web
 
@@ -76,6 +76,29 @@ class _FakeInteraction:
 
 
 _discord.Interaction = _FakeInteraction
+
+
+def make_ctx(**overrides: object) -> MagicMock:
+    """A `commands.Context` double pre-configured the way every reply test
+    needs: a non-interaction command invocation with an awaitable `.send`
+    and a real `.clean_prefix` string.
+
+    `MagicMock()` auto-vivifies any attribute access into another
+    MagicMock, so a bare `MagicMock()` used directly as `ctx` gives
+    `.clean_prefix` a MagicMock, not a string -- corridor's `[p]`
+    substitution (`str.replace`) then crashes on it. Centralizing that one
+    fixed attribute here, instead of every test setting it individually,
+    is the only reason this helper exists. Pass keyword overrides for
+    anything a specific test needs to differ, e.g. `make_ctx(interaction=...)`.
+    """
+
+    ctx = MagicMock()
+    ctx.interaction = None
+    ctx.send = AsyncMock()
+    ctx.clean_prefix = ";"
+    for key, value in overrides.items():
+        setattr(ctx, key, value)
+    return ctx
 
 
 def _utcnow():
@@ -690,18 +713,64 @@ class FakeCorridor:
             return member_id in self._keyholders
         return False
 
-    async def render_reply(self, guild_id, *, title=None, description=None, content=None, fields=()):
+    async def render_reply(
+        self, ctx, *, title=None, description=None, content=None, fields=(), code=()
+    ):
+        """Mirrors corridor's real render_reply, including resolving
+        `guild_id`/`prefix` from `ctx` itself (a caller never supplies
+        either) and ReplyService.render's `[p]` substitution and
+        `code`/`ReplyField.code` fencing -- see corridor/adapters/cog_base.py
+        and corridor/application/reply_service.py, the source of truth this
+        double is kept in sync with."""
+
+        guild_id = ctx.guild.id
+        prefix = ctx.clean_prefix
         self.rendered_replies.append((guild_id, title, description, content, tuple(fields)))
+
+        def subst(text):
+            return text.replace("[p]", prefix) if text is not None else None
+
+        def fence(text):
+            return f"```\n{text}\n```"
+
+        title = subst(title)
+        description = subst(description)
+        content = subst(content)
+        fields = tuple(
+            type(field)(field.name, subst(field.value) or "", field.inline, field.code)
+            for field in fields
+        )
+        code_blocks = tuple(fence(subst(entry)) for entry in code)
+
         if self.reply_mode == "text":
             base = content or description or title or ""
             lines = [base] if base else []
-            lines.extend(f"**{field.name}:** {field.value}" for field in fields)
+            lines.extend(code_blocks)
+            lines.extend(
+                f"**{field.name}:**\n{fence(field.value)}"
+                if field.code
+                else f"**{field.name}:** {field.value}"
+                for field in fields
+            )
             return _FakeRenderedReply(mode="text", content="\n".join(lines))
+
+        embed_description = description or content
+        if code_blocks:
+            block_text = "\n".join(code_blocks)
+            embed_description = (
+                f"{embed_description}\n\n{block_text}" if embed_description else block_text
+            )
+        embed_fields = tuple(
+            type(field)(field.name, fence(field.value), False, field.code)
+            if field.code
+            else field
+            for field in fields
+        )
         return _FakeRenderedReply(
             mode="embed",
             embed_title=title,
-            embed_description=description or content,
-            fields=tuple(fields),
+            embed_description=embed_description,
+            fields=embed_fields,
         )
 
 

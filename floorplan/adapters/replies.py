@@ -51,10 +51,11 @@ class ReplyMixin(PixelAgentsBase):
         *,
         title: str | None = None,
         fields: Sequence[ReplyField] = (),
+        code: Sequence[str] = (),
         **kwargs: Any,
     ) -> None:
         await self._dispatch_reply(
-            ctx, ephemeral=True, content=content, title=title, fields=fields, **kwargs
+            ctx, ephemeral=True, content=content, title=title, fields=fields, code=code, **kwargs
         )
 
     async def _send_public(
@@ -64,10 +65,11 @@ class ReplyMixin(PixelAgentsBase):
         *,
         title: str | None = None,
         fields: Sequence[ReplyField] = (),
+        code: Sequence[str] = (),
         **kwargs: Any,
     ) -> None:
         await self._dispatch_reply(
-            ctx, ephemeral=False, content=content, title=title, fields=fields, **kwargs
+            ctx, ephemeral=False, content=content, title=title, fields=fields, code=code, **kwargs
         )
 
     async def _dispatch_reply(
@@ -78,6 +80,7 @@ class ReplyMixin(PixelAgentsBase):
         content: str | None = None,
         title: str | None = None,
         fields: Sequence[ReplyField] = (),
+        code: Sequence[str] = (),
         **kwargs: Any,
     ) -> None:
         if "view" in kwargs:
@@ -86,7 +89,7 @@ class ReplyMixin(PixelAgentsBase):
         else:
             kwargs.update(
                 await self._render_reply_payload(
-                    ctx, title=title, description=content, fields=fields
+                    ctx, title=title, description=content, fields=fields, code=code
                 )
             )
 
@@ -106,10 +109,14 @@ class ReplyMixin(PixelAgentsBase):
         title: str | None,
         description: str | None,
         fields: Sequence[ReplyField],
+        code: Sequence[str] = (),
     ) -> dict[str, Any]:
-        assert ctx.guild is not None, "floorplan replies need a guild context"
         rendered = await self._corridor.render_reply(
-            ctx.guild.id, title=title or _REPLY_TITLE, description=description, fields=fields
+            ctx,
+            title=title or _REPLY_TITLE,
+            description=description,
+            fields=fields,
+            code=code,
         )
         if rendered.mode == "text":
             return {"content": rendered.content}

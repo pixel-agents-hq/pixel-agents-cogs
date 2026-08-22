@@ -57,13 +57,21 @@ class FakeUser:
 
 
 class FakeBot:
-    def __init__(self, owner_ids: frozenset[int] = frozenset()) -> None:
+    def __init__(
+        self,
+        owner_ids: frozenset[int] = frozenset(),
+        valid_prefixes: tuple[str, ...] = (";",),
+    ) -> None:
         self.owner_ids = owner_ids
         self.user = FakeUser()
         self._guilds: dict[int, FakeGuild] = {}
         self._cogs: dict[str, Any] = {}
         self.unload_extension_calls: list[str] = []
         self.unload_extension_failures: set[str] = set()
+        self._valid_prefixes = valid_prefixes
+
+    async def get_valid_prefixes(self) -> list[str]:
+        return list(self._valid_prefixes)
 
     def register_guild(self, guild: FakeGuild) -> None:
         self._guilds[guild.id] = guild
@@ -84,9 +92,10 @@ class FakeBot:
 
 
 class FakeContext:
-    def __init__(self, author: FakeMember, guild: FakeGuild) -> None:
+    def __init__(self, author: FakeMember, guild: FakeGuild, clean_prefix: str = ";") -> None:
         self.author = author
         self.guild = guild
+        self.clean_prefix = clean_prefix
         self.sent: list[dict[str, Any]] = []
 
     async def send(

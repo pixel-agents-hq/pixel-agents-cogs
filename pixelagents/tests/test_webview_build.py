@@ -373,6 +373,8 @@ class TestOwnerNotificationFor(unittest.TestCase):
         message = webview_build.owner_notification_for(outcome)
         self.assertIn("git", message)
         self.assertIn("npm", message)
+        # Left as the literal placeholder -- substituting it is corridor's
+        # job (corridor.substitute_default_prefix), not this pure function's.
         self.assertIn("[p]pixelagents webview rebuild", message)
 
     def test_falls_back_to_the_error_when_no_tool_is_missing(self) -> None:

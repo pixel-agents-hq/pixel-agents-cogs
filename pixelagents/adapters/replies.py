@@ -44,6 +44,7 @@ class ReplyMixin(PixelAgentsBase):
         *,
         title: str | None = None,
         fields: Sequence[ReplyField] = (),
+        code: Sequence[str] = (),
         **kwargs: Any,
     ) -> None:
         if "view" in kwargs:
@@ -52,7 +53,7 @@ class ReplyMixin(PixelAgentsBase):
         else:
             kwargs.update(
                 await self._render_reply_payload(
-                    ctx, title=title, description=content, fields=fields
+                    ctx, title=title, description=content, fields=fields, code=code
                 )
             )
 
@@ -72,10 +73,14 @@ class ReplyMixin(PixelAgentsBase):
         title: str | None,
         description: str | None,
         fields: Sequence[ReplyField],
+        code: Sequence[str] = (),
     ) -> dict[str, Any]:
-        assert ctx.guild is not None, "pixelagents replies need a guild context"
         rendered = await self._corridor.render_reply(
-            ctx.guild.id, title=title or _REPLY_TITLE, description=description, fields=fields
+            ctx,
+            title=title or _REPLY_TITLE,
+            description=description,
+            fields=fields,
+            code=code,
         )
         if rendered.mode == "text":
             return {"content": rendered.content}

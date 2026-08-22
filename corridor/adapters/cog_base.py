@@ -88,12 +88,13 @@ class CogBase:
 
     async def render_reply(
         self,
-        guild_id: int,
+        ctx: commands.Context,
         *,
         title: str | None = None,
         description: str | None = None,
         content: str | None = None,
         fields: Sequence[ReplyField] = (),
+        code: Sequence[str] = (),
     ) -> RenderedReply:
         """Render title/description/content -- plus any embed `fields`
         (name/value/inline, discord.Embed.add_field-shaped) -- against a
@@ -105,18 +106,37 @@ class CogBase:
         title/description -- still gets exactly one send call and still
         respects ReplyMode, instead of hand-building its own discord.Embed.
 
+        Takes `ctx` (not a bare `guild_id`) so this can resolve the guild
+        *and* `ctx.clean_prefix` itself: any literal `[p]` in
+        `title`/`description`/`content`/every field value/every `code`
+        entry is replaced with the invoking command's real prefix -- Red
+        only substitutes `[p]` in command docstrings, never in reply text
+        this codebase builds by hand, and that substitution is corridor's
+        job alone, not something every caller should have to remember to
+        do itself. `code` holds copy-pastable strings (a command, a config
+        value, ...) that render in their own fenced Discord code block --
+        giving the client's native copy button -- instead of inline prose;
+        use `ReplyField(..., code=True)` for a whole field's value that
+        should render the same way.
+
         The single source of truth other cogs use when they need their own
         interaction-aware dispatch (ephemeral responses, hybrid-command
         followups, ...) instead of `send_reply`'s plain `ctx.send`. See
         floorplan's (or pixelagents') `ReplyMixin` for that use."""
 
-        settings = await self._repository.guild_settings(guild_id)
+        assert ctx.guild is not None, "render_reply needs a guild context"
+        settings = await self._repository.guild_settings(ctx.guild.id)
         return await self._reply_service.render(
-            guild_id,
+            ctx.guild.id,
             settings.reply,
             ReplyContent(
-                title=title, description=description, content=content, fields=tuple(fields)
+                title=title,
+                description=description,
+                content=content,
+                fields=tuple(fields),
+                code=tuple(code),
             ),
+            prefix=ctx.clean_prefix,
         )
 
     async def send_reply(
@@ -127,12 +147,39 @@ class CogBase:
         description: str | None = None,
         content: str | None = None,
         fields: Sequence[ReplyField] = (),
+        code: Sequence[str] = (),
     ) -> discord.Message:
-        assert ctx.guild is not None, "send_reply needs a guild context"
         rendered = await self.render_reply(
-            ctx.guild.id, title=title, description=description, content=content, fields=fields
+            ctx,
+            title=title,
+            description=description,
+            content=content,
+            fields=fields,
+            code=code,
         )
         return await send_rendered_reply(ctx, rendered)
+
+    async def default_prefix(self) -> str:
+        """The bot's global default command prefix -- what Red resolves DM
+        commands against, since a DM has no guild to pull a per-guild
+        prefix override from. For guild-scoped reply text, prefer
+        `render_reply`/`send_reply`'s automatic `ctx.clean_prefix`
+        substitution instead; this exists for proactive, ctx-less
+        notifications like `Red.send_to_owners` DMs."""
+
+        prefixes = await self.bot.get_valid_prefixes()
+        return prefixes[0] if prefixes else "[p]"
+
+    async def substitute_default_prefix(self, text: str) -> str:
+        """Replace literal `[p]` in `text` with `default_prefix()`.
+
+        For text that has no `ctx` to resolve a guild-scoped prefix from --
+        e.g. a proactive bot-owner DM built by a cog's own infrastructure
+        layer, which shouldn't need to know how to resolve a prefix at all.
+        Prefix resolution/substitution is corridor's job everywhere, not
+        something every caller re-derives for itself."""
+
+        return text.replace("[p]", await self.default_prefix())
 
     # --- settings mutation, used by settings_ui.py and [p]corridor commands ---
 

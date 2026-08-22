@@ -37,6 +37,7 @@ def _context() -> MagicMock:
     ctx = MagicMock()
     ctx.interaction = None
     ctx.send = AsyncMock()
+    ctx.clean_prefix = ";"
     return ctx
 
 
@@ -195,7 +196,8 @@ class TestWebviewBuildSurfaces(unittest.IsolatedAsyncioTestCase):
         self.cog.bot.send_to_owners.assert_awaited_once()
         (message,), _kwargs = self.cog.bot.send_to_owners.await_args
         self.assertIn("git", message)
-        self.assertIn("[p]pixelagents webview rebuild", message)
+        self.assertIn(";pixelagents webview rebuild", message)
+        self.assertNotIn("[p]", message)
 
     async def test_notify_owners_is_a_noop_without_a_failed_build(self) -> None:
         await self.cog._notify_owners_webview_build_failed()

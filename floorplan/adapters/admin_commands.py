@@ -57,6 +57,12 @@ class AdminCommandsMixin(PixelAgentsBase):
         def yn(value: bool) -> str:
             return "✅" if value else "🛑"
 
+        # "[p]" in the raw status text (not yet prefix-substituted -- that
+        # happens later, in corridor's render pipeline) is exactly the
+        # cases where the status also names a command to run, e.g. an
+        # outdated build convention or a failed build -- fence those so
+        # Discord gives a copy button, instead of every status line.
+        assets_status = self._webview_assets_status()
         fields = [
             ReplyField(
                 "Office Server", f"{global_settings.ws_host}:{global_settings.ws_port}/ws", False
@@ -66,7 +72,7 @@ class AdminCommandsMixin(PixelAgentsBase):
                 "Office Clients",
                 f"{self._client_hub.client_count} ({self._client_hub.editor_count} editor)",
             ),
-            ReplyField("Assets", self._webview_assets_status()),
+            ReplyField("Assets", assets_status, code="[p]" in assets_status),
             ReplyField("Msg Tool Clear Delay", f"{global_settings.message_tool_clear_delay}s"),
             ReplyField("Guild Enabled", yn(guild_settings.enabled)),
             ReplyField("Include Bots", yn(guild_settings.include_bots)),
@@ -200,7 +206,9 @@ class AdminCommandsMixin(PixelAgentsBase):
         if ctx.interaction:
             await ctx.interaction.response.defer(ephemeral=True)
         if not await self._settings_repository.guild_enabled(guild):
-            await self._reply(ctx, "Guild is not enabled. Use `[p]floorplan enable` first.")
+            await self._reply(
+                ctx, "Guild is not enabled. Enable it first:", code=["[p]floorplan enable"]
+            )
             return
         await self._reply(ctx, "Syncing…")
         await self._reply(ctx, await self._full_sync(guild))

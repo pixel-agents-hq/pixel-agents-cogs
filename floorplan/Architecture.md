@@ -134,13 +134,22 @@ in a browser console.
 
 `self._pixelagents` is resolved lazily, the first time
 `_sync_webview_assets` actually runs, via
-`dependency_loader.ensure_pixelagents_loaded` — not eagerly in `cog_load`
+`corridor.dependency_loader.ensure_loaded` — not eagerly in `cog_load`
 the way corridor is. `cog_load` never blocks on, or silently auto-loads,
 another cog's potentially slow webview build; deliberately deferred rather
 than mirroring corridor's own resolution timing here. `required_cogs` in
 `info.json` is only a Downloader install hint, so this pulls pixelagents
 back in if it was never loaded, or was unloaded independently, whenever it
 first turns out to be needed.
+
+`setup()` (in `floorplan/__init__.py`) does still eagerly ensure pixelagents
+is *importable* (not loaded) via `corridor.dependency_loader.ensure_importable`
+— floorplan's agent-visualization modules import pixelagents' domain/
+application/contracts API at module scope, so the package has to be
+resolvable before `.floorplan` is imported. Fully loading pixelagents there
+instead would break the Downloader RPC smoke test's later, independent load
+of pixelagents (it's tested alphabetically after floorplan) — see
+`ensure_importable`'s docstring in `corridor/dependency_loader.py`.
 
 ## Ecosystem integration
 

@@ -4,6 +4,7 @@ Stubs for discord / redbot / aiohttp are installed by conftest.py.
 """
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import unittest
@@ -69,10 +70,10 @@ def _make_cog():
     # floorplan/adapters/replies.py) -- default to a text-mode double so
     # tests that don't care about ReplyMode still get a working `_corridor`.
     cog._corridor = FakeCorridor()
-    # _sync_webview_assets() normally resolves this lazily via
-    # ensure_pixelagents_loaded() on first use; default it to a
-    # ready-and-loaded double the same way _corridor is defaulted above so
-    # tests that don't care about the webview still get a working one.
+    # cog_load() normally resolves this via corridor.dependency_loader's
+    # ensure_loaded(); default it to a ready-and-loaded double the same way
+    # _corridor is defaulted above so tests that don't care about the
+    # webview still get a working one.
     cog._pixelagents = FakePixelAgents()
     return cog
 
@@ -293,58 +294,50 @@ class TestBootstrap(unittest.IsolatedAsyncioTestCase):
         self.assertGreater(types.index("agentToolStart"), types.index("layoutLoaded"))
 
 
-class TestPixelagentsResolutionIsLazy(unittest.IsolatedAsyncioTestCase):
-    """cog_load() must never resolve (and so never auto-load) pixelagents --
-    see adapters/cog_base.py::_sync_webview_assets' docstring. A cog that
-    eagerly cross-loads a dependency at cog_load makes its own load/unload
-    cycle no longer self-contained, which broke the Downloader RPC smoke
-    test (check-cogs.yml): pixelagents got auto-loaded as a side effect of
-    loading floorplan, so when the harness later loaded pixelagents
-    explicitly (its own cogs are tested alphabetically, independently of
-    each other), Red reported it under `alreadyloaded_packages` instead of
-    `loaded_packages` and the harness treated that as a failure."""
+class TestPixelagentsResolution(unittest.IsolatedAsyncioTestCase):
+    """cog_load() resolves pixelagents synchronously, the same way it
+    already does for corridor -- see docs/dependency-loading.md for why the
+    previous lazy/background-load design (LazyDependency) was removed after
+    a real incident (an orphaned background build could collide with a
+    later, independent build of the same git working tree). This does mean
+    the Downloader RPC smoke test (check-cogs.yml) will likely report
+    pixelagents under `alreadyloaded_packages` on its own, later turn once
+    floorplan's earlier turn has already fully loaded it -- an accepted,
+    documented tradeoff, not a bug."""
 
-    async def test_cog_load_never_touches_pixelagents(self) -> None:
+    async def test_cog_load_resolves_pixelagents_synchronously(self) -> None:
         bot = MagicMock()
         bot.guilds = []
         bot.is_owner = AsyncMock(return_value=False)
         bot.wait_until_red_ready = AsyncMock()
         cog = FloorplanCog(bot)
         cog._corridor = FakeCorridor()
+        pixelagents_double = FakePixelAgents()
 
         with (
             patch(
-                "floorplan.adapters.cog_base.ensure_pixelagents_loaded", new=AsyncMock()
+                "corridor.dependency_loader.ensure_loaded",
+                new=AsyncMock(return_value=pixelagents_double),
             ) as ensure_loaded,
             patch.object(cog, "_start_server", new=AsyncMock()),
             patch.object(cog._pixel_index_client, "start", new=AsyncMock()),
         ):
             await cog.cog_load()
 
-        ensure_loaded.assert_not_awaited()
-        self.assertIsNone(cog._pixelagents)
-        await cog.cog_unload()
-
-    async def test_sync_webview_assets_resolves_pixelagents_on_first_use_only(self) -> None:
-        cog = _make_cog()
-        cog._pixelagents = None
-        pixelagents_double = FakePixelAgents()
-
-        with patch(
-            "floorplan.adapters.cog_base.ensure_pixelagents_loaded",
-            new=AsyncMock(return_value=pixelagents_double),
-        ) as ensure_loaded:
-            await cog._sync_webview_assets()
-            await cog._sync_webview_assets()
-
-        ensure_loaded.assert_awaited_once_with(cog.bot)
+        ensure_loaded.assert_awaited_once_with(bot, "pixelagents", "PixelAgents")
         self.assertIs(cog._pixelagents, pixelagents_double)
+        await cog.cog_unload()
 
     async def test_setup_never_touches_pixelagents_either(self) -> None:
         """The same bug also lived one layer up: floorplan/__init__.py's
         setup() -- Red's actual `[p]load floorplan` entrypoint -- used to
-        call ensure_pixelagents_loaded(bot) directly, before cog_load even
-        runs. Fixing only cog_base.py's cog_load() was not sufficient."""
+        call the pixelagents full-loader directly, before cog_load even
+        runs. Fixing only cog_base.py's cog_load() was not sufficient.
+
+        setup() does need pixelagents genuinely *importable* though (its
+        agent-visualization modules are imported at module scope by
+        `.floorplan`) -- see corridor.dependency_loader.ensure_importable,
+        which stops short of the full Cog load this test guards against."""
 
         import floorplan as floorplan_package
 
@@ -353,12 +346,55 @@ class TestPixelagentsResolutionIsLazy(unittest.IsolatedAsyncioTestCase):
         bot.is_owner = AsyncMock(return_value=False)
         bot.add_cog = AsyncMock()
 
-        with patch(
-            "floorplan.dependency_loader.ensure_pixelagents_loaded", new=AsyncMock()
-        ) as ensure_loaded:
+        with (
+            patch(
+                "corridor.dependency_loader.ensure_loaded", new=AsyncMock()
+            ) as ensure_loaded,
+            patch(
+                "floorplan.dependency_loader.ensure_corridor_loaded", new=AsyncMock()
+            ),
+            patch(
+                "corridor.dependency_loader.ensure_importable",
+                new=AsyncMock(),
+            ) as ensure_importable,
+        ):
             await floorplan_package.setup(bot)
 
         ensure_loaded.assert_not_awaited()
+        ensure_importable.assert_awaited_once_with(bot, "pixelagents")
+
+
+class TestCogLoadCleansUpOnFailure(unittest.IsolatedAsyncioTestCase):
+    """Regression test for a real incident: Red only calls cog_unload() for
+    a cog_load() that returned without raising (bot.extensions[name] is set
+    *after* setup() succeeds) -- so a crash partway through cog_load(),
+    after _start_server() already bound the office port, used to leak that
+    socket forever, since nothing was ever left to call .stop() on it.
+    cog_load() now cleans up (via cog_unload()) anything it already
+    started before letting the error propagate."""
+
+    async def test_a_crash_after_start_server_still_stops_the_server(self) -> None:
+        bot = MagicMock()
+        bot.guilds = []
+        bot.is_owner = AsyncMock(return_value=False)
+        cog = FloorplanCog(bot)
+        cog._corridor = FakeCorridor()
+
+        def _boom(coroutine, **kwargs):
+            coroutine.close()  # avoid a "coroutine was never awaited" warning
+            raise RuntimeError("boom")
+
+        with (
+            patch.object(cog, "_start_server", new=AsyncMock()) as start_server,
+            patch.object(cog._pixel_index_client, "start", new=AsyncMock()),
+            patch.object(cog._websocket_server, "stop", new=AsyncMock()) as stop_server,
+            patch.object(cog._task_supervisor, "create", side_effect=_boom),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "boom"):
+                await cog.cog_load()
+
+        start_server.assert_awaited_once()
+        stop_server.assert_awaited_once()
 
 
 class TestWebviewBasePathMismatch(unittest.IsolatedAsyncioTestCase):
@@ -977,6 +1013,21 @@ class TestOnMessage(unittest.IsolatedAsyncioTestCase):
         sent_types = [json.loads(s)["type"] for s in self.ws._sent]
         self.assertIn("agentToolStart", sent_types)
 
+    async def test_message_selects_the_agent(self):
+        """agentSelected must accompany the Message tool bubble so the label
+        panel (with the message text) is visible immediately, without hover
+        or "Always Show Labels"."""
+        self.cog._agents[(100, 1)] = ("online", "Tin")
+        msg = MagicMock()
+        msg.guild.id = 100
+        msg.author.id = 1
+        msg.content = "Hello world"
+        msg.id = 999
+        await self.cog.on_message(msg)
+        sent = [json.loads(s) for s in self.ws._sent]
+        self.assertEqual([m["type"] for m in sent], ["agentToolStart", "agentSelected"])
+        self.assertEqual(sent[1]["id"], self.cog._office_service.agent_id(1))
+
     async def test_message_truncates_long_content(self):
         self.cog._agents[(100, 1)] = ("online", "Tin")
         msg = MagicMock()
@@ -988,11 +1039,11 @@ class TestOnMessage(unittest.IsolatedAsyncioTestCase):
         tool_msg = next(json.loads(s) for s in self.ws._sent if json.loads(s)["type"] == "agentToolStart")
         self.assertLessEqual(len(tool_msg["status"]), 45)
 
-    async def test_message_clear_pings_waiting_checkmark(self):
-        """After the message-clear delay, a waiting checkmark ping must follow
-        the agentToolsClear — the only pixel-agents signal drawn without the
-        alwaysShowLabels/hover/select gate, so a message is still visible even
-        when nobody is looking at that character."""
+    async def test_message_clear_does_not_reping(self):
+        """After the message-clear delay, only agentToolsClear is sent —
+        agentSelected (sent at message-start) already made the message
+        visible without needing hover, so clearing must not also emit a
+        status ping."""
         self.cog._agents[(100, 1)] = ("online", "Tin")
         msg = MagicMock()
         msg.guild.id = 100
@@ -1000,15 +1051,14 @@ class TestOnMessage(unittest.IsolatedAsyncioTestCase):
         msg.content = "Hello world"
         msg.id = 999
         await self.cog.on_message(msg)
+        self.ws._sent.clear()
 
         await self.cog._clear_tool_after_delay(
             self.cog._office_service.agent_id(1), 0, guild_id=100, user_id=1
         )
 
-        sent = [json.loads(s) for s in self.ws._sent]
-        self.assertIn("agentStatus", [m["type"] for m in sent])
-        status_msg = next(m for m in sent if m["type"] == "agentStatus")
-        self.assertEqual(status_msg["status"], "waiting")
+        sent_types = [json.loads(s)["type"] for s in self.ws._sent]
+        self.assertEqual(sent_types, ["agentToolsClear"])
 
     async def test_message_ignored_if_not_tracked(self):
         msg = MagicMock()

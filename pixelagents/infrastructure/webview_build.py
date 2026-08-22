@@ -18,10 +18,13 @@ directly in tests and in CI without either installed.
 
 from __future__ import annotations
 
+import contextlib
+import fcntl
 import json
 import logging
 import shutil
 import subprocess
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -167,6 +170,34 @@ def _read_marker(marker: Path) -> str | None:
         return None
 
 
+@contextlib.contextmanager
+def _build_lock(cog_data_dir: Path) -> Iterator[None]:
+    """Serialize concurrent builds against the same `vendor_dir` checkout.
+
+    A real OS-level lock, not an `asyncio.Lock`: callers run this (via
+    `asyncio.to_thread`) on a worker thread that can outlive the asyncio
+    Task awaiting it -- Task cancellation (a caller's own timeout, a
+    supervisor shutdown, ...) stops the coroutine, not the thread or the
+    `git`/`npm`/`vite` subprocess already running inside it. An asyncio lock
+    would release the moment the coroutine unwinds, while the orphaned
+    subprocess keeps running and can still collide with a later, unrelated
+    build attempt -- this is exactly the incident this lock exists to
+    prevent (see docs/dependency-loading.md). `flock` is held by the OS
+    against the open file descriptor for as long as the underlying process
+    is alive, so a second caller queues instead of racing, no matter what
+    happened to the first caller's asyncio Task.
+    """
+
+    cog_data_dir.mkdir(parents=True, exist_ok=True)
+    lock_path = cog_data_dir / "webview_build.lock"
+    with open(lock_path, "w", encoding="utf-8") as lock_file:
+        fcntl.flock(lock_file, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_file, fcntl.LOCK_UN)
+
+
 def ensure_webview_built(
     cog_data_dir: Path,
     *,
@@ -193,20 +224,26 @@ def ensure_webview_built(
     if not force and is_up_to_date(webview_dist, commit, RELATIVE_BASE_PATH):
         return BuildResult(rebuilt=False, commit=commit, base_path=RELATIVE_BASE_PATH)
 
-    missing = missing_tools()
-    if missing:
-        raise WebviewBuildError(
-            f"missing required tool(s) to build the webview: {', '.join(missing)}",
-            missing_tools=missing,
-        )
+    with _build_lock(cog_data_dir):
+        # Re-check: a caller queued behind this lock may find the build it
+        # was waiting on already finished the exact work it needed.
+        if not force and is_up_to_date(webview_dist, commit, RELATIVE_BASE_PATH):
+            return BuildResult(rebuilt=False, commit=commit, base_path=RELATIVE_BASE_PATH)
 
-    vendor_dir = cog_data_dir / "vendor" / "pixel-agents"
-    _checkout(vendor_dir, commit, log)
-    _install_dependencies(vendor_dir, log)
-    build_out_dir = _build_bundle(vendor_dir, log)
-    _emit_decoded_assets(vendor_dir, build_out_dir, log)
-    _sync_dist(build_out_dir, webview_dist, commit, RELATIVE_BASE_PATH, log)
-    return BuildResult(rebuilt=True, commit=commit, base_path=RELATIVE_BASE_PATH)
+        missing = missing_tools()
+        if missing:
+            raise WebviewBuildError(
+                f"missing required tool(s) to build the webview: {', '.join(missing)}",
+                missing_tools=missing,
+            )
+
+        vendor_dir = cog_data_dir / "vendor" / "pixel-agents"
+        _checkout(vendor_dir, commit, log)
+        _install_dependencies(vendor_dir, log)
+        build_out_dir = _build_bundle(vendor_dir, log)
+        _emit_decoded_assets(vendor_dir, build_out_dir, log)
+        _sync_dist(build_out_dir, webview_dist, commit, RELATIVE_BASE_PATH, log)
+        return BuildResult(rebuilt=True, commit=commit, base_path=RELATIVE_BASE_PATH)
 
 
 def build_webview(

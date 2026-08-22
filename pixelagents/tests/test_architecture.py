@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import ast
+import subprocess
+import sys
 from pathlib import Path
 
 from redbot.core import commands
@@ -63,6 +65,36 @@ def test_production_config_access_does_not_bypass_repository() -> None:
     assert offenders == []
 
 
+def test_agent_visualization_modules_do_not_import_frameworks() -> None:
+    """domain/office.py, application/office.py, application/presence.py, and
+    contracts/outbound.py are consumed directly by every cog that drives the
+    pixel-agents webview (floorplan today, more later) -- they must stay free
+    of any one consumer's framework (Discord, Red, aiohttp, pydantic)."""
+
+    banned_roots = {"aiohttp", "discord", "pydantic", "redbot"}
+    targets = (
+        PACKAGE_ROOT / "domain" / "office.py",
+        PACKAGE_ROOT / "application" / "office.py",
+        PACKAGE_ROOT / "application" / "presence.py",
+        PACKAGE_ROOT / "contracts" / "outbound.py",
+    )
+
+    for path in targets:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        imported_roots = {
+            alias.name.partition(".")[0]
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Import)
+            for alias in node.names
+        }
+        imported_roots.update(
+            node.module.partition(".")[0]
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ImportFrom) and node.module is not None
+        )
+        assert imported_roots.isdisjoint(banned_roots), path
+
+
 def test_no_leftover_runtime_dependency_on_aiohttp_or_pydantic() -> None:
     """pixelagents shrank to vendoring+building -- neither the office
     WebSocket server nor the Pixel Index client live here any more, so
@@ -81,3 +113,39 @@ def test_no_leftover_runtime_dependency_on_aiohttp_or_pydantic() -> None:
                 if module in {"aiohttp", "pydantic"}:
                     offenders.append((path, module))
     assert offenders == []
+
+
+def test_importing_the_package_does_not_cache_the_corridor_coupled_cog_module() -> None:
+    """Regression test for a real production incident: `ensure_importable`
+    (corridor/dependency_loader.py) does `import pixelagents` so a dependent
+    can reach its domain/application/contracts submodules without loading it
+    as a Cog. If merely importing the top-level package also pulled in
+    `pixelagents.pixelagents` (and so `adapters/replies.py`, which needs
+    corridor already loaded), that submodule would get cached in
+    `sys.modules`. Red's `_load` always calls `_cleanup_and_refresh_modules`
+    before `setup()`, which unconditionally re-execs every already-cached
+    `pixelagents.*` submodule -- bypassing this package's own lazy
+    `__getattr__` resolution entirely -- so a later `[p]load pixelagents`,
+    at a moment corridor isn't currently loaded, crashed with
+    `ModuleNotFoundError: No module named 'corridor'` before `setup()` ever
+    got a chance to load corridor. Run in a subprocess: this has to observe
+    a genuinely fresh `sys.modules`, which the running test session's own
+    imports have already populated.
+    """
+
+    script = (
+        "import sys; "
+        "import pixelagents.tests.conftest; "
+        "import pixelagents; "
+        "assert 'pixelagents.pixelagents' not in sys.modules, sorted(sys.modules); "
+        "assert 'pixelagents.adapters.replies' not in sys.modules, sorted(sys.modules); "
+        "print('OK')"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=PACKAGE_ROOT.parent,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr

@@ -199,8 +199,24 @@ just applied to a build instead of an HTTP call:
   (`characters`/`floors`/`walls`/`carpets`/`furniture`, plus the furniture
   catalog), a default layout is available, and every asset the built
   `index.html` references resolves on disk. A build failure reports one
-  failing `build` check and three `skipped` checks, mirroring how Pixel
+  failing `build` check and five `skipped` checks, mirroring how Pixel
   Index's checker skips endpoints it can't reach.
+- [`contracts/pixel_agents/schema.py`](../contracts/pixel_agents/schema.py) /
+  [`contracts/pixel_agents/verify_outbound.py`](../contracts/pixel_agents/verify_outbound.py)
+  — the websocket half of the contract: `pixelagents/contracts/outbound.py`'s
+  builders and the `OfficeService`/`PresenceService` application classes that
+  call them claim to match upstream's `core/asyncapi.yaml` message shapes,
+  but nothing checked that claim against the real spec. `verify.py`'s clone
+  already has that file on disk (`<scratch>/vendor/pixel-agents/core/asyncapi.yaml`)
+  by the time the build checks above run, so `schema.py` indexes every
+  message schema there by its wire `type` discriminator, and
+  `verify_outbound.py` drives `OfficeService`/`PresenceService` through a
+  realistic sequence (spawn → message → clear → rename → close →
+  bootstrap), captures every message they actually emit, and validates each
+  one against its matching schema — catching a shape drift the same way an
+  actual connected webview would notice one. `merge_seat_patch`/`to_agent_id`
+  don't emit wire messages, so they get a functional smoke check instead
+  (`helper_smoke`).
 - [`contracts/pixel_agents/generate_status_site.py`](../contracts/pixel_agents/generate_status_site.py)
   — publishes the result in the same shape as Pixel Index's site, nested
   under `pixel-agents/` on the shared status site.

@@ -14,12 +14,22 @@ that.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import discord
 from redbot.core import commands
 
-from corridor.domain import ReplyField
+if TYPE_CHECKING:
+    # ReplyField is never constructed here, only referenced in annotations
+    # (which `from __future__ import annotations` never evaluates at
+    # runtime) -- a real top-level import isn't just unnecessary, it's
+    # actively unsafe: Red's `_cleanup_and_refresh_modules` re-execs this
+    # module directly, unconditionally, before pixelagents' own setup() gets
+    # a chance to run `ensure_corridor_loaded`, so a hard corridor import
+    # here would crash any reload attempted at a moment corridor isn't
+    # currently loaded (this happened in production -- see
+    # pixelagents/__init__.py's module docstring for the mechanism).
+    from corridor.domain import ReplyField
 
 from .cog_base import PixelAgentsBase
 

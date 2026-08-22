@@ -1,4 +1,4 @@
-"""Framework-neutral Discord activity and message projection policy."""
+"""Framework-neutral rich-presence and message activity projection policy."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ SendMessage: TypeAlias = Callable[[ServerMessage], Awaitable[None]]
 
 
 class PresenceService:
-    """Build labels and keep the last emitted rich presence per guild member."""
+    """Build labels and keep the last emitted rich presence per agent."""
 
     def __init__(self, send: SendMessage) -> None:
         self._send = send

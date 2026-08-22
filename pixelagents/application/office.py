@@ -10,6 +10,7 @@ from typing import Any, Protocol, TypeAlias, TypeVar
 from ..contracts.outbound import (
     agent_closed,
     agent_created,
+    agent_selected,
     agent_status,
     agent_team_info,
     agent_tools_clear,
@@ -34,11 +35,38 @@ class SeatRepository(Protocol):
     ) -> MutationResult: ...
 
 
-def discord_id_to_agent_id(user_id: int) -> int:
-    """Map a Discord snowflake to a stable negative JavaScript-safe integer."""
+def to_agent_id(external_id: int) -> int:
+    """Map an external member ID (e.g. a Discord snowflake) to a stable
+    negative JavaScript-safe integer the webview uses as its agent ID."""
 
-    mapped = user_id % JS_MAX_SAFE
+    mapped = external_id % JS_MAX_SAFE
     return -(mapped if mapped != 0 else JS_MAX_SAFE)
+
+
+def merge_seat_patch(
+    seats: SeatRecords,
+    agent_id: str,
+    palette_count: int,
+    patch: Mapping[str, object],
+) -> None:
+    """Validate and merge one agent's seat/palette patch into `seats` in place.
+
+    Shared by the editor-driven `SaveAgentSeats` path (an out-of-range or
+    wrong-typed field is dropped rather than corrupting the persisted record)
+    and available to any other seat-writing path a consuming cog adds later.
+    """
+
+    record = dict(seats.get(agent_id) or {})
+    palette = patch.get("palette")
+    hue_shift = patch.get("hueShift")
+    seat_id = patch.get("seatId")
+    if isinstance(palette, int) and 0 <= palette < palette_count:
+        record["palette"] = palette
+    if isinstance(hue_shift, int) and 0 <= hue_shift <= 360:
+        record["hueShift"] = hue_shift
+    if isinstance(seat_id, str):
+        record["seatId"] = seat_id
+    seats[agent_id] = record
 
 
 class OfficeService:
@@ -80,7 +108,7 @@ class OfficeService:
 
     @staticmethod
     def agent_id(user_id: int) -> int:
-        return discord_id_to_agent_id(user_id)
+        return to_agent_id(user_id)
 
     def tracked_user_ids(self) -> list[int]:
         seen: set[int] = set()
@@ -112,7 +140,7 @@ class OfficeService:
             if agent_id not in self._logged_collisions:
                 self._logged_collisions.add(agent_id)
                 self._log.warning(
-                    "floorplan: agent ID collision — user %d and user %d both map to %d",
+                    "pixelagents: agent ID collision — user %d and user %d both map to %d",
                     user_id,
                     active_user_id,
                     agent_id,
@@ -273,7 +301,9 @@ class OfficeService:
                     rich_presence_enabled=rich_presence_enabled,
                 )
             except Exception as exc:
-                self._log.error("floorplan: reconcile error for %s: %s", snapshot.key.user_id, exc)
+                self._log.error(
+                    "pixelagents: reconcile error for %s: %s", snapshot.key.user_id, exc
+                )
                 errors += 1
         return f"Sync complete. Errors: {errors}." if errors else "Sync complete."
 
@@ -282,18 +312,17 @@ class OfficeService:
         await self.presence.clear_all(agent_ids)
 
     async def send_message_activity(self, snapshot: MessageSnapshot) -> None:
-        await self._send(self.presence.message_start(snapshot, self.agent_id(snapshot.key.user_id)))
+        agent_id = self.agent_id(snapshot.key.user_id)
+        await self._send(self.presence.message_start(snapshot, agent_id))
+        # Forces the full label panel open for this agent (bypassing the
+        # hover/alwaysShowLabels gate pixel-agents' ToolOverlay otherwise
+        # applies), so the message text above is visible immediately without
+        # requiring the viewer to hover or enable "Always Show Labels".
+        await self._send(agent_selected(agent_id))
 
     async def clear_message_activity(self, key: AgentKey) -> None:
         agent_id = self.agent_id(key.user_id)
         await self._send(agent_tools_clear(agent_id))
-        # A "waiting" agentStatus triggers pixel-agents' checkmark bubble, drawn
-        # unconditionally on canvas (no alwaysShowLabels/hover/select gate) and
-        # auto-clearing after WAITING_BUBBLE_DURATION_SEC (2s) — the only
-        # built-in way to flash "something happened" without the always-show
-        # setting. Sent once the Message tool label itself has cleared, so it
-        # reads as "a message landed" rather than overlapping the label.
-        await self._send(agent_status(agent_id, "waiting"))
         label = self.presence.cached_label(key)
         if label:
             await self.presence.send_tool(agent_id, label)
@@ -356,8 +385,8 @@ class OfficeService:
         # existingAgents once it processes layoutLoaded (buffering restored
         # agents until then, see pixel-agents' existingAgents.ts). Sent any
         # earlier, setTeamInfo silently no-ops on the not-yet-created
-        # character and the Discord display name is dropped for every agent
-        # that was already online before this client connected.
+        # character and the display name is dropped for every agent that was
+        # already online before this client connected.
         for user_id, (_, name) in self._representative_agents().items():
             messages.append(agent_team_info(self.agent_id(user_id), name))
         for key, label in self.presence.replay(set(self._agents)):

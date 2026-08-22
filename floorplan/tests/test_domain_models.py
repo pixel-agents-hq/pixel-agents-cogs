@@ -1,58 +1,16 @@
-"""Unit tests for framework-independent Pixel Agents domain values."""
+"""Unit tests for framework-independent Floorplan settings values.
+
+Agent-visualization domain values (AgentKey, AgentSnapshot, PresenceStatus,
+etc.) moved to `pixelagents.domain` -- see
+`pixelagents/tests/test_domain_office.py` for their tests.
+"""
 
 from __future__ import annotations
 
 import ast
-from dataclasses import FrozenInstanceError
 from pathlib import Path
 
-import pytest
-
-from floorplan.domain import (
-    ActivityKind,
-    ActivitySnapshot,
-    AgentKey,
-    AgentSnapshot,
-    GlobalSettings,
-    GuildSettings,
-    PresenceStatus,
-    SeatAssignment,
-    SettingsSnapshot,
-    TrackedAgent,
-)
-
-
-def test_agent_snapshots_are_immutable_and_normalized() -> None:
-    key = AgentKey(guild_id=10, user_id=20)
-    activity = ActivitySnapshot(
-        kind=ActivityKind.LISTENING,
-        name="Spotify",
-        title="Track",
-        artist="Artist",
-    )
-    snapshot = AgentSnapshot(
-        key=key,
-        display_name="Tin",
-        status=PresenceStatus.IDLE,
-        is_bot=False,
-        activities=(activity,),
-    )
-    tracked = TrackedAgent(key=key, display_name="Tin", status=PresenceStatus.IDLE)
-
-    assert snapshot.activities == (activity,)
-    assert snapshot.status.value == "idle"
-    assert tracked.key == key
-    with pytest.raises(FrozenInstanceError):
-        snapshot.display_name = "Changed"  # type: ignore[misc]
-
-
-def test_seat_assignment_represents_partial_persisted_metadata() -> None:
-    assignment = SeatAssignment(agent_id=-42, palette=3, seat_id="chair:1")
-
-    assert assignment.agent_id == -42
-    assert assignment.palette == 3
-    assert assignment.hue_shift is None
-    assert assignment.seat_id == "chair:1"
+from floorplan.domain import GlobalSettings, GuildSettings, SettingsSnapshot
 
 
 def test_settings_snapshot_finds_a_guild_without_mutable_mappings() -> None:

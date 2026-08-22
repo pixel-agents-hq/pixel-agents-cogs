@@ -1,4 +1,12 @@
-"""Load runtime cog dependencies before importing dependency-bound adapters."""
+"""Load corridor before importing dependency-bound adapters.
+
+`ensure_corridor_loaded` has to live here rather than going through
+`corridor.dependency_loader`'s generic helpers: you cannot import from
+corridor before corridor is loaded. Every other cross-cog dependency
+(pixelagents) uses `corridor.dependency_loader.ensure_importable`/
+`LazyDependency` directly once this function has made that import possible
+-- see docs/dependency-loading.md.
+"""
 
 from __future__ import annotations
 
@@ -36,41 +44,6 @@ async def ensure_corridor_loaded(bot: Any) -> Any:
 
     await bot.add_loaded_package("corridor")
     return corridor
-
-
-async def ensure_pixelagents_loaded(bot: Any) -> Any:
-    """Return PixelAgents, loading its package through Red's cog manager if needed.
-
-    floorplan depends on pixelagents for the built webview bundle (see
-    `PixelAgents.webview_bundle_status()`) -- mirrors `ensure_corridor_loaded`
-    above exactly, just against a different dependency.
-    """
-
-    pixelagents = bot.get_cog("PixelAgents")
-    if pixelagents is not None:
-        return pixelagents
-
-    try:
-        spec = await bot._cog_mgr.find_cog("pixelagents")
-    except Exception as exc:
-        _raise_load_error(f"PixelAgents package discovery failed: {exc}", cause=exc)
-    if spec is None:
-        _raise_load_error(
-            "PixelAgents is not installed in a configured cog path. Install it before "
-            "loading this cog."
-        )
-
-    try:
-        await bot.load_extension(spec)
-    except Exception as exc:
-        _raise_load_error(f"PixelAgents could not be auto-loaded: {exc}", cause=exc)
-
-    pixelagents = bot.get_cog("PixelAgents")
-    if pixelagents is None:
-        _raise_load_error("PixelAgents loaded without registering its Cog.")
-
-    await bot.add_loaded_package("pixelagents")
-    return pixelagents
 
 
 def _raise_load_error(message: str, *, cause: Exception | None = None) -> NoReturn:

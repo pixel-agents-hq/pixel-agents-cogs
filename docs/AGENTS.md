@@ -14,7 +14,7 @@ together in one place.
 | [`floorplan`](../floorplan) | Serves the built webview as a Red Dashboard page, mirrors Discord presence into it, and browses the Pixel Index layout catalogue. | [floorplan/README.md](../floorplan/README.md) |
 | [`toolbox`](../toolbox) | Bot-owner Node.js/npm installation on the host. | [toolbox/README.md](../toolbox/README.md) |
 | [`pico`](../pico) | An LLM-backed Discord presence: decides whether to react to a message, then acts only via a bounded tool-calling loop (never a raw LLM text send). | [pico/README.md](../pico/README.md) |
-| [`contracts`](../contracts) | **Not a cog** — `"type": "SHARED_LIBRARY"` in its `info.json`, so Red's Downloader skips it. CI-only: consumer-driven contract tests against Pixel Index and Pixel Agents, plus the reply-channel lint. | [contracts/README.md](../contracts/README.md) |
+| [`contracts`](../contracts) | **Not a cog** — `"type": "SHARED_LIBRARY"` in its `info.json`, so Red's Downloader skips it. CI-only: consumer-driven contract tests against Pixel Index and Pixel Agents, plus the reply-channel lint. (It does have a no-op `setup()` — purely to stop dev-time hot reload tooling from reporting a spurious failure; see `contracts/__init__.py`.) | [contracts/README.md](../contracts/README.md) |
 
 `pixelagents` and `floorplan` used to be one combined cog; [issue #21](https://github.com/pixel-agents-hq/pixel-agents-cogs/issues/21)
 split "owns the vendor and the build" from "owns everything that consumes
@@ -42,7 +42,10 @@ package's own `Architecture.md` (where present) covers its specifics.
   `contracts/discord_replies/lint_reply_channel.py` runs in CI and fails a
   build on any command handler that reaches a raw Discord send without
   going through corridor. See [`docs/corridor.md`](corridor.md) for the
-  full permission model.
+  full permission model, and
+  [`docs/dependency-loading.md`](dependency-loading.md) for how/why
+  cross-cog dependencies (corridor included) get loaded at all — Red has
+  no built-in mechanism for this.
 - **Two separate trees, only one of them writable at runtime.** The
   installed package tree (what Downloader clones/copies) is read-only at
   runtime — never write into it. Anything a cog writes (config, build
@@ -94,6 +97,9 @@ Index lint/verify steps — see [`contracts/README.md`](../contracts/README.md).
 
 ## Further reading
 
+- [`docs/dependency-loading.md`](dependency-loading.md) — how cross-cog
+  dependencies get loaded, why corridor's bootstrap is duplicated per cog,
+  and when to use `ensure_loaded` vs `ensure_importable`.
 - [`docs/corridor.md`](corridor.md) — corridor's permission model in full.
 - [`docs/contract-testing.md`](contract-testing.md) — why/how Pixel Index
   and Pixel Agents contracts are generated and verified in CI.

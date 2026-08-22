@@ -1,4 +1,8 @@
-"""Application services coordinating Floorplan use cases."""
+"""Application services coordinating Floorplan use cases.
+
+OfficeService/PresenceService moved to `pixelagents.application` -- import
+them from there directly.
+"""
 
 from .catalogue import (
     LAYOUT_SEARCH_PAGE_SIZE,
@@ -9,8 +13,6 @@ from .catalogue import (
     CatalogueResult,
     CatalogueService,
 )
-from .office import OfficeService, discord_id_to_agent_id
-from .presence import PresenceService
 from .settings import SettingsService
 from .tasks import TaskSupervisor
 
@@ -22,9 +24,6 @@ __all__ = [
     "CatalogueErrorCode",
     "CatalogueResult",
     "CatalogueService",
-    "OfficeService",
-    "PresenceService",
     "SettingsService",
     "TaskSupervisor",
-    "discord_id_to_agent_id",
 ]

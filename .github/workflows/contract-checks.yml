@@ -154,8 +154,10 @@ jobs:
         # redbot stub) also stubs `discord` in sys.modules before anything
         # does a real `import discord`. Matches the dependency set
         # vendor-update.yml's real-build gate installs for this same code
-        # path.
-        run: pip install aiohttp 'pydantic>=2.6,<2.11'
+        # path. pyyaml/jsonschema are for contracts/pixel_agents/verify_outbound.py
+        # and schema.py, which parse the cloned repo's core/asyncapi.yaml and
+        # validate captured messages against it.
+        run: pip install aiohttp 'pydantic>=2.6,<2.11' 'pyyaml>=6.0' 'jsonschema>=4.20'
 
       - name: Run contract check
         run: |

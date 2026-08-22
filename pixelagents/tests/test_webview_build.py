@@ -178,6 +178,105 @@ class TestEnsureWebviewBuilt(unittest.TestCase):
             )
 
 
+class TestEnsureWebviewBuiltConcurrency(unittest.TestCase):
+    """Regression test for a real incident: two independent builds against
+    the same vendor checkout collided on `.git/index.lock` because nothing
+    serialized them. See `_build_lock`'s docstring and
+    docs/dependency-loading.md for why this has to be a real OS-level lock
+    rather than an asyncio one."""
+
+    def test_concurrent_builds_do_not_interleave_their_steps(self) -> None:
+        import threading
+        import time
+
+        state_lock = threading.Lock()
+        in_progress = 0
+        max_concurrent = 0
+        violations: list[str] = []
+
+        def _enter(step: str) -> None:
+            nonlocal in_progress, max_concurrent
+            with state_lock:
+                in_progress += 1
+                max_concurrent = max(max_concurrent, in_progress)
+                if in_progress > 1:
+                    violations.append(step)
+
+        def _leave() -> None:
+            nonlocal in_progress
+            with state_lock:
+                in_progress -= 1
+
+        def fake_checkout(vendor_dir, commit, log):
+            _enter("checkout")
+            try:
+                # Widen the window: if the real lock didn't serialize
+                # callers, the other thread would run its own steps in here.
+                time.sleep(0.05)
+            finally:
+                _leave()
+
+        def fake_install(vendor_dir, log):
+            _enter("install")
+            _leave()
+
+        def fake_build(vendor_dir, log):
+            _enter("build")
+            try:
+                build_out_dir = vendor_dir / "dist" / "webview"
+                if build_out_dir.exists():
+                    import shutil
+
+                    shutil.rmtree(build_out_dir)
+                write_fake_vite_build(build_out_dir)
+                return build_out_dir
+            finally:
+                _leave()
+
+        def fake_emit(vendor_dir, out_dir, log):
+            _enter("emit")
+            _leave()
+
+        with TemporaryDirectory() as tmp:
+            cog_data_dir = Path(tmp)
+            commit_a = "a" * 40
+            commit_b = "b" * 40
+
+            with (
+                patch.object(webview_build, "missing_tools", return_value=()),
+                patch.object(webview_build, "_checkout", side_effect=fake_checkout),
+                patch.object(webview_build, "_install_dependencies", side_effect=fake_install),
+                patch.object(webview_build, "_build_bundle", side_effect=fake_build),
+                patch.object(webview_build, "_emit_decoded_assets", side_effect=fake_emit),
+            ):
+                results: list[webview_build.BuildResult] = []
+                errors: list[BaseException] = []
+
+                def run(commit: str) -> None:
+                    try:
+                        results.append(
+                            webview_build.ensure_webview_built(
+                                cog_data_dir, commit=commit, logger=_LOG, force=True
+                            )
+                        )
+                    except BaseException as exc:  # surfaced via errors, not lost in the thread
+                        errors.append(exc)
+
+                threads = [
+                    threading.Thread(target=run, args=(commit_a,)),
+                    threading.Thread(target=run, args=(commit_b,)),
+                ]
+                for t in threads:
+                    t.start()
+                for t in threads:
+                    t.join(timeout=5)
+
+            self.assertEqual(errors, [])
+            self.assertEqual(len(results), 2)
+            self.assertEqual(violations, [], "a build step ran while another was in progress")
+            self.assertEqual(max_concurrent, 1)
+
+
 class TestEnsureWebviewBuiltWithCommitOverride(unittest.TestCase):
     def test_builds_from_the_override_instead_of_the_pin(self) -> None:
         override = "b" * 40

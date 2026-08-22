@@ -6,6 +6,8 @@ from __future__ import annotations
 from aiohttp import web
 from redbot.core import commands
 
+from pixelagents.application.office import DEFAULT_PALETTE_COUNT, JS_MAX_SAFE, to_agent_id
+
 from .adapters.admin_commands import AdminCommandsMixin
 from .adapters.catalogue_commands import CatalogueCommandsMixin
 from .adapters.dashboard import DashboardMixin, dashboard_page
@@ -14,7 +16,6 @@ from .adapters.layout_views import LayoutBrowseView, LayoutDetailView, absolute_
 from .adapters.office_gateway import OfficeGatewayMixin
 from .adapters.replies import ReplyMixin
 from .application import LAYOUT_SORT_CHOICES
-from .application.office import DEFAULT_PALETTE_COUNT, JS_MAX_SAFE, discord_id_to_agent_id
 
 __all__ = ["Floorplan", "dashboard_page", "web"]
 
@@ -32,7 +33,7 @@ _PALETTE_COUNT = DEFAULT_PALETTE_COUNT
 def _discord_id_to_agent_id(user_id: int) -> int:
     """Compatibility wrapper for the domain ID mapping."""
 
-    return discord_id_to_agent_id(user_id)
+    return to_agent_id(user_id)
 
 
 class Floorplan(

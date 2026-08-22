@@ -1,5 +1,10 @@
-"""Unit tests for ensure_corridor_loaded / ensure_pixelagents_loaded
-(floorplan/dependency_loader.py).
+"""Unit tests for ensure_corridor_loaded (floorplan/dependency_loader.py).
+
+The generic ensure_loaded/ensure_importable helpers this used to duplicate
+for pixelagents moved to corridor/dependency_loader.py -- see
+corridor/tests/test_dependency_loader.py for their tests. This file keeps
+only corridor's own bootstrap loader, which can't be generalized: you cannot
+import a helper from corridor before corridor is loaded.
 
 Stubs for discord / redbot / aiohttp are installed by conftest.py.
 """
@@ -11,7 +16,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 from redbot.core.errors import CogLoadError
 
-from floorplan.dependency_loader import ensure_corridor_loaded, ensure_pixelagents_loaded
+from floorplan.dependency_loader import ensure_corridor_loaded
 
 
 def _bot(*, already_loaded=None, spec=None, load_extension=None, after_load=None):
@@ -53,55 +58,6 @@ class TestEnsureCorridorLoaded(unittest.IsolatedAsyncioTestCase):
             await ensure_corridor_loaded(bot)
 
         bot.load_extension.assert_not_called()
-
-
-class TestEnsurePixelagentsLoaded(unittest.IsolatedAsyncioTestCase):
-    async def test_returns_already_loaded_pixelagents_without_loading(self):
-        pixelagents = MagicMock()
-        bot = _bot(already_loaded=pixelagents)
-
-        result = await ensure_pixelagents_loaded(bot)
-
-        self.assertIs(result, pixelagents)
-        bot._cog_mgr.find_cog.assert_not_called()
-        bot.load_extension.assert_not_called()
-
-    async def test_loads_pixelagents_when_not_yet_loaded(self):
-        pixelagents = MagicMock()
-        spec = MagicMock()
-        bot = _bot(already_loaded=None, spec=spec, after_load=pixelagents)
-
-        result = await ensure_pixelagents_loaded(bot)
-
-        self.assertIs(result, pixelagents)
-        bot._cog_mgr.find_cog.assert_awaited_once_with("pixelagents")
-        bot.load_extension.assert_awaited_once_with(spec)
-        bot.add_loaded_package.assert_awaited_once_with("pixelagents")
-
-    async def test_missing_pixelagents_reports_a_user_facing_load_error(self):
-        bot = _bot(already_loaded=None, spec=None)
-
-        with self.assertRaisesRegex(CogLoadError, "not installed"):
-            await ensure_pixelagents_loaded(bot)
-
-        bot.load_extension.assert_not_called()
-
-    async def test_load_extension_failure_reports_a_user_facing_load_error(self):
-        spec = MagicMock()
-        bot = _bot(already_loaded=None, spec=spec)
-        bot.load_extension = AsyncMock(side_effect=RuntimeError("boom"))
-
-        with self.assertRaisesRegex(CogLoadError, "could not be auto-loaded"):
-            await ensure_pixelagents_loaded(bot)
-
-    async def test_load_without_registering_cog_reports_a_user_facing_load_error(self):
-        spec = MagicMock()
-        bot = _bot(already_loaded=None, spec=spec, after_load=None)
-
-        with self.assertRaisesRegex(CogLoadError, "without registering"):
-            await ensure_pixelagents_loaded(bot)
-
-        bot.add_loaded_package.assert_not_called()
 
 
 if __name__ == "__main__":

@@ -84,9 +84,10 @@ class FakeBot:
 
 
 class FakeContext:
-    def __init__(self, author: FakeMember, guild: FakeGuild) -> None:
+    def __init__(self, author: FakeMember, guild: FakeGuild, clean_prefix: str = ";") -> None:
         self.author = author
         self.guild = guild
+        self.clean_prefix = clean_prefix
         self.sent: list[dict[str, Any]] = []
 
     async def send(

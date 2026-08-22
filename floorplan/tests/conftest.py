@@ -690,18 +690,60 @@ class FakeCorridor:
             return member_id in self._keyholders
         return False
 
-    async def render_reply(self, guild_id, *, title=None, description=None, content=None, fields=()):
+    async def render_reply(
+        self, guild_id, *, prefix, title=None, description=None, content=None, fields=(), code=()
+    ):
+        """Mirrors corridor's real ReplyService.render, including its `[p]`
+        substitution and `code`/`ReplyField.code` fencing -- see
+        corridor/application/reply_service.py, the source of truth this
+        double is kept in sync with."""
+
         self.rendered_replies.append((guild_id, title, description, content, tuple(fields)))
+
+        def subst(text):
+            return text.replace("[p]", prefix) if text is not None else None
+
+        def fence(text):
+            return f"```\n{text}\n```"
+
+        title = subst(title)
+        description = subst(description)
+        content = subst(content)
+        fields = tuple(
+            type(field)(field.name, subst(field.value) or "", field.inline, field.code)
+            for field in fields
+        )
+        code_blocks = tuple(fence(subst(entry)) for entry in code)
+
         if self.reply_mode == "text":
             base = content or description or title or ""
             lines = [base] if base else []
-            lines.extend(f"**{field.name}:** {field.value}" for field in fields)
+            lines.extend(code_blocks)
+            lines.extend(
+                f"**{field.name}:**\n{fence(field.value)}"
+                if field.code
+                else f"**{field.name}:** {field.value}"
+                for field in fields
+            )
             return _FakeRenderedReply(mode="text", content="\n".join(lines))
+
+        embed_description = description or content
+        if code_blocks:
+            block_text = "\n".join(code_blocks)
+            embed_description = (
+                f"{embed_description}\n\n{block_text}" if embed_description else block_text
+            )
+        embed_fields = tuple(
+            type(field)(field.name, fence(field.value), False, field.code)
+            if field.code
+            else field
+            for field in fields
+        )
         return _FakeRenderedReply(
             mode="embed",
             embed_title=title,
-            embed_description=description or content,
-            fields=tuple(fields),
+            embed_description=embed_description,
+            fields=embed_fields,
         )
 
 

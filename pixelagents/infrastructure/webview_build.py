@@ -282,19 +282,28 @@ def build_webview(
     return BuildOutcome(ok=True, status_line=f"✅ Webview {verb} ({link}).")
 
 
-def owner_notification_for(outcome: BuildOutcome) -> str:
-    """DM text for `Red.send_to_owners` when `outcome.ok` is False."""
+def owner_notification_for(outcome: BuildOutcome, *, prefix: str) -> str:
+    """DM text for `Red.send_to_owners` when `outcome.ok` is False.
+
+    This is a proactive DM, not a reply to a command -- there's no `ctx` to
+    pull `clean_prefix` from, and Red resolves DM commands against the
+    bot's *global default* prefix rather than any guild's override, so the
+    caller is expected to pass that (e.g. `(await bot.get_valid_prefixes())[0]`)
+    as `prefix`.
+    """
 
     if outcome.missing_tools:
-        return (
+        message = (
             "⚠️ Pixel Agents could not build the office webview: missing "
             f"{', '.join(outcome.missing_tools)} on this bot's host. Install the missing "
             "tool(s), then run `[p]pixelagents webview rebuild`."
         )
-    return (
-        f"⚠️ Pixel Agents could not build the office webview: {outcome.error}\n"
-        "Run `[p]pixelagents webview rebuild` after investigating, or check the logs."
-    )
+    else:
+        message = (
+            f"⚠️ Pixel Agents could not build the office webview: {outcome.error}\n"
+            "Run `[p]pixelagents webview rebuild` after investigating, or check the logs."
+        )
+    return message.replace("[p]", prefix)
 
 
 def _run(args: list[str], *, cwd: Path | None, timeout: float, log: logging.Logger) -> None:

@@ -370,14 +370,15 @@ class TestOwnerNotificationFor(unittest.TestCase):
         outcome = webview_build.BuildOutcome(
             ok=False, status_line="x", error="boom", missing_tools=("git", "npm")
         )
-        message = webview_build.owner_notification_for(outcome)
+        message = webview_build.owner_notification_for(outcome, prefix=";")
         self.assertIn("git", message)
         self.assertIn("npm", message)
-        self.assertIn("[p]pixelagents webview rebuild", message)
+        self.assertIn(";pixelagents webview rebuild", message)
+        self.assertNotIn("[p]", message)
 
     def test_falls_back_to_the_error_when_no_tool_is_missing(self) -> None:
         outcome = webview_build.BuildOutcome(ok=False, status_line="x", error="disk full")
-        message = webview_build.owner_notification_for(outcome)
+        message = webview_build.owner_notification_for(outcome, prefix=";")
         self.assertIn("disk full", message)
 
 

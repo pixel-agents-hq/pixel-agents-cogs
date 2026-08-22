@@ -90,10 +90,12 @@ class CogBase:
         self,
         guild_id: int,
         *,
+        prefix: str,
         title: str | None = None,
         description: str | None = None,
         content: str | None = None,
         fields: Sequence[ReplyField] = (),
+        code: Sequence[str] = (),
     ) -> RenderedReply:
         """Render title/description/content -- plus any embed `fields`
         (name/value/inline, discord.Embed.add_field-shaped) -- against a
@@ -105,6 +107,17 @@ class CogBase:
         title/description -- still gets exactly one send call and still
         respects ReplyMode, instead of hand-building its own discord.Embed.
 
+        `prefix` (the invoking command's real prefix, e.g. `ctx.clean_prefix`)
+        replaces any literal `[p]` in `title`/`description`/`content`/every
+        field value/every `code` entry -- Red only substitutes `[p]` in
+        command docstrings, never in reply text this codebase builds by
+        hand, so callers are required to supply it rather than risk a
+        literal `[p]` leaking to users. `code` holds copy-pastable strings
+        (a command, a config value, ...) that render in their own fenced
+        Discord code block -- giving the client's native copy button --
+        instead of inline prose; use `ReplyField(..., code=True)` for a
+        whole field's value that should render the same way.
+
         The single source of truth other cogs use when they need their own
         interaction-aware dispatch (ephemeral responses, hybrid-command
         followups, ...) instead of `send_reply`'s plain `ctx.send`. See
@@ -115,8 +128,13 @@ class CogBase:
             guild_id,
             settings.reply,
             ReplyContent(
-                title=title, description=description, content=content, fields=tuple(fields)
+                title=title,
+                description=description,
+                content=content,
+                fields=tuple(fields),
+                code=tuple(code),
             ),
+            prefix=prefix,
         )
 
     async def send_reply(
@@ -127,10 +145,17 @@ class CogBase:
         description: str | None = None,
         content: str | None = None,
         fields: Sequence[ReplyField] = (),
+        code: Sequence[str] = (),
     ) -> discord.Message:
         assert ctx.guild is not None, "send_reply needs a guild context"
         rendered = await self.render_reply(
-            ctx.guild.id, title=title, description=description, content=content, fields=fields
+            ctx.guild.id,
+            prefix=ctx.clean_prefix,
+            title=title,
+            description=description,
+            content=content,
+            fields=fields,
+            code=code,
         )
         return await send_rendered_reply(ctx, rendered)
 

@@ -118,7 +118,9 @@ class PixelAgentsBase:
         if outcome is None or outcome.ok:
             return
         try:
-            await self.bot.send_to_owners(owner_notification_for(outcome))
+            prefixes = await self.bot.get_valid_prefixes()
+            prefix = prefixes[0] if prefixes else "[p]"
+            await self.bot.send_to_owners(owner_notification_for(outcome, prefix=prefix))
         except Exception:  # best-effort notification only, must never raise
             log.exception("pixelagents: could not notify owners about the webview build failure")
 

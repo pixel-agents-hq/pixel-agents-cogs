@@ -71,8 +71,8 @@ class CommandsMixin(PixelAgentsBase):
             await self._reply(
                 ctx,
                 f"Building from custom commit `{override}` "
-                f"(default pin is `{default}`). "
-                "Use `[p]pixelagents webview resetcommit` to revert.",
+                f"(default pin is `{default}`). To revert:",
+                code=["[p]pixelagents webview resetcommit"],
             )
         else:
             await self._reply(ctx, f"Building from the default pinned commit `{default}`.")
@@ -99,8 +99,8 @@ class CommandsMixin(PixelAgentsBase):
             return
         await self._reply(
             ctx,
-            f"Webview builds will use commit `{clean}`. "
-            "Run `[p]pixelagents webview rebuild` to build it now.",
+            f"Webview builds will use commit `{clean}`. To build it now:",
+            code=["[p]pixelagents webview rebuild"],
         )
 
     @cmd_webview.command(name="resetcommit")
@@ -113,5 +113,6 @@ class CommandsMixin(PixelAgentsBase):
         await self._reply(
             ctx,
             f"Webview builds will use the default pinned commit `{pinned_commit()}`. "
-            "Run `[p]pixelagents webview rebuild` to build it now.",
+            "To build it now:",
+            code=["[p]pixelagents webview rebuild"],
         )

@@ -66,6 +66,24 @@ class TestCorridorApi(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(ctx.sent[0]["content"], "Status\n**Serving:** yes")
 
+    async def test_send_reply_substitutes_p_with_ctx_clean_prefix(self) -> None:
+        member = FakeMember(2, self.guild)
+        ctx = FakeContext(author=member, guild=self.guild, clean_prefix=";")
+
+        await self.corridor.send_reply(ctx, title="Hi", description="Run [p]foo")
+
+        embed = ctx.sent[0]["embed"]
+        self.assertEqual(embed.description, "Run ;foo")
+
+    async def test_send_reply_code_renders_a_fenced_block(self) -> None:
+        await self.corridor.set_reply_mode(self.guild.id, ReplyMode.TEXT)
+        member = FakeMember(2, self.guild)
+        ctx = FakeContext(author=member, guild=self.guild, clean_prefix=";")
+
+        await self.corridor.send_reply(ctx, description="Do this:", code=["[p]foo"])
+
+        self.assertEqual(ctx.sent[0]["content"], "Do this:\n```\n;foo\n```")
+
     async def test_require_permission_denies_by_default(self) -> None:
         member = FakeMember(2, self.guild)
         ctx = FakeContext(author=member, guild=self.guild)

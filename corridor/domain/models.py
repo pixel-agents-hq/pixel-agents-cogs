@@ -91,11 +91,18 @@ class ReplyField:
     """One embed field -- discord.Embed.add_field's name/value/inline,
     framework-neutral. In ReplyMode.TEXT there's no such thing as an embed
     field, so ReplyService.render flattens each into an extra text line
-    instead of dropping it -- see that method for the exact format."""
+    instead of dropping it -- see that method for the exact format.
+
+    `code=True` marks `value` as copy-pastable command/config text --
+    ReplyService.render fences it in a Discord code block (giving the
+    client's native copy button) instead of rendering it as plain text, and
+    forces `inline=False` for the rendered field since a fenced block can't
+    usefully share a row with other fields."""
 
     name: str
     value: str
     inline: bool = True
+    code: bool = False
 
 
 @dataclass(frozen=True, slots=True)

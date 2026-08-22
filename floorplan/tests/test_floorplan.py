@@ -1183,6 +1183,7 @@ class TestToolClearDelayCommand(unittest.IsolatedAsyncioTestCase):
 
     async def test_set_valid_delay(self):
         ctx = MagicMock()
+        ctx.clean_prefix = ";"
         ctx.interaction = None
         ctx.send = AsyncMock()
         await self.cog.cmd_toolcleardelay(ctx, 5.0)
@@ -1192,6 +1193,7 @@ class TestToolClearDelayCommand(unittest.IsolatedAsyncioTestCase):
 
     async def test_negative_delay_rejected(self):
         ctx = MagicMock()
+        ctx.clean_prefix = ";"
         ctx.interaction = None
         ctx.send = AsyncMock()
         await self.cog.cmd_toolcleardelay(ctx, -1.0)
@@ -1204,6 +1206,7 @@ class TestWsPortCommand(unittest.IsolatedAsyncioTestCase):
 
     def _ctx(self):
         ctx = MagicMock()
+        ctx.clean_prefix = ";"
         ctx.interaction = None
         ctx.send = AsyncMock()
         return ctx
@@ -1313,6 +1316,7 @@ class TestPixelIndexSetwebCommand(unittest.IsolatedAsyncioTestCase):
 
     def _ctx(self):
         ctx = MagicMock()
+        ctx.clean_prefix = ";"
         ctx.interaction = None
         ctx.send = AsyncMock()
         return ctx
@@ -1556,6 +1560,7 @@ class TestReplyHelper(unittest.IsolatedAsyncioTestCase):
 
     async def test_prefix_uses_ctx_send(self):
         ctx = MagicMock()
+        ctx.clean_prefix = ";"
         ctx.interaction = None
         ctx.send = AsyncMock()
         await self.cog._reply(ctx, "hello")
@@ -1564,6 +1569,7 @@ class TestReplyHelper(unittest.IsolatedAsyncioTestCase):
     async def test_text_mode_renders_through_corridor(self):
         self.cog._corridor = FakeCorridor(reply_mode="text")
         ctx = MagicMock()
+        ctx.clean_prefix = ";"
         ctx.interaction = None
         ctx.send = AsyncMock()
         await self.cog._reply(ctx, "hello", title="Pixel Agents")
@@ -1576,6 +1582,7 @@ class TestReplyHelper(unittest.IsolatedAsyncioTestCase):
     async def test_embed_mode_renders_through_corridor(self):
         self.cog._corridor = FakeCorridor(reply_mode="embed")
         ctx = MagicMock()
+        ctx.clean_prefix = ";"
         ctx.interaction = None
         ctx.send = AsyncMock()
         await self.cog._reply(ctx, "hello", title="Pixel Agents")
@@ -1586,6 +1593,7 @@ class TestReplyHelper(unittest.IsolatedAsyncioTestCase):
     async def test_embed_mode_reply_carries_fields(self):
         self.cog._corridor = FakeCorridor(reply_mode="embed")
         ctx = MagicMock()
+        ctx.clean_prefix = ";"
         ctx.interaction = None
         ctx.send = AsyncMock()
         fields = [ReplyField("Serving", "yes", False), ReplyField("Clients", "3")]
@@ -1604,6 +1612,7 @@ class TestReplyHelper(unittest.IsolatedAsyncioTestCase):
     async def test_text_mode_reply_flattens_fields_to_lines(self):
         self.cog._corridor = FakeCorridor(reply_mode="text")
         ctx = MagicMock()
+        ctx.clean_prefix = ";"
         ctx.interaction = None
         ctx.send = AsyncMock()
         fields = [ReplyField("Serving", "yes"), ReplyField("Clients", "3")]
@@ -1617,6 +1626,7 @@ class TestReplyHelper(unittest.IsolatedAsyncioTestCase):
     async def test_view_only_reply_bypasses_corridor(self):
         self.cog._corridor = FakeCorridor(reply_mode="embed")
         ctx = MagicMock()
+        ctx.clean_prefix = ";"
         ctx.interaction = None
         ctx.send = AsyncMock()
         view = object()
@@ -1626,6 +1636,7 @@ class TestReplyHelper(unittest.IsolatedAsyncioTestCase):
 
     async def test_slash_uses_response_send_message(self):
         ctx = MagicMock()
+        ctx.clean_prefix = ";"
         interaction = _FakeInteraction(guild=MagicMock())
         ctx.interaction = interaction
         sent = []
@@ -1642,6 +1653,7 @@ class TestReplyHelper(unittest.IsolatedAsyncioTestCase):
 
     async def test_slash_after_defer_uses_followup(self):
         ctx = MagicMock()
+        ctx.clean_prefix = ";"
         interaction = _FakeInteraction(guild=MagicMock())
         interaction.response._done = True
         ctx.interaction = interaction

@@ -187,6 +187,7 @@ class TestSettingsCommandParity(unittest.IsolatedAsyncioTestCase):
         ctx = MagicMock()
         ctx.interaction = None
         ctx.send = AsyncMock()
+        ctx.clean_prefix = ";"
         return ctx
 
     async def test_existing_commands_delegate_to_the_shared_service(self) -> None:

@@ -8,7 +8,21 @@ on:
 jobs:
   test-cogs:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # cog: a cog's dependencies may already be loaded (e.g. an earlier
+        # cog's turn pulled them in as a real side effect -- the common
+        # warm-start case). cog-and-dependencies: forces a genuine
+        # cold-start bootstrap by unloading everything the cog declares in
+        # required_cogs first. Both are real states a user can hit in
+        # production -- see .github/actions/test-red-discordbot-downloader-local's
+        # unload_scope input.
+        unload_scope: [cog, cog-and-dependencies]
     steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
@@ -18,11 +32,12 @@ jobs:
         run: pip install red-discordbot
 
       - name: Test Cogs
-        uses: nntin/d-flows/actions/test-red-discordbot-downloader@v1
+        uses: ./.github/actions/test-red-discordbot-downloader-local
         with:
           token: ${{ secrets.DISCORD_BOT_TOKEN }}
           repo_url: https://github.com/${{ github.repository }}
           repo_branch: ${{ github.head_ref || github.ref_name }}
+          unload_scope: ${{ matrix.unload_scope }}
 
   ##################################################################
   ####     Build validation results for Discord notification    ####

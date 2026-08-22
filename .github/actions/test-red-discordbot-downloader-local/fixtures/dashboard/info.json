@@ -1,0 +1,10 @@
+{
+  "author": ["pixel-agents-cogs CI"],
+  "name": "dashboard",
+  "short": "CI-only stub of Red Web Dashboard's Cog shape.",
+  "description": "Minimal fixture satisfying floorplan's dashboard_cog_loaded() check during check-cogs.yml runs, so the DM-on-missing-dashboard notification doesn't fire against the real bot owner in CI. Not a real Red Web Dashboard implementation and never published through Downloader.",
+  "min_bot_version": "3.5.0",
+  "hidden": true,
+  "disabled": false,
+  "type": "COG"
+}

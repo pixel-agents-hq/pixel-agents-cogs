@@ -55,6 +55,16 @@ WS_WAIT_TIMEOUT = _ws_timeout(3)
 DEFAULT_INSTANCE_NAME = "tinkerer"
 TEMPORARY_INSTANCE_NAME = "temporary_red"
 
+# Loaded once, upfront, and left loaded for the whole run -- satisfies
+# floorplan's dashboard_cog_loaded() check so its cog_load() doesn't DM the
+# real bot owner about a "missing" dashboard on every CI run. Never part of
+# `expected_names`/`installed` (it lives outside the repo under test), so it
+# never goes through install_cogs_from_repo, exercise_cogs, or
+# _transitive_dependencies -- it's just a fixed fact of the RPC instance's
+# state by the time the real cogs are exercised.
+DASHBOARD_STUB_NAME = "dashboard"
+DASHBOARD_STUB_FIXTURE = Path(__file__).parent / "fixtures" / DASHBOARD_STUB_NAME
+
 
 class RPCError(RuntimeError):
     """Raised when the RPC server reports an error."""
@@ -307,6 +317,24 @@ async def get_cog_install_path() -> Path:
     return path
 
 
+def install_dashboard_stub(install_path: Path) -> None:
+    """Copy the fixture dashboard cog directly into Red's cog search path.
+
+    Bypasses Downloader entirely (no Repo/install_cog involved) -- Red's
+    CogManager searches `install_path` for loadable packages regardless of
+    whether Downloader's own bookkeeping considers something "installed"
+    there, so a plain copy is sufficient.
+    """
+
+    target = install_path / DASHBOARD_STUB_NAME
+    if target.exists():
+        if target.is_dir():
+            shutil.rmtree(target)
+        else:
+            target.unlink()
+    shutil.copytree(DASHBOARD_STUB_FIXTURE, target)
+
+
 def ensure_lib_paths() -> Path:
     base = data_manager.cog_data_path(raw_name="Downloader") / "lib"
     shared = base / "cog_shared"
@@ -485,6 +513,7 @@ async def main_async() -> None:
     repo_manager = await setup_repo_manager()
     install_path = await get_cog_install_path()
     requirements_path = ensure_lib_paths()
+    install_dashboard_stub(install_path)
 
     unload_scope = resolved_unload_scope()
     print(f"🧪 Unload scope: {unload_scope}")
@@ -510,11 +539,13 @@ async def main_async() -> None:
         async with aiohttp.ClientSession() as session:
             await wait_for_rpc(session, rpc_url)
             async with JsonRpcClient(session, rpc_url) as client:
+                await load_cog(client, DASHBOARD_STUB_NAME)
                 await exercise_cogs(client, installed, required_cogs_by_name, unload_scope)
+                await unload_quietly(client, DASHBOARD_STUB_NAME)
 
         print("🎯 Downloader installation tests passed")
     finally:
-        cleanup_installed_cogs(install_path, installed)
+        cleanup_installed_cogs(install_path, [*installed, DASHBOARD_STUB_NAME])
         if repo is not None:
             try:
                 await repo_manager.delete_repo(repo.name)

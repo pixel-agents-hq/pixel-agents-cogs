@@ -55,8 +55,9 @@ jobs:
 3. Red-DiscordBot (`redbot tinkerer ... --rpc`) starts in the background and writes logs to `${{ runner.temp }}`.
 4. The helper script `test_downloader_cogs.py` loads Red's configuration, initializes the downloader `RepoManager`, and adds the temporary git repo via `repo add` semantics.
 5. Downloader installs each cog into Red's configured install path, ensuring requirements are installed into Downloader's library directory.
-6. Using the RPC websocket endpoint, every installed cog is loaded and then unloaded to verify that the installation truly works inside a live bot.
-7. On success or failure the action cleans up: Red is stopped, installed cogs are removed, the downloader clone is deleted, and the temporary repository is discarded.
+6. Before any real cog is exercised, a minimal fixture "dashboard" cog (`fixtures/dashboard/`) is copied straight into Red's install path (bypassing Downloader) and loaded via RPC, satisfying floorplan's `dashboard_cog_loaded()` check so its cog_load() doesn't DM the real bot owner every run just because Red Web Dashboard (an external cog) isn't installed in CI. It's never part of the repo's own cog list, so it's never load/unload-exercised itself.
+7. Using the RPC websocket endpoint, every installed cog is loaded and then unloaded to verify that the installation truly works inside a live bot.
+8. On success or failure the action cleans up: the fixture dashboard cog and installed cogs are removed, Red is stopped, the downloader clone is deleted, and the temporary repository is discarded.
 
 ## Requirements
 - Runner must already have Red-DiscordBot configured (e.g., via `install-red-discordbot` + `setup-red-discordbot` flows).

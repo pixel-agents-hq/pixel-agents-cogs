@@ -151,6 +151,33 @@ instead would break the Downloader RPC smoke test's later, independent load
 of pixelagents (it's tested alphabetically after floorplan) — see
 `ensure_importable`'s docstring in `corridor/dependency_loader.py`.
 
+## Dashboard dependency
+
+The office webview and the editor session ticket route
+(`adapters/dashboard.py`) are only reachable through Red Web Dashboard
+(AAA3A-cogs' `dashboard`) — floorplan registers itself as a third party via
+`dashboard_cog.rpc.third_parties_handler.add_third_party`, the same
+registration convention `on_dashboard_cog_add` already reacts to when
+dashboard loads *after* floorplan. Unlike pixelagents, though, `cog_load()`
+never blocks on dashboard: dashboard being absent doesn't stop presence
+mirroring, layout catalogue browsing, or the WebSocket protocol from
+working, and a hard failure here would be a worse outage than a silently
+unreachable webview.
+
+Instead, `cog_load()` checks once, synchronously, whether dashboard is
+already loaded (`adapters/dashboard.py::dashboard_cog_loaded`, the same
+`.rpc.third_parties_handler` shape check `on_dashboard_cog_add` trusts —
+finding *something* registered as `"Dashboard"` isn't proof it's really Red
+Web Dashboard). If it isn't, the bot owner gets a one-time DM
+(`Red.send_to_owners`, wrapped the same never-raises way
+`pixelagents/adapters/cog_base.py::_notify_owners_webview_build_failed`
+guards its own owner DM) linking
+[Red Web Dashboard's docs](https://red-web-dashboard.readthedocs.io/en/latest/).
+This is deliberately a one-shot check at floorplan's own load time, not a
+recurring one: dashboard loading later is already covered by
+`on_dashboard_cog_add`'s registration listener, which this doesn't
+duplicate or race against.
+
 ## Ecosystem integration
 
 ```mermaid

@@ -190,6 +190,7 @@ class PixelAgentsBase:
             self._corridor = await ensure_corridor_loaded(self.bot)
             self._corridor.register_dependent("floorplan")
             self._pixelagents = await ensure_loaded(self.bot, "pixelagents", "PixelAgents")
+            await self._notify_owners_dashboard_missing_if_unloaded()
             self._task_supervisor.open()
             await self._pixel_index_client.start()
             await self._start_server()
@@ -215,6 +216,7 @@ class PixelAgentsBase:
         await self._pixel_index_client.close()
 
     # Cross-adapter hooks resolved by the composed Cog's MRO.
+    async def _notify_owners_dashboard_missing_if_unloaded(self) -> None: ...
     async def _check_auth(self, user_id: int) -> bool:
         raise NotImplementedError
 

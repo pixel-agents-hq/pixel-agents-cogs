@@ -33,6 +33,13 @@ floorplan does not build the webview itself — see
 Assets field reports it missing (this requires `git`, `node`, and `npm` on
 the host; [`toolbox`](../toolbox) can install Node.js/npm for you).
 
+The office webview is served through [Red Web
+Dashboard](https://red-web-dashboard.readthedocs.io/en/latest/)
+(AAA3A-cogs' `dashboard`). floorplan stays loadable without it, but if
+dashboard isn't loaded yet when floorplan loads, the bot owner gets a DM
+with the setup link above — see
+[Architecture.md](Architecture.md#dashboard-dependency).
+
 ## Configuring
 
 1. Set who may edit the office layout via corridor:

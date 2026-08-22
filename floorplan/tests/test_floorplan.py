@@ -23,6 +23,7 @@ from floorplan.floorplan import (
     _LayoutDetailView,
     Floorplan as FloorplanCog,
 )
+from floorplan.adapters.dashboard import DASHBOARD_DOCS_URL
 from floorplan.infrastructure.tickets import TicketStore
 from floorplan.infrastructure.webview import WebviewAssetProvider
 from floorplan.tests.conftest import (
@@ -486,6 +487,103 @@ class TestDashboardWebviewHosting(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["status"], 0)
         self.assertTrue(result["web_content"]["standalone"])
         self.assertIn("root", result["web_content"]["source"])
+
+
+class TestDashboardMissingOwnerNotification(unittest.IsolatedAsyncioTestCase):
+    """cog_load() must never block on a missing Red Web Dashboard cog --
+    unlike pixelagents (`ensure_loaded`, required for the office webview to
+    exist at all), dashboard loading *after* floorplan is already handled by
+    `on_dashboard_cog_add`'s own registration listener. This only has to
+    catch what that listener can't see: dashboard still missing right now,
+    at floorplan's own cog_load time -- see floorplan/adapters/dashboard.py.
+    """
+
+    def setUp(self) -> None:
+        self.cog = _make_cog()
+        self.cog.bot.send_to_owners = AsyncMock()
+
+    async def test_dashboard_loaded_sends_no_dm(self) -> None:
+        self.cog.bot.get_cog = MagicMock(return_value=MagicMock())
+
+        await self.cog._notify_owners_dashboard_missing_if_unloaded()
+
+        self.cog.bot.send_to_owners.assert_not_awaited()
+
+    async def test_a_same_named_cog_without_dashboards_shape_still_notifies(self) -> None:
+        # Finding *something* registered under "Dashboard" isn't proof it's
+        # really Red Web Dashboard -- only the same `.rpc.third_parties_handler`
+        # shape `on_dashboard_cog_add` already trusts is.
+        self.cog.bot.get_cog = MagicMock(return_value=object())
+
+        await self.cog._notify_owners_dashboard_missing_if_unloaded()
+
+        self.cog.bot.send_to_owners.assert_awaited_once()
+
+    async def test_dashboard_missing_notifies_owners_once_with_docs_link(self) -> None:
+        self.cog.bot.get_cog = MagicMock(return_value=None)
+
+        await self.cog._notify_owners_dashboard_missing_if_unloaded()
+
+        self.cog.bot.send_to_owners.assert_awaited_once()
+        (message,), _kwargs = self.cog.bot.send_to_owners.await_args
+        self.assertIn(DASHBOARD_DOCS_URL, message)
+
+    async def test_notify_never_raises_when_send_to_owners_fails(self) -> None:
+        self.cog.bot.get_cog = MagicMock(return_value=None)
+        self.cog.bot.send_to_owners = AsyncMock(side_effect=RuntimeError("no owners"))
+
+        await self.cog._notify_owners_dashboard_missing_if_unloaded()  # must not raise
+
+    async def test_cog_load_notifies_owners_when_dashboard_is_missing(self) -> None:
+        bot = MagicMock()
+        bot.guilds = []
+        bot.is_owner = AsyncMock(return_value=False)
+        bot.wait_until_red_ready = AsyncMock()
+        # Only "Dashboard" is absent -- corridor's own bootstrap also looks
+        # itself up by name (`bot.get_cog("Corridor")`) and must keep
+        # resolving to a truthy double, or cog_load fails before it ever
+        # reaches the dashboard check this test exercises.
+        bot.get_cog = MagicMock(side_effect=lambda name: None if name == "Dashboard" else MagicMock())
+        bot.send_to_owners = AsyncMock()
+        cog = FloorplanCog(bot)
+        cog._corridor = FakeCorridor()
+        pixelagents_double = FakePixelAgents()
+
+        with (
+            patch(
+                "corridor.dependency_loader.ensure_loaded",
+                new=AsyncMock(return_value=pixelagents_double),
+            ),
+            patch.object(cog, "_start_server", new=AsyncMock()),
+            patch.object(cog._pixel_index_client, "start", new=AsyncMock()),
+        ):
+            await cog.cog_load()
+
+        bot.send_to_owners.assert_awaited_once()
+        await cog.cog_unload()
+
+    async def test_cog_load_does_not_notify_when_dashboard_is_loaded(self) -> None:
+        bot = MagicMock()
+        bot.guilds = []
+        bot.is_owner = AsyncMock(return_value=False)
+        bot.wait_until_red_ready = AsyncMock()
+        bot.send_to_owners = AsyncMock()
+        cog = FloorplanCog(bot)
+        cog._corridor = FakeCorridor()
+        pixelagents_double = FakePixelAgents()
+
+        with (
+            patch(
+                "corridor.dependency_loader.ensure_loaded",
+                new=AsyncMock(return_value=pixelagents_double),
+            ),
+            patch.object(cog, "_start_server", new=AsyncMock()),
+            patch.object(cog._pixel_index_client, "start", new=AsyncMock()),
+        ):
+            await cog.cog_load()
+
+        bot.send_to_owners.assert_not_awaited()
+        await cog.cog_unload()
 
 
 # ---------------------------------------------------------------------------

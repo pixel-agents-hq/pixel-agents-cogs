@@ -68,10 +68,10 @@ place for a third chokepoint like this, not a new fourth shared cog.
 - **No cross-process or persistent bus.** In-process, single event loop,
   scoped to one running bot — the same scope every other corridor service
   already has. Nothing here needs to survive a restart.
-- **No free-form event shape.** A small, explicit catalog of event types
-  with typed payloads — mirroring how `ReplyField`/`PermissionGroupDef`
-  are explicit domain types today, not arbitrary dicts. See "Domain
-  model" below.
+- **No free-form event shape.** A closed set of frozen dataclasses, one
+  per kind of agent activity — mirroring how `ReplyField`/`PermissionGroupDef`
+  are explicit domain types today, never a stringly-typed `type` tag plus
+  an untyped payload dict. See "Domain model" below.
 - **No guaranteed delivery, ordering, or replay.** If nothing is
   subscribed when an event publishes, it's simply dropped — the same as
   floorplan's WebSocket broadcast today drops messages when no client is
@@ -87,7 +87,7 @@ flowchart LR
     end
 
     subgraph corridor_bus["corridor — event bus"]
-        bus["EventBusService<br/><small>publish(event)<br/>subscribe(event_type, handler)</small>"]
+        bus["EventBusService<br/><small>publish(event: AgentActivity)<br/>subscribe(EventClass, handler)</small>"]
     end
 
     subgraph Subscribers["Subscribers"]
@@ -120,7 +120,8 @@ cross-cutting concern:
 ```mermaid
 flowchart TB
     subgraph domain["corridor/domain/"]
-        event_model["Event<br/><small>(proposed) frozen dataclass:<br/>type, guild_id, source, payload</small>"]
+        agent_ref["AgentRef<br/><small>discord_user_id, guild_id, is_bot</small>"]
+        activities["AgentSpoke / AgentToolStarted /<br/>AgentStatusChanged / ...<br/><small>closed set of frozen dataclasses,<br/>each carries one AgentRef</small>"]
     end
     subgraph application["corridor/application/"]
         perm["PermissionService<br/><small>existing</small>"]
@@ -131,7 +132,8 @@ flowchart TB
         chokepoints["require_permission / capabilities_satisfy<br/>render_reply / send_reply<br/>publish_event / subscribe_event <small>(proposed)</small>"]
     end
 
-    bus_svc --> event_model
+    activities --> agent_ref
+    bus_svc --> activities
     chokepoints --> perm
     chokepoints --> reply
     chokepoints --> bus_svc
@@ -140,40 +142,100 @@ flowchart TB
 `CogBase.__init__` would wire one `EventBusService` instance the same way
 it already wires `PermissionService`/`ReplyService` today
 (`corridor/adapters/cog_base.py`) — one bus per bot process, not per
-guild, with guild scoping carried on the `Event` itself (see below).
+guild, with guild scoping carried on each event's `AgentRef` (see below).
 
-## Domain model (proposed)
+## Domain model: a closed set of agent-activity dataclasses
+
+Settled direction (superseding an earlier draft of this doc that used a
+generic `Event(type: str, payload: Mapping)` envelope — rejected because
+it's stringly-typed, mypy-blind, and says nothing about *agents*, which is
+the whole point of this bus): every publishable event is its own frozen
+dataclass, all sharing one `AgentRef`. No generic envelope, no string
+tag, no untyped payload:
 
 ```python
 @dataclass(frozen=True, slots=True)
-class Event:
-    type: str                    # namespaced catalog key, e.g. "pico.responded"
+class AgentRef:
+    """A Discord member represented as a webview agent. Deliberately holds
+    the *raw* Discord user ID, not floorplan's derived, JS-safe negative
+    agent ID -- that derivation (`_discord_id_to_agent_id`) stays
+    floorplan's own concern, the only place that currently needs it."""
+
+    discord_user_id: int
     guild_id: int
-    source: str                  # publishing cog's Red Cog name, e.g. "Pico"
-    payload: Mapping[str, Any]   # shape defined per event `type`, not free-form
+    is_bot: bool  # ties into floorplan's existing per-guild `include_bots` setting
+
+
+@dataclass(frozen=True, slots=True)
+class AgentSpoke:
+    agent: AgentRef
+    summary: str  # short label -- e.g. the reply's rendered title/content
+
+
+@dataclass(frozen=True, slots=True)
+class AgentToolStarted:
+    agent: AgentRef
+    tool_id: str
+    tool_name: str
+
+
+@dataclass(frozen=True, slots=True)
+class AgentStatusChanged:
+    agent: AgentRef
+    status: Literal["active", "waiting"]
+
+
+AgentActivity = AgentSpoke | AgentToolStarted | AgentStatusChanged
 ```
 
-`type` is a small, explicit catalog — not a free string any cog can
-invent on the spot. The catalog should be namespaced by publisher
-(`pico.*` today) but *interpreted generically* by subscribers: floorplan
-shouldn't need an `if event.source == "Pico"` branch any more than it
-needs Discord-specific branches today. Where possible, an event's
-`payload` shape should map directly onto the message vocabulary floorplan
-already renders through
-(`pixelagents/contracts/outbound.py`'s `AgentToolStartMessage`,
-`AgentToolDoneMessage`, `AgentStatusMessage`, ...,
-[confirmed in `docs/architecture.md` §3c](architecture.md#3c-serving-the-bundle-pixelagents-built))
-so a subscriber's translation is closer to a pass-through than a
-redesign. Candidate first two event types:
+`is_bot` exists because both kinds of Discord member are meant to become
+agents, not just bots: floorplan's own presence mirroring already treats
+every guild member as an agent today, human or bot, gated only by its
+per-guild `include_bots` setting. For pico specifically, `AgentRef` names
+*pico's own Discord bot user* — pico is publishing "I, this bot account,
+did something," the same way floorplan's existing presence path already
+turns a human member's message into an `agentToolStart` bubble for that
+human. A future publisher representing a human-triggered activity (not
+just a bot's own) would set `is_bot=False` and reference that human's
+Discord user ID instead — the dataclasses don't change, only which member
+`AgentRef` points at.
 
-| `type` | Published by | Roughly maps to |
+`EventBusService.subscribe` dispatches by concrete class
+(`subscribe(AgentSpoke, handler, owner="Floorplan")`), not by a string
+key — a subscriber only ever registers for classes it actually knows how
+to handle, and mypy can check that a handler's signature matches the
+class it's registered against.
+
+**Deliberately not included:** any of `pixelagents.contracts.outbound`'s
+wire-shaped fields (no `id` in the derived agent-ID namespace, no raw
+`agentToolStart`/`agentToolDone` message construction). Translating an
+`AgentActivity` into the exact canvas message stays entirely floorplan's
+job, the same way it alone owns translating a Discord presence update
+into one today — this bus only ever crosses the "something happened to
+this Discord member" boundary, never the "here's the exact webview
+message" one. See
+[floorplan's presence-mapping table](../floorplan/Architecture.md#presence-mapping)
+for the shape of translation floorplan already does for raw Discord
+signals; a subscriber handler for `AgentSpoke`/`AgentToolStarted` would
+do the equivalent for bus-originated ones.
+
+Candidate first mapping (illustrative — settled for real in the
+implementation PR against pico's actual `GateDecision`/`ToolLoopResult`
+shapes):
+
+| Dataclass | Published by | Roughly maps to |
 |---|---|---|
-| `pico.responded` | pico, after `ToolLoopService.run` finishes with `stopped_reason == "no_tool_calls"` or a successful `send_reply` tool call | `agentToolStart` → `agentToolDone` bubble, the same shape floorplan already gives a Discord message today (see [floorplan's presence-mapping table](../floorplan/Architecture.md#presence-mapping)) |
-| `pico.gate_decision` *(maybe — open question)* | pico, after `GateService.decide` | `agentStatus` (`active`/`waiting`) |
+| `AgentSpoke` | pico, after `ToolLoopService.run` finishes via a successful `send_reply` tool call | `agentToolStart` → `agentToolDone` bubble, the same shape floorplan already gives a Discord message today |
+| `AgentStatusChanged` | pico, after `GateService.decide` returns `RESPOND` / after the tool loop finishes | `agentStatus` (`active`/`waiting`) |
+| `AgentToolStarted` | reserved for when pico grows tools beyond `send_reply` (`docs/architecture.md` §4 notes the tool-loop shape already supports more) | `agentToolStart` with a real `toolName` other than the reply tool |
 
-This table is illustrative, not final — the real catalog gets settled in
-the implementation PR against pico's actual `GateDecision`/`ToolLoopResult`
-shapes.
+Open question this raises for the implementation PR: `AgentToolStarted`
+has no paired "finished" event in this set. floorplan already
+auto-clears message-triggered `agentToolStart` bubbles after
+`message_tool_clear_delay` (2s default) without an explicit "done" signal
+— worth deciding whether bus-originated tool activity reuses that same
+clear-after-delay convention (no new dataclass needed) or needs its own
+`AgentToolFinished` to correlate against `tool_id` explicitly.
 
 ## Subscription lifecycle
 
@@ -193,11 +255,11 @@ sequenceDiagram
     participant C as corridor
 
     Note over FP: cog_load
-    FP->>C: subscribe_event("pico.responded", handler, owner="Floorplan")
+    FP->>C: subscribe_event(AgentSpoke, handler, owner="Floorplan")
     C-->>FP: registered
 
     Note over FP: ... bot runs ...
-    C->>FP: dispatch("pico.responded", event) on publish
+    C->>FP: dispatch(AgentSpoke instance) on publish
 
     Note over FP: cog_unload / [p]reload floorplan
     FP->>C: unsubscribe_owner("Floorplan")
@@ -229,10 +291,10 @@ sequenceDiagram
     participant B as Browser webview
 
     Pico->>Pico: tool loop runs, ReplyTool sends via corridor.send_reply
-    Pico->>C: publish_event(Event("pico.responded", guild_id, "Pico", payload))
-    C->>C: look up subscribers for "pico.responded"
+    Pico->>C: publish_event(AgentSpoke(AgentRef(pico_bot_user_id, guild_id, is_bot=True), summary))
+    C->>C: look up subscribers registered for AgentSpoke
     C->>FP: dispatch(event)  [wrapped: a raising handler is<br/>logged, not propagated to pico]
-    FP->>FP: translate event.payload -><br/>AgentToolStartMessage / AgentToolDoneMessage
+    FP->>FP: derive agent_id via _discord_id_to_agent_id,<br/>translate -> AgentToolStartMessage / AgentToolDoneMessage
     FP->>Hub: broadcast(message)
     Hub->>B: push over open socket
 ```
@@ -254,7 +316,7 @@ corridor is the one edge every other cog gets, never each other.
   once there's a second subscriber and real latency data — starting
   synchronous keeps the first implementation's failure modes easy to
   reason about.
-- **Guild scoping.** Every `Event` carries `guild_id`. Whether corridor
+- **Guild scoping.** Every event's `AgentRef` carries `guild_id`. Whether corridor
   itself filters dispatch (e.g. skip a subscriber if the guild has that
   cog disabled) or whether that stays each subscriber's own
   responsibility (floorplan already gates on its own per-guild `enabled`
@@ -276,20 +338,26 @@ corridor is the one edge every other cog gets, never each other.
 
 ## What the follow-up implementation PR needs to land
 
-- [ ] `corridor/domain/models.py`: `Event` (and any per-event payload
-      types the settled catalog needs).
+- [ ] `corridor/domain/models.py`: `AgentRef` and the closed
+      `AgentSpoke`/`AgentToolStarted`/`AgentStatusChanged`/... dataclass
+      set (settle whether `AgentToolStarted` needs a paired
+      `AgentToolFinished` or reuses floorplan's existing
+      clear-after-delay convention).
 - [ ] `corridor/application/event_bus_service.py`: `EventBusService`
-      (`publish`, `subscribe`, `unsubscribe_owner`), unit-tested in
-      isolation the way `PermissionService`/`ReplyService` are today.
+      (`publish`, `subscribe` keyed by concrete class, `unsubscribe_owner`),
+      unit-tested in isolation the way `PermissionService`/`ReplyService`
+      are today.
 - [ ] `corridor/adapters/cog_base.py`: `publish_event`/`subscribe_event`
       chokepoint methods, wired the same way `send_reply`/
       `require_permission` are.
-- [ ] pico: publish `pico.responded` (and any other settled event types)
-      from the tool loop's completion path.
+- [ ] pico: publish `AgentSpoke`/`AgentStatusChanged` (and any other
+      settled dataclasses) from the tool loop's completion path, with
+      `AgentRef` pointing at pico's own bot user.
 - [ ] floorplan: subscribe at `cog_load`, unsubscribe at `cog_unload`,
-      translate `Event.payload` into the existing
-      `pixelagents.contracts.outbound` message builders and broadcast via
-      the existing `ClientHub`.
+      derive the canvas agent ID via its existing
+      `_discord_id_to_agent_id` and translate each `AgentActivity` into
+      the existing `pixelagents.contracts.outbound` message builders,
+      broadcasting via the existing `ClientHub`.
 - [ ] Update [`docs/architecture.md`](architecture.md) once this lands —
       the dependency graph in §1 doesn't change, but §2's ownership map
       and a new data-flow diagram closing the pico → corridor → floorplan

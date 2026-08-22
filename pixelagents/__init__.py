@@ -1,4 +1,23 @@
-"""Red entrypoint with dependency-aware imports for lightweight tooling."""
+"""Red entrypoint with dependency-aware imports for lightweight tooling.
+
+`PixelAgents`/`pixelagents` are resolved lazily, through `__getattr__` below,
+never eagerly at this module's own top level. `.pixelagents` (the Cog module)
+transitively imports `adapters/replies.py`, which needs `corridor` already
+loaded -- fine when reached through `setup()` below (which loads corridor
+first), but importing it here unconditionally would make `import pixelagents`
+alone -- e.g. `corridor.dependency_loader.ensure_importable`'s whole point is
+letting a dependent do exactly that without loading pixelagents as a Cog --
+cache `pixelagents.adapters.replies` in `sys.modules` bound to whatever
+corridor state happened to hold at that moment. That caching is the trap:
+Red's `_load` always calls `_cleanup_and_refresh_modules` before `setup()`,
+which unconditionally re-execs every already-cached `pixelagents.*` submodule
+-- bypassing this file's own lazy resolution entirely -- so a later
+`[p]load pixelagents`, at a moment corridor isn't currently loaded, would
+re-run that stale cached module's `from corridor.domain import ReplyField`
+and crash with `ModuleNotFoundError` before `setup()` ever gets a chance to
+load corridor. Keeping this file corridor-free until `PixelAgents`/`setup()`
+is actually requested means nothing ever caches that submodule prematurely.
+"""
 
 from __future__ import annotations
 
@@ -9,14 +28,6 @@ if TYPE_CHECKING:
 
     from .pixelagents import PixelAgents as PixelAgents
     from .pixelagents import pixelagents as pixelagents
-else:
-    try:
-        from .pixelagents import PixelAgents as PixelAgents
-        from .pixelagents import pixelagents as pixelagents
-    except ImportError:
-        # Contract tools intentionally import this package without Red or
-        # discord.py installed; the public names load on first access instead.
-        pass
 
 __all__ = ["pixelagents"]
 

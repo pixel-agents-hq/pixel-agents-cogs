@@ -12,6 +12,8 @@ pair.
 
 from __future__ import annotations
 
+import asyncio
+import logging
 import sys
 from typing import Any, NoReturn
 
@@ -100,6 +102,63 @@ async def ensure_importable(bot: Any, package: str) -> None:
         spec.loader.load_module()
     except Exception as exc:
         _raise_load_error(f"{package} could not be imported: {exc}", cause=exc)
+
+
+class LazyDependency:
+    """Resolve-once, background-eager-loadable handle for a dependency that
+    must not be synchronously force-loaded as a side effect of the caller's
+    own load, but should still become a genuinely loaded Cog moments after
+    the caller loads in normal operation. See docs/dependency-loading.md for
+    when to reach for this instead of `ensure_loaded` directly.
+
+    self._pixelagents = LazyDependency(bot, "pixelagents", "PixelAgents")
+    # in cog_load(): fire-and-forget, do not await
+    self._task_supervisor.create(self._pixelagents.eager_load_in_background())
+    # anywhere a live instance is actually needed:
+    pixelagents_cog = await self._pixelagents.resolve()
+    """
+
+    def __init__(
+        self, bot: Any, package: str, cog_name: str, *, logger: logging.Logger | None = None
+    ) -> None:
+        self._bot = bot
+        self._package = package
+        self._cog_name = cog_name
+        self._cog: Any = None
+        self._lock = asyncio.Lock()
+        self._log = logger or logging.getLogger(__name__)
+
+    @property
+    def value(self) -> Any:
+        """The cached Cog, or `None` if `resolve()` hasn't completed yet."""
+
+        return self._cog
+
+    async def resolve(self) -> Any:
+        """Fully load the dependency (once), safe against a concurrent caller."""
+
+        if self._cog is None:
+            async with self._lock:
+                if self._cog is None:
+                    self._cog = await ensure_loaded(self._bot, self._package, self._cog_name)
+        return self._cog
+
+    async def eager_load_in_background(self) -> None:
+        """Best-effort full load shortly after the caller loads. Meant to be
+        scheduled via a task supervisor, never awaited directly from the
+        caller's own `cog_load()`/`setup()` -- see `resolve`'s docstring and
+        docs/dependency-loading.md for why a synchronous load here would be
+        unsafe for a dependency tested after the caller by the Downloader
+        RPC smoke test."""
+
+        try:
+            await self.resolve()
+        except Exception:
+            self._log.exception(
+                "%s: eager load of %s failed; will retry on first use",
+                self._cog_name,
+                self._package,
+            )
 
 
 def _raise_load_error(message: str, *, cause: Exception | None = None) -> NoReturn:

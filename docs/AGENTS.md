@@ -42,7 +42,10 @@ package's own `Architecture.md` (where present) covers its specifics.
   `contracts/discord_replies/lint_reply_channel.py` runs in CI and fails a
   build on any command handler that reaches a raw Discord send without
   going through corridor. See [`docs/corridor.md`](corridor.md) for the
-  full permission model.
+  full permission model, and
+  [`docs/dependency-loading.md`](dependency-loading.md) for how/why
+  cross-cog dependencies (corridor included) get loaded at all — Red has
+  no built-in mechanism for this.
 - **Two separate trees, only one of them writable at runtime.** The
   installed package tree (what Downloader clones/copies) is read-only at
   runtime — never write into it. Anything a cog writes (config, build
@@ -94,6 +97,9 @@ Index lint/verify steps — see [`contracts/README.md`](../contracts/README.md).
 
 ## Further reading
 
+- [`docs/dependency-loading.md`](dependency-loading.md) — how cross-cog
+  dependencies get loaded, why corridor's bootstrap is duplicated per cog,
+  and when to use `ensure_loaded` vs `ensure_importable` vs `LazyDependency`.
 - [`docs/corridor.md`](corridor.md) — corridor's permission model in full.
 - [`docs/contract-testing.md`](contract-testing.md) — why/how Pixel Index
   and Pixel Agents contracts are generated and verified in CI.

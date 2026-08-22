@@ -1,11 +1,11 @@
-"""Load runtime cog dependencies before importing dependency-bound adapters.
+"""Load corridor before importing dependency-bound adapters.
 
-Only corridor gets its own bootstrap function here: it's the one dependency
-that can't go through `corridor.dependency_loader`'s generic helpers, since
-you cannot import from corridor before corridor is loaded. Every other
-cross-cog dependency (pixelagents today) uses `ensure_loaded`/
-`ensure_importable` from `corridor.dependency_loader` directly, once this
-function has made that import possible.
+`ensure_corridor_loaded` has to live here rather than going through
+`corridor.dependency_loader`'s generic helpers: you cannot import from
+corridor before corridor is loaded. Every other cross-cog dependency
+(pixelagents) uses `corridor.dependency_loader.ensure_importable`/
+`LazyDependency` directly once this function has made that import possible
+-- see docs/dependency-loading.md.
 """
 
 from __future__ import annotations

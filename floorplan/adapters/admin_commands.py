@@ -8,8 +8,6 @@ import discord
 from discord import app_commands
 from redbot.core import commands
 
-from corridor.domain import ReplyField
-
 from .cog_base import PixelAgentsBase
 from .settings_panel import SettingsPanelView, SettingsRuntimeSnapshot
 
@@ -38,6 +36,17 @@ class AdminCommandsMixin(PixelAgentsBase):
     @commands.admin_or_permissions(administrator=True)
     async def cmd_status(self, ctx: commands.Context) -> None:
         """Show current Floorplan configuration and connection status."""
+
+        # Deferred, not just top-level-import style: `ReplyField` is
+        # constructed below, so (unlike replies.py's annotation-only usage)
+        # this can't move under TYPE_CHECKING -- but importing it here
+        # instead of at module scope means Red's `_cleanup_and_refresh_modules`
+        # re-execing this module (which it does unconditionally on every
+        # reload attempt, before setup() gets to run `ensure_corridor_loaded`)
+        # never touches corridor either. The import only actually runs when
+        # this command handler is invoked, by which point cog_load() has
+        # already guaranteed corridor is loaded.
+        from corridor.domain import ReplyField
 
         guild = self._guild(ctx)
         await self._sync_webview_assets()

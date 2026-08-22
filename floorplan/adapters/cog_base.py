@@ -13,7 +13,6 @@ from aiohttp import web
 from redbot.core import commands
 from redbot.core.bot import Red
 
-from corridor.dependency_loader import ensure_loaded
 from pixelagents.application.office import OfficeService
 from pixelagents.application.presence import PresenceService
 
@@ -30,13 +29,10 @@ from ..infrastructure.webview import WebviewAssetProvider
 
 log = logging.getLogger("red.d_cogs.floorplan")
 
-# This cog's route -- injected as a `<base href>` at serve time
-# (WebviewAssetProvider.base_href) so pixelagents' shared bundle resolves.
+# This cog's route -- injected as a `<base href>` at serve time (WebviewAssetProvider.base_href).
 WEBVIEW_BASE_PATH = "/third-party/floorplan/static/"
 
-# What built_base_path reads once pixelagents has built with the current
-# convention; a mismatch (a stale pre-convention build) surfaces in
-# `[p]floorplan status` rather than only as a 404.
+# What built_base_path reads once built; a mismatch surfaces in `[p]floorplan status`, not just a 404.
 EXPECTED_RELATIVE_BASE_PATH = "./"
 
 
@@ -52,10 +48,17 @@ class PixelAgentsBase:
     _clients: dict[web.WebSocketResponse, ClientState]
 
     def __init__(self, bot: Red) -> None:
+        # Deferred, not at module scope: this file is cached in sys.modules
+        # once floorplan has loaded once, and Red re-execs cached modules on
+        # every reload attempt before setup() runs -- see
+        # pixelagents/__init__.py's docstring for the incident a module-scope
+        # corridor import here would reintroduce.
+        from corridor.dependency_loader import LazyDependency
+
         self.bot = bot
         self._closing = False
         self._corridor: Any = None
-        self._pixelagents: Any = None
+        self._pixelagents = LazyDependency(bot, "pixelagents", "PixelAgents", logger=log)
         self._task_supervisor = TaskSupervisor(logger=log)
         self._settings_repository = RedSettingsRepository.create(self)
         self.config = self._settings_repository.config
@@ -153,17 +156,9 @@ class PixelAgentsBase:
         self._webview_assets.load_assets()
 
     async def _sync_webview_assets(self) -> None:
-        """Refresh the built-bundle path/status from pixelagents.
+        """Refresh the built-bundle path/status from pixelagents."""
 
-        `setup()` only ensures the pixelagents *package* is importable, not
-        that the Cog is loaded (see `corridor.dependency_loader.
-        ensure_importable`'s docstring). The real Cog instance is resolved
-        here instead, lazily, on first actual use.
-        """
-
-        if self._pixelagents is None:
-            self._pixelagents = await ensure_loaded(self.bot, "pixelagents", "PixelAgents")
-        status = self._pixelagents.webview_bundle_status()
+        status = (await self._pixelagents.resolve()).webview_bundle_status()
         self._webview_assets.root = status.dist_path.resolve()
         self._webview_assets.build_status = None if status.ready else status.detail
         if status.ready and status.built_commit != self._webview_built_commit:
@@ -200,6 +195,9 @@ class PixelAgentsBase:
         await self._start_server()
         self._sync_task = self._task_supervisor.create(
             self._initial_sync(), name="floorplan-initial-sync"
+        )
+        self._task_supervisor.create(
+            self._pixelagents.eager_load_in_background(), name="floorplan-eager-load-pixelagents"
         )
 
     async def _initial_sync(self) -> None:

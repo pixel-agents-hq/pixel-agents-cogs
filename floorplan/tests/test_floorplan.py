@@ -4,6 +4,7 @@ Stubs for discord / redbot / aiohttp are installed by conftest.py.
 """
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import unittest
@@ -73,7 +74,7 @@ def _make_cog():
     # corridor.dependency_loader.ensure_loaded() on first use; default it to a
     # ready-and-loaded double the same way _corridor is defaulted above so
     # tests that don't care about the webview still get a working one.
-    cog._pixelagents = FakePixelAgents()
+    cog._pixelagents._cog = FakePixelAgents()
     return cog
 
 
@@ -294,15 +295,20 @@ class TestBootstrap(unittest.IsolatedAsyncioTestCase):
 
 
 class TestPixelagentsResolutionIsLazy(unittest.IsolatedAsyncioTestCase):
-    """cog_load() must never resolve (and so never auto-load) pixelagents --
-    see adapters/cog_base.py::_sync_webview_assets' docstring. A cog that
-    eagerly cross-loads a dependency at cog_load makes its own load/unload
-    cycle no longer self-contained, which broke the Downloader RPC smoke
-    test (check-cogs.yml): pixelagents got auto-loaded as a side effect of
+    """cog_load() must never *synchronously await* resolving pixelagents --
+    see corridor.dependency_loader.LazyDependency's docstring.
+    A cog that eagerly cross-loads a dependency as part of its own
+    cog_load() transaction makes that load/unload cycle no longer
+    self-contained, which broke the Downloader RPC smoke test
+    (check-cogs.yml): pixelagents got auto-loaded as a side effect of
     loading floorplan, so when the harness later loaded pixelagents
     explicitly (its own cogs are tested alphabetically, independently of
     each other), Red reported it under `alreadyloaded_packages` instead of
-    `loaded_packages` and the harness treated that as a failure."""
+    `loaded_packages` and the harness treated that as a failure. cog_load()
+    does schedule a *backgrounded* eager load (see
+    test_cog_load_schedules_an_eager_pixelagents_load_in_the_background
+    below) so `[p]cogs` reflects the dependency promptly in normal
+    operation -- it just doesn't block cog_load() itself on it."""
 
     async def test_cog_load_never_touches_pixelagents(self) -> None:
         bot = MagicMock()
@@ -314,7 +320,7 @@ class TestPixelagentsResolutionIsLazy(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                "floorplan.adapters.cog_base.ensure_loaded", new=AsyncMock()
+                "corridor.dependency_loader.ensure_loaded", new=AsyncMock()
             ) as ensure_loaded,
             patch.object(cog, "_start_server", new=AsyncMock()),
             patch.object(cog._pixel_index_client, "start", new=AsyncMock()),
@@ -322,23 +328,49 @@ class TestPixelagentsResolutionIsLazy(unittest.IsolatedAsyncioTestCase):
             await cog.cog_load()
 
         ensure_loaded.assert_not_awaited()
-        self.assertIsNone(cog._pixelagents)
+        self.assertIsNone(cog._pixelagents.value)
+        await cog.cog_unload()
+
+    async def test_cog_load_schedules_an_eager_pixelagents_load_in_the_background(self) -> None:
+        bot = MagicMock()
+        bot.guilds = []
+        bot.is_owner = AsyncMock(return_value=False)
+        bot.wait_until_red_ready = AsyncMock()
+        cog = FloorplanCog(bot)
+        cog._corridor = FakeCorridor()
+        pixelagents_double = FakePixelAgents()
+
+        with (
+            patch(
+                "corridor.dependency_loader.ensure_loaded",
+                new=AsyncMock(return_value=pixelagents_double),
+            ) as ensure_loaded,
+            patch.object(cog, "_start_server", new=AsyncMock()),
+            patch.object(cog._pixel_index_client, "start", new=AsyncMock()),
+        ):
+            await cog.cog_load()
+            # cog_load() only *schedules* the eager load; give the event
+            # loop a turn so the backgrounded task actually runs.
+            await asyncio.sleep(0)
+
+        ensure_loaded.assert_awaited_once_with(bot, "pixelagents", "PixelAgents")
+        self.assertIs(cog._pixelagents.value, pixelagents_double)
         await cog.cog_unload()
 
     async def test_sync_webview_assets_resolves_pixelagents_on_first_use_only(self) -> None:
         cog = _make_cog()
-        cog._pixelagents = None
+        cog._pixelagents._cog = None
         pixelagents_double = FakePixelAgents()
 
         with patch(
-            "floorplan.adapters.cog_base.ensure_loaded",
+            "corridor.dependency_loader.ensure_loaded",
             new=AsyncMock(return_value=pixelagents_double),
         ) as ensure_loaded:
             await cog._sync_webview_assets()
             await cog._sync_webview_assets()
 
         ensure_loaded.assert_awaited_once_with(cog.bot, "pixelagents", "PixelAgents")
-        self.assertIs(cog._pixelagents, pixelagents_double)
+        self.assertIs(cog._pixelagents.value, pixelagents_double)
 
     async def test_setup_never_touches_pixelagents_either(self) -> None:
         """The same bug also lived one layer up: floorplan/__init__.py's
@@ -383,7 +415,7 @@ class TestWebviewBasePathMismatch(unittest.IsolatedAsyncioTestCase):
 
     async def test_current_convention_reports_loaded(self) -> None:
         cog = _make_cog()
-        cog._pixelagents = FakePixelAgents(built_base_path="./")
+        cog._pixelagents._cog = FakePixelAgents(built_base_path="./")
 
         await cog._sync_webview_assets()
         cog._assets["characters"] = ["fake"]  # bypass the empty fixture dist's real (empty) load
@@ -392,7 +424,7 @@ class TestWebviewBasePathMismatch(unittest.IsolatedAsyncioTestCase):
 
     async def test_outdated_convention_is_reported_instead_of_loaded(self) -> None:
         cog = _make_cog()
-        cog._pixelagents = FakePixelAgents(built_base_path="/third-party/pixelagents/static/")
+        cog._pixelagents._cog = FakePixelAgents(built_base_path="/third-party/pixelagents/static/")
 
         await cog._sync_webview_assets()
 
@@ -411,7 +443,7 @@ class TestWebviewBasePathMismatch(unittest.IsolatedAsyncioTestCase):
                 return status
 
         cog = _make_cog()
-        cog._pixelagents = _StaleStatusPixelAgents()
+        cog._pixelagents._cog = _StaleStatusPixelAgents()
 
         await cog._sync_webview_assets()
         cog._assets["characters"] = ["fake"]  # bypass the empty fixture dist's real (empty) load
@@ -458,7 +490,7 @@ class TestDashboardWebviewHosting(unittest.IsolatedAsyncioTestCase):
             root = Path(tmp)
             (root / "index.html").write_text("<!doctype html><div id=\"root\"></div>", encoding="utf-8")
             cog._webview_assets = WebviewAssetProvider(root)
-            cog._pixelagents = FakePixelAgents(dist_path=root)
+            cog._pixelagents._cog = FakePixelAgents(dist_path=root)
 
             result = await cog.dashboard_webview()
 
@@ -809,7 +841,7 @@ class TestTicketInjection(unittest.IsolatedAsyncioTestCase):
             root = Path(tmp)
             (root / "index.html").write_text(html, encoding="utf-8")
             cog._webview_assets = WebviewAssetProvider(root)
-            cog._pixelagents = FakePixelAgents(dist_path=root)
+            cog._pixelagents._cog = FakePixelAgents(dist_path=root)
             result = await cog.dashboard_webview()
         return cog, result["web_content"]["source"]
 

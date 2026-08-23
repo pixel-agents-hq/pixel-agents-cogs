@@ -7,14 +7,14 @@ stable contract they depend on through `required_cogs`.
 from __future__ import annotations
 
 import logging
-from collections.abc import Sequence
-from typing import Any
+from collections.abc import Awaitable, Callable, Sequence
+from typing import Any, TypeVar
 
 import discord
 from redbot.core import commands
 from redbot.core.bot import Red
 
-from ..application import PermissionService, ReplyContent, ReplyService
+from ..application import EventBusService, PermissionService, ReplyContent, ReplyService
 from ..domain import (
     GuildSettings,
     IconPreference,
@@ -27,6 +27,8 @@ from ..infrastructure import RedCorridorRepository
 from .api import BotIconResolver, BotOwnerRegistry, DiscordMemberRef, send_rendered_reply
 
 log = logging.getLogger("red.corridor")
+
+_EventT = TypeVar("_EventT")
 
 
 class CogBase:
@@ -41,6 +43,7 @@ class CogBase:
         self.config = self._repository.config
         self._permission_service = PermissionService(BotOwnerRegistry(bot))
         self._reply_service = ReplyService(BotIconResolver(bot))
+        self._event_bus = EventBusService()
         self._dependents: set[str] = set()
 
     async def cog_load(self) -> None:
@@ -180,6 +183,38 @@ class CogBase:
         something every caller re-derives for itself."""
 
         return text.replace("[p]", await self.default_prefix())
+
+    # --- Pub/Sub: corridor's Discord-vocabulary event bus ----------------------
+
+    async def publish_event(self, event: object) -> None:
+        """Publish a corridor Discord-vocabulary event (`AgentReplied`,
+        `AgentPresenceChanged`, ...) to every subscriber registered for its
+        concrete type. See `EventBusService.publish` for delivery semantics
+        (synchronous, awaited dispatch, per-subscriber error isolation)."""
+
+        await self._event_bus.publish(event)
+
+    def subscribe_event(
+        self,
+        event_type: type[_EventT],
+        handler: Callable[[_EventT], Awaitable[None]],
+        *,
+        owner: str,
+    ) -> None:
+        """Register interest in `event_type`, called from the subscriber's
+        own `cog_load`. `owner` should be the subscribing cog's class name
+        (matching `register_dependent`'s convention) -- `unsubscribe_owner`
+        drops every handler `owner` registered, across every event type, in
+        one call."""
+
+        self._event_bus.subscribe(event_type, handler, owner=owner)
+
+    def unsubscribe_owner(self, owner: str) -> None:
+        """Call from the subscriber's own `cog_unload` -- corridor does not
+        track/cascade a subscriber's lifecycle the way `register_dependent`
+        does the reverse direction for a dependent cog."""
+
+        self._event_bus.unsubscribe_owner(owner)
 
     # --- settings mutation, used by settings_ui.py and [p]corridor commands ---
 

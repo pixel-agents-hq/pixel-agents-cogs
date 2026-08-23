@@ -1,13 +1,21 @@
-"""Discord gateway listeners and compatibility snapshot helpers."""
+"""Discord gateway listeners: normalize raw discord.py events into
+corridor's Discord-vocabulary Pub/Sub bus.
+
+This module no longer calls OfficeService/PresenceService directly -- it
+only ever builds a corridor event and publishes it. `event_subscriptions.py`
+is the (only) subscriber that translates a published event back into the
+snapshot types those services expect, and drives them exactly as this
+module used to -- see that module for the other half of this split.
+"""
 
 from __future__ import annotations
-
-import asyncio
 
 import discord
 from redbot.core import commands
 
-from pixelagents.domain import AgentKey, AgentSnapshot, PresenceStatus
+from corridor.domain import AgentActivity as CorridorActivity
+from corridor.domain import AgentPresenceChanged, AgentRef, AgentReplied
+from pixelagents.domain import AgentSnapshot
 
 from ..infrastructure.discord import member_snapshot, message_snapshot
 from .cog_base import PixelAgentsBase, log
@@ -15,8 +23,39 @@ from .cog_base import PixelAgentsBase, log
 VISIBLE_STATUSES = {"online", "idle", "dnd"}
 
 
+def _presence_event(snapshot: AgentSnapshot) -> AgentPresenceChanged:
+    """Discord's own online/idle/dnd/offline vocabulary, not pixel-agents'
+    active/waiting one -- see AgentPresenceChanged's docstring. `None`
+    (offline/invisible, or a member snapshot built for someone who just
+    left) maps to the explicit `"offline"` value; there is no separate
+    "member left" event, on_member_remove publishes this same shape."""
+
+    status = snapshot.status.value if snapshot.status is not None else "offline"
+    return AgentPresenceChanged(
+        agent=AgentRef(
+            discord_user_id=snapshot.key.user_id,
+            guild_id=snapshot.key.guild_id,
+            is_bot=snapshot.is_bot,
+        ),
+        display_name=snapshot.display_name,
+        status=status,  # type: ignore[arg-type]
+        activities=tuple(
+            CorridorActivity(
+                kind=activity.kind.value,
+                name=activity.name,
+                title=activity.title,
+                artist=activity.artist,
+                details=activity.details,
+                state=activity.state,
+            )
+            for activity in snapshot.activities
+        ),
+    )
+
+
 class DiscordGatewayMixin(PixelAgentsBase):
-    """Normalize Discord events before invoking office application policy."""
+    """Normalize Discord events, then publish -- never drive office
+    application policy directly (see event_subscriptions.py for that)."""
 
     async def _sync_all_guilds(self) -> None:
         for guild in self.bot.guilds:
@@ -27,6 +66,11 @@ class DiscordGatewayMixin(PixelAgentsBase):
                     log.error("floorplan: sync error for guild %s: %s", guild.id, exc)
 
     async def _full_sync(self, guild: discord.Guild) -> str:
+        # A bulk guild resync, not a per-member Discord *event* -- stays a
+        # direct OfficeService call. Threading potentially hundreds of
+        # members through the bus per full sync isn't what "event volume
+        # bounded by Discord message/interaction rates" (see
+        # docs/corridor-pubsub-design.md) was ever about.
         guild_settings = await self._settings_repository.guild_settings(guild)
         rich_presence_enabled = await self._settings_repository.broadcast_rich_presence()
         snapshots = tuple(self._member_snapshot(member) for member in guild.members)
@@ -41,35 +85,6 @@ class DiscordGatewayMixin(PixelAgentsBase):
         bot_user_id = self.bot.user.id if self.bot.user is not None else None
         return member_snapshot(member, bot_user_id=bot_user_id)
 
-    @staticmethod
-    def _pick_presence_activity(
-        member: discord.Member,
-    ) -> (
-        discord.Activity
-        | discord.Game
-        | discord.CustomActivity
-        | discord.Streaming
-        | discord.Spotify
-        | None
-    ):
-        activities = [
-            activity
-            for activity in member.activities
-            if activity.type != discord.ActivityType.custom
-        ]
-        listening = next(
-            (
-                activity
-                for activity in activities
-                if activity.type == discord.ActivityType.listening
-            ),
-            None,
-        )
-        return listening or (activities[0] if activities else None)
-
-    def _build_presence_label(self, member: discord.Member) -> str | None:
-        return self._presence_service.label(self._member_snapshot(member))
-
     def _status_str(self, member: discord.Member) -> str | None:
         status = self._member_snapshot(member).status
         return status.value if status is not None else None
@@ -77,79 +92,11 @@ class DiscordGatewayMixin(PixelAgentsBase):
     def _is_included(self, member: discord.Member, include_bots: bool) -> bool:
         return not (self._member_snapshot(member).is_bot and not include_bots)
 
-    def _has_rich_presence(self, member: discord.Member) -> bool:
-        return self._presence_service.agent_status(self._member_snapshot(member)) == "active"
-
     def _agent_status(self, member: discord.Member) -> str:
         return self._presence_service.agent_status(self._member_snapshot(member))
 
-    async def _reconcile_member(self, member: discord.Member, include_bots: bool) -> None:
-        await self._office_service.reconcile(
-            self._member_snapshot(member),
-            include_bots=include_bots,
-            rich_presence_enabled=await self._settings_repository.broadcast_rich_presence(),
-        )
-
-    def _is_user_active_in_other_guild(self, guild_id: int, user_id: int) -> bool:
-        return self._office_service.is_user_active_in_other_guild(guild_id, user_id)
-
-    async def _spawn_agent(
-        self,
-        guild_id: int,
-        user_id: int,
-        name: str,
-        folder: str,
-        member: discord.Member,
-    ) -> None:
-        original = self._member_snapshot(member)
-        snapshot = AgentSnapshot(
-            key=AgentKey(guild_id, user_id),
-            display_name=name,
-            status=PresenceStatus(folder),
-            is_bot=original.is_bot,
-            activities=original.activities,
-        )
-        await self._office_service.spawn(
-            snapshot,
-            rich_presence_enabled=await self._settings_repository.broadcast_rich_presence(),
-        )
-
-    async def _close_agent(self, guild_id: int, user_id: int) -> None:
-        await self._office_service.close(AgentKey(guild_id, user_id))
-
     async def _despawn_guild(self, guild: discord.Guild) -> None:
         await self._office_service.despawn_guild(guild.id)
-
-    async def _send_presence_tool(self, agent_id: int, label: str) -> None:
-        await self._presence_service.send_tool(agent_id, label)
-
-    async def _update_presence_tool(
-        self, guild_id: int, user_id: int, member: discord.Member
-    ) -> None:
-        original = self._member_snapshot(member)
-        snapshot = AgentSnapshot(
-            key=AgentKey(guild_id, user_id),
-            display_name=original.display_name,
-            status=original.status,
-            is_bot=original.is_bot,
-            activities=original.activities,
-        )
-        await self._presence_service.update(
-            snapshot,
-            self._office_service.agent_id(user_id),
-            enabled=await self._settings_repository.broadcast_rich_presence(),
-        )
-
-    async def _clear_tool_after_delay(
-        self, agent_id: int, delay: float, guild_id: int = 0, user_id: int = 0
-    ) -> None:
-        await asyncio.sleep(delay)
-        if self._closing:
-            return
-        if guild_id and user_id:
-            await self._office_service.clear_message_activity(AgentKey(guild_id, user_id))
-        else:
-            await self._send({"type": "agentToolsClear", "id": agent_id})
 
     @commands.Cog.listener()
     async def on_member_update(self, before: discord.Member, after: discord.Member) -> None:
@@ -157,7 +104,7 @@ class DiscordGatewayMixin(PixelAgentsBase):
         if not guild_settings.enabled or before.display_name == after.display_name:
             return
         try:
-            await self._reconcile_member(after, guild_settings.include_bots)
+            await self._corridor.publish_event(_presence_event(self._member_snapshot(after)))
         except Exception as exc:
             log.error("on_member_update error for %s: %s", after.id, exc)
 
@@ -169,7 +116,7 @@ class DiscordGatewayMixin(PixelAgentsBase):
         if before.status == after.status and before.activities == after.activities:
             return
         try:
-            await self._reconcile_member(after, guild_settings.include_bots)
+            await self._corridor.publish_event(_presence_event(self._member_snapshot(after)))
         except Exception as exc:
             log.error("on_presence_update error for %s: %s", after.id, exc)
 
@@ -179,7 +126,7 @@ class DiscordGatewayMixin(PixelAgentsBase):
         if not guild_settings.enabled or self._status_str(member) is None:
             return
         try:
-            await self._reconcile_member(member, guild_settings.include_bots)
+            await self._corridor.publish_event(_presence_event(self._member_snapshot(member)))
         except Exception as exc:
             log.error("on_member_join error for %s: %s", member.id, exc)
 
@@ -188,7 +135,15 @@ class DiscordGatewayMixin(PixelAgentsBase):
         if not await self._settings_repository.guild_enabled(member.guild):
             return
         try:
-            await self._close_agent(member.guild.id, member.id)
+            await self._corridor.publish_event(
+                AgentPresenceChanged(
+                    agent=AgentRef(
+                        discord_user_id=member.id, guild_id=member.guild.id, is_bot=member.bot
+                    ),
+                    display_name=member.display_name,
+                    status="offline",
+                )
+            )
         except Exception as exc:
             log.error("on_member_remove error for %s: %s", member.id, exc)
 
@@ -208,14 +163,13 @@ class DiscordGatewayMixin(PixelAgentsBase):
             return
         if not await self._settings_repository.broadcast_messages():
             return
-        await self._office_service.send_message_activity(snapshot)
-        delay = await self._settings_repository.message_tool_clear_delay()
-        self._task_supervisor.create(
-            self._clear_tool_after_delay(
-                self._office_service.agent_id(snapshot.key.user_id),
-                delay,
-                snapshot.key.guild_id,
-                snapshot.key.user_id,
-            ),
-            name=f"floorplan-message-clear-{snapshot.message_id}",
+        await self._corridor.publish_event(
+            AgentReplied(
+                agent=AgentRef(
+                    discord_user_id=snapshot.key.user_id,
+                    guild_id=snapshot.key.guild_id,
+                    is_bot=message.author.bot,
+                ),
+                summary=snapshot.content,  # untruncated -- truncation is the subscriber's job
+            )
         )

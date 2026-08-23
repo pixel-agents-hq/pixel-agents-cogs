@@ -13,10 +13,11 @@ from unittest.mock import AsyncMock, MagicMock
 
 import discord
 
+from corridor.domain import AgentPresenceChanged, AgentReplied
 from floorplan.application import TaskSupervisor
 from floorplan.floorplan import Floorplan as FloorplanCog
 from floorplan.infrastructure.discord import member_snapshot, message_snapshot
-from floorplan.tests.conftest import _FakeClientWebSocketResponse
+from floorplan.tests.conftest import FakeCorridor, _FakeClientWebSocketResponse
 from pixelagents.domain import ActivityKind, PresenceStatus
 
 
@@ -140,6 +141,11 @@ class TestCogTaskLifecycle(unittest.IsolatedAsyncioTestCase):
         bot.user = None
         bot.is_owner = AsyncMock(return_value=False)
         cog = FloorplanCog(bot)
+        cog._corridor = FakeCorridor()
+        cog._corridor.subscribe_event(
+            AgentPresenceChanged, cog._on_agent_presence_changed, owner="Floorplan"
+        )
+        cog._corridor.subscribe_event(AgentReplied, cog._on_agent_replied, owner="Floorplan")
         cog._agents[(1, 2)] = ("online", "Agent")
         await cog.config.guild_from_id(1).enabled.set(True)
         await cog.config.message_tool_clear_delay.set(3600.0)
@@ -147,7 +153,7 @@ class TestCogTaskLifecycle(unittest.IsolatedAsyncioTestCase):
         cog._client_hub.add(socket)
         message = SimpleNamespace(
             guild=SimpleNamespace(id=1),
-            author=SimpleNamespace(id=2),
+            author=SimpleNamespace(id=2, bot=False),
             id=99,
             content="hello",
         )

@@ -1,7 +1,8 @@
 # Cross-cog architecture
 
-This doc is the one place that shows how this repo's seven packages —
-[`corridor`](../corridor), [`floorplan`](../floorplan), [`pico`](../pico),
+This doc is the one place that shows how this repo's eight packages —
+[`corridor`](../corridor), [`deskutils`](../deskutils),
+[`floorplan`](../floorplan), [`pico`](../pico),
 [`pixelagents`](../pixelagents), [`testbench`](../testbench),
 [`toolbox`](../toolbox), and the CI-only [`contracts`](../contracts) —
 relate to and depend on each other. It does
@@ -25,12 +26,14 @@ picture — see [`docs/dependency-loading.md`](dependency-loading.md) for
 ```mermaid
 flowchart BT
     corridor["corridor<br/><small>permissions + reply style<br/>+ PubSub event bus</small><br/><small>hidden COG</small>"]
+    deskutils["deskutils<br/><small>current-time utility command</small>"]
     floorplan["floorplan<br/><small>serves the office + presence</small>"]
     pico["pico<br/><small>LLM-backed presence</small>"]
     pixelagents["pixelagents<br/><small>vendors + builds the webview</small>"]
     testbench["testbench<br/><small>owner-only: manually publishes<br/>corridor bus events</small>"]
     toolbox["toolbox<br/><small>Node.js/npm on the host</small>"]
 
+    deskutils -->|required_cogs| corridor
     floorplan -->|required_cogs| corridor
     pico -->|required_cogs| corridor
     pixelagents -->|required_cogs| corridor
@@ -45,8 +48,9 @@ Notes, all confirmed against each package's `info.json`:
   graph — every other cog depends on it, it depends on nothing here.
 - **floorplan is the only cog with two dependencies** — it declares both
   `corridor` and `pixelagents`.
-- **No cog depends on floorplan, pico, testbench, or toolbox.** They're
-  leaves: things end here, nothing in this repo builds on top of them.
+- **No cog depends on floorplan, pico, testbench, toolbox, or deskutils.**
+  They're leaves: things end here, nothing in this repo builds on top of
+  them.
 - corridor's `info.json` sets `"type": "COG"` and `"hidden": true`. It is a
   real, loaded Red Cog — not the `SHARED_LIBRARY` type `contracts` uses —
   but it's hidden from end users because its own command surface
@@ -92,6 +96,10 @@ flowchart TB
         pico["pico<br/><small>watches messages, gate decides<br/>react/ignore, acts only through a<br/>bounded LLM tool-calling loop, publishes<br/>AgentReplied onto corridor's bus</small>"]
     end
 
+    subgraph utility["General utilities"]
+        deskutils["deskutils<br/><small>[p]deskutils time: current time via<br/>Discord's per-viewer timestamp markup<br/>plus explicit UTC/named-zone formatting.<br/>No config, no bus traffic.</small>"]
+    end
+
     toolbox -.->|"host prerequisite<br/>(operational, not coded)"| pixelagents
     pixelagents -->|"webview_bundle_status()<br/>via bot.get_cog('PixelAgents')"| floorplan
     corridor -->|"send_reply / render_reply<br/>require_permission / capabilities_satisfy<br/>publish_event / subscribe_event"| floorplan
@@ -99,6 +107,7 @@ flowchart TB
     corridor --> pixelagents
     corridor --> toolbox
     corridor -->|publish_event| testbench
+    corridor -->|send_reply| deskutils
 ```
 
 Every arrow into `corridor` in diagram 1 becomes an arrow *out of*
@@ -275,6 +284,7 @@ never `[p]load`ed by a running bot.
 flowchart LR
     subgraph runtime["Runtime cogs"]
         corridor2["corridor"]
+        deskutils2["deskutils"]
         floorplan2["floorplan"]
         pico2["pico"]
         pixelagents2["pixelagents"]
@@ -285,13 +295,14 @@ flowchart LR
     subgraph ci["contracts/ (CI-only, SHARED_LIBRARY)"]
         pa_verify["contracts.pixel_agents.verify<br/><small>imports floorplan.infrastructure.webview<br/>+ pixelagents.infrastructure.webview_build</small>"]
         idx_lint["contracts.pixel_index.*<br/><small>imports floorplan.contracts.pixel_index<br/>(generates + lints contract.yaml)</small>"]
-        reply_lint["contracts.discord_replies.lint_reply_channel<br/><small>AST-scans all six cog packages</small>"]
+        reply_lint["contracts.discord_replies.lint_reply_channel<br/><small>AST-scans all seven cog packages</small>"]
     end
 
     pa_verify -.->|"import"| floorplan2
     pa_verify -.->|"import"| pixelagents2
     idx_lint -.->|"import"| floorplan2
     reply_lint -.->|"AST scan, no import"| corridor2
+    reply_lint -.->|"AST scan, no import"| deskutils2
     reply_lint -.->|"AST scan, no import"| floorplan2
     reply_lint -.->|"AST scan, no import"| pico2
     reply_lint -.->|"AST scan, no import"| pixelagents2
@@ -318,11 +329,11 @@ real, if strange, code change; today it's structurally impossible.
 - **`contracts.discord_replies.lint_reply_channel`** is different in kind
   from the two above: it doesn't import any cog's code as a live module at
   all. It statically indexes every function/method in each of
-  `corridor`, `floorplan`, `pico`, `pixelagents`, `testbench`, `toolbox`
-  (`COG_PACKAGES` in the script), AST-walks every Red command handler's
-  reachable call graph, and fails the build if a handler reaches a raw
-  `ctx.send`/`interaction.response.send_message`/`.followup.send` without
-  that call graph ever reaching `corridor.send_reply`/`render_reply`.
+  `corridor`, `deskutils`, `floorplan`, `pico`, `pixelagents`, `testbench`,
+  `toolbox` (`COG_PACKAGES` in the script), AST-walks every Red command
+  handler's reachable call graph, and fails the build if a handler reaches
+  a raw `ctx.send`/`interaction.response.send_message`/`.followup.send`
+  without that call graph ever reaching `corridor.send_reply`/`render_reply`.
 
 See [`docs/contract-testing.md`](contract-testing.md) for the full
 methodology behind the two `verify` scripts, and
@@ -332,9 +343,9 @@ of pixelagents' own runtime) and repo-root `contracts/` (this CI-only
 package) are two unrelated things that happen to share a name.
 
 Separately, [`.github/workflows/check-cogs.yml`](../.github/workflows/check-cogs.yml)
-load-tests each of the six real cogs one at a time, alphabetically
-(`corridor` → `floorplan` → `pico` → `pixelagents` → `testbench` →
-`toolbox`, per
+load-tests each of the seven real cogs one at a time, alphabetically
+(`corridor` → `deskutils` → `floorplan` → `pico` → `pixelagents` →
+`testbench` → `toolbox`, per
 [`docs/dependency-loading.md`](dependency-loading.md#the-ci-smoke-test-and-the-tradeoff-we-accept)),
 checking each loads cleanly from a clean state rather than being silently
 dragged in by an earlier cog's own dependency loading. That's a different

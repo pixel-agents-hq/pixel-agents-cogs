@@ -15,6 +15,7 @@ together in one place.
 | [`toolbox`](../toolbox) | Bot-owner Node.js/npm installation on the host. | [toolbox/README.md](../toolbox/README.md) |
 | [`pico`](../pico) | An LLM-backed Discord presence: decides whether to react to a message, then acts only via a bounded tool-calling loop (never a raw LLM text send). | [pico/README.md](../pico/README.md) |
 | [`testbench`](../testbench) | Bot-owner-only: publishes any corridor Pub/Sub event through a Discord UI generated from corridor's own event catalog, for exercising floorplan's canvas rendering without a real Discord presence change or message. | [testbench/README.md](../testbench/README.md) |
+| [`deskutils`](../deskutils) | Small Discord utilities with no state of their own; today just `[p]deskutils time`, showing the current time via Discord's native per-viewer timestamp markup plus explicit UTC/named-zone formatting. | [deskutils/README.md](../deskutils/README.md) |
 | [`contracts`](../contracts) | **Not a cog** — `"type": "SHARED_LIBRARY"` in its `info.json`, so Red's Downloader skips it. CI-only: consumer-driven contract tests against Pixel Index and Pixel Agents, plus the reply-channel lint. (It does have a no-op `setup()` — purely to stop dev-time hot reload tooling from reporting a spurious failure; see `contracts/__init__.py`.) | [contracts/README.md](../contracts/README.md) |
 
 `pixelagents` and `floorplan` used to be one combined cog; [issue #21](https://github.com/pixel-agents-hq/pixel-agents-cogs/issues/21)
@@ -90,10 +91,11 @@ python -m pytest -q pixelagents/tests
 python -m pytest -q toolbox/
 python -m pytest -q pico/
 python -m pytest -q testbench/
+python -m pytest -q deskutils/
 
-python -m ruff format --check corridor floorplan pixelagents toolbox pico testbench
-python -m ruff check corridor floorplan pixelagents toolbox pico testbench
-python -m mypy corridor floorplan pixelagents toolbox pico testbench
+python -m ruff format --check corridor floorplan pixelagents toolbox pico testbench deskutils
+python -m ruff check corridor floorplan pixelagents toolbox pico testbench deskutils
+python -m mypy corridor floorplan pixelagents toolbox pico testbench deskutils
 python -m unittest discover -s contracts/tests
 python -m contracts.discord_replies.lint_reply_channel
 ```

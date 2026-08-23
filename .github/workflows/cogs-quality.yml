@@ -11,6 +11,7 @@ on:
       - "toolbox/**/*.py"
       - "pico/**/*.py"
       - "testbench/**/*.py"
+      - "deskutils/**/*.py"
       - "contracts/pixel_index/**"
       - "contracts/pixel_agents/**"
       - "contracts/corridor/**"
@@ -28,6 +29,7 @@ on:
       - "toolbox/**/*.py"
       - "pico/**/*.py"
       - "testbench/**/*.py"
+      - "deskutils/**/*.py"
       - "contracts/pixel_index/**"
       - "contracts/pixel_agents/**"
       - "contracts/corridor/**"
@@ -104,6 +106,14 @@ jobs:
             lint_target: "pico"
             mypy_target: "pico"
             extra_deps: "aiohttp 'pydantic>=2.6,<2.11'"
+            pixel_index_contracts: false
+          # deskutils only reads the system clock and stdlib zoneinfo, same
+          # discord.py-stub-only shape as corridor/toolbox/testbench above.
+          - cog: deskutils
+            test_target: "deskutils/"
+            lint_target: "deskutils"
+            mypy_target: "deskutils"
+            extra_deps: ""
             pixel_index_contracts: false
 
     steps:

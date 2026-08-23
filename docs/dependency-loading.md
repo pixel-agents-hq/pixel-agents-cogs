@@ -48,7 +48,8 @@ call that replaced it.
 
 The `.github/workflows/check-cogs.yml` job (`nntin/d-flows/actions/test-red-discordbot-downloader@v1`)
 loads and tests each cog **one at a time, in isolation, alphabetically**
-(`corridor` → `floorplan` → `pico` → `pixelagents` → `toolbox`). After
+(`corridor` → `deskutils` → `floorplan` → `pico` → `pixelagents` →
+`toolbox`). After
 loading a cog, it checks whether Red reports it under `loaded_packages`
 (fresh load) or `alreadyloaded_packages` (Red already considered it
 loaded) — the latter is treated as a **failure** for that cog's own turn,
@@ -71,8 +72,8 @@ design around its documented behavior, not against it.
 `ensure_corridor_loaded` (hand-rolled `find_cog`/`load_extension`, not
 going through `corridor.dependency_loader`) is duplicated verbatim in
 every dependent's own `dependency_loader.py` (`floorplan/`, `pixelagents/`,
-`toolbox/`, `pico/`, and the `.cookiecutter/cog-cookiecutter` template new
-cogs are generated from). This is structural, not an oversight: you cannot
+`toolbox/`, `pico/`, `deskutils/`, and the `.cookiecutter/cog-cookiecutter`
+template new cogs are generated from). This is structural, not an oversight: you cannot
 `from corridor.dependency_loader import ensure_loaded` before corridor
 itself is loaded and importable. Once corridor *is* loaded, every other
 cross-cog dependency goes through the shared `corridor.dependency_loader`

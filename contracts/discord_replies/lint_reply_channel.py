@@ -78,7 +78,15 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 # graph walked) independently -- add a new cog here when it's created (the
 # cookiecutter template's `commands.py` already follows the compliant
 # pattern this check enforces).
-COG_PACKAGES = ("corridor", "floorplan", "pico", "pixelagents", "testbench", "toolbox")
+COG_PACKAGES = (
+    "corridor",
+    "deskutils",
+    "floorplan",
+    "pico",
+    "pixelagents",
+    "testbench",
+    "toolbox",
+)
 
 _COMMAND_DECORATOR_ATTRS = {"command", "group", "hybrid_command", "hybrid_group"}
 _SEND_ATTRS = {"send", "send_message"}
@@ -179,10 +187,7 @@ def main() -> int:
         )
         return 1
 
-    print(
-        "Every command handler in corridor/floorplan/pico/pixelagents/testbench/toolbox "
-        "respects corridor's ReplyMode."
-    )
+    print(f"Every command handler in {'/'.join(COG_PACKAGES)} respects corridor's ReplyMode.")
     return 0
 
 

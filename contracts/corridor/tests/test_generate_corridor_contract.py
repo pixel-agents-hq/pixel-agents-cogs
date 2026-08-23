@@ -1,5 +1,7 @@
-"""Unit tests for contracts.corridor.generate_corridor_contract -- fully
-offline (introspects corridor.domain directly, no clone/network needed)."""
+"""Unit tests for contracts.corridor.generate_corridor_contract -- the thin
+CLI wrapper around corridor.event_catalog.build_contract(). The
+introspection itself is tested in corridor/tests/test_event_catalog.py
+now (see that module's docstring for why it moved)."""
 
 from __future__ import annotations
 
@@ -9,59 +11,6 @@ from pathlib import Path
 from unittest.mock import patch
 
 from contracts.corridor import generate_corridor_contract as gcc
-
-
-class TestBuildContract(unittest.TestCase):
-    def test_agent_ref_is_a_value_object(self) -> None:
-        contract = gcc.build_contract()
-        entry = contract["events"]["AgentRef"]
-
-        self.assertEqual(entry["kind"], "value-object")
-        self.assertEqual(
-            entry["fields"],
-            {
-                "discord_user_id": {"type": "int"},
-                "guild_id": {"type": "int"},
-                "is_bot": {"type": "bool"},
-            },
-        )
-
-    def test_agent_presence_changed_is_an_event_with_a_literal_status(self) -> None:
-        contract = gcc.build_contract()
-        entry = contract["events"]["AgentPresenceChanged"]
-
-        self.assertEqual(entry["kind"], "event")
-        self.assertEqual(
-            entry["fields"]["status"]["type"], "Literal['online', 'idle', 'dnd', 'offline']"
-        )
-
-    def test_activities_default_to_an_empty_list(self) -> None:
-        contract = gcc.build_contract()
-        entry = contract["events"]["AgentPresenceChanged"]
-
-        self.assertEqual(entry["fields"]["activities"]["type"], "tuple[AgentActivity, ...]")
-        self.assertEqual(entry["fields"]["activities"]["default"], [])
-
-    def test_optional_field_renders_as_a_union_with_none(self) -> None:
-        contract = gcc.build_contract()
-        entry = contract["events"]["AgentToolStarted"]
-
-        self.assertEqual(entry["fields"]["tool_name"]["type"], "str | None")
-        self.assertIsNone(entry["fields"]["tool_name"]["default"])
-
-    def test_agent_activity_event_union_alias_is_excluded_not_a_dataclass(self) -> None:
-        contract = gcc.build_contract()
-
-        self.assertNotIn("AgentActivityEvent", contract["events"])
-
-    def test_only_agent_prefixed_names_are_included(self) -> None:
-        # corridor.domain also exports non-pubsub types (GuildSettings,
-        # PermissionGroupDef, ReplyField, ...) -- a different contract's
-        # concern entirely.
-        contract = gcc.build_contract()
-
-        self.assertTrue(all(name.startswith("Agent") for name in contract["events"]))
-        self.assertNotIn("GuildSettings", contract["events"])
 
 
 class TestMain(unittest.TestCase):

@@ -146,7 +146,7 @@ publisher is still future work.
 | floorplan publishing to the bus | ✅ Implemented | `floorplan/adapters/discord_gateway.py` publishes `AgentPresenceChanged`/`AgentReplied` |
 | floorplan subscribing to the bus | ✅ Implemented | `floorplan/adapters/event_subscriptions.py::EventSubscriptionsMixin` |
 | pico publishing to the bus | ❌ Not implemented, out of scope for this PR | no `publish_event` call sites in `pico/` |
-| Consumer-driven contract test for corridor's bus | ✅ Implemented | `contracts/corridor/generate_corridor_contract.py --check`, generated `contracts/corridor/corridor.yaml` |
+| Consumer-driven contract test for corridor's bus | ✅ Implemented | `contracts/corridor/generate_corridor_contract.py --check`, generated `corridor/corridor.yaml` |
 
 ## Goals
 
@@ -788,10 +788,11 @@ original one-rich-event design decision.
       `floorplan/` yet. This item doesn't touch corridor's bus at all,
       since `is_bot` comes from Discord directly and floorplan already has
       it independently of any `AgentActivityEvent`.
-- [x] A real consumer-driven check for `contracts/corridor/corridor.yaml`:
-      `contracts/corridor/generate_corridor_contract.py` introspects
-      `corridor/domain/models.py`'s real dataclasses and regenerates
-      `corridor.yaml`; CI's `--check` mode fails on any drift, the same way
+- [x] A real consumer-driven check for `corridor/corridor.yaml`:
+      `corridor/event_catalog.py` introspects `corridor/domain/models.py`'s
+      real dataclasses into a plain-data schema, and
+      `contracts/corridor/generate_corridor_contract.py` regenerates
+      `corridor.yaml` from it; CI's `--check` mode fails on any drift, the same way
       `contracts/pixel_agents/lint_outbound_contract.py` verifies
       `pixelagents.contracts.outbound` against
       `pixel-agents-consumer-contract.yaml` — see "Verifying this design:
@@ -847,7 +848,7 @@ other's vocabulary; only floorplan ever touches both.
 
 ```mermaid
 flowchart LR
-    subgraph corridor_yaml["contracts/corridor/corridor.yaml"]
+    subgraph corridor_yaml["corridor/corridor.yaml"]
         cAgentRef["AgentRef / AgentActivity<br/><small>value objects</small>"]
         cActivities["AgentReplied / AgentToolStarted /<br/>AgentStatusChanged / AgentHighlighted /<br/>AgentUnhighlighted / AgentPresenceChanged"]
     end
@@ -896,20 +897,32 @@ narrower than the doc's own prose by design — not a gap to close, just two
 different questions ("what have we verified is possible" vs. "what do we
 actually send").
 
-### `contracts/corridor/corridor.yaml`
+### `corridor/corridor.yaml`
 
 A **generated, but committed** file, following the same pattern as
-`pixel-agents-consumer-contract.yaml` above: `contracts/corridor/generate_corridor_contract.py`
-introspects every `Agent`-prefixed name in `corridor.domain.__all__` (via
-`dataclasses.fields()`/`typing.get_type_hints()` — a different
-introspection API than the TypedDict-based `pixel_agents` generator, since
-corridor's domain types are plain dataclasses, not TypedDicts) and renders
-its `version`/`status`/`events` shape. All eight names appear: the two
-value objects (`AgentRef`, `AgentActivity`) and the six
-`AgentActivityEvent` members (`AgentReplied`, `AgentToolStarted`,
-`AgentStatusChanged`, `AgentHighlighted`, `AgentUnhighlighted`,
-`AgentPresenceChanged`) — `AgentActivityEvent` itself is skipped, since
-it's a union alias, not a dataclass.
+`pixel-agents-consumer-contract.yaml` above, with one difference from every
+other contract in this repo: it lives inside `corridor/` itself, not
+`contracts/`. `docs/corridor.md` documents `contracts/` as a
+`SHARED_LIBRARY`-type package "other cogs never import at runtime" —
+CI-only. That held fine while `corridor.yaml` only had CI readers
+(`generate_corridor_contract.py --check`, `lint_corridor_contract.py`).
+It stopped holding once `testbench` needed the same schema at *runtime*,
+to build its Discord UI generically off the event set — a real cog can't
+import `contracts` without breaking that rule, so the contract (and the
+introspection that builds it) moved to where every cog that already
+depends on corridor can reach it: `corridor/event_catalog.py` now owns
+`build_contract()` (introspecting every `Agent`-prefixed name in
+`corridor.domain.__all__` via `dataclasses.fields()`/`typing.get_type_hints()`
+— a different introspection API than the TypedDict-based `pixel_agents`
+generator, since corridor's domain types are plain dataclasses, not
+TypedDicts), and `contracts/corridor/generate_corridor_contract.py`
+imports that function rather than duplicating it. All eight names appear
+in the rendered `version`/`status`/`events` shape: the two value objects
+(`AgentRef`, `AgentActivity`) and the six `AgentActivityEvent` members
+(`AgentReplied`, `AgentToolStarted`, `AgentStatusChanged`,
+`AgentHighlighted`, `AgentUnhighlighted`, `AgentPresenceChanged`) —
+`AgentActivityEvent` itself is skipped, since it's a union alias, not a
+dataclass.
 
 Unlike `pixel_agents`' contract, there's no separate offline-capture lint
 here: corridor's domain types are plain in-process dataclasses, never

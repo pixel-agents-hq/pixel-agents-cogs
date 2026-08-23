@@ -19,7 +19,7 @@ from pathlib import Path
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-CONTRACT_PATH = Path(__file__).with_name("corridor.yaml")
+CONTRACT_PATH = REPO_ROOT / "corridor" / "corridor.yaml"
 DESIGN_DOC_PATH = REPO_ROOT / "docs" / "corridor-pubsub-design.md"
 
 

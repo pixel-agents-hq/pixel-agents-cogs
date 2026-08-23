@@ -288,6 +288,25 @@ def _install_discord() -> None:
             self.values: list[Any] = list(self.default_values)
             self.callback: Any = None
 
+    class _MockUserSelect:
+        def __init__(
+            self,
+            *,
+            placeholder: str = "",
+            min_values: int = 0,
+            max_values: int = 25,
+            default_values: list[Any] | None = None,
+            custom_id: str = "",
+            **kwargs: object,
+        ) -> None:
+            self.placeholder = placeholder
+            self.min_values = min_values
+            self.max_values = max_values
+            self.default_values = default_values or []
+            self.custom_id = custom_id or _generate_custom_id()
+            self.values: list[Any] = list(self.default_values)
+            self.callback: Any = None
+
     discord_ui = _make_stub_module("discord.ui")
     discord_ui.Modal = _MockModal
     discord_ui.TextInput = _MockTextInput
@@ -298,6 +317,7 @@ def _install_discord() -> None:
     discord_ui.Button = _MockButton
     discord_ui.Select = _MockSelect
     discord_ui.RoleSelect = _MockRoleSelect
+    discord_ui.UserSelect = _MockUserSelect
 
     class _MockSection:
         """Section wraps display components plus one `.accessory` (a Button

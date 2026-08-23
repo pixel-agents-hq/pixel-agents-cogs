@@ -33,14 +33,19 @@ event bus:
   differs from Pixel Index's `contract.yaml`.
 - **corridor's Pub/Sub domain model** — internal, not external (see
   [`docs/corridor-pubsub-design.md`](../docs/corridor-pubsub-design.md)).
-  `contracts/corridor/corridor.yaml` is **generated, but committed**,
-  produced by `generate_corridor_contract.py` introspecting
+  `corridor/corridor.yaml` is **generated, but committed**, produced by
+  `corridor/event_catalog.py::build_contract()` introspecting
   `corridor/domain/models.py`'s real dataclasses — the same generate-and-commit
-  pattern as `pixel-agents-consumer-contract.yaml` below. CI's
-  `generate_corridor_contract.py --check` fails on any diff from the
-  committed copy; `lint_corridor_contract.py` keeps one narrower job on
-  top, checking every declared event name is still mentioned in the design
-  doc's own text.
+  pattern as `pixel-agents-consumer-contract.yaml` below. It lives inside
+  `corridor/`, not `contracts/`, because a real cog (`testbench`) needs
+  this same schema at runtime to build its UI, and `contracts/` is
+  documented (`docs/corridor.md`) as CI-only, never imported by a loaded
+  cog — `contracts/corridor/generate_corridor_contract.py` just imports
+  `build_contract()` from `corridor` rather than owning the introspection
+  itself. CI's `generate_corridor_contract.py --check` fails on any diff
+  from the committed copy; `lint_corridor_contract.py` keeps one narrower
+  job on top, checking every declared event name is still mentioned in
+  the design doc's own text.
 
 Pixel Index and Pixel Agents (the build-pipeline contract) are checked live
 on a schedule and on relevant PRs, and published to a shared status site so
@@ -83,8 +88,8 @@ doc's "Verifying this design: two committed contracts" section.
 | `pixel_agents/generate_consumer_contract.py` | Builds `pixel-agents-consumer-contract.yaml` from `pixelagents.contracts.outbound`'s TypedDicts (**committed**, not gitignored — CI fails on drift instead of always overwriting) |
 | `pixel_agents/pixel-agents-consumer-contract.yaml` | The subset of wire `ServerMessage` schemas `pixelagents.contracts.outbound` actually builds; generated, committed, reviewable |
 | `pixel_agents/lint_outbound_contract.py` | CI lint: fails if a captured outbound message violates the committed consumer contract (offline) |
-| `corridor/generate_corridor_contract.py` | Builds `contracts/corridor/corridor.yaml` from `corridor.domain`'s real dataclasses (**committed**, not gitignored — CI fails on drift instead of always overwriting) |
-| `contracts/corridor/corridor.yaml` | Every `Agent`-prefixed type in `corridor/domain/models.py`; generated, committed, reviewable |
+| `corridor/generate_corridor_contract.py` | Thin CLI wrapper: renders and `--check`s/writes `../corridor/corridor.yaml` from `corridor.event_catalog.build_contract()` (**committed**, not gitignored — CI fails on drift instead of always overwriting) |
+| [`../corridor/corridor.yaml`](../corridor/corridor.yaml) | Every `Agent`-prefixed type in `corridor/domain/models.py`; generated, committed, reviewable. Lives inside `corridor/`, not here — see the bullet above |
 | `corridor/lint_corridor_contract.py` | CI lint: fails if a name declared in `corridor.yaml` isn't mentioned in `docs/corridor-pubsub-design.md`'s text (doc cross-reference only — structural correctness against real code is `generate_corridor_contract.py --check`'s job) |
 | `discord_replies/lint_reply_channel.py` | CI lint: fails on a raw Discord send reachable from a command handler without going through corridor's `send_reply`/`render_reply` |
 

@@ -42,6 +42,49 @@ calling into `deskutils`' own `TimeService` — corridor only ever sees a
 name, a description, a JSON-Schema dict, an opaque callable, and a
 permission-group key.
 
+## Topology: corridor is the only piece that must be loaded
+
+Every cog in this repo is a genuine Red-DiscordBot plugin — installable,
+loadable, and unloadable independently — and this feature is designed so
+that stays true. `deskutils` and `pico` each declare `corridor` in
+`required_cogs` (the one thing they cannot function without); neither
+declares the other, and neither imports so much as a type from the other's
+package. The only edge between them is mediated entirely through corridor,
+at runtime, through the registry described below:
+
+```mermaid
+flowchart BT
+    corridor["corridor<br/><small>required_cogs is empty — nothing this repo<br/>ships can make it fail to load.<br/>Hosts ToolRegistryService.</small>"]
+    deskutils["deskutils<br/><small>optional producer<br/>registers deskutils_time if loaded</small>"]
+    pico["pico<br/><small>optional consumer<br/>reads the registry if loaded &amp; enabled</small>"]
+
+    deskutils -->|"required_cogs<br/>(must be loaded)"| corridor
+    pico -->|"required_cogs<br/>(must be loaded)"| corridor
+    deskutils -.->|"register_tool()<br/>at cog_load"| corridor
+    corridor -.->|"list_tools_for()<br/>at on_message, if RESPOND"| pico
+
+    classDef required stroke-width:3px;
+    class corridor required;
+```
+
+Solid arrows are the only ones Red actually enforces (`required_cogs` —
+corridor refuses to let a dependent load without it, via
+`ensure_corridor_loaded`). Dashed arrows are the tool-registry traffic this
+doc describes, and they are the *only* place `deskutils` and `pico` come
+anywhere near each other — there is deliberately no dashed (or any) edge
+drawn directly between them. Remove either dashed arrow's endpoint cog from
+the bot entirely and the other endpoint keeps working exactly as it did
+before this feature existed; remove corridor and neither `deskutils` nor
+`pico` can even load, tool registry or not — that dependency predates this
+feature and would exist with zero cogs ever touching `register_tool`.
+
+| Installed | `[p]deskutils time` (Discord command) | pico answers "what time is it?" |
+|---|---|---|
+| `corridor` only | n/a (deskutils not installed) | n/a (pico not installed) |
+| `corridor` + `deskutils` | ✅ works | n/a (pico not installed) |
+| `corridor` + `pico` | n/a (deskutils not installed) | pico responds via its native reply tool only — `list_tools_for` returns `()`, exactly as if this feature didn't exist |
+| `corridor` + `deskutils` + `pico` | ✅ works | ✅ pico calls `deskutils_time` directly |
+
 ## The contract: framework-neutral, not pydantic
 
 `pico`'s own `ToolSpec` Protocol (`pico/tools/base.py`) is pydantic-typed —
@@ -146,7 +189,43 @@ loaded.
 
 ## Example: one full turn
 
-A user asks "what time is it?" in a pico-enabled guild:
+```mermaid
+sequenceDiagram
+    participant U as Discord user
+    participant P as pico<br/><small>(if loaded &amp; enabled)</small>
+    participant C as corridor<br/><small>(always loaded)</small>
+    participant D as deskutils<br/><small>(if loaded)</small>
+
+    Note over D,C: cog_load -- runs whether or not pico is ever installed
+    D->>C: register_tool(deskutils_time, owner="Deskutils")
+
+    U->>P: "what time is it?"
+    P->>P: GateService.decide() -> RESPOND
+    P->>C: list_tools_for(ctx.author)
+    alt deskutils loaded and member satisfies "employee"
+        C-->>P: (deskutils_time,)
+    else deskutils not loaded
+        C-->>P: ()
+    end
+    P->>P: ToolLoopService.run(tools=[ReplyTool, CrossCogTool(...)?])
+    opt LLM chooses to call deskutils_time
+        P->>D: CrossCogTool.handler(args)
+        D->>D: TimeService.now() / resolve_zone()
+        D-->>P: {utc_iso, epoch_seconds, discord_markup, ...}
+    end
+    opt LLM chooses to reply
+        P->>C: send_reply(...) via ReplyTool
+        C-->>U: rendered reply
+    end
+```
+
+If `pico` is never installed, nothing right of `deskutils`' own `cog_load`
+ever runs — the registration still happened and simply sits unread. If
+`deskutils` is never installed, the `alt` above always takes the "not
+loaded" branch and pico behaves exactly as it did before this feature
+existed, using only its native `ReplyTool`.
+
+Spelled out:
 
 1. `GateService.decide()` → `RESPOND`.
 2. `ctx = await bot.get_context(message)` → `ctx.author` is a real

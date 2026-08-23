@@ -1,0 +1,55 @@
+name: "Pixel Agents Contract Lint"
+
+on:
+  push:
+    paths:
+      - "pixelagents/contracts/outbound.py"
+      - "pixelagents/application/office.py"
+      - "contracts/pixel_agents/**"
+      - ".github/workflows/pixel-agents-contract-lint.yml"
+  pull_request:
+    paths:
+      - "pixelagents/contracts/outbound.py"
+      - "pixelagents/application/office.py"
+      - "contracts/pixel_agents/**"
+      - ".github/workflows/pixel-agents-contract-lint.yml"
+
+jobs:
+  lint:
+    name: Static contract checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        # Deliberately lighter than contracts/pixel_index/requirements.txt --
+        # outbound.py/office.py are plain-stdlib TypedDicts, no pydantic/aiohttp/
+        # discord needed for this offline path.
+        run: pip install 'pyyaml>=6.0' 'jsonschema>=4.20'
+
+      - name: Check pixel-agents-consumer-contract.yaml is up to date
+        run: python -m contracts.pixel_agents.generate_consumer_contract --check
+
+      - name: Check outbound builders match the committed consumer contract
+        run: python -m contracts.pixel_agents.lint_outbound_contract
+
+      - name: Test consumer-contract tooling
+        # NOT `unittest discover -s contracts/pixel_agents/tests` -- that
+        # also collects test_status_site.py, which imports verify.py, which
+        # imports floorplan (pydantic/discord). Every other test module here
+        # is floorplan-free (verified: schema.py/verify_outbound.py only
+        # import pixelagents + stdlib + pyyaml/jsonschema), so target them
+        # directly to keep this job's dependency footprint minimal without
+        # losing coverage.
+        run: |
+          python -m unittest \
+            contracts.pixel_agents.tests.test_generate_consumer_contract \
+            contracts.pixel_agents.tests.test_lint_outbound_contract \
+            contracts.pixel_agents.tests.test_verify_outbound \
+            contracts.pixel_agents.tests.test_schema

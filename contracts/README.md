@@ -14,7 +14,7 @@ top-level package with an `info.json`, without checking `type`/`hidden`)
 doesn't report a spurious reload failure — see that function's docstring.
 
 It owns the contract for two external dependencies neither `pixelagents`
-nor `floorplan` controls:
+nor `floorplan` controls, plus one internal, not-yet-implemented one:
 
 - **[Pixel Index](https://github.com/pixel-agents-hq/index)** — a plain
   HTTP API. The contract is generated from the same pydantic models
@@ -25,10 +25,44 @@ nor `floorplan` controls:
   at the commit pinned in `webview_vendor.commit`, and `floorplan` serves
   the result). The "contract" here is a real clone + `npm ci` + `vite
   build`, checked against the same asset decoding the office actually
-  needs.
+  needs. A second, narrower contract
+  (`pixel_agents/pixel-agents-consumer-contract.yaml`) covers just the
+  subset of that same repo's WebSocket message vocabulary
+  `pixelagents.contracts.outbound` actually builds — see below for how it
+  differs from Pixel Index's `contract.yaml`.
+- **corridor's Pub/Sub domain model** — internal, not external, and not
+  implemented yet (see
+  [`docs/corridor-pubsub-design.md`](../docs/corridor-pubsub-design.md)).
+  `corridor/corridor.yaml` is hand-authored from that design doc; its CI
+  check is well-formedness only (does the yaml parse, does it match the
+  doc) until corridor's real domain model exists to check against.
 
-Both are checked live on a schedule and on relevant PRs, and published to a
-shared status site so a break is visible before it reaches a bot host.
+Pixel Index and Pixel Agents (the build-pipeline contract) are checked live
+on a schedule and on relevant PRs, and published to a shared status site so
+a break is visible before it reaches a bot host.
+
+## `pixel-agents-consumer-contract.yaml`: generated, but committed
+
+Unlike `pixel_index/contract.yaml` (gitignored, regenerated fresh on every
+`verify.py` run — never a reviewable diff), `pixel_agents/pixel-agents-consumer-contract.yaml`
+**is committed**. It's produced by `generate_consumer_contract.py`
+introspecting `pixelagents.contracts.outbound`'s `TypedDict`s (plain
+`TypedDict`s, not pydantic models — `model_json_schema()` doesn't apply
+here), but CI regenerates it and fails on any diff from the committed copy
+instead of silently overwriting. A change to `outbound.py` always shows up
+as a reviewable diff to this file in the same PR. Checked two ways:
+
+- **Offline** (`lint_outbound_contract.py`, every PR): do
+  `pixelagents.contracts.outbound`'s builders still produce exactly what
+  we've committed to?
+- **Live** (a new `consumer_contract_drift` check appended to
+  `pixel_agents/verify_outbound.py`'s existing checks, scheduled + PR-gated,
+  needs the real vendor clone): does upstream's actual, currently-pinned
+  `core/asyncapi.yaml` still support every field this contract declares?
+
+It's deliberately narrower than everything `docs/corridor-pubsub-design.md`
+has verified against upstream — only what's actually built today. See that
+doc's "Verifying this design: two committed contracts" section.
 
 ## Layout
 
@@ -40,6 +74,12 @@ shared status site so a break is visible before it reaches a bot host.
 | `pixel_index/lint_endpoints.py` | CI lint: fails if a called endpoint isn't registered in `endpoints.py` |
 | `pixel_index/lint_model_usage.py` | CI lint: fails if a field read on a contract model isn't modeled (via mypy) |
 | `pixel_agents/verify.py` | Runs a real webview build against the pinned commit and checks the result |
+| `pixel_agents/verify_outbound.py` | Captures real outbound messages and validates them against the vendor schema, our own committed contract, and (live) checks the contract itself against the vendor schema |
+| `pixel_agents/generate_consumer_contract.py` | Builds `pixel-agents-consumer-contract.yaml` from `pixelagents.contracts.outbound`'s TypedDicts (**committed**, not gitignored — CI fails on drift instead of always overwriting) |
+| `pixel_agents/pixel-agents-consumer-contract.yaml` | The subset of wire `ServerMessage` schemas `pixelagents.contracts.outbound` actually builds; generated, committed, reviewable |
+| `pixel_agents/lint_outbound_contract.py` | CI lint: fails if a captured outbound message violates the committed consumer contract (offline) |
+| `corridor/corridor.yaml` | Hand-authored description of corridor's not-yet-implemented Pub/Sub domain model |
+| `corridor/lint_corridor_contract.py` | CI lint: fails if `corridor.yaml` is malformed or drifts from `docs/corridor-pubsub-design.md`'s domain model (well-formedness only — no code exists yet) |
 | `discord_replies/lint_reply_channel.py` | CI lint: fails on a raw Discord send reachable from a command handler without going through corridor's `send_reply`/`render_reply` |
 
 ## Running checks locally
@@ -50,6 +90,13 @@ python -m contracts.pixel_index.verify
 python -m contracts.pixel_index.lint_endpoints
 python -m contracts.pixel_index.lint_model_usage
 python -m unittest discover -s contracts/pixel_index/tests -v
+
+python -m contracts.pixel_agents.generate_consumer_contract
+python -m contracts.pixel_agents.lint_outbound_contract
+python -m unittest discover -s contracts/pixel_agents/tests -v
+
+python -m contracts.corridor.lint_corridor_contract
+python -m unittest discover -s contracts/corridor/tests -v
 ```
 
 ## Docs

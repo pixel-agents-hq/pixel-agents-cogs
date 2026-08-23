@@ -12,6 +12,8 @@ on:
       - "pico/**/*.py"
       - "contracts/pixel_index/**"
       - "contracts/pixel_agents/**"
+      - "contracts/corridor/**"
+      - "docs/corridor-pubsub-design.md"
       - "pyproject.toml"
       - ".github/workflows/cogs-quality.yml"
   pull_request:
@@ -25,6 +27,8 @@ on:
       - "pico/**/*.py"
       - "contracts/pixel_index/**"
       - "contracts/pixel_agents/**"
+      - "contracts/corridor/**"
+      - "docs/corridor-pubsub-design.md"
       - "pyproject.toml"
       - ".github/workflows/cogs-quality.yml"
 
@@ -50,7 +54,7 @@ jobs:
             test_target: "corridor/"
             lint_target: "corridor"
             mypy_target: "corridor"
-            extra_deps: ""
+            extra_deps: "'pyyaml>=6.0'"
             pixel_index_contracts: false
           - cog: toolbox
             test_target: "toolbox/"
@@ -64,7 +68,7 @@ jobs:
             test_target: "pixelagents/tests"
             lint_target: "pixelagents"
             mypy_target: "pixelagents"
-            extra_deps: ""
+            extra_deps: "'pyyaml>=6.0' 'jsonschema>=4.20'"
             pixel_index_contracts: false
           # floorplan inherited the runtime half of the old pixelagents Cog:
           # the dashboard, office WebSocket protocol, and Pixel Index
@@ -155,6 +159,28 @@ jobs:
         # WebviewAssetProvider consuming it (see contracts/pixel_agents/verify.py)
         # -- needs floorplan's deps (pydantic, via this leg's Pixel Index
         # contract install above), so it runs on the floorplan leg rather
-        # than pixelagents'.
+        # than pixelagents'. This discover also picks up
+        # test_generate_consumer_contract.py/test_lint_outbound_contract.py
+        # (below) automatically -- no separate step needed for those here.
         if: matrix.cog == 'floorplan'
         run: python -m unittest discover -s contracts/pixel_agents/tests
+
+      - name: Check pixel-agents-consumer-contract.yaml is up to date
+        # Offline -- pixelagents/contracts/outbound.py + application/office.py
+        # are plain-stdlib TypedDicts, no clone/floorplan deps needed. See
+        # .github/workflows/pixel-agents-contract-lint.yml for the dedicated,
+        # narrower-triggered version of these same two checks.
+        if: matrix.cog == 'pixelagents'
+        run: python -m contracts.pixel_agents.generate_consumer_contract --check
+
+      - name: Check outbound builders match the committed consumer contract
+        if: matrix.cog == 'pixelagents'
+        run: python -m contracts.pixel_agents.lint_outbound_contract
+
+      - name: Check corridor.yaml is well-formed and matches the design doc
+        if: matrix.cog == 'corridor'
+        run: python -m contracts.corridor.lint_corridor_contract
+
+      - name: Test corridor contract tooling
+        if: matrix.cog == 'corridor'
+        run: python -m unittest discover -s contracts/corridor/tests

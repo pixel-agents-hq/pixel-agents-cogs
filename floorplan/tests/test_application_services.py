@@ -62,6 +62,20 @@ class TestDiscordSnapshots(unittest.TestCase):
         direct_message = SimpleNamespace(guild=None)
         self.assertIsNone(message_snapshot(direct_message))
 
+    def test_message_adapter_resolves_mentions_to_display_names(self) -> None:
+        message = SimpleNamespace(
+            guild=SimpleNamespace(id=20),
+            author=SimpleNamespace(id=10),
+            id=30,
+            content="hey <@10>, check this out",
+            clean_content="hey @Someone, check this out",
+        )
+
+        snapshot = message_snapshot(message)
+
+        assert snapshot is not None
+        self.assertEqual(snapshot.content, "hey @Someone, check this out")
+
 
 class TestApplicationBoundaries(unittest.TestCase):
     def test_office_policy_modules_do_not_import_frameworks(self) -> None:
@@ -156,6 +170,7 @@ class TestCogTaskLifecycle(unittest.IsolatedAsyncioTestCase):
             author=SimpleNamespace(id=2, bot=False),
             id=99,
             content="hello",
+            clean_content="hello",
         )
 
         await cog.on_message(message)

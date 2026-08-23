@@ -245,7 +245,7 @@ class TestWebSocketBootstrapContract(unittest.IsolatedAsyncioTestCase):
             "extensionVersion": "",
             "watchAllSessions": False,
             "alwaysShowLabels": False,
-            "ghostHeadlessAgents": False,
+            "ghostHeadlessAgents": True,
             "hooksEnabled": False,
             "hooksInfoShown": True,
             "externalAssetDirectories": [],

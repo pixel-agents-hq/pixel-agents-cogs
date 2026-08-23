@@ -280,6 +280,19 @@ class TestOfficeService(unittest.IsolatedAsyncioTestCase):
 
         self.assertLess(types.index("layoutLoaded"), types.index("agentTeamInfo"))
 
+    async def test_bootstrap_enables_ghost_rendering_for_headless_agents(self) -> None:
+        """isHeadless (agent_created/existingAgents) is inert in the webview
+        unless settingsLoaded.ghostHeadlessAgents is also true -- see
+        renderer.ts's `ch.isHeadless && ghostHeadlessAgents` alpha check."""
+        messages = self.service.bootstrap_messages(
+            assets={"characters": []},
+            seats={},
+            layout={"version": 1},
+        )
+        settings_loaded = next(m for m in messages if m["type"] == "settingsLoaded")
+
+        self.assertTrue(settings_loaded["ghostHeadlessAgents"])
+
 
 class TestMergeSeatPatch(unittest.TestCase):
     def test_valid_fields_are_merged(self) -> None:

@@ -1012,6 +1012,7 @@ class TestOnMessage(unittest.IsolatedAsyncioTestCase):
         msg.author.id = 1
         msg.author.bot = False
         msg.content = "Hello world"
+        msg.clean_content = "Hello world"
         msg.id = 999
         await self.cog.on_message(msg)
         self.assertEqual(len(self.cog._corridor.published), 1)

@@ -216,6 +216,19 @@ class CogBase:
 
         self._event_bus.unsubscribe_owner(owner)
 
+    @commands.Cog.listener()
+    async def on_cog_remove(self, cog: commands.Cog) -> None:
+        """Defensive: Red dispatches this unconditionally after every cog
+        removal, even if that cog's own cog_unload() raised partway through
+        (discord.py's Cog._eject swallows that exception before dispatching,
+        and the cog is already popped from bot.cogs by then either way) --
+        so a subscriber that crashes mid-unload without ever reaching its
+        own unsubscribe_owner() call doesn't leak a stale subscription
+        forever. register_dependent's cascade exists for the same distrust
+        in the opposite (corridor-unloads-first) direction."""
+
+        self._event_bus.unsubscribe_owner(cog.qualified_name)
+
     # --- settings mutation, used by settings_ui.py and [p]corridor commands ---
 
     async def set_reply_mode(self, guild_id: int, mode: ReplyMode) -> None:

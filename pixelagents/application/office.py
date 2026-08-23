@@ -94,6 +94,13 @@ class OfficeService:
         self._choose = choose
         self._hue_shift = hue_shift
         self._agents: dict[tuple[int, int], tuple[str, str]] = {}
+        # Keyed by bare user_id, not (guild_id, user_id) like self._agents --
+        # is_bot is guild-invariant (a Discord account's bot flag doesn't
+        # change per guild), and _representative_agents() already collapses
+        # multi-guild presence down to one representative user_id, so a
+        # (guild_id, user_id)-keyed dict here would need that same
+        # internally-chosen representative guild_id, which isn't exposed.
+        self._agent_is_bot: dict[int, bool] = {}
         self._logged_collisions: set[int] = set()
 
     @property
@@ -167,17 +174,24 @@ class OfficeService:
         agent_ids: list[int] = []
         folder_names: dict[str, str] = {}
         agent_meta: dict[str, dict[str, object]] = {}
+        external_agents: dict[str, bool] = {}
+        headless_agents: dict[str, bool] = {}
         for user_id, (folder, _) in self._representative_agents().items():
             agent_id = self.agent_id(user_id)
             agent_ids.append(agent_id)
             folder_names[str(agent_id)] = folder
             agent_meta[str(agent_id)] = self.seat_meta(agent_id, seats)
+            # Every agent this service tracks is Discord-derived, hence
+            # external, unconditionally.
+            external_agents[str(agent_id)] = True
+            headless_agents[str(agent_id)] = self._agent_is_bot.get(user_id, False)
         return {
             "type": "existingAgents",
             "agents": agent_ids,
             "agentMeta": agent_meta,
             "folderNames": folder_names,
-            "externalAgents": {},
+            "externalAgents": external_agents,
+            "headlessAgents": headless_agents,
         }
 
     async def send_existing_agents(self) -> None:
@@ -234,9 +248,19 @@ class OfficeService:
         agent_id = self.agent_id(snapshot.key.user_id)
         if folder != cached_folder:
             self._agents[key] = (folder, snapshot.display_name)
+            self._agent_is_bot[snapshot.key.user_id] = snapshot.is_bot
             palette, hue_shift = await self.assign_palette(agent_id)
             await self._send(agent_closed(agent_id))
-            await self._send(agent_created(agent_id, folder, palette, hue_shift))
+            await self._send(
+                agent_created(
+                    agent_id,
+                    folder,
+                    palette,
+                    hue_shift,
+                    is_external=True,
+                    is_headless=snapshot.is_bot,
+                )
+            )
             if snapshot.display_name != cached_name:
                 await self._send(agent_team_info(agent_id, snapshot.display_name))
             await self.send_existing_agents()
@@ -254,9 +278,19 @@ class OfficeService:
         agent_id = self.agent_id(user_id)
         already_active = self.is_user_active_in_other_guild(guild_id, user_id)
         self._agents[(guild_id, user_id)] = (snapshot.status.value, snapshot.display_name)
+        self._agent_is_bot[user_id] = snapshot.is_bot
         if not already_active:
             palette, hue_shift = await self.assign_palette(agent_id)
-            await self._send(agent_created(agent_id, snapshot.status.value, palette, hue_shift))
+            await self._send(
+                agent_created(
+                    agent_id,
+                    snapshot.status.value,
+                    palette,
+                    hue_shift,
+                    is_external=True,
+                    is_headless=snapshot.is_bot,
+                )
+            )
             await self._send(agent_team_info(agent_id, snapshot.display_name))
             await self._send(agent_status(agent_id, self.presence.agent_status(snapshot)))
         await self.send_existing_agents()
@@ -270,6 +304,7 @@ class OfficeService:
         del self._agents[raw_key]
         self.presence.forget(key)
         if not self.is_user_active_in_other_guild(key.guild_id, key.user_id):
+            self._agent_is_bot.pop(key.user_id, None)
             await self._send(agent_closed(agent_id))
         await self.send_existing_agents()
 

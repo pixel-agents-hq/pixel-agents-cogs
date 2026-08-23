@@ -1035,6 +1035,32 @@ class TestOnMessage(unittest.IsolatedAsyncioTestCase):
         await self.cog.on_message(msg)
         self.assertEqual(self.cog._corridor.published, [])
 
+    async def test_message_from_this_bots_own_account_is_ignored(self):
+        """Avoids double-publishing: pico's ReplyTool now publishes
+        AgentReplied directly for its own reply, and that reply is itself a
+        Discord message this same listener would otherwise also see and
+        publish a second time."""
+        self.cog._agents[(100, 1)] = ("online", "Tin")
+        self.cog.bot.user.id = 1
+        msg = MagicMock()
+        msg.guild.id = 100
+        msg.author.id = 1
+        msg.author.bot = True
+        msg.content = "hello world"
+        await self.cog.on_message(msg)
+        self.assertEqual(self.cog._corridor.published, [])
+
+    async def test_message_from_a_different_bot_still_publishes(self):
+        self.cog._agents[(100, 2)] = ("online", "OtherBot")
+        self.cog.bot.user.id = 1
+        msg = MagicMock()
+        msg.guild.id = 100
+        msg.author.id = 2
+        msg.author.bot = True
+        msg.content = "hello world"
+        await self.cog.on_message(msg)
+        self.assertEqual(len(self.cog._corridor.published), 1)
+
 
 # ---------------------------------------------------------------------------
 # Tests: commands

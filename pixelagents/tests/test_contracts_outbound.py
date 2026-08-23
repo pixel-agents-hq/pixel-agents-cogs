@@ -55,6 +55,18 @@ class TestOutboundBuilders:
                     "isExternal": True,
                 },
             ),
+            (
+                lambda: agent_created(-1, "online", 2, 45, is_external=True, is_headless=True),
+                {
+                    "type": "agentCreated",
+                    "id": -1,
+                    "folderName": "online",
+                    "palette": 2,
+                    "hueShift": 45,
+                    "isExternal": True,
+                    "isHeadless": True,
+                },
+            ),
             (lambda: agent_closed(-1), {"type": "agentClosed", "id": -1}),
             (lambda: agent_selected(-1), {"type": "agentSelected", "id": -1}),
             (lambda: agent_deselected(-1), {"type": "agentDeselected", "id": -1}),

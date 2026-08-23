@@ -25,9 +25,7 @@ present-day cogs, not a pending change.
 See [`docs/architecture.md`](architecture.md) for Mermaid diagrams of how
 these packages depend on and relate to each other — the dependency graph,
 an ownership map, cross-package runtime data flow for floorplan and pico,
-and the CI-only relationships `contracts/` adds on top of all of it. That
-doc predates `testbench`; treat it as covering the other six until it's
-updated.
+and the CI-only relationships `contracts/` adds on top of all of it.
 
 ## Internal layering
 

@@ -15,7 +15,7 @@ from typing import Protocol
 
 from pydantic import BaseModel, Field
 
-from corridor.domain import ReplyField
+from corridor.domain import AgentRef, AgentReplied, ReplyField
 
 log = logging.getLogger("red.pico")
 
@@ -64,6 +64,8 @@ class CorridorReply(Protocol):
         fields: Sequence[ReplyField] = (),
     ) -> SentMessage: ...
 
+    async def publish_event(self, event: object) -> None: ...
+
 
 class ReplyTool:
     """Handler closes over the triggering `ctx` and the corridor reference
@@ -78,9 +80,13 @@ class ReplyTool:
     Input = ReplyInput
     Output = ReplyOutput
 
-    def __init__(self, corridor: CorridorReply, ctx: object) -> None:
+    def __init__(
+        self, corridor: CorridorReply, ctx: object, *, guild_id: int, bot_user_id: int | None
+    ) -> None:
         self._corridor = corridor
         self._ctx = ctx
+        self._guild_id = guild_id
+        self._bot_user_id = bot_user_id
 
     async def handler(self, raw_input: BaseModel) -> BaseModel:
         assert isinstance(raw_input, ReplyInput)
@@ -99,7 +105,27 @@ class ReplyTool:
             # the whole turn.
             log.warning("pico: reply tool failed to send: %s", exc)
             return ReplyOutput(sent=False, message_id=None, error=str(exc))
+        await self._publish_agent_replied(raw_input)
         return ReplyOutput(sent=True, message_id=message.id, error=None)
+
+    async def _publish_agent_replied(self, raw_input: ReplyInput) -> None:
+        # A separate try/except from send_reply's above -- the message was
+        # already sent successfully by this point, so a corridor bus
+        # failure here must never turn that into a reported tool failure.
+        if self._bot_user_id is None:
+            return
+        summary = raw_input.content or raw_input.description or raw_input.title or ""
+        try:
+            await self._corridor.publish_event(
+                AgentReplied(
+                    agent=AgentRef(
+                        discord_user_id=self._bot_user_id, guild_id=self._guild_id, is_bot=True
+                    ),
+                    summary=summary,
+                )
+            )
+        except Exception as exc:
+            log.warning("pico: failed to publish AgentReplied: %s", exc)
 
 
 __all__ = ["CorridorReply", "ReplyFieldInput", "ReplyInput", "ReplyOutput", "ReplyTool"]

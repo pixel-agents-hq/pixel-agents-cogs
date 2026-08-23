@@ -154,6 +154,14 @@ class DiscordGatewayMixin(PixelAgentsBase):
         guild = message.guild
         if guild is None:
             return
+        if self.bot.user is not None and message.author.id == self.bot.user.id:
+            # This bot's own message -- e.g. pico's ReplyTool just sent a
+            # reply via corridor.send_reply, which pico now also publishes
+            # AgentReplied for directly. Without this guard, this listener
+            # would see that same outgoing message and publish a second,
+            # duplicate AgentReplied for it. Other bots' messages are
+            # unaffected -- they keep publishing exactly as before.
+            return
         snapshot = message_snapshot(message)
         if snapshot is None:
             return

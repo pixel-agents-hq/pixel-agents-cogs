@@ -1,9 +1,10 @@
 # Cross-cog architecture
 
-This doc is the one place that shows how this repo's six packages —
+This doc is the one place that shows how this repo's seven packages —
 [`corridor`](../corridor), [`floorplan`](../floorplan), [`pico`](../pico),
-[`pixelagents`](../pixelagents), [`toolbox`](../toolbox), and the CI-only
-[`contracts`](../contracts) — relate to and depend on each other. It does
+[`pixelagents`](../pixelagents), [`testbench`](../testbench),
+[`toolbox`](../toolbox), and the CI-only [`contracts`](../contracts) —
+relate to and depend on each other. It does
 not replace any package's own `Architecture.md` (linked throughout below);
 those cover one package's internal layers in depth. This doc's only job is
 the picture across packages: who depends on whom to load, who owns what,
@@ -23,15 +24,17 @@ picture — see [`docs/dependency-loading.md`](dependency-loading.md) for
 
 ```mermaid
 flowchart BT
-    corridor["corridor<br/><small>permissions + reply style</small><br/><small>hidden COG</small>"]
+    corridor["corridor<br/><small>permissions + reply style<br/>+ PubSub event bus</small><br/><small>hidden COG</small>"]
     floorplan["floorplan<br/><small>serves the office + presence</small>"]
     pico["pico<br/><small>LLM-backed presence</small>"]
     pixelagents["pixelagents<br/><small>vendors + builds the webview</small>"]
+    testbench["testbench<br/><small>owner-only: manually publishes<br/>corridor bus events</small>"]
     toolbox["toolbox<br/><small>Node.js/npm on the host</small>"]
 
     floorplan -->|required_cogs| corridor
     pico -->|required_cogs| corridor
     pixelagents -->|required_cogs| corridor
+    testbench -->|required_cogs| corridor
     toolbox -->|required_cogs| corridor
     floorplan -->|required_cogs| pixelagents
 ```
@@ -42,8 +45,8 @@ Notes, all confirmed against each package's `info.json`:
   graph — every other cog depends on it, it depends on nothing here.
 - **floorplan is the only cog with two dependencies** — it declares both
   `corridor` and `pixelagents`.
-- **No cog depends on floorplan, pico, or toolbox.** They're leaves: things
-  end here, nothing in this repo builds on top of them.
+- **No cog depends on floorplan, pico, testbench, or toolbox.** They're
+  leaves: things end here, nothing in this repo builds on top of them.
 - corridor's `info.json` sets `"type": "COG"` and `"hidden": true`. It is a
   real, loaded Red Cog — not the `SHARED_LIBRARY` type `contracts` uses —
   but it's hidden from end users because its own command surface
@@ -72,11 +75,12 @@ The dependency graph above says nothing about what each package actually
 ```mermaid
 flowchart TB
     subgraph shared["Shared infrastructure"]
-        corridor["corridor<br/><small>permission tiers (role- and Discord-permission-backed)<br/>+ the single reply-rendering chokepoint<br/>(send_reply / render_reply)</small>"]
+        corridor["corridor<br/><small>permission tiers (role- and Discord-permission-backed)<br/>+ the single reply-rendering chokepoint<br/>(send_reply / render_reply)<br/>+ Discord-vocabulary PubSub event bus<br/>(publish_event / subscribe_event)</small>"]
     end
 
     subgraph host["Host tooling (bot-owner only)"]
         toolbox["toolbox<br/><small>downloads Node.js/npm releases onto<br/>the bot host, puts them on PATH</small>"]
+        testbench["testbench<br/><small>publishes any corridor bus event<br/>through a Discord UI, for testing</small>"]
     end
 
     subgraph build["Build pipeline"]
@@ -84,16 +88,17 @@ flowchart TB
     end
 
     subgraph serve["Runtime surfaces"]
-        floorplan["floorplan<br/><small>serves webview_dist/ as a Red Dashboard<br/>third-party page, runs the office<br/>WebSocket server, mirrors Discord<br/>presence/activity/messages into it,<br/>browses/loads Pixel Index layouts</small>"]
-        pico["pico<br/><small>watches messages, gate decides<br/>react/ignore, acts only through a<br/>bounded LLM tool-calling loop</small>"]
+        floorplan["floorplan<br/><small>serves webview_dist/ as a Red Dashboard<br/>third-party page, runs the office<br/>WebSocket server, publishes+subscribes<br/>Discord presence/activity/messages<br/>through corridor's bus, browses/loads<br/>Pixel Index layouts</small>"]
+        pico["pico<br/><small>watches messages, gate decides<br/>react/ignore, acts only through a<br/>bounded LLM tool-calling loop, publishes<br/>AgentReplied onto corridor's bus</small>"]
     end
 
     toolbox -.->|"host prerequisite<br/>(operational, not coded)"| pixelagents
     pixelagents -->|"webview_bundle_status()<br/>via bot.get_cog('PixelAgents')"| floorplan
-    corridor -->|"send_reply / render_reply<br/>require_permission / capabilities_satisfy"| floorplan
-    corridor --> pico
+    corridor -->|"send_reply / render_reply<br/>require_permission / capabilities_satisfy<br/>publish_event / subscribe_event"| floorplan
+    corridor -->|"send_reply<br/>publish_event"| pico
     corridor --> pixelagents
     corridor --> toolbox
+    corridor -->|publish_event| testbench
 ```
 
 Every arrow into `corridor` in diagram 1 becomes an arrow *out of*
@@ -116,21 +121,37 @@ Traefik, and dashboard-serving detail lives in
 only shows how the *other packages* enter that picture; go there for the
 byte-level HTTP/WebSocket routes.
 
-### 3a. Presence mirroring (no corridor involvement)
+### 3a. Presence mirroring (via corridor's PubSub bus)
 
 ```mermaid
 sequenceDiagram
     participant D as Discord Gateway
-    participant FP as floorplan<br/>(discord_gateway.py)
+    participant FP1 as floorplan<br/>(discord_gateway.py,<br/>publisher)
+    participant C as corridor<br/>(EventBusService)
+    participant FP2 as floorplan<br/>(event_subscriptions.py,<br/>subscriber)
     participant WS as floorplan's office<br/>WebSocket server
     participant B as Browser webview
 
-    D->>FP: presence / activity / message event
-    FP->>FP: project to ServerMessage<br/>(agentCreated / agentStatus / agentToolStart / ...)
-    FP->>WS: broadcast to ClientHub
+    D->>FP1: presence / activity / message event
+    FP1->>C: publish_event(AgentPresenceChanged / AgentReplied)
+    C->>FP2: dispatch to floorplan's own subscriber
+    FP2->>FP2: translate to ServerMessage<br/>(agentCreated / agentStatus / agentToolStart / ...)
+    FP2->>WS: broadcast to ClientHub
     WS->>B: push over open socket
     Note over B: every connected socket starts<br/>as a read-only viewer
 ```
+
+floorplan is both publisher and subscriber here — the bus is the seam
+between "listening to Discord" and "rendering to the canvas" inside
+floorplan itself, which is what lets a second producer plug in without
+floorplan's gateway listeners or translation code changing at all. pico
+is that second producer (§4): it publishes `AgentReplied` directly for
+its own replies, and `testbench` can publish any of corridor's six event
+types manually, for testing. See
+[`docs/corridor-pubsub-design.md`](corridor-pubsub-design.md) for the
+full domain model, all six event types, delivery semantics, and the
+subscription-lifecycle/defensive-cleanup details this condensed diagram
+leaves out.
 
 ### 3b. Editor authorization and layout edits (corridor-gated)
 
@@ -216,7 +237,7 @@ flowchart TD
     LLM --> G4{"tool_calls<br/>returned?"}
     G4 -->|none| STOP2(["stop: no_tool_calls<br/>(raw assistant text is<br/>kept in history, never<br/>sent to Discord)"])
     G4 -->|yes, and under budget| EXEC["execute each tool call"]
-    EXEC --> REPLY["ReplyTool.handler<br/>-> corridor.send_reply(ctx, ...)"]
+    EXEC --> REPLY["ReplyTool.handler<br/>-> corridor.send_reply(ctx, ...)<br/>-> corridor.publish_event(AgentReplied(...))"]
     REPLY --> LOOP
     G4 -->|budget exhausted| STOP3(["stop: max_tool_calls"])
 ```
@@ -228,6 +249,18 @@ whole cog is `ReplyTool.handler`, which is why pico stays compliant with
 corridor" rule without needing any pico-specific exception. `pico` ships
 exactly one tool today (`send_reply`); the tool-loop shape supports more
 without changing this diagram.
+
+`ReplyTool.handler` also publishes `AgentReplied` onto corridor's bus
+right after a successful send (§3a) — floorplan's own subscriber renders
+it the same way it renders a tracked member's own message, with no
+pico-specific code anywhere in floorplan. That `send_reply` call also
+creates a real Discord message, which floorplan's `on_message` listener
+(§3a's publisher half) would otherwise see and publish a *second*
+`AgentReplied` for — `on_message` specifically excludes messages from
+this bot's own account (never other bots) to avoid that double-publish.
+See [`docs/corridor-pubsub-design.md`](corridor-pubsub-design.md) for the
+full mapping table and the `AgentStatusChanged` publish pico doesn't make
+yet.
 
 ## 5. CI-only relationships (not `required_cogs`)
 
@@ -245,13 +278,14 @@ flowchart LR
         floorplan2["floorplan"]
         pico2["pico"]
         pixelagents2["pixelagents"]
+        testbench2["testbench"]
         toolbox2["toolbox"]
     end
 
     subgraph ci["contracts/ (CI-only, SHARED_LIBRARY)"]
         pa_verify["contracts.pixel_agents.verify<br/><small>imports floorplan.infrastructure.webview<br/>+ pixelagents.infrastructure.webview_build</small>"]
         idx_lint["contracts.pixel_index.*<br/><small>imports floorplan.contracts.pixel_index<br/>(generates + lints contract.yaml)</small>"]
-        reply_lint["contracts.discord_replies.lint_reply_channel<br/><small>AST-scans all five cog packages</small>"]
+        reply_lint["contracts.discord_replies.lint_reply_channel<br/><small>AST-scans all six cog packages</small>"]
     end
 
     pa_verify -.->|"import"| floorplan2
@@ -261,6 +295,7 @@ flowchart LR
     reply_lint -.->|"AST scan, no import"| floorplan2
     reply_lint -.->|"AST scan, no import"| pico2
     reply_lint -.->|"AST scan, no import"| pixelagents2
+    reply_lint -.->|"AST scan, no import"| testbench2
     reply_lint -.->|"AST scan, no import"| toolbox2
 ```
 
@@ -283,7 +318,7 @@ real, if strange, code change; today it's structurally impossible.
 - **`contracts.discord_replies.lint_reply_channel`** is different in kind
   from the two above: it doesn't import any cog's code as a live module at
   all. It statically indexes every function/method in each of
-  `corridor`, `floorplan`, `pico`, `pixelagents`, `toolbox`
+  `corridor`, `floorplan`, `pico`, `pixelagents`, `testbench`, `toolbox`
   (`COG_PACKAGES` in the script), AST-walks every Red command handler's
   reachable call graph, and fails the build if a handler reaches a raw
   `ctx.send`/`interaction.response.send_message`/`.followup.send` without
@@ -297,8 +332,9 @@ of pixelagents' own runtime) and repo-root `contracts/` (this CI-only
 package) are two unrelated things that happen to share a name.
 
 Separately, [`.github/workflows/check-cogs.yml`](../.github/workflows/check-cogs.yml)
-load-tests each of the five real cogs one at a time, alphabetically
-(`corridor` → `floorplan` → `pico` → `pixelagents` → `toolbox`, per
+load-tests each of the six real cogs one at a time, alphabetically
+(`corridor` → `floorplan` → `pico` → `pixelagents` → `testbench` →
+`toolbox`, per
 [`docs/dependency-loading.md`](dependency-loading.md#the-ci-smoke-test-and-the-tradeoff-we-accept)),
 checking each loads cleanly from a clean state rather than being silently
 dragged in by an earlier cog's own dependency loading. That's a different

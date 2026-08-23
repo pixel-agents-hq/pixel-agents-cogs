@@ -58,6 +58,8 @@ messages:
         type: integer
       isExternal:
         type: boolean
+      isHeadless:
+        type: boolean
   agentDeselected:
     typeddict: AgentDeselectedMessage
     type: object
@@ -205,6 +207,7 @@ messages:
     - agents
     - externalAgents
     - folderNames
+    - headlessAgents
     - type
     properties:
       type:
@@ -218,6 +221,8 @@ messages:
       folderNames:
         type: object
       externalAgents:
+        type: object
+      headlessAgents:
         type: object
   subagentClear:
     typeddict: SubagentClearMessage

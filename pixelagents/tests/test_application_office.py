@@ -23,12 +23,13 @@ def agent(
     name: str = "Agent",
     status: PresenceStatus | None = PresenceStatus.ONLINE,
     activities: tuple[ActivitySnapshot, ...] = (),
+    is_bot: bool = False,
 ) -> AgentSnapshot:
     return AgentSnapshot(
         key=AgentKey(guild_id, user_id),
         display_name=name,
         status=status,
-        is_bot=False,
+        is_bot=is_bot,
         activities=activities,
     )
 
@@ -69,6 +70,62 @@ class TestOfficeService(unittest.IsolatedAsyncioTestCase):
             [message["type"] for message in self.sent[:3]],
             ["agentCreated", "agentTeamInfo", "agentStatus"],
         )
+
+    async def test_spawn_marks_a_bot_agent_created_headless_and_external(self) -> None:
+        await self.service.reconcile(
+            agent(is_bot=True), include_bots=True, rich_presence_enabled=True
+        )
+
+        created = next(m for m in self.sent if m["type"] == "agentCreated")
+        self.assertTrue(created["isHeadless"])
+        self.assertTrue(created["isExternal"])
+
+    async def test_spawn_marks_a_human_agent_created_not_headless_but_external(self) -> None:
+        await self.service.reconcile(
+            agent(is_bot=False), include_bots=True, rich_presence_enabled=True
+        )
+
+        created = next(m for m in self.sent if m["type"] == "agentCreated")
+        self.assertFalse(created["isHeadless"])
+        self.assertTrue(created["isExternal"])
+
+    async def test_existing_agents_message_reports_headless_and_external_per_agent(self) -> None:
+        await self.service.reconcile(
+            agent(user_id=2, is_bot=False), include_bots=True, rich_presence_enabled=True
+        )
+        await self.service.reconcile(
+            agent(user_id=3, is_bot=True), include_bots=True, rich_presence_enabled=True
+        )
+
+        message = self.service.existing_agents_message(await self.repository.seats())
+
+        human_id = str(self.service.agent_id(2))
+        bot_id = str(self.service.agent_id(3))
+        self.assertEqual(message["headlessAgents"], {human_id: False, bot_id: True})
+        self.assertEqual(message["externalAgents"], {human_id: True, bot_id: True})
+
+    async def test_closing_the_bots_only_guild_drops_it_from_headless_agents(self) -> None:
+        await self.service.reconcile(
+            agent(user_id=3, is_bot=True), include_bots=True, rich_presence_enabled=True
+        )
+
+        await self.service.close(AgentKey(1, 3))
+
+        message = self.service.existing_agents_message(await self.repository.seats())
+        self.assertEqual(message["headlessAgents"], {})
+
+    async def test_a_user_tracked_in_two_guilds_keeps_is_bot_after_closing_one(self) -> None:
+        await self.service.reconcile(
+            agent(guild_id=1, user_id=3, is_bot=True), include_bots=True, rich_presence_enabled=True
+        )
+        await self.service.reconcile(
+            agent(guild_id=2, user_id=3, is_bot=True), include_bots=True, rich_presence_enabled=True
+        )
+
+        await self.service.close(AgentKey(1, 3))
+
+        message = self.service.existing_agents_message(await self.repository.seats())
+        self.assertEqual(message["headlessAgents"], {str(self.service.agent_id(3)): True})
 
     async def test_send_message_activity_selects_the_agent(self) -> None:
         """send_message_activity must send agentSelected right alongside the

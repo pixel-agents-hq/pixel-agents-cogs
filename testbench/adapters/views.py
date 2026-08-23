@@ -137,7 +137,11 @@ def _user_select(field: FieldSpec) -> discord.ui.UserSelect[EventDetailView]:
         # only needs to acknowledge the interaction within Discord's 3s
         # window (an unassigned callback defaults to a no-op that never
         # responds, which surfaces to the user as "Pico didn't respond in
-        # time"). Re-editing with the same view is a cheap, harmless ack.
+        # time"). A render only shows a pick as selected if `default_values`
+        # says so -- `select.values` is interaction-scoped and ignored when
+        # serializing the component, so without this the dropdown reverts
+        # to its placeholder on every re-render despite the pick sticking.
+        select.default_values = select.values
         await interaction.response.edit_message(view=select.view)
 
     select.callback = callback  # type: ignore[method-assign]
@@ -156,6 +160,12 @@ def _literal_select(field: FieldSpec) -> discord.ui.Select[EventDetailView]:
     )
 
     async def callback(interaction: discord.Interaction) -> None:
+        # Same rendering quirk as _user_select's callback, but a plain
+        # Select shows its pick via each SelectOption's `default` flag
+        # instead of a `default_values` list.
+        picked = set(select.values)
+        for option in select.options:
+            option.default = option.value in picked
         await interaction.response.edit_message(view=select.view)
 
     select.callback = callback  # type: ignore[method-assign]

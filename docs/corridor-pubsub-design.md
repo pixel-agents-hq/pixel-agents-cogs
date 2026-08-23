@@ -7,6 +7,12 @@
 > [`docs/architecture.md`](architecture.md)'s pattern of thinking through
 > the cross-cog picture on paper first. Implementation lands in a
 > follow-up PR stacked on top of this one.
+>
+> A review pass against the real pixel-agents source found one confirmed
+> error (corrected) and surfaced two new items now in scope but not yet
+> designed — headless agents, and `agentSelected`, the latter now tracked
+> as [a review comment on pixel-agents-hq/pixel-agents#396](https://github.com/pixel-agents-hq/pixel-agents/pull/396#issuecomment-5385481972).
+> See "Design review" and "In scope, pending input" below.
 
 ## Motivation
 
@@ -310,10 +316,15 @@ schema, not invented:
 - **`agentTeamInfo` is real but excluded**, per direction on this design:
   its fields (`teamName`, `isTeamLead`, `leadAgentId`, `teamUsesTmux`)
   describe CLI-agent-team concepts — a lead agent with teammates sharing a
-  tmux session — with no Discord analogue. **`agentSelected`** is real too
-  but explicitly documented upstream as "VS Code only" (focusing a
-  terminal) — same story as headless: doesn't apply where there's no
-  terminal to focus. Neither gets a dataclass.
+  tmux session — with no Discord analogue.
+- **`agentSelected` was wrongly excluded in an earlier draft of this doc**,
+  which claimed it was "VS Code only" and had no Discord analogue. That
+  was wrong: office-cogs already sends it —
+  `pixelagents/application/office.py::send_message_activity` calls
+  `agent_selected(agent_id)` on every tracked Discord message, specifically
+  to force the label panel open. See "Design review" below for the full
+  finding (including a real upstream bug this surfaced) and why it's now
+  in scope for a dataclass, pending one open question.
 
 ### The dataclasses
 
@@ -413,6 +424,82 @@ duration isn't known in advance. Worth deciding whether it needs its own
 `AgentToolFinished`/`AgentToolCleared` dataclass to correlate against
 `tool_id` explicitly, rather than borrowing `AgentReplied`'s timer-based
 approach.
+
+## Design review: two gaps found, one reported upstream
+
+A review pass against `~/pixel-index/vendor/pixel-agents` (the read-only
+vendored source, same pinned commit as above) found one confirmed error in
+this doc and one genuinely open design question — both now tracked as a
+comment on
+[pixel-agents-hq/pixel-agents#396](https://github.com/pixel-agents-hq/pixel-agents/pull/396#issuecomment-5385481972).
+
+### Confirmed error: `agentSelected` is not VS-Code-only, and this doc excluded it wrongly
+
+The claim that `agentSelected` "doesn't apply where there's no terminal to
+focus" was checked against `asyncapi.yaml`'s *description* field
+(`"An agent's terminal was focused (VS Code only)"`) rather than against
+how this repo actually uses it. It's wrong:
+`pixelagents/application/office.py::send_message_activity` already sends
+`agent_selected(agent_id)` on every tracked Discord message — not to focus
+a terminal, but to force the label panel open (bypassing the
+hover/`alwaysShowLabels` gate) so the message text is visible immediately.
+This has shipped in office-cogs for a while.
+
+Tracing what that message actually *does* client-side surfaced something
+more consequential: **until today, it didn't do anything on the real
+office canvas.** `agentSelected`'s webview handler
+(`useExtensionMessages.ts`) only ever updated the React state feeding
+`<DebugView>` — the actual canvas (`<ToolOverlay>`) reads a *different*,
+engine-level field (`officeState.selectedAgentId`) that only direct canvas
+clicks ever set. So office-cogs' `send_message_activity` call has been a
+no-op on the visible office this entire time. This is being fixed live,
+in [pixel-agents#396](https://github.com/pixel-agents-hq/pixel-agents/pull/396)
+(opened the same day as this review), which makes the `agentSelected`
+handler also set `officeState.selectedAgentId` — closing exactly this gap.
+
+That fix surfaced a second, sharper finding while tracing
+`officeState.ts`: **`selectedAgentId` has no expiry and no deselect
+message.** It only clears when the referenced agent is removed, or another
+selection/canvas click happens — there is no `agentToolsClear`-style timer
+and no `agentDeselected` in `core/asyncapi.yaml`. Once #396 ships,
+`send_message_activity`'s existing per-message call will start visibly
+pinning the label panel open on whichever Discord user messaged most
+recently, with no automatic release — a real UX regression that was
+invisible only because of the bug #396 fixes. Posted as a specific ask in
+the PR comment above, along with a related question about headless-agent
+ghosting (see below).
+
+**Consequence for this doc:** `agentSelected` is not excluded any more —
+see "in scope, pending input" below. It is *not yet* folded into
+`AgentReplied`'s translation table, specifically because doing so today
+would import the same unbounded-pinning risk this review just flagged
+upstream — settling that shouldn't happen before hearing back on the PR
+comment.
+
+### Open design question: headless agents
+
+`isHeadlessAgent()`'s blanket exemption for the entire "standalone"
+runtime (`!isBrowserRuntime`, [pixel-agents#369](https://github.com/pixel-agents-hq/pixel-agents/pull/369))
+was reasoned about against the lightweight `webview-ui dev` browser-preview
+tool introduced in [pixel-agents#143](https://github.com/pixel-agents-hq/pixel-agents/pull/143)
+("every agent would qualify and the cue would distinguish nothing") — a
+throwaway dev tool, not a production third-party consumer. `isBrowserRuntime`
+also covers floorplan's real deployment, where that premise doesn't
+obviously hold: `isExternal=True` is already sent correctly for every
+Discord-derived agent (unchanged finding from the "Verified against the
+real wire protocol" section above), but the ghost/headless treatment it
+would otherwise drive can never engage for us, structurally, regardless of
+what we send. The PR comment above asks whether upstream would consider
+making that behavior protocol-controllable instead of purely
+client-runtime-detected.
+
+What this doc does **not** yet know: what a Discord-vocabulary domain
+event for this should actually represent, or whether one is warranted at
+all — `is_external` is already `True` for *every* single agent this bus
+will ever describe, which is the same "distinguishes nothing" problem
+upstream's own exemption comment raises, just recreated on our side rather
+than solved. This needs an answer before a dataclass gets designed here;
+see the question at the end of this doc.
 
 ## Subscription lifecycle
 
@@ -542,3 +629,44 @@ corridor is the one edge every other cog gets, never each other.
       and a new data-flow diagram closing the pico → corridor → floorplan
       loop should replace this doc's sequence diagrams with the real,
       shipped shape.
+- [ ] `AgentHighlighted` (maps to `agentSelected`) — **in scope, blocked on
+      [pixel-agents#396](https://github.com/pixel-agents-hq/pixel-agents/pull/396)'s
+      review comment**: don't wire `AgentReplied`'s translation to also
+      send `agentSelected` (matching `send_message_activity`'s current
+      parity) until there's an answer on the deselect/expiry question — see
+      "Design review" above.
+- [ ] A headless-agent dataclass — **in scope, blocked on a design answer**
+      (see "Open question for you" below) before anything gets specified,
+      let alone implemented.
+
+## In scope, pending input
+
+Two additions were confirmed in scope during this doc's review pass, but
+neither has a settled shape yet:
+
+1. **`agentSelected` → `AgentHighlighted`.** The mapping is clear
+   (`AgentHighlighted(agent: AgentRef)` → `agentSelected(id)`); what's not
+   settled is *when* floorplan should be allowed to send it, given the
+   unbounded-pinning risk "Design review" describes above. This one is
+   blocked on [pixel-agents#396](https://github.com/pixel-agents-hq/pixel-agents/pull/396)'s
+   response, not on you — no question needed here, just don't implement it
+   yet.
+2. **Headless agents — genuinely open, needs your input:**
+   `is_external` (and therefore "headless," on pixel-agents' terms) is
+   `True` for *every* agent this bus will ever describe — there's no
+   per-event distinction to carry unless "headless" is meant to represent
+   something Discord-specific rather than a direct translation of
+   pixel-agents' own CLI-session concept. Before this gets a dataclass:
+
+   - What should "headless" mean in Discord vocabulary? Candidates that
+     came up during this review, none settled: (a) nothing — it's not a
+     per-agent fact worth an event, only a protocol-level ask (already
+     filed upstream) about whether ghosting *can* apply to us at all;
+     (b) a stand-in for some other per-member state that's actually
+     variable per Discord agent (e.g. idle/away vs. actively
+     conversing) which floorplan would then render via whatever the ghost
+     mechanism becomes; (c) something else entirely you have in mind that
+     this review didn't surface.
+   - If it's (b) or (c): does that belong on `AgentRef` (a durable fact
+     about the member, like `is_bot`) or is it its own
+     `AgentStatusChanged`-shaped event (a fact that changes over time)?

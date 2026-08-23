@@ -676,6 +676,14 @@ corridor is the one edge every other cog gets, never each other.
       item doesn't touch corridor's bus at all, since `is_bot` comes from
       Discord directly and floorplan already has it independently of any
       `AgentActivity` event.
+- [ ] A real consumer-driven check for `contracts/corridor/corridor.yaml`:
+      once `corridor/domain/models.py` actually has `AgentRef` and the
+      `AgentActivity` dataclasses, verify them against `corridor.yaml` the
+      same way `contracts/pixel_agents/lint_outbound_contract.py` verifies
+      `pixelagents.contracts.outbound` against
+      `pixel-agents-consumer-contract.yaml` — see "Verifying this design:
+      two committed contracts" below. Until then, `corridor.yaml`'s CI check
+      stays well-formedness-only.
 
 ## Now unblocked: what pixel-agents-hq/pixel-agents#396 shipped
 
@@ -707,3 +715,84 @@ the vendor pin bump to `df517d1`.
    doesn't need an `AgentActivity` event to learn a fact it already has.
    The domain model doesn't change; only floorplan's existing translation
    code gains one more field to set.
+
+## Verifying this design: two committed contracts
+
+Everything above is a design that can drift two ways: pixel-agents' upstream
+WebSocket protocol can change (it already has, twice, during this doc's own
+review pass), and corridor's future implementation can drift from what this
+doc says it will build. Both get a committed, CI-checked contract — one per
+side of floorplan's translation boundary, matching the "two channels, one
+bridge" framing from earlier in this doc. Neither contract references the
+other's vocabulary; only floorplan ever touches both.
+
+```mermaid
+flowchart LR
+    subgraph corridor_yaml["contracts/corridor/corridor.yaml"]
+        cAgentRef["AgentRef"]
+        cActivities["AgentReplied / AgentToolStarted /<br/>AgentStatusChanged / AgentHighlighted /<br/>AgentUnhighlighted"]
+    end
+
+    FP["floorplan"]
+
+    subgraph pa_yaml["contracts/pixel_agents/<br/>pixel-agents-consumer-contract.yaml"]
+        wMessages["agentCreated / agentClosed /<br/>agentToolStart / agentToolDone /<br/>agentToolsClear / agentStatus /<br/>agentSelected / existingAgents / ..."]
+    end
+
+    cActivities -->|subscribed by| FP
+    FP -->|builds via<br/>pixelagents.contracts.outbound| wMessages
+```
+
+### `contracts/pixel_agents/pixel-agents-consumer-contract.yaml`
+
+A **generated, but committed** file — unlike `contracts/pixel_index/contract.yaml`
+(gitignored, rebuilt fresh every run), this one is meant to be read: it's
+produced by `generate_consumer_contract.py` introspecting
+`pixelagents.contracts.outbound`'s TypedDicts (via `typing.get_type_hints`/
+`__required_keys__`, since they're plain `TypedDict`s, not pydantic models —
+`model_json_schema()` doesn't apply here the way it does for Pixel Index),
+but CI regenerates it and fails on any diff from the committed copy, so a
+change to `outbound.py` always shows up as a reviewable diff to this file in
+the same PR — never silent, never hand-typed. Checked two ways, matching
+Pixel Index's existing offline/live split:
+
+- **Offline** (`lint_outbound_contract.py`, every PR, no network): do
+  `pixelagents.contracts.outbound`'s builders still produce exactly what
+  we've committed to?
+- **Live** (`verify_outbound.py`'s new `consumer_contract_drift` check,
+  scheduled + PR-gated, needs the real vendor clone): does upstream's
+  *actual*, currently-pinned `core/asyncapi.yaml` still support every field
+  this contract declares?
+
+**Deliberately narrower than "Verified against the real wire protocol"
+above.** That section documents everything this doc has *verified against
+upstream* — including `agentDeselected` and `isHeadless`/`headlessAgents`,
+per "Now unblocked." This generated contract only covers what
+`pixelagents.contracts.outbound` (+ `existing_agents_message`) *actually
+builds today* — neither of those two appears in it yet, because no producer
+exists for them. They'll appear automatically, with zero generator changes,
+the moment a future PR adds real producers (floorplan's `AgentHighlighted`/
+`AgentUnhighlighted` translation, most likely). Until then, this file is
+narrower than the doc's own prose by design — not a gap to close, just two
+different questions ("what have we verified is possible" vs. "what do we
+actually send").
+
+### `contracts/corridor/corridor.yaml`
+
+Hand-authored — there's no Python to introspect yet. Describes the six
+Discord-vocabulary types from "The dataclasses" above (`AgentRef` plus the
+five `AgentActivity` members). Its CI check
+(`lint_corridor_contract.py`) is **well-formedness only**: the file parses,
+its event set is exactly these six names (neither more nor fewer), every
+name is cross-referenced against this doc's own text, and every declared
+field has a type. It does **not** check anything against real corridor code
+— `corridor/domain/models.py` doesn't have any of these types yet (see
+"Implementation status" at the top of this doc). A real consumer-driven
+check — does `corridor/domain/models.py` actually match this file? — is
+explicit follow-up work, added to the checklist below, once the
+implementation PR gives it something real to check against.
+
+See [`docs/contract-testing.md`](contract-testing.md) for the full
+methodology this reuses (why generate instead of hand-write, how drift
+is caught, how to read a CI result) and [`contracts/README.md`](../contracts/README.md)
+for local run commands.

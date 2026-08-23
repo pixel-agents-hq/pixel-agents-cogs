@@ -16,7 +16,7 @@ from redbot.core.errors import CogLoadError
 from .. import setup
 from ..application import TimeService
 from ..deskutils import Deskutils
-from .conftest import FakeBot, FakeContext
+from .conftest import FakeBot, FakeContext, FakeCorridor
 from .test_application_service import FIXED_INSTANT, FakeClock
 
 EPOCH = int(FIXED_INSTANT.timestamp())
@@ -41,6 +41,19 @@ class TestTimeCommand(unittest.IsolatedAsyncioTestCase):
             f"<t:{EPOCH}:F> (<t:{EPOCH}:R>)",
         )
         self.assertEqual(reply["fields"][1].value, "2026-08-23 12:30:00 UTC")
+
+    async def test_time_checks_employee_permission(self) -> None:
+        await self.cog.time_command.callback(self.cog, self.ctx, None)
+
+        self.assertEqual(self.bot.corridor.permission_checks, ["employee"])
+
+    async def test_time_is_blocked_when_corridor_denies_permission(self) -> None:
+        self.bot.corridor = FakeCorridor(allow_permission=False)
+        await self.cog.cog_load()
+
+        await self.cog.time_command.callback(self.cog, self.ctx, None)
+
+        self.assertEqual(self.bot.corridor.replies, [])
 
     async def test_time_with_a_valid_zone_adds_a_localized_field(self) -> None:
         await self.cog.time_command.callback(self.cog, self.ctx, "America/New_York")
@@ -120,3 +133,29 @@ class TestDependentRegistration(unittest.IsolatedAsyncioTestCase):
         await cog.cog_unload()
 
         self.assertNotIn("deskutils", bot.corridor.registered_dependents)
+
+
+class TestToolRegistration(unittest.IsolatedAsyncioTestCase):
+    """The `time` command's underlying TimeService is also registered as a
+    cross-cog LLM tool -- inert unless something (pico) reads corridor's
+    registry, but always registered/unregistered in step with the cog's own
+    lifecycle regardless of whether anything ever does."""
+
+    async def test_cog_load_registers_the_time_tool(self) -> None:
+        bot = FakeBot()
+        cog = Deskutils(bot=bot)
+
+        await cog.cog_load()
+
+        self.assertIn("Deskutils", bot.corridor.registered_tools)
+        tool = bot.corridor.registered_tools["Deskutils"]
+        self.assertEqual(tool.name, "deskutils_time")  # type: ignore[attr-defined]
+
+    async def test_cog_unload_unregisters_the_time_tool(self) -> None:
+        bot = FakeBot()
+        cog = Deskutils(bot=bot)
+        await cog.cog_load()
+
+        await cog.cog_unload()
+
+        self.assertNotIn("Deskutils", bot.corridor.registered_tools)

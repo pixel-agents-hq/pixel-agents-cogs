@@ -11,7 +11,7 @@ from typing import Any
 
 from redbot.core import commands
 
-from corridor.domain import ReplyField
+from corridor.domain import EMPLOYEE_KEY, ReplyField
 
 from ..application import TimeService, UnknownTimeZoneError
 
@@ -40,6 +40,9 @@ class CommandsMixin:
         `timezone` (e.g. `America/New_York`) to also show it explicitly
         localized to that zone.
         """
+
+        if not await self._corridor.require_permission(ctx, EMPLOYEE_KEY):
+            return
 
         snapshot = self._service.now()
         epoch = snapshot.epoch_seconds

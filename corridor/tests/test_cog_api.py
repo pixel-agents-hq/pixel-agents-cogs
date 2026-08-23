@@ -7,8 +7,22 @@ from __future__ import annotations
 import unittest
 
 from ..corridor import Corridor
-from ..domain import ReplyField, ReplyMode
+from ..domain import RegisteredTool, ReplyField, ReplyMode
 from .conftest import FakeBot, FakeContext, FakeGuild, FakeMember
+
+
+async def _tool_handler(raw_input: object) -> dict[str, object]:
+    return {}
+
+
+def _tool(name: str, *, required_group: str | None = None) -> RegisteredTool:
+    return RegisteredTool(
+        name=name,
+        description="A tool.",
+        parameters={"type": "object", "properties": {}},
+        handler=_tool_handler,
+        required_group=required_group,
+    )
 
 
 class TestCorridorApi(unittest.IsolatedAsyncioTestCase):
@@ -178,3 +192,54 @@ class TestCorridorApi(unittest.IsolatedAsyncioTestCase):
         await self.corridor.remove_permission_group(self.guild.id, "hr")
         groups = await self.corridor.list_permission_groups(self.guild.id)
         self.assertNotIn("hr", {group.key for group in groups})
+
+    async def test_register_tool_and_list_tools_roundtrip(self) -> None:
+        tool = _tool("a")
+
+        self.corridor.register_tool(tool, owner="A")
+
+        self.assertEqual(self.corridor.list_tools(), (tool,))
+
+    async def test_unregister_tool_owner_removes_only_that_owners_tools(self) -> None:
+        self.corridor.register_tool(_tool("a"), owner="A")
+        self.corridor.register_tool(_tool("b"), owner="B")
+
+        self.corridor.unregister_tool_owner("A")
+
+        self.assertEqual({tool.name for tool in self.corridor.list_tools()}, {"b"})
+
+    async def test_list_tools_for_includes_an_ungated_tool_for_any_member(self) -> None:
+        self.corridor.register_tool(_tool("a"), owner="A")
+        member = FakeMember(2, self.guild)
+
+        allowed = await self.corridor.list_tools_for(member)
+
+        self.assertEqual({tool.name for tool in allowed}, {"a"})
+
+    async def test_list_tools_for_includes_an_employee_gated_tool_for_any_member(self) -> None:
+        self.corridor.register_tool(_tool("a", required_group="employee"), owner="A")
+        member = FakeMember(2, self.guild)
+
+        allowed = await self.corridor.list_tools_for(member)
+
+        self.assertEqual({tool.name for tool in allowed}, {"a"})
+
+    async def test_list_tools_for_excludes_a_tool_the_member_does_not_satisfy(self) -> None:
+        # "building_manager" seeds with no roles/permissions assigned, so a
+        # plain member fails it by default (see test_require_permission_
+        # denies_by_default above).
+        self.corridor.register_tool(_tool("a", required_group="building_manager"), owner="A")
+        member = FakeMember(2, self.guild)
+
+        allowed = await self.corridor.list_tools_for(member)
+
+        self.assertEqual(allowed, ())
+
+    async def test_list_tools_for_includes_a_gated_tool_once_the_member_satisfies_it(self) -> None:
+        await self.corridor.set_group_role_ids(self.guild.id, "building_manager", frozenset({500}))
+        self.corridor.register_tool(_tool("a", required_group="building_manager"), owner="A")
+        member = FakeMember(2, self.guild, role_ids=(500,))
+
+        allowed = await self.corridor.list_tools_for(member)
+
+        self.assertEqual({tool.name for tool in allowed}, {"a"})

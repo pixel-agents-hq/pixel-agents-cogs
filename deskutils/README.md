@@ -20,7 +20,15 @@ Nothing to configure -- deskutils has no persistent settings.
 
 | Command | Description |
 |---|---|
-| `[p]deskutils time [timezone]` | Show the current time: Discord's native timestamp markup (auto-localized per viewer) plus explicit UTC. Pass an IANA `timezone` (e.g. `America/New_York`) to also show it explicitly in that zone. |
+| `[p]deskutils time [timezone]` | Show the current time: Discord's native timestamp markup (auto-localized per viewer) plus explicit UTC. Pass an IANA `timezone` (e.g. `America/New_York`) to also show it explicitly in that zone. Requires the `employee` permission tier (unrestricted by default). |
+
+The `time` command's logic is also registered as an LLM-callable tool in
+corridor's cross-cog tool registry, so if [`pico`](../pico) is installed,
+loaded, and enabled for a guild, a user can just ask it "what time is it?"
+in chat instead of running the command by hand -- see
+[`docs/corridor-tool-registry-design.md`](../docs/corridor-tool-registry-design.md).
+Nothing to configure for this either: registration happens automatically at
+`cog_load` and is inert if pico isn't loaded.
 
 ## Docs
 
@@ -31,4 +39,6 @@ floorplan's for the expected shape), and link it here. If the cog owns a
 permission model beyond corridor's tiers, add a PERMISSIONS.md too. -->
 
 See [`docs/corridor.md`](../docs/corridor.md) for how `required_cogs` and
-corridor's dependency-loading work in general.
+corridor's dependency-loading work in general, and
+[`docs/corridor-tool-registry-design.md`](../docs/corridor-tool-registry-design.md)
+for the cross-cog tool registry this cog registers into.

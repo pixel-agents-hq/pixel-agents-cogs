@@ -25,8 +25,8 @@ picture — see [`docs/dependency-loading.md`](dependency-loading.md) for
 
 ```mermaid
 flowchart BT
-    corridor["corridor<br/><small>permissions + reply style<br/>+ PubSub event bus</small><br/><small>hidden COG</small>"]
-    deskutils["deskutils<br/><small>current-time utility command</small>"]
+    corridor["corridor<br/><small>permissions + reply style<br/>+ PubSub event bus<br/>+ cross-cog tool registry</small><br/><small>hidden COG</small>"]
+    deskutils["deskutils<br/><small>current-time utility command<br/>+ LLM tool registration</small>"]
     floorplan["floorplan<br/><small>serves the office + presence</small>"]
     pico["pico<br/><small>LLM-backed presence</small>"]
     pixelagents["pixelagents<br/><small>vendors + builds the webview</small>"]
@@ -79,7 +79,7 @@ The dependency graph above says nothing about what each package actually
 ```mermaid
 flowchart TB
     subgraph shared["Shared infrastructure"]
-        corridor["corridor<br/><small>permission tiers (role- and Discord-permission-backed)<br/>+ the single reply-rendering chokepoint<br/>(send_reply / render_reply)<br/>+ Discord-vocabulary PubSub event bus<br/>(publish_event / subscribe_event)</small>"]
+        corridor["corridor<br/><small>permission tiers (role- and Discord-permission-backed)<br/>+ the single reply-rendering chokepoint<br/>(send_reply / render_reply)<br/>+ Discord-vocabulary PubSub event bus<br/>(publish_event / subscribe_event)<br/>+ cross-cog LLM tool registry<br/>(register_tool / list_tools_for)</small>"]
     end
 
     subgraph host["Host tooling (bot-owner only)"]
@@ -97,7 +97,7 @@ flowchart TB
     end
 
     subgraph utility["General utilities"]
-        deskutils["deskutils<br/><small>[p]deskutils time: current time via<br/>Discord's per-viewer timestamp markup<br/>plus explicit UTC/named-zone formatting.<br/>No config, no bus traffic.</small>"]
+        deskutils["deskutils<br/><small>[p]deskutils time: current time via<br/>Discord's per-viewer timestamp markup<br/>plus explicit UTC/named-zone formatting.<br/>No config, no bus traffic. Also registers<br/>the same logic as an LLM tool corridor's<br/>registry offers to pico, if loaded.</small>"]
     end
 
     toolbox -.->|"host prerequisite<br/>(operational, not coded)"| pixelagents
@@ -256,8 +256,12 @@ never calls anything Discord-facing itself — the *only* Discord send in the
 whole cog is `ReplyTool.handler`, which is why pico stays compliant with
 `contracts/discord_replies/lint_reply_channel.py`'s "always through
 corridor" rule without needing any pico-specific exception. `pico` ships
-exactly one tool today (`send_reply`); the tool-loop shape supports more
-without changing this diagram.
+one native tool (`send_reply`), plus whatever any other cog has registered
+into corridor's cross-cog tool registry (`deskutils`' `time` today) —
+`ToolLoopService` itself doesn't distinguish between the two; the tool-loop
+shape supports both without changing this diagram. See
+[`docs/corridor-tool-registry-design.md`](corridor-tool-registry-design.md)
+for how a cog registers one and how pico adapts it.
 
 `ReplyTool.handler` also publishes `AgentReplied` onto corridor's bus
 right after a successful send (§3a) — floorplan's own subscriber renders

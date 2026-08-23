@@ -101,6 +101,17 @@ is unrelated to this — it's Discord's interactive-UI system, used only for
 corridor's *settings panel*, not for the embeds a reply renders as (Discord
 doesn't allow mixing V1 embeds and V2 components in the same message).
 
+## Cross-cog LLM tool registry
+
+A third thing corridor centralizes, same shape as its Pub/Sub event bus:
+any cog can register a Discord-command-equivalent as an LLM-callable tool
+(`corridor.register_tool`), so `pico` (if loaded) can invoke it directly
+from its tool-calling loop instead of a user needing to run the command by
+hand — without `pico` and the registering cog ever depending on each
+other. See [`docs/corridor-tool-registry-design.md`](corridor-tool-registry-design.md)
+for the full rationale, lifecycle, and the framework-neutral (plain
+JSON-Schema dict, not pydantic) contract this uses.
+
 ## What a dependent cog calls
 
 Everything a generated cog needs is exposed on the loaded `Corridor` Cog
@@ -112,6 +123,9 @@ await corridor.send_reply(ctx, title="Count", description=str(snapshot.count))
 
 if not await corridor.require_permission(ctx, "keyholder"):
     return
+
+corridor.register_tool(my_registered_tool, owner="MyCog")  # in cog_load
+corridor.unregister_tool_owner("MyCog")                    # in cog_unload
 ```
 
 `send_reply` picks text vs. embed per the guild's stored preference and

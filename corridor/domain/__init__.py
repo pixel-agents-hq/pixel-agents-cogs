@@ -17,10 +17,12 @@ from .models import (
     MemberCapabilities,
     PermissionGroupDef,
     PermissionSettings,
+    RegisteredTool,
     RenderedReply,
     ReplyField,
     ReplyMode,
     ReplyPreferences,
+    ToolHandler,
 )
 
 __all__ = [
@@ -42,8 +44,10 @@ __all__ = [
     "MemberCapabilities",
     "PermissionGroupDef",
     "PermissionSettings",
+    "RegisteredTool",
     "RenderedReply",
     "ReplyField",
     "ReplyMode",
     "ReplyPreferences",
+    "ToolHandler",
 ]

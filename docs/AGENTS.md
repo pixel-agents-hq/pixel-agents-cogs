@@ -14,6 +14,7 @@ together in one place.
 | [`floorplan`](../floorplan) | Serves the built webview as a Red Dashboard page, mirrors Discord presence into it, and browses the Pixel Index layout catalogue. | [floorplan/README.md](../floorplan/README.md) |
 | [`toolbox`](../toolbox) | Bot-owner Node.js/npm installation on the host. | [toolbox/README.md](../toolbox/README.md) |
 | [`pico`](../pico) | An LLM-backed Discord presence: decides whether to react to a message, then acts only via a bounded tool-calling loop (never a raw LLM text send). | [pico/README.md](../pico/README.md) |
+| [`testbench`](../testbench) | Bot-owner-only: publishes any corridor Pub/Sub event through a Discord UI generated from corridor's own event catalog, for exercising floorplan's canvas rendering without a real Discord presence change or message. | [testbench/README.md](../testbench/README.md) |
 | [`contracts`](../contracts) | **Not a cog** — `"type": "SHARED_LIBRARY"` in its `info.json`, so Red's Downloader skips it. CI-only: consumer-driven contract tests against Pixel Index and Pixel Agents, plus the reply-channel lint. (It does have a no-op `setup()` — purely to stop dev-time hot reload tooling from reporting a spurious failure; see `contracts/__init__.py`.) | [contracts/README.md](../contracts/README.md) |
 
 `pixelagents` and `floorplan` used to be one combined cog; [issue #21](https://github.com/pixel-agents-hq/pixel-agents-cogs/issues/21)
@@ -22,9 +23,11 @@ the result." That split has landed on `develop` — treat both as separate,
 present-day cogs, not a pending change.
 
 See [`docs/architecture.md`](architecture.md) for Mermaid diagrams of how
-these six packages depend on and relate to each other — the dependency
-graph, an ownership map, cross-package runtime data flow for floorplan and
-pico, and the CI-only relationships `contracts/` adds on top of all of it.
+these packages depend on and relate to each other — the dependency graph,
+an ownership map, cross-package runtime data flow for floorplan and pico,
+and the CI-only relationships `contracts/` adds on top of all of it. That
+doc predates `testbench`; treat it as covering the other six until it's
+updated.
 
 ## Internal layering
 
@@ -88,10 +91,11 @@ python -m pytest -q floorplan/tests
 python -m pytest -q pixelagents/tests
 python -m pytest -q toolbox/
 python -m pytest -q pico/
+python -m pytest -q testbench/
 
-python -m ruff format --check corridor floorplan pixelagents toolbox pico
-python -m ruff check corridor floorplan pixelagents toolbox pico
-python -m mypy corridor floorplan pixelagents toolbox pico
+python -m ruff format --check corridor floorplan pixelagents toolbox pico testbench
+python -m ruff check corridor floorplan pixelagents toolbox pico testbench
+python -m mypy corridor floorplan pixelagents toolbox pico testbench
 python -m unittest discover -s contracts/tests
 python -m contracts.discord_replies.lint_reply_channel
 ```

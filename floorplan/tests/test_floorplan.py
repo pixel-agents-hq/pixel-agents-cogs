@@ -12,7 +12,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from corridor.domain import ReplyField
+from corridor.domain import AgentPresenceChanged, AgentReplied, ReplyField
 from floorplan.application.catalogue import CatalogueResult
 from floorplan.models import LayoutDetail, LayoutListResponse
 from floorplan.floorplan import (
@@ -619,119 +619,14 @@ class TestSendExistingAgents(unittest.IsolatedAsyncioTestCase):
 
 
 # ---------------------------------------------------------------------------
-# Tests: reconcile member
+# Tests: reconcile member / close agent
+#
+# Ported to test_event_subscriptions.py -- discord_gateway.py's
+# _reconcile_member/_close_agent no longer exist. This module's own tests
+# now cover discord_gateway.py's listeners publishing the right corridor
+# event (see TestMemberUpdateListener etc. and TestOnMessage below); what a
+# subscriber *does* with that event is event_subscriptions.py's own concern.
 # ---------------------------------------------------------------------------
-
-class TestReconcileMember(unittest.IsolatedAsyncioTestCase):
-    async def asyncSetUp(self):
-        self.cog = _make_cog()
-        self.ws = _connect(self.cog)
-
-    async def test_new_visible_member_spawns(self):
-        m = _member(status="online")
-        await self.cog._reconcile_member(m, include_bots=True)
-        sent_types = [json.loads(s)["type"] for s in self.ws._sent]
-        self.assertIn("agentCreated", sent_types)
-
-    async def test_spawn_sets_folder_name(self):
-        m = _member(status="dnd")
-        await self.cog._reconcile_member(m, include_bots=True)
-        created = next(json.loads(s) for s in self.ws._sent if json.loads(s)["type"] == "agentCreated")
-        self.assertEqual(created["folderName"], "dnd")
-
-    async def test_spawn_sets_agent_name_via_team_info(self):
-        m = _member(status="online", display_name="Alice")
-        await self.cog._reconcile_member(m, include_bots=True)
-        team_info = next(json.loads(s) for s in self.ws._sent if json.loads(s)["type"] == "agentTeamInfo")
-        self.assertEqual(team_info["agentName"], "Alice")
-
-    async def test_spawn_sends_status(self):
-        m = _member(status="online", activities=[_activity(discord.ActivityType.playing)])
-        await self.cog._reconcile_member(m, include_bots=True)
-        status_msg = next(json.loads(s) for s in self.ws._sent if json.loads(s)["type"] == "agentStatus")
-        self.assertEqual(status_msg["status"], "active")
-
-    async def test_offline_member_not_spawned(self):
-        m = _member(status="offline")
-        await self.cog._reconcile_member(m, include_bots=True)
-        sent_types = [json.loads(s)["type"] for s in self.ws._sent]
-        self.assertNotIn("agentCreated", sent_types)
-
-    async def test_offline_cached_member_closed(self):
-        self.cog._agents[(100, 1)] = ("online", "Tin")
-        m = _member(status="offline")
-        await self.cog._reconcile_member(m, include_bots=True)
-        sent_types = [json.loads(s)["type"] for s in self.ws._sent]
-        self.assertIn("agentClosed", sent_types)
-        self.assertNotIn((100, 1), self.cog._agents)
-
-    async def test_folder_change_closes_and_respawns(self):
-        self.cog._agents[(100, 1)] = ("online", "Tin")
-        m = _member(status="dnd")
-        await self.cog._reconcile_member(m, include_bots=True)
-        sent_types = [json.loads(s)["type"] for s in self.ws._sent]
-        self.assertIn("agentClosed", sent_types)
-        self.assertIn("agentCreated", sent_types)
-
-    async def test_name_change_only_sends_team_info(self):
-        self.cog._agents[(100, 1)] = ("online", "Tin")
-        m = _member(status="online", display_name="Newname")
-        await self.cog._reconcile_member(m, include_bots=True)
-        sent_types = [json.loads(s)["type"] for s in self.ws._sent]
-        self.assertNotIn("agentClosed", sent_types)
-        self.assertNotIn("agentCreated", sent_types)
-        self.assertIn("agentTeamInfo", sent_types)
-
-    async def test_no_change_sends_nothing(self):
-        self.cog._agents[(100, 1)] = ("online", "Tin")
-        m = _member(status="online", display_name="Tin")
-        await self.cog._reconcile_member(m, include_bots=True)
-        self.assertEqual(len(self.ws._sent), 0)
-
-    async def test_bot_excluded_when_include_bots_false(self):
-        m = _member(status="online", is_bot=True)
-        await self.cog._reconcile_member(m, include_bots=False)
-        self.assertNotIn((100, 1), self.cog._agents)
-
-    async def test_bot_cached_excluded_closes(self):
-        self.cog._agents[(100, 99)] = ("online", "BotName")
-        m = _member(user_id=99, status="online", is_bot=True)
-        await self.cog._reconcile_member(m, include_bots=False)
-        sent_types = [json.loads(s)["type"] for s in self.ws._sent]
-        self.assertIn("agentClosed", sent_types)
-
-
-# ---------------------------------------------------------------------------
-# Tests: close agent
-# ---------------------------------------------------------------------------
-
-class TestCloseAgent(unittest.IsolatedAsyncioTestCase):
-    async def asyncSetUp(self):
-        self.cog = _make_cog()
-        self.ws = _connect(self.cog)
-
-    async def test_close_sends_agent_closed(self):
-        self.cog._agents[(100, 1)] = ("online", "Tin")
-        await self.cog._close_agent(100, 1)
-        sent_types = [json.loads(s)["type"] for s in self.ws._sent]
-        self.assertIn("agentClosed", sent_types)
-
-    async def test_close_removes_from_registry(self):
-        self.cog._agents[(100, 1)] = ("online", "Tin")
-        await self.cog._close_agent(100, 1)
-        self.assertNotIn((100, 1), self.cog._agents)
-
-    async def test_close_nonexistent_is_noop(self):
-        await self.cog._close_agent(100, 999)
-        self.assertEqual(len(self.ws._sent), 0)
-
-    async def test_close_user_active_in_other_guild_does_not_send_closed(self):
-        self.cog._agents[(100, 1)] = ("online", "Tin")
-        self.cog._agents[(200, 1)] = ("idle", "Tin")
-        await self.cog._close_agent(100, 1)
-        sent_types = [json.loads(s)["type"] for s in self.ws._sent]
-        self.assertNotIn("agentClosed", sent_types)
-
 
 # ---------------------------------------------------------------------------
 # Tests: auth check
@@ -1018,78 +913,83 @@ class TestLayoutOwnership(unittest.IsolatedAsyncioTestCase):
 class TestMemberUpdateListener(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.cog = _make_enabled_cog()
-        self.cog._reconcile_member = AsyncMock()
 
-    async def test_name_change_reconciles(self):
+    async def test_name_change_publishes_presence_changed(self):
         before = _member(display_name="Old")
         after = _member(display_name="New")
         await self.cog.on_member_update(before, after)
-        self.cog._reconcile_member.assert_awaited_once()
+        self.assertEqual(len(self.cog._corridor.published), 1)
+        event = self.cog._corridor.published[0]
+        self.assertIsInstance(event, AgentPresenceChanged)
+        self.assertEqual(event.display_name, "New")
 
     async def test_no_name_change_skips(self):
         before = _member(display_name="Same", status="online")
         after = _member(display_name="Same", status="dnd")
         await self.cog.on_member_update(before, after)
-        self.cog._reconcile_member.assert_not_awaited()
+        self.assertEqual(self.cog._corridor.published, [])
 
 
 class TestPresenceUpdateListener(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.cog = _make_enabled_cog()
-        self.cog._reconcile_member = AsyncMock()
 
-    async def test_status_change_reconciles(self):
+    async def test_status_change_publishes_presence_changed(self):
         before = _member(status="online")
         after = _member(status="idle")
         await self.cog.on_presence_update(before, after)
-        self.cog._reconcile_member.assert_awaited_once()
+        self.assertEqual(len(self.cog._corridor.published), 1)
+        self.assertIsInstance(self.cog._corridor.published[0], AgentPresenceChanged)
 
-    async def test_activity_change_reconciles(self):
+    async def test_activity_change_publishes_presence_changed(self):
         before = _member(activities=[])
         after = _member(activities=[_activity(discord.ActivityType.playing)])
         await self.cog.on_presence_update(before, after)
-        self.cog._reconcile_member.assert_awaited_once()
+        self.assertEqual(len(self.cog._corridor.published), 1)
 
     async def test_no_change_skips(self):
         before = _member(status="online", activities=[])
         after = _member(status="online", activities=[])
         await self.cog.on_presence_update(before, after)
-        self.cog._reconcile_member.assert_not_awaited()
+        self.assertEqual(self.cog._corridor.published, [])
 
     async def test_disabled_guild_skips(self):
         cog = _make_cog()
-        cog._reconcile_member = AsyncMock()
         before = _member(status="online")
         after = _member(status="dnd")
         await cog.on_presence_update(before, after)
-        cog._reconcile_member.assert_not_awaited()
+        self.assertEqual(cog._corridor.published, [])
 
 
 class TestMemberJoinListener(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.cog = _make_enabled_cog()
-        self.cog._reconcile_member = AsyncMock()
 
-    async def test_visible_member_reconciles(self):
+    async def test_visible_member_publishes_presence_changed(self):
         m = _member(status="online")
         await self.cog.on_member_join(m)
-        self.cog._reconcile_member.assert_awaited_once()
+        self.assertEqual(len(self.cog._corridor.published), 1)
+        self.assertIsInstance(self.cog._corridor.published[0], AgentPresenceChanged)
 
     async def test_offline_member_skips(self):
         m = _member(status="offline")
         await self.cog.on_member_join(m)
-        self.cog._reconcile_member.assert_not_awaited()
+        self.assertEqual(self.cog._corridor.published, [])
 
 
 class TestMemberRemoveListener(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.cog = _make_enabled_cog()
-        self.cog._close_agent = AsyncMock()
 
-    async def test_remove_calls_close(self):
+    async def test_remove_publishes_offline_presence_changed(self):
         m = _member(guild_id=100, user_id=42)
         await self.cog.on_member_remove(m)
-        self.cog._close_agent.assert_awaited_once_with(100, 42)
+        self.assertEqual(len(self.cog._corridor.published), 1)
+        event = self.cog._corridor.published[0]
+        self.assertIsInstance(event, AgentPresenceChanged)
+        self.assertEqual(event.status, "offline")
+        self.assertEqual(event.agent.discord_user_id, 42)
+        self.assertEqual(event.agent.guild_id, 100)
 
 
 # ---------------------------------------------------------------------------
@@ -1097,67 +997,29 @@ class TestMemberRemoveListener(unittest.IsolatedAsyncioTestCase):
 # ---------------------------------------------------------------------------
 
 class TestOnMessage(unittest.IsolatedAsyncioTestCase):
+    """What on_message publishes -- what a subscriber does with an
+    AgentReplied (wire effects, truncation, the post-delay clear) is
+    event_subscriptions.py's own concern, covered in
+    test_event_subscriptions.py::TestOnAgentReplied."""
+
     async def asyncSetUp(self):
         self.cog = _make_enabled_cog()
-        self.ws = _connect(self.cog)
 
-    async def test_message_sends_tool_start(self):
+    async def test_message_publishes_agent_replied(self):
         self.cog._agents[(100, 1)] = ("online", "Tin")
         msg = MagicMock()
         msg.guild.id = 100
         msg.author.id = 1
+        msg.author.bot = False
         msg.content = "Hello world"
         msg.id = 999
         await self.cog.on_message(msg)
-        sent_types = [json.loads(s)["type"] for s in self.ws._sent]
-        self.assertIn("agentToolStart", sent_types)
-
-    async def test_message_selects_the_agent(self):
-        """agentSelected must accompany the Message tool bubble so the label
-        panel (with the message text) is visible immediately, without hover
-        or "Always Show Labels"."""
-        self.cog._agents[(100, 1)] = ("online", "Tin")
-        msg = MagicMock()
-        msg.guild.id = 100
-        msg.author.id = 1
-        msg.content = "Hello world"
-        msg.id = 999
-        await self.cog.on_message(msg)
-        sent = [json.loads(s) for s in self.ws._sent]
-        self.assertEqual([m["type"] for m in sent], ["agentToolStart", "agentSelected"])
-        self.assertEqual(sent[1]["id"], self.cog._office_service.agent_id(1))
-
-    async def test_message_truncates_long_content(self):
-        self.cog._agents[(100, 1)] = ("online", "Tin")
-        msg = MagicMock()
-        msg.guild.id = 100
-        msg.author.id = 1
-        msg.content = "x" * 100
-        msg.id = 1
-        await self.cog.on_message(msg)
-        tool_msg = next(json.loads(s) for s in self.ws._sent if json.loads(s)["type"] == "agentToolStart")
-        self.assertLessEqual(len(tool_msg["status"]), 45)
-
-    async def test_message_clear_does_not_reping(self):
-        """After the message-clear delay, only agentToolsClear is sent —
-        agentSelected (sent at message-start) already made the message
-        visible without needing hover, so clearing must not also emit a
-        status ping."""
-        self.cog._agents[(100, 1)] = ("online", "Tin")
-        msg = MagicMock()
-        msg.guild.id = 100
-        msg.author.id = 1
-        msg.content = "Hello world"
-        msg.id = 999
-        await self.cog.on_message(msg)
-        self.ws._sent.clear()
-
-        await self.cog._clear_tool_after_delay(
-            self.cog._office_service.agent_id(1), 0, guild_id=100, user_id=1
-        )
-
-        sent_types = [json.loads(s)["type"] for s in self.ws._sent]
-        self.assertEqual(sent_types, ["agentToolsClear"])
+        self.assertEqual(len(self.cog._corridor.published), 1)
+        event = self.cog._corridor.published[0]
+        self.assertIsInstance(event, AgentReplied)
+        self.assertEqual(event.agent.discord_user_id, 1)
+        self.assertEqual(event.agent.guild_id, 100)
+        self.assertEqual(event.summary, "Hello world")
 
     async def test_message_ignored_if_not_tracked(self):
         msg = MagicMock()
@@ -1165,13 +1027,13 @@ class TestOnMessage(unittest.IsolatedAsyncioTestCase):
         msg.author.id = 999
         msg.content = "hi"
         await self.cog.on_message(msg)
-        self.assertEqual(len(self.ws._sent), 0)
+        self.assertEqual(self.cog._corridor.published, [])
 
     async def test_message_ignored_in_dm(self):
         msg = MagicMock()
         msg.guild = None
         await self.cog.on_message(msg)
-        self.assertEqual(len(self.ws._sent), 0)
+        self.assertEqual(self.cog._corridor.published, [])
 
 
 # ---------------------------------------------------------------------------

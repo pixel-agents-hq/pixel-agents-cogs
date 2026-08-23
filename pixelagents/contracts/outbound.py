@@ -33,6 +33,11 @@ class AgentSelectedMessage(TypedDict):
     id: int
 
 
+class AgentDeselectedMessage(TypedDict):
+    type: Literal["agentDeselected"]
+    id: int
+
+
 class ExistingAgentsMessage(TypedDict):
     type: Literal["existingAgents"]
     agents: list[int]
@@ -153,6 +158,12 @@ def agent_closed(agent_id: int) -> AgentClosedMessage:
 
 def agent_selected(agent_id: int) -> AgentSelectedMessage:
     return {"type": "agentSelected", "id": agent_id}
+
+
+def agent_deselected(agent_id: int) -> AgentDeselectedMessage:
+    # Safe to send even if this agent isn't the currently-selected one --
+    # the webview's own handler is a no-op unless it still matches.
+    return {"type": "agentDeselected", "id": agent_id}
 
 
 def agent_team_info(

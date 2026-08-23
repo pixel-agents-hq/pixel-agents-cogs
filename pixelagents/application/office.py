@@ -5,15 +5,17 @@ from __future__ import annotations
 import logging
 import random
 from collections.abc import Callable, Mapping, Sequence
-from typing import Any, Protocol, TypeAlias, TypeVar
+from typing import Any, Literal, Protocol, TypeAlias, TypeVar
 
 from ..contracts.outbound import (
     ExistingAgentsMessage,
     agent_closed,
     agent_created,
+    agent_deselected,
     agent_selected,
     agent_status,
     agent_team_info,
+    agent_tool_start,
     agent_tools_clear,
 )
 from ..domain import AgentKey, AgentSnapshot, MessageSnapshot
@@ -327,6 +329,29 @@ class OfficeService:
         label = self.presence.cached_label(key)
         if label:
             await self.presence.send_tool(agent_id, label)
+
+    async def highlight_agent(self, key: AgentKey) -> None:
+        await self._send(agent_selected(self.agent_id(key.user_id)))
+
+    async def unhighlight_agent(self, key: AgentKey) -> None:
+        await self._send(agent_deselected(self.agent_id(key.user_id)))
+
+    async def start_tool_activity(
+        self, key: AgentKey, tool_id: str, status: str, tool_name: str | None = None
+    ) -> None:
+        await self._send(
+            agent_tool_start(self.agent_id(key.user_id), tool_id, tool_name or "", status)
+        )
+
+    async def set_status(
+        self,
+        key: AgentKey,
+        status: Literal["active", "waiting"],
+        awaiting_input: bool | None = None,
+    ) -> None:
+        await self._send(
+            agent_status(self.agent_id(key.user_id), status, awaiting_input=awaiting_input)
+        )
 
     def bootstrap_messages(
         self,

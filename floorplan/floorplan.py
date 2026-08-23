@@ -12,6 +12,7 @@ from .adapters.admin_commands import AdminCommandsMixin
 from .adapters.catalogue_commands import CatalogueCommandsMixin
 from .adapters.dashboard import DashboardMixin, dashboard_page
 from .adapters.discord_gateway import VISIBLE_STATUSES, DiscordGatewayMixin
+from .adapters.event_subscriptions import EventSubscriptionsMixin
 from .adapters.layout_views import LayoutBrowseView, LayoutDetailView, absolute_url
 from .adapters.office_gateway import OfficeGatewayMixin
 from .adapters.replies import ReplyMixin
@@ -40,6 +41,7 @@ class Floorplan(
     DashboardMixin,
     OfficeGatewayMixin,
     DiscordGatewayMixin,
+    EventSubscriptionsMixin,
     ReplyMixin,
     AdminCommandsMixin,
     CatalogueCommandsMixin,

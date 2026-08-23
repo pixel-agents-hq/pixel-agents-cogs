@@ -697,12 +697,32 @@ class FakeCorridor:
         self.registered_dependents = set()
         self.capability_checks = []
         self.rendered_replies = []
+        self.published = []
+        self._subscribers = {}
 
     def register_dependent(self, extension_name):
         self.registered_dependents.add(extension_name)
 
     def unregister_dependent(self, extension_name):
         self.registered_dependents.discard(extension_name)
+
+    async def publish_event(self, event):
+        """Mirrors corridor's real EventBusService.publish: records every
+        published event (for listener-level assertions), then actually
+        dispatches to any registered subscriber (for end-to-end
+        assertions) -- see corridor/application/event_bus_service.py, the
+        source of truth this double is kept in sync with."""
+
+        self.published.append(event)
+        for _owner, handler in list(self._subscribers.get(type(event), ())):
+            await handler(event)
+
+    def subscribe_event(self, event_type, handler, *, owner):
+        self._subscribers.setdefault(event_type, []).append((owner, handler))
+
+    def unsubscribe_owner(self, owner):
+        for handlers in self._subscribers.values():
+            handlers[:] = [(o, h) for o, h in handlers if o != owner]
 
     async def capabilities_satisfy(self, member, group_key):
         member_id = getattr(member, "id", None)

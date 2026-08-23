@@ -10,9 +10,11 @@ on:
       - "floorplan/**/*.py"
       - "toolbox/**/*.py"
       - "pico/**/*.py"
+      - "testbench/**/*.py"
       - "contracts/pixel_index/**"
       - "contracts/pixel_agents/**"
       - "contracts/corridor/**"
+      - "corridor/corridor.yaml"
       - "docs/corridor-pubsub-design.md"
       - "pyproject.toml"
       - ".github/workflows/cogs-quality.yml"
@@ -25,9 +27,11 @@ on:
       - "floorplan/**/*.py"
       - "toolbox/**/*.py"
       - "pico/**/*.py"
+      - "testbench/**/*.py"
       - "contracts/pixel_index/**"
       - "contracts/pixel_agents/**"
       - "contracts/corridor/**"
+      - "corridor/corridor.yaml"
       - "docs/corridor-pubsub-design.md"
       - "pyproject.toml"
       - ".github/workflows/cogs-quality.yml"
@@ -47,9 +51,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # corridor and toolbox both only need discord.py's stub surface
-          # (neither talks to aiohttp or the Pixel Index contracts) -- their
-          # suites, lint scope, and type-check scope are otherwise identical.
+          # corridor, toolbox, and testbench all only need discord.py's stub
+          # surface (none talk to aiohttp or the Pixel Index contracts) --
+          # their suites, lint scope, and type-check scope are otherwise
+          # identical.
           - cog: corridor
             test_target: "corridor/"
             lint_target: "corridor"
@@ -60,6 +65,17 @@ jobs:
             test_target: "toolbox/"
             lint_target: "toolbox"
             mypy_target: "toolbox"
+            extra_deps: ""
+            pixel_index_contracts: false
+          # testbench's schema comes from corridor.event_catalog.build_contract()
+          # in-process (no YAML parsing at runtime) -- no pyyaml needed here,
+          # unlike corridor's own leg above (which needs it for the
+          # contracts.corridor.generate_corridor_contract/lint_corridor_contract
+          # steps below).
+          - cog: testbench
+            test_target: "testbench/"
+            lint_target: "testbench"
+            mypy_target: "testbench"
             extra_deps: ""
             pixel_index_contracts: false
           # pixelagents shrank to a vendor+build utility cog (like toolbox) --
@@ -177,7 +193,13 @@ jobs:
         if: matrix.cog == 'pixelagents'
         run: python -m contracts.pixel_agents.lint_outbound_contract
 
-      - name: Check corridor.yaml is well-formed and matches the design doc
+      - name: Check corridor.yaml is up to date
+        # Offline -- corridor/domain/models.py is plain-stdlib dataclasses,
+        # no clone/network needed.
+        if: matrix.cog == 'corridor'
+        run: python -m contracts.corridor.generate_corridor_contract --check
+
+      - name: Check corridor.yaml matches the design doc
         if: matrix.cog == 'corridor'
         run: python -m contracts.corridor.lint_corridor_contract
 

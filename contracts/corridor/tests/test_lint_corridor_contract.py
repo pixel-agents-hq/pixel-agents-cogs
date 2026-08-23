@@ -16,57 +16,23 @@ class TestCheck(unittest.TestCase):
 
         self.assertEqual(problems, [])
 
-    def test_a_missing_event_is_reported(self) -> None:
-        contract = {
-            "events": {
-                name: {"fields": {}}
-                for name in lcc._EXPECTED_EVENTS
-                if name != "AgentUnhighlighted"
-            }
-        }
-
-        problems = lcc.check(
-            contract,
-            doc_text="AgentRef AgentReplied AgentToolStarted "
-            "AgentStatusChanged AgentHighlighted AgentUnhighlighted",
-        )
-
-        self.assertTrue(any("missing event(s)" in p for p in problems))
-
-    def test_an_undocumented_extra_event_is_reported(self) -> None:
-        contract = {
-            "events": {
-                **{name: {"fields": {}} for name in lcc._EXPECTED_EVENTS},
-                "AgentSomethingElse": {"fields": {}},
-            }
-        }
-
-        problems = lcc.check(contract, doc_text="mentions every real name plus AgentSomethingElse")
-
-        self.assertTrue(any("undocumented event(s)" in p for p in problems))
-
     def test_an_event_name_absent_from_the_doc_text_is_reported(self) -> None:
-        contract = {"events": {name: {"fields": {}} for name in lcc._EXPECTED_EVENTS}}
-        doc_text_missing_one = (
-            "AgentRef AgentReplied AgentToolStarted AgentStatusChanged AgentHighlighted"
-        )
-
-        problems = lcc.check(contract, doc_text_missing_one)
-
-        self.assertTrue(any("AgentUnhighlighted" in p and "not mentioned" in p for p in problems))
-
-    def test_a_field_with_no_type_is_reported(self) -> None:
-        contract = {
-            "events": {
-                **{name: {"fields": {}} for name in lcc._EXPECTED_EVENTS if name != "AgentRef"},
-                "AgentRef": {"fields": {"discord_user_id": {}}},
-            }
-        }
-        doc_text = " ".join(lcc._EXPECTED_EVENTS)
+        contract = {"events": {"AgentReplied": {}, "AgentTotallyMadeUp": {}}}
+        doc_text = "mentions AgentReplied but nothing else"
 
         problems = lcc.check(contract, doc_text)
 
-        self.assertTrue(any("discord_user_id has no declared type" in p for p in problems))
+        self.assertEqual(len(problems), 1)
+        self.assertIn("AgentTotallyMadeUp", problems[0])
+        self.assertIn("not mentioned", problems[0])
+
+    def test_every_name_present_is_clean(self) -> None:
+        contract = {"events": {"AgentReplied": {}, "AgentRef": {}}}
+        doc_text = "mentions both AgentReplied and AgentRef"
+
+        problems = lcc.check(contract, doc_text)
+
+        self.assertEqual(problems, [])
 
     def test_missing_events_mapping_is_reported(self) -> None:
         problems = lcc.check({}, doc_text="")

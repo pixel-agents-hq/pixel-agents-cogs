@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import StrEnum
+from typing import Literal
 
 OWNER_KEY = "owner"
 EMPLOYEE_KEY = "employee"
@@ -141,3 +142,142 @@ class MemberCapabilities:
         if key == OWNER_KEY:
             return False  # only is_owner satisfies OWNER_KEY, already handled above
         return key in self.satisfied_keys
+
+
+# --- corridor's Pub/Sub domain model -----------------------------------
+#
+# A closed set of Discord-vocabulary events, published/subscribed through
+# EventBusService (corridor/application/event_bus_service.py). Deliberately
+# never mirrors pixel-agents' own wire vocabulary (agentToolStart,
+# ServerMessage, isExternal, ...) -- translating one of these into the
+# webview's actual protocol is entirely a subscriber's job (floorplan
+# today), never something this module encodes. See
+# docs/corridor-pubsub-design.md for the full design rationale.
+
+
+@dataclass(frozen=True, slots=True)
+class AgentRef:
+    """A Discord member represented as a webview agent. Deliberately holds
+    the *raw* Discord user ID, not floorplan's derived, JS-safe negative
+    agent ID -- that derivation (`_discord_id_to_agent_id`) stays
+    floorplan's own concern, the only place that currently needs it."""
+
+    discord_user_id: int
+    guild_id: int
+    is_bot: bool
+
+
+@dataclass(frozen=True, slots=True)
+class AgentReplied:
+    """Named for corridor's own verb (`send_reply`), not a generic "spoke".
+
+    Originally scoped to "fires exactly when a publisher sends a reply
+    through corridor, nothing broader" -- widened once floorplan's own raw
+    Discord message mirroring became a second publisher alongside any cog's
+    `send_reply` call: both a cog routing a reply through corridor *and*
+    floorplan noticing a tracked member's own raw Discord message publish
+    this same event. `summary` always carries the full, untruncated text --
+    wording/truncation for the wire is the subscriber's job, never the
+    publisher's."""
+
+    agent: AgentRef
+    summary: str
+
+
+@dataclass(frozen=True, slots=True)
+class AgentToolStarted:
+    agent: AgentRef
+    tool_id: str
+    status: str  # required on the wire -- human-readable label
+    tool_name: str | None = None  # optional on the wire
+
+
+@dataclass(frozen=True, slots=True)
+class AgentStatusChanged:
+    """Pixel-agents' own CLI-shaped active/waiting concept -- NOT to be
+    confused with `AgentPresenceChanged.status` below, which is Discord's
+    own online/idle/dnd/offline concept. Two unrelated status vocabularies
+    that happen to share a common English word; kept as deliberately
+    different field types (this one a two-value Literal) so they can never
+    be confused for one another in code."""
+
+    agent: AgentRef
+    status: Literal["active", "waiting"]  # matches AgentActivityStatus exactly
+    awaiting_input: bool | None = None  # matches AgentStatus.awaitingInput
+
+
+@dataclass(frozen=True, slots=True)
+class AgentHighlighted:
+    """-> agentSelected(id). Named for what it does in Discord vocabulary
+    (draw attention to this member's activity), not for the CLI-editor
+    action (`agentSelected`'s own wire name) that happens to share the
+    mechanism."""
+
+    agent: AgentRef
+
+
+@dataclass(frozen=True, slots=True)
+class AgentUnhighlighted:
+    """-> agentDeselected(id). Only takes effect if this agent is still
+    the highlighted one -- matches agentDeselected's own no-op-if-stale
+    semantics on the wire, so publishing this after a newer AgentHighlighted
+    already moved the highlight elsewhere is always safe."""
+
+    agent: AgentRef
+
+
+@dataclass(frozen=True, slots=True)
+class AgentActivity:
+    """One Discord rich-presence activity (Spotify, a game, ...), in
+    corridor's own vocabulary -- shaped after pixelagents.domain's
+    ActivitySnapshot, but corridor must not import pixelagents types, so
+    this is a parallel, hand-kept-in-sync copy. Includes `name`:
+    floorplan's PresenceService.label() falls back to `activity.name` for
+    every non-LISTENING kind (playing/watching/competing/streaming) --
+    omitting it here would silently drop those rich-presence bubbles."""
+
+    kind: str
+    name: str | None = None
+    title: str | None = None
+    artist: str | None = None
+    details: str | None = None
+    state: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class AgentPresenceChanged:
+    """A full presence snapshot for one Discord member -- enough for a
+    subscriber to reconstruct pixelagents.domain.AgentSnapshot and drive
+    OfficeService.reconcile()/spawn()/close() unchanged. One rich event per
+    presence change, not four granular ones (join/leave/status/activity):
+    every one of those needs the same full-snapshot reconstruction to call
+    reconcile() anyway, so a granular split would only add event types
+    without adding information.
+
+    `status="offline"` covers both a real Discord offline/invisible status
+    AND a member actually leaving the guild -- there is no separate "member
+    left" event; a member-remove publishes this same shape with
+    `status="offline"`. The subscriber maps that to
+    `AgentSnapshot(status=None, ...)` before calling `reconcile()`, matching
+    that method's own existing `folder is None` branch."""
+
+    agent: AgentRef
+    display_name: str
+    status: Literal["online", "idle", "dnd", "offline"]
+    activities: tuple[AgentActivity, ...] = ()
+
+
+# The closed set of classes a cog actually publish()es/subscribe()s to.
+# AgentRef and AgentActivity are value objects referenced *by* these events'
+# fields, never published/subscribed to on their own -- deliberately absent
+# from this union. Named "...Event" (not "AgentActivity", which an earlier
+# draft of this design used for this same union) to avoid colliding with
+# the AgentActivity value object above.
+AgentActivityEvent = (
+    AgentReplied
+    | AgentToolStarted
+    | AgentStatusChanged
+    | AgentHighlighted
+    | AgentUnhighlighted
+    | AgentPresenceChanged
+)

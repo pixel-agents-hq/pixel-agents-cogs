@@ -43,6 +43,93 @@ shouldn't need to know who (if anyone) is listening, and a consumer that
 shouldn't need to know who (if anyone) produces. corridor is the natural
 place for a third chokepoint like this, not a new fourth shared cog.
 
+## Roles across the stack, and what's implemented today
+
+| Package | Role |
+|---|---|
+| **pixelagents** | Owns the Pixel Agents webview **distribution bundle** — clones `pixel-agents-hq/pixel-agents` at a pinned commit and builds it into `webview_dist/`. Never talks to a browser or a Discord gateway itself. |
+| **floorplan** | Owns **serving** that bundle (the Red Dashboard route) *and* owns **the communication to it** — the entire WebSocket protocol implementation against pixel-agents' real wire contract, `core/asyncapi.yaml` (vendored transitively via pixelagents). floorplan is the only package in this repo that speaks that protocol, in either direction. |
+| **contracts** | CI-only. Runs consumer-driven contract tests against **pixelagents'** real build pipeline (`contracts/pixel_agents/verify.py`) and **floorplan's** real Pixel Index integration (`contracts/pixel_index/verify.py`) — both against live/pinned upstream targets. Separately runs a static lint (`contracts/discord_replies/lint_reply_channel.py`) that AST-scans every cog's command handlers, corridor included, checking they route replies through corridor rather than a raw `ctx.send`. That lint is a boundary check on how cogs *use* corridor's existing reply chokepoint — it is not a consumer-driven contract *against* a live corridor the way the pixelagents/pixel_index checks are, and no `contracts/corridor/` package exists today (verified: `contracts/` has exactly three subpackages — `discord_replies/`, `pixel_agents/`, `pixel_index/`). A consumer-driven contract for corridor's own `EventBusService`, once it exists, would be a natural fourth. |
+| **corridor** | Three responsibilities, only two shipped today: |
+
+1. **Reply rendering** (`send_reply`/`render_reply`) — **implemented**.
+   `corridor/application/reply_service.py`'s `ReplyService`, wired through
+   `corridor/adapters/cog_base.py`.
+2. **Permission tiers** (`require_permission`/`capabilities_satisfy`) —
+   **implemented**. `corridor/application/permission_service.py`'s
+   `PermissionService`, wired the same way.
+3. **PubSub, in Discord vocabulary** — **not implemented**. This entire
+   doc. Verified empty: `grep -rl` across `corridor/`, `pico/`,
+   `floorplan/`, `pixelagents/`, `toolbox/` for `EventBus`,
+   `publish_event`, `subscribe_event`, `AgentRef`, `AgentReplied`,
+   `AgentActivity` returns nothing — every name in the "Domain model"
+   section above is still just this design, not a single line of it exists
+   on `develop`.
+
+### corridor's PubSub is independent of pixel-agents' WebSocket protocol — deliberately
+
+This is the single most important framing decision in this doc, and it's
+easy to get wrong by analogy to floorplan's existing WebSocket work:
+
+- corridor's bus does **not** own, wrap, or proxy pixel-agents' WebSocket
+  protocol (`core/asyncapi.yaml`). That protocol has exactly one owner in
+  this repo — floorplan — unchanged by anything in this doc.
+- corridor's bus is its **own, independent, in-process** communication
+  channel, speaking **Discord vocabulary** (`AgentRef`, `AgentReplied`,
+  `AgentStatusChanged`, ...) — never webview wire vocabulary
+  (`agentToolStart`, `ServerMessage`, `isExternal`, ...). See "Deliberately
+  not included" in the Domain model section above.
+- Because of that split, **corridor's `EventBusService` can be designed,
+  built, tested, and merged completely independently of floorplan or
+  pixelagents** — it needs nothing from either package, and neither needs
+  anything from it until a subscriber (floorplan) chooses to wire one up.
+  `PermissionService`/`ReplyService` are proof this pattern already works
+  in this exact codebase: both shipped and are used by every cog without
+  either service knowing anything about WebSockets, Red Dashboard, or the
+  webview. The bus is the same shape of addition — no new coupling to
+  floorplan's stack, just a new capability on corridor.
+- floorplan is still the one piece that bridges both channels — the only
+  package that both subscribes to corridor's bus *and* speaks the wire
+  protocol, so it (and only it) does the translation between the two.
+
+```mermaid
+flowchart LR
+    Canvas["Pixel Agents webview canvas<br/><small>upstream pixel-agents-hq/pixel-agents</small>"]
+    PA["pixelagents cog<br/><small>owns the distribution bundle</small>"]
+    FP["floorplan<br/><small>owns serving it, and owns the<br/>consumer contract: WebSocket<br/>communication to core/asyncapi.yaml</small>"]
+    C["corridor<br/><small>owns PubSub, in Discord vocabulary<br/>-- independent of core/asyncapi.yaml</small>"]
+    Pico["pico"]
+
+    Canvas -- "vendored by" --> PA
+    PA -- "served by" --> FP
+    FP -- "subscriber of" --> C
+    C -- "has publisher" --> Pico
+```
+
+Two channels, one bridge: the left half of this chain (`Canvas` through
+`floorplan`) is the existing, shipped webview-serving path — floorplan
+speaks pixel-agents' wire protocol there. The right half (`corridor`
+through `pico`) is this doc's entirely new, unshipped path — corridor
+speaks nothing but its own Discord-vocabulary dataclasses there. floorplan
+is the only node that appears in both halves, because it's the only
+package with a reason to.
+
+### Implementation status, verified line by line
+
+| Piece | Status | Evidence |
+|---|---|---|
+| Reply rendering | ✅ Implemented | `corridor/application/reply_service.py`, `corridor/adapters/cog_base.py::send_reply`/`render_reply` |
+| Permission tiers | ✅ Implemented | `corridor/application/permission_service.py`, `corridor/adapters/cog_base.py::require_permission`/`capabilities_satisfy` |
+| Webview bundle vendoring + build | ✅ Implemented | `pixelagents/infrastructure/webview_build.py` |
+| Webview serving + WebSocket protocol | ✅ Implemented | `floorplan/infrastructure/websocket.py`, `floorplan/contracts/websocket.py` |
+| Consumer-driven contract tests (pixelagents, pixel_index) | ✅ Implemented | `contracts/pixel_agents/verify.py`, `contracts/pixel_index/verify.py` |
+| Reply-channel static lint (all cogs, corridor included) | ✅ Implemented | `contracts/discord_replies/lint_reply_channel.py` |
+| corridor `EventBusService` (`publish`/`subscribe`) | ❌ Not implemented | no matches anywhere in the repo |
+| corridor domain types (`AgentRef`, `AgentReplied`, ...) | ❌ Not implemented | no matches anywhere in the repo |
+| pico publishing to the bus | ❌ Not implemented | no `publish_event` call sites |
+| floorplan subscribing to the bus | ❌ Not implemented | no `subscribe_event` call sites |
+| Consumer-driven contract test for corridor's bus | ❌ Not implemented | no `contracts/corridor/` package exists |
+
 ## Goals
 
 - A publishing cog can emit a typed event without knowing whether anything

@@ -430,7 +430,14 @@ class OfficeService:
                     "extensionVersion": "",
                     "watchAllSessions": False,
                     "alwaysShowLabels": False,
-                    "ghostHeadlessAgents": False,
+                    # The webview only ever renders the isHeadless ghost cue
+                    # (translucent sprite) when this is true -- isHeadless
+                    # alone (agent_created/existingAgents, set from
+                    # snapshot.is_bot) is inert without it. Unlike VS Code,
+                    # where it's a genuine user preference toggle, every
+                    # headless-worthy agent this office produces is a real
+                    # Discord bot, so there's no case where it should be off.
+                    "ghostHeadlessAgents": True,
                     "hooksEnabled": False,
                     "hooksInfoShown": True,
                     "externalAssetDirectories": [],

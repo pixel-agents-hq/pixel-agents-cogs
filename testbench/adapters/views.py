@@ -108,7 +108,7 @@ class EventPickerView(discord.ui.LayoutView):
                 "**Publish a corridor bus event**\nPick an event type to fill in and publish."
             )
         )
-        container.add_item(_event_select(specs))
+        container.add_item(discord.ui.ActionRow(_event_select(specs)))
         self.add_item(container)
 
 
@@ -128,9 +128,20 @@ def _event_select(specs: tuple[EventSpec, ...]) -> discord.ui.Select[EventPicker
 
 
 def _user_select(field: FieldSpec) -> discord.ui.UserSelect[EventDetailView]:
-    return discord.ui.UserSelect(
+    select: discord.ui.UserSelect[EventDetailView] = discord.ui.UserSelect(
         placeholder=f"{field.name}: pick a Discord member", min_values=1, max_values=1
     )
+
+    async def callback(interaction: discord.Interaction) -> None:
+        # The pick is already captured on `select.values` -- this callback
+        # only needs to acknowledge the interaction within Discord's 3s
+        # window (an unassigned callback defaults to a no-op that never
+        # responds, which surfaces to the user as "Pico didn't respond in
+        # time"). Re-editing with the same view is a cheap, harmless ack.
+        await interaction.response.edit_message(view=select.view)
+
+    select.callback = callback  # type: ignore[method-assign]
+    return select
 
 
 def _literal_select(field: FieldSpec) -> discord.ui.Select[EventDetailView]:
@@ -143,6 +154,11 @@ def _literal_select(field: FieldSpec) -> discord.ui.Select[EventDetailView]:
             for value in literal_options(field.type_str)
         ],
     )
+
+    async def callback(interaction: discord.Interaction) -> None:
+        await interaction.response.edit_message(view=select.view)
+
+    select.callback = callback  # type: ignore[method-assign]
     return select
 
 
@@ -161,10 +177,10 @@ class EventDetailView(discord.ui.LayoutView):
             discord.ui.TextDisplay(f"**{spec.name}**\nFill in the fields below, then Publish.")
         )
         for user_select in self._agent_selects.values():
-            container.add_item(user_select)
+            container.add_item(discord.ui.ActionRow(user_select))
         for literal_select in self._literal_selects.values():
-            container.add_item(literal_select)
-        container.add_item(self._publish_button())
+            container.add_item(discord.ui.ActionRow(literal_select))
+        container.add_item(discord.ui.ActionRow(self._publish_button()))
         self.add_item(container)
 
     def _publish_button(self) -> discord.ui.Button[EventDetailView]:

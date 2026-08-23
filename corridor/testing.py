@@ -227,8 +227,8 @@ def _install_discord() -> None:
             return self
 
     class _MockActionRow:
-        def __init__(self, *args: object, **kwargs: object) -> None:
-            self.children: list[Any] = []
+        def __init__(self, *children: Any, **kwargs: object) -> None:
+            self.children: list[Any] = list(children)
 
         def add_item(self, item: Any) -> _MockActionRow:
             self.children.append(item)

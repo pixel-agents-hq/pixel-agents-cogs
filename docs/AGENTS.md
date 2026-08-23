@@ -21,6 +21,11 @@ split "owns the vendor and the build" from "owns everything that consumes
 the result." That split has landed on `develop` — treat both as separate,
 present-day cogs, not a pending change.
 
+See [`docs/architecture.md`](architecture.md) for Mermaid diagrams of how
+these six packages depend on and relate to each other — the dependency
+graph, an ownership map, cross-package runtime data flow for floorplan and
+pico, and the CI-only relationships `contracts/` adds on top of all of it.
+
 ## Internal layering
 
 Every cog here (and the `.cookiecutter/cog-cookiecutter` template new cogs
@@ -97,6 +102,8 @@ Index lint/verify steps — see [`contracts/README.md`](../contracts/README.md).
 
 ## Further reading
 
+- [`docs/architecture.md`](architecture.md) — cross-cog dependency graph,
+  ownership map, and runtime/CI data-flow diagrams.
 - [`docs/dependency-loading.md`](dependency-loading.md) — how cross-cog
   dependencies get loaded, why corridor's bootstrap is duplicated per cog,
   and when to use `ensure_loaded` vs `ensure_importable`.

@@ -58,6 +58,18 @@ messages:
         type: integer
       isExternal:
         type: boolean
+  agentDeselected:
+    typeddict: AgentDeselectedMessage
+    type: object
+    additionalProperties: false
+    required:
+    - id
+    - type
+    properties:
+      type:
+        const: agentDeselected
+      id:
+        type: integer
   agentSelected:
     typeddict: AgentSelectedMessage
     type: object

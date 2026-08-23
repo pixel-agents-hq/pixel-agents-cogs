@@ -17,7 +17,16 @@ from __future__ import annotations
 import json
 import unittest
 
-from corridor.domain import AgentActivity, AgentPresenceChanged, AgentRef, AgentReplied
+from corridor.domain import (
+    AgentActivity,
+    AgentHighlighted,
+    AgentPresenceChanged,
+    AgentRef,
+    AgentReplied,
+    AgentStatusChanged,
+    AgentToolStarted,
+    AgentUnhighlighted,
+)
 from floorplan.tests.test_floorplan import _connect, _make_cog
 
 
@@ -249,6 +258,138 @@ class TestOnAgentReplied(unittest.IsolatedAsyncioTestCase):
 
         sent_types = [json.loads(s)["type"] for s in self.ws._sent]
         self.assertEqual(sent_types, ["agentToolsClear"])
+
+
+class TestOnAgentHighlighted(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        self.cog = _make_cog()
+        self.ws = _connect(self.cog)
+
+    async def test_tracked_agent_sends_agent_selected(self):
+        self.cog._agents[(100, 1)] = ("online", "Tin")
+        await self.cog._on_agent_highlighted(
+            AgentHighlighted(agent=AgentRef(discord_user_id=1, guild_id=100, is_bot=False))
+        )
+        sent = [json.loads(s) for s in self.ws._sent]
+        self.assertEqual(
+            sent, [{"type": "agentSelected", "id": self.cog._office_service.agent_id(1)}]
+        )
+
+    async def test_not_tracked_is_a_noop(self):
+        await self.cog._on_agent_highlighted(
+            AgentHighlighted(agent=AgentRef(discord_user_id=999, guild_id=100, is_bot=False))
+        )
+        self.assertEqual(len(self.ws._sent), 0)
+
+
+class TestOnAgentUnhighlighted(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        self.cog = _make_cog()
+        self.ws = _connect(self.cog)
+
+    async def test_tracked_agent_sends_agent_deselected(self):
+        self.cog._agents[(100, 1)] = ("online", "Tin")
+        await self.cog._on_agent_unhighlighted(
+            AgentUnhighlighted(agent=AgentRef(discord_user_id=1, guild_id=100, is_bot=False))
+        )
+        sent = [json.loads(s) for s in self.ws._sent]
+        self.assertEqual(
+            sent, [{"type": "agentDeselected", "id": self.cog._office_service.agent_id(1)}]
+        )
+
+    async def test_not_tracked_is_a_noop(self):
+        await self.cog._on_agent_unhighlighted(
+            AgentUnhighlighted(agent=AgentRef(discord_user_id=999, guild_id=100, is_bot=False))
+        )
+        self.assertEqual(len(self.ws._sent), 0)
+
+
+class TestOnAgentToolStarted(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        self.cog = _make_cog()
+        self.ws = _connect(self.cog)
+
+    async def test_tracked_agent_sends_agent_tool_start(self):
+        self.cog._agents[(100, 1)] = ("online", "Tin")
+        await self.cog._on_agent_tool_started(
+            AgentToolStarted(
+                agent=AgentRef(discord_user_id=1, guild_id=100, is_bot=False),
+                tool_id="tool-1",
+                status="Running",
+                tool_name="MyTool",
+            )
+        )
+        sent = [json.loads(s) for s in self.ws._sent]
+        self.assertEqual(
+            sent,
+            [
+                {
+                    "type": "agentToolStart",
+                    "id": self.cog._office_service.agent_id(1),
+                    "toolId": "tool-1",
+                    "toolName": "MyTool",
+                    "status": "Running",
+                }
+            ],
+        )
+
+    async def test_missing_tool_name_defaults_to_empty_string(self):
+        self.cog._agents[(100, 1)] = ("online", "Tin")
+        await self.cog._on_agent_tool_started(
+            AgentToolStarted(
+                agent=AgentRef(discord_user_id=1, guild_id=100, is_bot=False),
+                tool_id="tool-1",
+                status="Running",
+            )
+        )
+        sent = [json.loads(s) for s in self.ws._sent]
+        self.assertEqual(sent[0]["toolName"], "")
+
+    async def test_not_tracked_is_a_noop(self):
+        await self.cog._on_agent_tool_started(
+            AgentToolStarted(
+                agent=AgentRef(discord_user_id=999, guild_id=100, is_bot=False),
+                tool_id="tool-1",
+                status="Running",
+            )
+        )
+        self.assertEqual(len(self.ws._sent), 0)
+
+
+class TestOnAgentStatusChanged(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        self.cog = _make_cog()
+        self.ws = _connect(self.cog)
+
+    async def test_tracked_agent_sends_agent_status(self):
+        self.cog._agents[(100, 1)] = ("online", "Tin")
+        await self.cog._on_agent_status_changed(
+            AgentStatusChanged(
+                agent=AgentRef(discord_user_id=1, guild_id=100, is_bot=False),
+                status="waiting",
+                awaiting_input=True,
+            )
+        )
+        sent = [json.loads(s) for s in self.ws._sent]
+        self.assertEqual(
+            sent,
+            [
+                {
+                    "type": "agentStatus",
+                    "id": self.cog._office_service.agent_id(1),
+                    "status": "waiting",
+                    "awaitingInput": True,
+                }
+            ],
+        )
+
+    async def test_not_tracked_is_a_noop(self):
+        await self.cog._on_agent_status_changed(
+            AgentStatusChanged(
+                agent=AgentRef(discord_user_id=999, guild_id=100, is_bot=False), status="active"
+            )
+        )
+        self.assertEqual(len(self.ws._sent), 0)
 
 
 if __name__ == "__main__":

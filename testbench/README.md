@@ -15,12 +15,16 @@ catalog** (`corridor/event_catalog.py`, mirrored into
 `corridor/domain/models.py` makes it show up here automatically, with no
 code change in this cog.
 
-Not every published event is visible on the canvas today: floorplan only
-subscribes to `AgentPresenceChanged`/`AgentReplied` so far (see
+floorplan subscribes to all six event types, so every event testbench can
+publish has a visible effect on the canvas: `AgentPresenceChanged`/
+`AgentReplied` (also published by floorplan itself, from real Discord
+activity) and `AgentToolStarted`/`AgentStatusChanged`/`AgentHighlighted`/
+`AgentUnhighlighted` (published today only by testbench's own UI — no
+automated publisher exists for these four yet; see
 [`docs/corridor-pubsub-design.md`](../docs/corridor-pubsub-design.md)'s
-"What this PR lands" checklist). Publishing `AgentToolStarted`/
-`AgentStatusChanged`/`AgentHighlighted`/`AgentUnhighlighted` is still
-useful for exercising the bus itself even before a subscriber exists.
+"What this PR lands" checklist). The target agent must already be on the
+canvas (`is_tracked`) for any of the four to have an effect, same as every
+other subscriber handler.
 
 ## Installing
 

@@ -98,6 +98,70 @@ class TestOfficeService(unittest.IsolatedAsyncioTestCase):
         types = [message["type"] for message in self.sent]
         self.assertEqual(types, ["agentToolsClear"])
 
+    async def test_highlight_agent_sends_agent_selected(self) -> None:
+        await self.service.reconcile(agent(), include_bots=True, rich_presence_enabled=True)
+        self.sent.clear()
+
+        await self.service.highlight_agent(AgentKey(1, 2))
+
+        self.assertEqual(self.sent, [{"type": "agentSelected", "id": self.service.agent_id(2)}])
+
+    async def test_unhighlight_agent_sends_agent_deselected(self) -> None:
+        await self.service.reconcile(agent(), include_bots=True, rich_presence_enabled=True)
+        self.sent.clear()
+
+        await self.service.unhighlight_agent(AgentKey(1, 2))
+
+        self.assertEqual(self.sent, [{"type": "agentDeselected", "id": self.service.agent_id(2)}])
+
+    async def test_start_tool_activity_sends_agent_tool_start(self) -> None:
+        await self.service.reconcile(agent(), include_bots=True, rich_presence_enabled=True)
+        self.sent.clear()
+
+        await self.service.start_tool_activity(AgentKey(1, 2), "tool-1", "Running", "MyTool")
+
+        self.assertEqual(
+            self.sent,
+            [
+                {
+                    "type": "agentToolStart",
+                    "id": self.service.agent_id(2),
+                    "toolId": "tool-1",
+                    "toolName": "MyTool",
+                    "status": "Running",
+                }
+            ],
+        )
+
+    async def test_start_tool_activity_defaults_missing_tool_name_to_empty_string(self) -> None:
+        """tool_name is optional on corridor's AgentToolStarted, but
+        AgentToolStartMessage's wire toolName is required -- None must not
+        reach the builder as a literal None."""
+        await self.service.reconcile(agent(), include_bots=True, rich_presence_enabled=True)
+        self.sent.clear()
+
+        await self.service.start_tool_activity(AgentKey(1, 2), "tool-1", "Running")
+
+        self.assertEqual(self.sent[0]["toolName"], "")
+
+    async def test_set_status_sends_agent_status(self) -> None:
+        await self.service.reconcile(agent(), include_bots=True, rich_presence_enabled=True)
+        self.sent.clear()
+
+        await self.service.set_status(AgentKey(1, 2), "waiting", awaiting_input=True)
+
+        self.assertEqual(
+            self.sent,
+            [
+                {
+                    "type": "agentStatus",
+                    "id": self.service.agent_id(2),
+                    "status": "waiting",
+                    "awaitingInput": True,
+                }
+            ],
+        )
+
     async def test_same_user_in_two_guilds_has_one_rendered_agent(self) -> None:
         await self.service.spawn(agent(guild_id=1), rich_presence_enabled=False)
         self.sent.clear()

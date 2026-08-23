@@ -13,7 +13,14 @@ from __future__ import annotations
 import asyncio
 import itertools
 
-from corridor.domain import AgentPresenceChanged, AgentReplied
+from corridor.domain import (
+    AgentHighlighted,
+    AgentPresenceChanged,
+    AgentReplied,
+    AgentStatusChanged,
+    AgentToolStarted,
+    AgentUnhighlighted,
+)
 from pixelagents.domain import (
     ActivityKind,
     ActivitySnapshot,
@@ -73,6 +80,18 @@ class EventSubscriptionsMixin(PixelAgentsBase):
             AgentPresenceChanged, self._on_agent_presence_changed, owner="Floorplan"
         )
         self._corridor.subscribe_event(AgentReplied, self._on_agent_replied, owner="Floorplan")
+        self._corridor.subscribe_event(
+            AgentHighlighted, self._on_agent_highlighted, owner="Floorplan"
+        )
+        self._corridor.subscribe_event(
+            AgentUnhighlighted, self._on_agent_unhighlighted, owner="Floorplan"
+        )
+        self._corridor.subscribe_event(
+            AgentToolStarted, self._on_agent_tool_started, owner="Floorplan"
+        )
+        self._corridor.subscribe_event(
+            AgentStatusChanged, self._on_agent_status_changed, owner="Floorplan"
+        )
 
     async def cog_unload(self) -> None:
         if self._corridor is not None:
@@ -104,6 +123,32 @@ class EventSubscriptionsMixin(PixelAgentsBase):
             ),
             name=f"floorplan-agent-replied-clear-{key.guild_id}-{key.user_id}",
         )
+
+    async def _on_agent_highlighted(self, event: AgentHighlighted) -> None:
+        key = AgentKey(guild_id=event.agent.guild_id, user_id=event.agent.discord_user_id)
+        if not self._office_service.is_tracked(key):
+            return
+        await self._office_service.highlight_agent(key)
+
+    async def _on_agent_unhighlighted(self, event: AgentUnhighlighted) -> None:
+        key = AgentKey(guild_id=event.agent.guild_id, user_id=event.agent.discord_user_id)
+        if not self._office_service.is_tracked(key):
+            return
+        await self._office_service.unhighlight_agent(key)
+
+    async def _on_agent_tool_started(self, event: AgentToolStarted) -> None:
+        key = AgentKey(guild_id=event.agent.guild_id, user_id=event.agent.discord_user_id)
+        if not self._office_service.is_tracked(key):
+            return
+        await self._office_service.start_tool_activity(
+            key, event.tool_id, event.status, event.tool_name
+        )
+
+    async def _on_agent_status_changed(self, event: AgentStatusChanged) -> None:
+        key = AgentKey(guild_id=event.agent.guild_id, user_id=event.agent.discord_user_id)
+        if not self._office_service.is_tracked(key):
+            return
+        await self._office_service.set_status(key, event.status, event.awaiting_input)
 
     async def _clear_tool_after_delay(
         self, agent_id: int, delay: float, guild_id: int = 0, user_id: int = 0

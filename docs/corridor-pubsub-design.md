@@ -144,7 +144,8 @@ publisher is still future work.
 | corridor `EventBusService` (`publish`/`subscribe`) | ✅ Implemented | `corridor/application/event_bus_service.py`, `corridor/adapters/cog_base.py::publish_event`/`subscribe_event`/`unsubscribe_owner` |
 | corridor domain types (`AgentRef`, `AgentReplied`, `AgentPresenceChanged`, ...) | ✅ Implemented | `corridor/domain/models.py`, exported via `corridor/domain/__init__.py` |
 | floorplan publishing to the bus | ✅ Implemented | `floorplan/adapters/discord_gateway.py` publishes `AgentPresenceChanged`/`AgentReplied` |
-| floorplan subscribing to the bus | ✅ Implemented | `floorplan/adapters/event_subscriptions.py::EventSubscriptionsMixin` |
+| floorplan subscribing to the bus | ✅ Implemented, all six event types | `floorplan/adapters/event_subscriptions.py::EventSubscriptionsMixin` — `AgentPresenceChanged`/`AgentReplied` (own publications) plus `AgentHighlighted`/`AgentUnhighlighted`/`AgentToolStarted`/`AgentStatusChanged` (published by `testbench` today) |
+| `testbench` manually publishing any event to the bus | ✅ Implemented | `testbench/adapters/views.py`, owner-only, UI generated from `corridor/event_catalog.py` |
 | pico publishing to the bus | ❌ Not implemented, out of scope for this PR | no `publish_event` call sites in `pico/` |
 | Consumer-driven contract test for corridor's bus | ✅ Implemented | `contracts/corridor/generate_corridor_contract.py --check`, generated `corridor/corridor.yaml` |
 
@@ -494,10 +495,10 @@ presence path, actually shipped:
 |---|---|---|
 | `AgentReplied` | **shipped**: floorplan's own `on_message` listener, for every tracked member's Discord message (`floorplan/adapters/discord_gateway.py`). **Future**: pico, after `ToolLoopService.run` finishes via a successful `send_reply` tool call — a second producer of the same event, per the design decision above | `agentToolStart` (`status=summary`) then `agentSelected`, via the existing, unchanged `OfficeService.send_message_activity` (matches its pre-existing parity for a raw Discord message). After `message_tool_clear_delay`, `OfficeService.clear_message_activity` sends `agentToolsClear` only — **not** `agentToolDone`, and **not** `agentDeselected` either: `agentSelected`'s own no-expiry semantics mean nothing needs to actively deselect, and re-pinging a deselect at clear time was rejected as a re-ping with no visible effect (see `test_message_clear_does_not_reping`) |
 | `AgentPresenceChanged` | **shipped**: floorplan's own presence/member-join/member-remove listeners (`floorplan/adapters/discord_gateway.py`) | The existing, unchanged `OfficeService.reconcile()` — spawns/closes/renames the agent and forwards each `AgentActivity` into `ActivitySnapshot` for rich-presence bubbles, exactly as it did before this event existed |
-| `AgentStatusChanged` | pico (future), after `GateService.decide` returns `RESPOND` / after the tool loop finishes | `agentStatus` (`status` ∈ `active`/`waiting`; `awaiting_input` expected unset) |
-| `AgentToolStarted` | reserved for when pico grows tools beyond `send_reply` (`docs/architecture.md` §4 notes the tool-loop shape already supports more) | `agentToolStart` with a real `toolName` other than the reply tool |
-| `AgentHighlighted` | not yet published by anything — the dataclass exists (`corridor/domain/models.py`) but has zero publishers/subscribers today | `agentSelected(id)` |
-| `AgentUnhighlighted` | not yet published by anything | `agentDeselected(id)` — safe to send even if a newer highlight already moved on, since the wire message is itself a no-op unless it still matches |
+| `AgentStatusChanged` | **shipped as a subscriber, manual publisher only**: `testbench`'s owner-only UI can publish it on demand; pico's automatic publish (after `GateService.decide` returns `RESPOND` / after the tool loop finishes) is still future work | `agentStatus` (`status` ∈ `active`/`waiting`; `awaiting_input` expected unset) via `OfficeService.set_status`, gated on `is_tracked` |
+| `AgentToolStarted` | **shipped as a subscriber, manual publisher only**: `testbench`; reserved for when pico grows tools beyond `send_reply` (`docs/architecture.md` §4 notes the tool-loop shape already supports more) | `agentToolStart` via `OfficeService.start_tool_activity`, gated on `is_tracked`. No paired clear event exists yet (see "Open question" below) — the bubble stays until something else sends `agentToolsClear`/a new `agentToolStart` for the same agent |
+| `AgentHighlighted` | **shipped as a subscriber, manual publisher only**: `testbench` | `agentSelected(id)` via `OfficeService.highlight_agent`, gated on `is_tracked` |
+| `AgentUnhighlighted` | **shipped as a subscriber, manual publisher only**: `testbench` | `agentDeselected(id)` via `OfficeService.unhighlight_agent`, gated on `is_tracked` — safe to send even if a newer highlight already moved on, since the wire message is itself a no-op unless it still matches |
 
 Open question, unchanged by the presence path landing:
 `AgentReplied`'s clear mechanism (reuse `message_tool_clear_delay` →
@@ -772,14 +773,21 @@ original one-rich-event design decision.
       ownership map and a new data-flow diagram closing the
       pico → corridor → floorplan loop should replace this doc's sequence
       diagrams with the real, fully-shipped shape.
-- [ ] `AgentHighlighted`/`AgentUnhighlighted` (map to `agentSelected`/
-      `agentDeselected`) — the dataclasses exist and are unblocked (see
-      "Now unblocked" below), but nothing publishes or subscribes to them
-      yet: `AgentReplied`'s own translation gets `agentSelected` for free
-      from the existing, unchanged `OfficeService.send_message_activity`,
-      without needing to publish a separate `AgentHighlighted` event.
-      These two stay reserved for a future publisher that wants to
-      highlight an agent *without* a full `AgentReplied`.
+- [x] `AgentHighlighted`/`AgentUnhighlighted` (map to `agentSelected`/
+      `agentDeselected`) — floorplan now subscribes to both
+      (`OfficeService.highlight_agent`/`unhighlight_agent`, gated on
+      `is_tracked`); `agent_deselected(id)` is a new builder in
+      `pixelagents/contracts/outbound.py` (it didn't exist before this).
+      `AgentReplied`'s own translation still gets `agentSelected` for free
+      from `OfficeService.send_message_activity`, unrelated to this
+      subscription — these two are for a publisher that wants to highlight
+      an agent *without* a full `AgentReplied`. No automated publisher
+      exists yet; `testbench` can publish either manually today.
+- [x] `AgentToolStarted`/`AgentStatusChanged` — floorplan now subscribes to
+      both (`OfficeService.start_tool_activity`/`set_status`, gated on
+      `is_tracked`). `AgentToolStarted`'s paired-clear-dataclass question
+      (below) is still open — no automated publisher exists yet;
+      `testbench` can publish either manually today.
 - [ ] Headless/ghost rendering driven by `agent.is_bot` — **no new
       dataclass** (`AgentRef.is_bot` already covers it); floorplan-side
       translation work only: set `isHeadless=agent.is_bot` when building
@@ -806,19 +814,23 @@ the vendor pin bump to `df517d1`.
 1. **`agentSelected`/`agentDeselected` → `AgentHighlighted`/`AgentUnhighlighted`.**
    Mapping: `AgentHighlighted(agent: AgentRef)` → `agentSelected(id)`,
    `AgentUnhighlighted(agent: AgentRef)` → `agentDeselected(id)`. Both are
-   independently publishable — a future publisher can highlight an agent
-   without also faking a full `AgentReplied` — but this PR doesn't publish
-   either yet: `AgentReplied`'s own shipped translation already gets
-   `agentSelected` for free from the existing, unchanged
-   `OfficeService.send_message_activity` (matching that method's
-   pre-existing parity for a raw Discord message), and its clear path
-   (`OfficeService.clear_message_activity`, after
-   `message_tool_clear_delay`) sends only `agentToolsClear` — not
-   `agentDeselected` too, since `agentSelected` has no expiry to race and
-   an unconditional deselect at clear time would be a re-ping with no
+   independently publishable — a publisher can highlight an agent without
+   also faking a full `AgentReplied` — and floorplan now subscribes to
+   both (`OfficeService.highlight_agent`/`unhighlight_agent`, gated on
+   `is_tracked` the same way every other subscriber handler is).
+   `agent_deselected(agent_id)` is a **new** builder in
+   `pixelagents/contracts/outbound.py` added specifically for this —
+   `agentDeselected` had no producer at all before. This is independent of
+   `AgentReplied`'s own translation, which still gets `agentSelected` for
+   free from `OfficeService.send_message_activity` (matching that
+   method's pre-existing parity for a raw Discord message) and clears via
+   `OfficeService.clear_message_activity` sending only `agentToolsClear` —
+   not `agentDeselected` too, since `agentSelected` has no expiry to race
+   and an unconditional deselect at clear time would be a re-ping with no
    visible effect. The unbounded-pinning risk this review originally
-   flagged is closed regardless: `agentDeselected` is available, real, and
-   safe to send anytime, for whichever future publisher needs it.
+   flagged is closed regardless: `agentDeselected` is real, safe to send
+   anytime, and reachable today by publishing `AgentUnhighlighted` — from
+   `testbench`, manually, until an automated publisher exists.
 2. **Headless agents: distinguishes bot accounts from human members —
    still needs no new corridor dataclass.** `AgentRef.is_bot` already
    carries the fact that drives this. What changed is that it's now

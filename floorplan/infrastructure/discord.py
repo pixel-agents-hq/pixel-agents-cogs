@@ -70,5 +70,9 @@ def message_snapshot(message: discord.Message) -> MessageSnapshot | None:
     return MessageSnapshot(
         key=AgentKey(guild_id=message.guild.id, user_id=message.author.id),
         message_id=message.id,
-        content=message.content or "",
+        # clean_content, not content -- resolves <@id>/<@&id>/<#id> mentions
+        # to @name/@role/#channel using data already cached on the message,
+        # so the webview's message bubble shows readable names instead of
+        # raw Discord mention syntax.
+        content=message.clean_content or "",
     )

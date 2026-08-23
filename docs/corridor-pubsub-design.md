@@ -9,10 +9,13 @@
 > follow-up PR stacked on top of this one.
 >
 > A review pass against the real pixel-agents source found one confirmed
-> error (corrected) and surfaced two new items now in scope but not yet
-> designed — headless agents, and `agentSelected`, the latter now tracked
-> as [a review comment on pixel-agents-hq/pixel-agents#396](https://github.com/pixel-agents-hq/pixel-agents/pull/396#issuecomment-5385481972).
-> See "Design review" and "In scope, pending input" below.
+> error (corrected) and surfaced two new items now in scope, tracked as
+> [a review comment on pixel-agents-hq/pixel-agents#396](https://github.com/pixel-agents-hq/pixel-agents/pull/396#issuecomment-5385481972):
+> `agentSelected` (mapping settled, timing blocked on upstream's response)
+> and headless agents (meaning settled — distinguishes bot accounts from
+> human members via the already-existing `AgentRef.is_bot` — implementation
+> blocked on the same upstream response). See "Design review" and "In
+> scope, pending input" below.
 
 ## Motivation
 
@@ -635,14 +638,16 @@ corridor is the one edge every other cog gets, never each other.
       send `agentSelected` (matching `send_message_activity`'s current
       parity) until there's an answer on the deselect/expiry question — see
       "Design review" above.
-- [ ] A headless-agent dataclass — **in scope, blocked on a design answer**
-      (see "Open question for you" below) before anything gets specified,
-      let alone implemented.
+- [ ] Headless/ghost rendering driven by `agent.is_bot` — **no new
+      dataclass** (`AgentRef.is_bot` already covers it); floorplan-side
+      translation work only, and only once
+      [pixel-agents#396](https://github.com/pixel-agents-hq/pixel-agents/pull/396)'s
+      protocol-controllability question has a useful answer — see "In
+      scope, pending input" above.
 
 ## In scope, pending input
 
-Two additions were confirmed in scope during this doc's review pass, but
-neither has a settled shape yet:
+Two additions were confirmed in scope during this doc's review pass.
 
 1. **`agentSelected` → `AgentHighlighted`.** The mapping is clear
    (`AgentHighlighted(agent: AgentRef)` → `agentSelected(id)`); what's not
@@ -651,22 +656,19 @@ neither has a settled shape yet:
    blocked on [pixel-agents#396](https://github.com/pixel-agents-hq/pixel-agents/pull/396)'s
    response, not on you — no question needed here, just don't implement it
    yet.
-2. **Headless agents — genuinely open, needs your input:**
-   `is_external` (and therefore "headless," on pixel-agents' terms) is
-   `True` for *every* agent this bus will ever describe — there's no
-   per-event distinction to carry unless "headless" is meant to represent
-   something Discord-specific rather than a direct translation of
-   pixel-agents' own CLI-session concept. Before this gets a dataclass:
-
-   - What should "headless" mean in Discord vocabulary? Candidates that
-     came up during this review, none settled: (a) nothing — it's not a
-     per-agent fact worth an event, only a protocol-level ask (already
-     filed upstream) about whether ghosting *can* apply to us at all;
-     (b) a stand-in for some other per-member state that's actually
-     variable per Discord agent (e.g. idle/away vs. actively
-     conversing) which floorplan would then render via whatever the ghost
-     mechanism becomes; (c) something else entirely you have in mind that
-     this review didn't surface.
-   - If it's (b) or (c): does that belong on `AgentRef` (a durable fact
-     about the member, like `is_bot`) or is it its own
-     `AgentStatusChanged`-shaped event (a fact that changes over time)?
+2. **Headless agents — settled: distinguishes bot accounts from human
+   members, and needs no new dataclass.** `AgentRef.is_bot` already carries
+   the fact that would drive this — floorplan already knows, for every
+   agent it renders, whether the underlying Discord member is a bot
+   (pico, a future publisher) or a human. The ghost visual becomes a
+   *rendering* decision on floorplan's translation side, not a bus concern:
+   when building `agentCreated`/`existingAgents`, read `agent.is_bot` the
+   same way it already reads `agent.discord_user_id` to derive the canvas
+   ID, and drive ghosting from it. **Blocked on the same upstream ask as
+   item 1** — `isHeadlessAgent()` structurally cannot engage on floorplan's
+   deployment today regardless of what's sent (see "Design review" above),
+   so this has nothing to implement until/unless
+   [pixel-agents#396](https://github.com/pixel-agents-hq/pixel-agents/pull/396)'s
+   protocol-controllability question gets a useful answer. No corridor
+   domain-model change either way: `is_bot` already exists, from the very
+   first version of `AgentRef` in this doc.

@@ -8,6 +8,7 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Protocol, TypeAlias, TypeVar
 
 from ..contracts.outbound import (
+    ExistingAgentsMessage,
     agent_closed,
     agent_created,
     agent_selected,
@@ -160,7 +161,7 @@ class OfficeService:
 
     def existing_agents_message(
         self, seats: Mapping[str, Mapping[str, object]]
-    ) -> dict[str, object]:
+    ) -> ExistingAgentsMessage:
         agent_ids: list[int] = []
         folder_names: dict[str, str] = {}
         agent_meta: dict[str, dict[str, object]] = {}

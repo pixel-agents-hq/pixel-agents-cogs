@@ -7,6 +7,7 @@ inferred from client code.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Literal, TypedDict
 
 
@@ -30,6 +31,14 @@ class AgentClosedMessage(TypedDict):
 class AgentSelectedMessage(TypedDict):
     type: Literal["agentSelected"]
     id: int
+
+
+class ExistingAgentsMessage(TypedDict):
+    type: Literal["existingAgents"]
+    agents: list[int]
+    agentMeta: Mapping[str, object]
+    folderNames: Mapping[str, str]
+    externalAgents: Mapping[str, bool]
 
 
 class _AgentTeamInfoRequired(TypedDict):

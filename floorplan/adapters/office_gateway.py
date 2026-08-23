@@ -9,6 +9,7 @@ import discord
 from aiohttp import web
 
 from pixelagents.application.office import DEFAULT_PALETTE_COUNT, merge_seat_patch
+from pixelagents.contracts.outbound import ExistingAgentsMessage
 
 from ..contracts.websocket import (
     ClientMessage,
@@ -35,7 +36,7 @@ class OfficeGatewayMixin(PixelAgentsBase):
 
     def _existing_agents_message(
         self, seats: Mapping[str, Mapping[str, object]]
-    ) -> dict[str, object]:
+    ) -> ExistingAgentsMessage:
         return self._office_service.existing_agents_message(seats)
 
     async def _send_existing_agents(self) -> None:

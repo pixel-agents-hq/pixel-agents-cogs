@@ -18,6 +18,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, TypeVar
 
+import yaml
 from jsonschema import Draft7Validator
 
 from pixelagents.application.office import OfficeService, merge_seat_patch, to_agent_id
@@ -32,6 +33,8 @@ from pixelagents.domain import (
 )
 
 from .schema import load_message_schemas
+
+CONSUMER_CONTRACT_PATH = Path(__file__).with_name("pixel-agents-consumer-contract.yaml")
 
 _MutationResult = TypeVar("_MutationResult")
 
@@ -173,6 +176,89 @@ def _check_helper_smoke() -> tuple[bool, str]:
     return True, ""
 
 
+def _load_consumer_contract() -> dict[str, Any]:
+    return yaml.safe_load(CONSUMER_CONTRACT_PATH.read_text(encoding="utf-8"))
+
+
+def _resolve_vendor_field(field_schema: dict[str, Any], resolver: Any) -> dict[str, Any]:
+    """Follow one level of $ref -- covers AgentActivityStatus (agentStatus's
+    `status`), the only $ref'd property in the message subset this contract
+    covers today. Not recursive; a deeper nesting would need more, but
+    nothing in this contract's fields does."""
+
+    if "$ref" in field_schema:
+        _url, resolved = resolver.resolve(field_schema["$ref"])
+        return resolved
+    return field_schema
+
+
+def _field_kind(field_schema: dict[str, Any]) -> tuple[str | None, object]:
+    """A coarse (kind, detail) pair used to compare our contract's declared
+    shape for a field against the vendor's -- 'type' fields compare their
+    JSON-Schema type string, 'const'/'enum' fields compare their allowed
+    value(s). Returns (None, None) for a shape this coarse check can't
+    characterize (e.g. an unresolved nested $ref) -- callers skip comparison
+    rather than risk a false positive."""
+
+    if "const" in field_schema:
+        return "const", field_schema["const"]
+    if "enum" in field_schema:
+        return "enum", tuple(sorted(field_schema["enum"]))
+    if "type" in field_schema:
+        return "type", field_schema["type"]
+    return None, None
+
+
+def _check_consumer_contract_drift(vendor_dir: Path) -> tuple[bool, str]:
+    """Cross-check pixel-agents-consumer-contract.yaml's declared fields
+    against the LIVE vendored core/asyncapi.yaml. Unlike
+    _check_outbound_messages (replays OUR builders, checks the result
+    against upstream), this walks every field we've declared we depend on
+    and confirms upstream's schema still has it with a compatible shape --
+    the actual upstream-drift detector for this contract."""
+
+    schemas = load_message_schemas(vendor_dir)
+    contract = _load_consumer_contract()
+    problems: list[str] = []
+    checked = 0
+
+    for message_type, entry in contract["messages"].items():
+        vendor_schema = schemas.by_type.get(message_type)
+        if vendor_schema is None:
+            problems.append(f"{message_type!r}: no vendor schema (message type removed upstream?)")
+            continue
+
+        vendor_props = vendor_schema.get("properties", {})
+        vendor_required = set(vendor_schema.get("required", []))
+
+        for field_name, our_field_schema in entry["properties"].items():
+            vendor_field = vendor_props.get(field_name)
+            if vendor_field is None:
+                problems.append(f"{message_type}.{field_name}: no longer in vendor schema")
+                continue
+            resolved_vendor_field = _resolve_vendor_field(vendor_field, schemas.resolver)
+            vendor_kind, vendor_detail = _field_kind(resolved_vendor_field)
+            our_kind, _our_detail = _field_kind(our_field_schema)
+            if vendor_kind and our_kind and vendor_kind != our_kind:
+                problems.append(
+                    f"{message_type}.{field_name}: vendor shape is {vendor_kind}={vendor_detail!r}, "
+                    f"contract expects a {our_kind}"
+                )
+
+        missing_required = vendor_required - set(entry["properties"])
+        if missing_required:
+            problems.append(
+                f"{message_type}: vendor now requires {sorted(missing_required)}, which "
+                "pixel-agents-consumer-contract.yaml doesn't declare"
+            )
+
+        checked += 1
+
+    if problems:
+        return False, "; ".join(problems)
+    return True, f"{checked} contract message type(s) still compatible with the live vendor schema"
+
+
 def run(vendor_dir: Path) -> list[dict[str, str]]:
     """Run the new checks, in the `{"name", "status", "detail"}` shape
     `contracts.pixel_agents.verify.run` already appends to its check list."""
@@ -181,6 +267,7 @@ def run(vendor_dir: Path) -> list[dict[str, str]]:
     named_checks: tuple[tuple[str, Callable[[], tuple[bool, str]]], ...] = (
         ("outbound_messages", lambda: _check_outbound_messages(vendor_dir)),
         ("helper_smoke", _check_helper_smoke),
+        ("consumer_contract_drift", lambda: _check_consumer_contract_drift(vendor_dir)),
     )
     for name, check in named_checks:
         ok, detail = check()

@@ -44,7 +44,9 @@ class TestBuildContract(unittest.TestCase):
         self.assertEqual(entry["properties"]["agentMeta"], {"type": "object"})
         self.assertEqual(
             entry["required"],
-            sorted(["type", "agents", "agentMeta", "folderNames", "externalAgents"]),
+            sorted(
+                ["type", "agents", "agentMeta", "folderNames", "externalAgents", "headlessAgents"]
+            ),
         )
 
     def test_private_required_base_classes_are_excluded(self) -> None:

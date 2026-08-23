@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from corridor.domain import ReplyField
+from corridor.domain import AgentRef, AgentReplied, ReplyField
 
 from ..tools.reply_tool import ReplyFieldInput, ReplyInput, ReplyOutput, ReplyTool
 
@@ -21,9 +21,13 @@ class FakeSentMessage:
 
 
 class FakeCorridor:
-    def __init__(self, *, fail_with: Exception | None = None) -> None:
+    def __init__(
+        self, *, fail_with: Exception | None = None, publish_fails_with: Exception | None = None
+    ) -> None:
         self.fail_with = fail_with
+        self.publish_fails_with = publish_fails_with
         self.calls: list[dict[str, Any]] = []
+        self.published: list[object] = []
         self._next_id = 1
 
     async def send_reply(
@@ -49,6 +53,11 @@ class FakeCorridor:
         message = FakeSentMessage(self._next_id)
         self._next_id += 1
         return message
+
+    async def publish_event(self, event: object) -> None:
+        if self.publish_fails_with is not None:
+            raise self.publish_fails_with
+        self.published.append(event)
 
 
 class TestReplyInputValidation(unittest.TestCase):
@@ -83,7 +92,7 @@ class TestReplyToolHandler(unittest.IsolatedAsyncioTestCase):
     async def test_sends_through_corridor_and_reports_the_message_id(self) -> None:
         corridor = FakeCorridor()
         ctx = object()
-        tool = ReplyTool(corridor, ctx)
+        tool = ReplyTool(corridor, ctx, guild_id=100, bot_user_id=999)
 
         output = await tool.handler(
             ReplyInput(
@@ -101,7 +110,7 @@ class TestReplyToolHandler(unittest.IsolatedAsyncioTestCase):
 
     async def test_reports_corridor_failures_as_a_failed_output_instead_of_raising(self) -> None:
         corridor = FakeCorridor(fail_with=RuntimeError("discord is down"))
-        tool = ReplyTool(corridor, object())
+        tool = ReplyTool(corridor, object(), guild_id=100, bot_user_id=999)
 
         output = await tool.handler(ReplyInput(content="hi"))
 
@@ -109,3 +118,64 @@ class TestReplyToolHandler(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(output.sent)
         self.assertIsNone(output.message_id)
         self.assertEqual(output.error, "discord is down")
+
+    async def test_a_failed_send_does_not_publish_agent_replied(self) -> None:
+        corridor = FakeCorridor(fail_with=RuntimeError("discord is down"))
+        tool = ReplyTool(corridor, object(), guild_id=100, bot_user_id=999)
+
+        await tool.handler(ReplyInput(content="hi"))
+
+        self.assertEqual(corridor.published, [])
+
+
+class TestReplyToolPublishesAgentReplied(unittest.IsolatedAsyncioTestCase):
+    """The reply tool is now a direct corridor bus publisher, closing the
+    loop into floorplan's canvas rendering without going through floorplan's
+    own on_message listener (which now explicitly ignores this bot's own
+    messages to avoid a duplicate publish -- see
+    floorplan/adapters/discord_gateway.py)."""
+
+    async def test_successful_send_publishes_agent_replied(self) -> None:
+        corridor = FakeCorridor()
+        tool = ReplyTool(corridor, object(), guild_id=100, bot_user_id=999)
+
+        await tool.handler(ReplyInput(content="hello world"))
+
+        self.assertEqual(
+            corridor.published,
+            [
+                AgentReplied(
+                    agent=AgentRef(discord_user_id=999, guild_id=100, is_bot=True),
+                    summary="hello world",
+                )
+            ],
+        )
+
+    async def test_summary_falls_back_to_description_then_title(self) -> None:
+        corridor = FakeCorridor()
+        tool = ReplyTool(corridor, object(), guild_id=100, bot_user_id=999)
+
+        await tool.handler(ReplyInput(description="a description"))
+
+        self.assertEqual(corridor.published[0].summary, "a description")
+
+    async def test_no_bot_user_id_skips_publishing(self) -> None:
+        corridor = FakeCorridor()
+        tool = ReplyTool(corridor, object(), guild_id=100, bot_user_id=None)
+
+        output = await tool.handler(ReplyInput(content="hi"))
+
+        assert isinstance(output, ReplyOutput)
+        self.assertTrue(output.sent)
+        self.assertEqual(corridor.published, [])
+
+    async def test_publish_failure_does_not_affect_the_reported_send_result(self) -> None:
+        corridor = FakeCorridor(publish_fails_with=RuntimeError("bus is down"))
+        tool = ReplyTool(corridor, object(), guild_id=100, bot_user_id=999)
+
+        output = await tool.handler(ReplyInput(content="hi"))
+
+        assert isinstance(output, ReplyOutput)
+        self.assertTrue(output.sent)
+        self.assertEqual(output.message_id, 1)
+        self.assertIsNone(output.error)

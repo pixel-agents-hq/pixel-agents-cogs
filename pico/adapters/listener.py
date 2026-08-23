@@ -70,7 +70,9 @@ class ListenerMixin:
             return
 
         ctx = await self.bot.get_context(message)
-        tools = [ReplyTool(self._corridor, ctx)]
+        tools = [
+            ReplyTool(self._corridor, ctx, guild_id=guild.id, bot_user_id=_bot_user_id(self.bot))
+        ]
         result = await self._tool_loop_service.run(
             base_url=settings.llm_base_url,
             api_key=settings.llm_api_key or "",

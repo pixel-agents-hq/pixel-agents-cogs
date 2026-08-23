@@ -1,16 +1,23 @@
 # Corridor event bus (PubSub): design
 
-> **Status: presence path shipped, pico publishing still future work.**
+> **Status: presence path and pico's reply path both shipped.**
 > corridor's `EventBusService` (`publish`/`subscribe`/`unsubscribe_owner`)
-> is implemented, and floorplan now both **publishes** onto it (Discord
-> presence updates as `AgentPresenceChanged`, raw tracked-member messages
-> as `AgentReplied`) and **subscribes** to its own publications to drive
-> the existing webview-translation code, unchanged. `AgentReplied` is no
-> longer scoped to just "a cog's `send_reply` call" — see the corrected
-> docstring below. pico's own publish call (`AgentReplied`/
-> `AgentStatusChanged` from the tool loop) is **not** part of this PR and
-> stays exactly as this doc originally designed it: a follow-up, stacked
-> on top of this one.
+> is implemented, with defensive subscription cleanup on top
+> (`CogBase.on_cog_remove`, see "Subscription lifecycle" below). floorplan
+> both **publishes** onto it (Discord presence updates as
+> `AgentPresenceChanged`, raw tracked-member messages as `AgentReplied`)
+> and **subscribes** to all six event types to drive the webview
+> translation. `AgentReplied` is no longer scoped to just "a cog's
+> `send_reply` call" — see the corrected docstring below. **pico now
+> publishes `AgentReplied` directly** from `ReplyTool`, right after a
+> successful `send_reply` — closing this doc's originally-motivating use
+> case. floorplan's own `on_message` excludes this bot's own account
+> specifically (never other bots) to avoid double-publishing the same
+> reply it just sent. pico's `AgentStatusChanged` publish (after
+> `GateService.decide`/the tool loop finishes) is **not** part of this PR
+> — still future work, same as `AgentToolStarted`. Headless/ghost
+> rendering (`isHeadless`/`headlessAgents`, driven by `AgentRef.is_bot`)
+> is also now implemented.
 >
 > A review pass against the real pixel-agents source found one confirmed
 > error (corrected) and surfaced two follow-up requests, posted as
@@ -24,13 +31,14 @@
 
 ## Motivation
 
-Today, the only cog that turns "something happened" into "something
-visible on the office canvas" is floorplan, and the only producer it
-knows about is Discord's own gateway: `floorplan/adapters/discord_gateway.py`
-listens to presence/activity/message events directly and projects them
-into `ServerMessage`s itself (see
-[`docs/architecture.md` §3a](architecture.md#3a-presence-mirroring-no-corridor-involvement)).
-That works because there has only ever been one producer.
+Originally, the only cog that turned "something happened" into "something
+visible on the office canvas" was floorplan, and the only producer it
+knew about was Discord's own gateway: `floorplan/adapters/discord_gateway.py`
+listened to presence/activity/message events directly and projected them
+into `ServerMessage`s itself, with no corridor involvement at all (see
+[`docs/architecture.md` §3a](architecture.md#3a-presence-mirroring-via-corridors-pubsub-bus)
+for the real, current shape). That worked because there was only ever one
+producer.
 
 pico is about to become a second one. pico's tool-calling loop
 (`docs/architecture.md` §4) already does something worth visualizing —
@@ -72,13 +80,18 @@ place for a third chokepoint like this, not a new fourth shared cog.
 2. **Permission tiers** (`require_permission`/`capabilities_satisfy`) —
    **implemented**. `corridor/application/permission_service.py`'s
    `PermissionService`, wired the same way.
-3. **PubSub, in Discord vocabulary** — **implemented for the presence
-   path**. `corridor/application/event_bus_service.py`'s
+3. **PubSub, in Discord vocabulary** — **implemented for presence and
+   pico's replies**. `corridor/application/event_bus_service.py`'s
    `EventBusService`, wired through `corridor/adapters/cog_base.py`'s
-   `publish_event`/`subscribe_event`/`unsubscribe_owner`. floorplan
-   publishes (`floorplan/adapters/discord_gateway.py`) and subscribes
-   (`floorplan/adapters/event_subscriptions.py`) to its own events. pico's
-   publish call is still future work — see the status table below.
+   `publish_event`/`subscribe_event`/`unsubscribe_owner`, with a
+   defensive `on_cog_remove` listener dropping a subscriber's stale
+   registrations if it disappears without ever calling
+   `unsubscribe_owner` itself. floorplan publishes
+   (`floorplan/adapters/discord_gateway.py`) and subscribes to all six
+   event types (`floorplan/adapters/event_subscriptions.py`). pico
+   publishes `AgentReplied` directly from `pico/tools/reply_tool.py`.
+   pico's `AgentStatusChanged` publish is still future work — see the
+   status table below.
 
 ### corridor's PubSub is independent of pixel-agents' WebSocket protocol — deliberately
 
@@ -117,19 +130,18 @@ flowchart LR
     Canvas -- "vendored by" --> PA
     PA -- "served by" --> FP
     FP -- "publisher and<br/>subscriber of" --> C
-    C -- "has future publisher" --> Pico
+    C -- "has publisher" --> Pico
 ```
 
 Two channels, one bridge: the left half of this chain (`Canvas` through
 `floorplan`) is the existing, shipped webview-serving path — floorplan
 speaks pixel-agents' wire protocol there. The right half (`corridor`
 through `pico`) is corridor's Discord-vocabulary path — corridor speaks
-nothing but its own dataclasses there. floorplan is the only node that
-appears in both halves, because it's the only package with a reason to:
-as of this PR, floorplan is both the bus's first publisher (its own
-Discord gateway listeners) and its first subscriber (translating those
-same events back into webview messages) — pico joining as a second
-publisher is still future work.
+nothing but its own dataclasses there. floorplan is both the bus's first
+publisher (its own Discord gateway listeners) and its subscriber
+(translating events back into webview messages, all six types); pico is
+the bus's second publisher, for `AgentReplied` only so far —
+`AgentStatusChanged` stays future work.
 
 ### Implementation status, verified line by line
 
@@ -146,7 +158,10 @@ publisher is still future work.
 | floorplan publishing to the bus | ✅ Implemented | `floorplan/adapters/discord_gateway.py` publishes `AgentPresenceChanged`/`AgentReplied` |
 | floorplan subscribing to the bus | ✅ Implemented, all six event types | `floorplan/adapters/event_subscriptions.py::EventSubscriptionsMixin` — `AgentPresenceChanged`/`AgentReplied` (own publications) plus `AgentHighlighted`/`AgentUnhighlighted`/`AgentToolStarted`/`AgentStatusChanged` (published by `testbench` today) |
 | `testbench` manually publishing any event to the bus | ✅ Implemented | `testbench/adapters/views.py`, owner-only, UI generated from `corridor/event_catalog.py` |
-| pico publishing to the bus | ❌ Not implemented, out of scope for this PR | no `publish_event` call sites in `pico/` |
+| pico publishing `AgentReplied` to the bus | ✅ Implemented | `pico/tools/reply_tool.py::ReplyTool._publish_agent_replied`, called right after a successful `send_reply` |
+| pico publishing `AgentStatusChanged` to the bus | ❌ Not implemented, out of scope for this PR | no such `publish_event` call site in `pico/` |
+| Defensive subscription cleanup | ✅ Implemented | `corridor/adapters/cog_base.py::on_cog_remove` — drops a subscriber's registrations if it disappears without calling `unsubscribe_owner` itself |
+| Headless/ghost rendering (`isHeadless`/`headlessAgents`) | ✅ Implemented | `pixelagents/application/office.py`'s `spawn`/`reconcile`/`existing_agents_message`, driven by `AgentRef.is_bot` |
 | Consumer-driven contract test for corridor's bus | ✅ Implemented | `contracts/corridor/generate_corridor_contract.py --check`, generated `corridor/corridor.yaml` |
 
 ## Goals
@@ -493,23 +508,25 @@ presence path, actually shipped:
 
 | Dataclass | Published by | Wire translation |
 |---|---|---|
-| `AgentReplied` | **shipped**: floorplan's own `on_message` listener, for every tracked member's Discord message (`floorplan/adapters/discord_gateway.py`). **Future**: pico, after `ToolLoopService.run` finishes via a successful `send_reply` tool call — a second producer of the same event, per the design decision above | `agentToolStart` (`status=summary`) then `agentSelected`, via the existing, unchanged `OfficeService.send_message_activity` (matches its pre-existing parity for a raw Discord message). After `message_tool_clear_delay`, `OfficeService.clear_message_activity` sends `agentToolsClear` only — **not** `agentToolDone`, and **not** `agentDeselected` either: `agentSelected`'s own no-expiry semantics mean nothing needs to actively deselect, and re-pinging a deselect at clear time was rejected as a re-ping with no visible effect (see `test_message_clear_does_not_reping`) |
+| `AgentReplied` | **shipped, two producers**: floorplan's own `on_message` listener, for every tracked member's Discord message except this bot's own account (`floorplan/adapters/discord_gateway.py`); pico's `ReplyTool`, right after `corridor.send_reply` succeeds (`pico/tools/reply_tool.py`) — floorplan's `on_message` guard is exactly what stops pico's own reply from being double-published by both producers for the same message | `agentToolStart` (`status=summary`) then `agentSelected`, via the existing, unchanged `OfficeService.send_message_activity` (matches its pre-existing parity for a raw Discord message). After `message_tool_clear_delay`, `OfficeService.clear_message_activity` sends `agentToolsClear` only — **not** `agentToolDone`, and **not** `agentDeselected` either: `agentSelected`'s own no-expiry semantics mean nothing needs to actively deselect, and re-pinging a deselect at clear time was rejected as a re-ping with no visible effect (see `test_message_clear_does_not_reping`) |
 | `AgentPresenceChanged` | **shipped**: floorplan's own presence/member-join/member-remove listeners (`floorplan/adapters/discord_gateway.py`) | The existing, unchanged `OfficeService.reconcile()` — spawns/closes/renames the agent and forwards each `AgentActivity` into `ActivitySnapshot` for rich-presence bubbles, exactly as it did before this event existed |
 | `AgentStatusChanged` | **shipped as a subscriber, manual publisher only**: `testbench`'s owner-only UI can publish it on demand; pico's automatic publish (after `GateService.decide` returns `RESPOND` / after the tool loop finishes) is still future work | `agentStatus` (`status` ∈ `active`/`waiting`; `awaiting_input` expected unset) via `OfficeService.set_status`, gated on `is_tracked` |
-| `AgentToolStarted` | **shipped as a subscriber, manual publisher only**: `testbench`; reserved for when pico grows tools beyond `send_reply` (`docs/architecture.md` §4 notes the tool-loop shape already supports more) | `agentToolStart` via `OfficeService.start_tool_activity`, gated on `is_tracked`. No paired clear event exists yet (see "Open question" below) — the bubble stays until something else sends `agentToolsClear`/a new `agentToolStart` for the same agent |
+| `AgentToolStarted` | **shipped as a subscriber, manual publisher only**: `testbench`; reserved for when pico grows tools beyond `send_reply` (`docs/architecture.md` §4 notes the tool-loop shape already supports more) | `agentToolStart` via `OfficeService.start_tool_activity`, gated on `is_tracked`. Deliberately no paired clear event (settled, see below) — the bubble stays until something else sends `agentToolsClear`/a new `agentToolStart` for the same agent |
 | `AgentHighlighted` | **shipped as a subscriber, manual publisher only**: `testbench` | `agentSelected(id)` via `OfficeService.highlight_agent`, gated on `is_tracked` |
 | `AgentUnhighlighted` | **shipped as a subscriber, manual publisher only**: `testbench` | `agentDeselected(id)` via `OfficeService.unhighlight_agent`, gated on `is_tracked` — safe to send even if a newer highlight already moved on, since the wire message is itself a no-op unless it still matches |
 
-Open question, unchanged by the presence path landing:
+**Resolved: `AgentToolStarted` does not get a paired clear dataclass.**
 `AgentReplied`'s clear mechanism (reuse `message_tool_clear_delay` →
-`agentToolsClear`) is now shipped for both a raw Discord message and (once
-it lands) pico's own reply. The generic `AgentToolStarted`, reserved for a
-future, possibly-longer-running pico tool, does **not** have one — a fixed
-delay is a bad fit for a tool whose duration isn't known in advance. Worth
-deciding whether it needs its own `AgentToolFinished`/`AgentToolCleared`
-dataclass to correlate against
-`tool_id` explicitly, rather than borrowing `AgentReplied`'s timer-based
-approach.
+`agentToolsClear`) is shipped for both a raw Discord message and pico's
+own reply. The generic `AgentToolStarted`, reserved for a future,
+possibly-longer-running pico tool, deliberately doesn't get an equivalent
+— a fixed delay is a bad fit for a tool whose duration isn't known in
+advance, and a dedicated `AgentToolFinished`/`AgentToolCleared` dataclass
+isn't worth adding to corridor's domain model for a producer that doesn't
+exist yet. An `AgentToolStarted` bubble persists until something else
+clears it (a fresh `agentToolStart`/`agentToolsClear` for the same agent)
+— accepted as fine for now; revisit only once a real producer other than
+`testbench`'s manual UI needs it.
 
 ## Design review: two gaps found, both resolved upstream within the day
 
@@ -619,37 +636,50 @@ sequenceDiagram
     C-->>FP: handler dropped
 ```
 
-Open question for the implementation PR: whether corridor should also
-defensively drop an owner's subscriptions if that owner's Cog disappears
-from `bot.cogs` without ever calling `unsubscribe_owner` (a crash during
-`cog_unload`, say) — `register_dependent`'s cascade exists precisely
-because corridor doesn't trust every dependent to clean up after itself
-perfectly. The same distrust probably applies here.
+**Resolved: corridor also defensively drops an owner's subscriptions if
+that owner's Cog disappears without ever calling `unsubscribe_owner`** (a
+crash partway through its own `cog_unload`, say) —
+`register_dependent`'s cascade exists precisely because corridor doesn't
+trust every dependent to clean up after itself perfectly, and the same
+distrust applies here.
 
-## End-to-end example: pico publishes, floorplan renders it (future work)
+The mechanism, verified against the real installed discord.py 2.7.1 +
+Red-DiscordBot 3.5.24 source: `Bot.remove_cog` pops the cog from
+`bot.cogs` **before** calling `cog_unload()`; `Cog._eject` runs
+`cog_unload()` inside its own `try`/`except Exception` and swallows
+(logs) whatever it raises — discord.py's way, not corridor's — and the
+cog is already gone from `bot.cogs` by the time that runs either way.
+Red's own `remove_cog` override then unconditionally does
+`self.dispatch("cog_remove", cog)` — fired exactly once per real removal,
+crash-mid-`cog_unload()` or not, for every removal path (`[p]unload`,
+`[p]reload`, a direct `remove_cog` call). `CogBase.on_cog_remove`
+(`corridor/adapters/cog_base.py`) is a `@commands.Cog.listener()` for
+exactly this event, calling `unsubscribe_owner(cog.qualified_name)` — no
+polling, no new mechanism, an already-existing Red hook that fires
+reliably regardless of how the cog went away.
+
+## Shipped example: pico publishes, floorplan renders it
 
 This is the flow the whole design exists to support — closing the loop
 between [`docs/architecture.md` §4](architecture.md#4-runtime-data-flow-picos-gate-then-tool-loop)
 (pico's tool loop) and
-[§3a](architecture.md#3a-presence-mirroring-no-corridor-involvement)
+[§3a](architecture.md#3a-presence-mirroring-via-corridors-pubsub-bus)
 (floorplan's canvas broadcast), with corridor mediating instead of either
-cog knowing about the other. **Not part of this PR** — pico's `publish_event`
-call doesn't exist yet (see the checklist above); this diagram is still the
-target shape for when it lands:
+cog knowing about the other:
 
 ```mermaid
 sequenceDiagram
-    participant Pico as pico<br/>(ToolLoopService)
+    participant Pico as pico<br/>(ReplyTool)
     participant C as corridor<br/>(EventBusService)
     participant FP as floorplan
     participant Hub as floorplan's<br/>ClientHub
     participant B as Browser webview
 
-    Pico->>Pico: tool loop runs, ReplyTool sends via corridor.send_reply
-    Pico->>C: publish_event(AgentReplied(AgentRef(pico_bot_user_id, guild_id, is_bot=True), summary))
+    Pico->>Pico: tool loop calls ReplyTool.handler,<br/>sends via corridor.send_reply
+    Pico->>C: publish_event(AgentReplied(AgentRef(bot_user_id, guild_id, is_bot=True), summary))
     C->>C: look up subscribers registered for AgentReplied
     C->>FP: dispatch(event)  [wrapped: a raising handler is<br/>logged, not propagated to pico]
-    FP->>FP: derive agent_id via _discord_id_to_agent_id,<br/>send agentToolStart(status=summary)
+    FP->>FP: OfficeService.send_message_activity --<br/>agent_id via agent_id(user_id),<br/>send agentToolStart(status=summary) + agentSelected
     FP->>Hub: broadcast(message)
     Hub->>B: push over open socket
     Note over FP,Hub: after message_tool_clear_delay,<br/>floorplan sends agentToolsClear (existing mechanism)
@@ -659,6 +689,13 @@ pico never imports anything from floorplan, and floorplan never imports
 anything from pico — both only ever talk to corridor. This is the same
 shape `docs/architecture.md` §1 already documents for `required_cogs`:
 corridor is the one edge every other cog gets, never each other.
+
+The `corridor.send_reply` call at the top of this diagram *also* creates a
+real Discord message, which floorplan's own `on_message` listener would
+otherwise see and publish a second `AgentReplied` for — floorplan's
+`on_message` explicitly excludes messages from this bot's own account
+(never other bots) specifically to avoid that double-publish. See the
+mapping table above.
 
 ## Shipped example: floorplan publishes and subscribes to itself
 
@@ -704,8 +741,8 @@ original one-rich-event design decision.
   `EventBusService.publish` awaits each subscriber's handler in turn inside
   a `try`/`except`, logs and continues on failure — mirroring `ClientHub`'s
   per-socket isolation. A subscriber that raises never breaks the
-  publisher's own turn (a future pico tool loop won't fail because
-  floorplan's rendering threw; verified today by
+  publisher's own turn (pico's tool loop doesn't fail because floorplan's
+  rendering threw; verified by
   `corridor/tests/test_event_bus_service.py`'s isolation tests). Whether
   dispatch should instead be fire-and-forget (`asyncio.create_task` per
   handler) is worth revisiting once there's a second subscriber and real
@@ -739,10 +776,10 @@ original one-rich-event design decision.
 - [x] `corridor/domain/models.py`: `AgentRef` and the closed
       `AgentActivityEvent` set — `AgentReplied`/`AgentToolStarted`/
       `AgentStatusChanged`/`AgentHighlighted`/`AgentUnhighlighted`/
-      `AgentPresenceChanged` — plus the `AgentActivity` value object. The
-      generic `AgentToolStarted`'s paired-clear-dataclass question (below)
-      stays open; `AgentReplied`'s clear mechanism is settled and shipped:
-      reuse floorplan's existing `message_tool_clear_delay` →
+      `AgentPresenceChanged` — plus the `AgentActivity` value object.
+      `AgentToolStarted`'s paired-clear-dataclass question is resolved (no
+      — see below); `AgentReplied`'s clear mechanism is settled and
+      shipped: reuse floorplan's existing `message_tool_clear_delay` →
       `agentToolsClear` (see the mapping table above for why **not** also
       `agentDeselected`).
 - [x] `corridor/application/event_bus_service.py`: `EventBusService`
@@ -752,13 +789,11 @@ original one-rich-event design decision.
 - [x] `corridor/adapters/cog_base.py`: `publish_event`/`subscribe_event`/
       `unsubscribe_owner` chokepoint methods, wired the same way
       `send_reply`/`require_permission` are.
-- [ ] pico: publish `AgentReplied`/`AgentStatusChanged` (and any other
-      settled dataclasses) from the tool loop's completion path, with
-      `AgentRef` pointing at pico's own bot user. **Not part of this PR** —
-      the presence path below shipped first because floorplan already had
-      both a producer (its own gateway listeners) and a consumer
-      (`OfficeService.reconcile`) to wire together with no other cog's
-      code to touch.
+- [x] pico: publish `AgentReplied` from `ReplyTool.handler`, right after
+      `corridor.send_reply` succeeds, with `AgentRef` pointing at pico's
+      own bot user (`self.bot.user.id`, guild-scoped to the invoking
+      guild). `AgentStatusChanged` (after `GateService.decide`/the tool
+      loop finishes) is **not** part of this PR — still future work.
 - [x] floorplan: publish `AgentPresenceChanged` (member update/presence
       update/join/remove listeners) and `AgentReplied` (tracked-member
       messages) at the point `discord_gateway.py` used to call
@@ -768,11 +803,15 @@ original one-rich-event design decision.
       back into the existing `OfficeService.reconcile`/
       `send_message_activity`/`clear_message_activity` calls, completely
       unchanged — see the sequence diagram below.
-- [ ] Update [`docs/architecture.md`](architecture.md) once pico's publish
-      lands too — the dependency graph in §1 doesn't change, but §2's
-      ownership map and a new data-flow diagram closing the
-      pico → corridor → floorplan loop should replace this doc's sequence
-      diagrams with the real, fully-shipped shape.
+- [x] Update [`docs/architecture.md`](architecture.md) once pico's publish
+      landed — the dependency graph in §1 didn't change shape (just
+      corridor's own responsibilities grew), but §2's ownership map, §3a
+      (renamed off "no corridor involvement"), and §4's pico diagram now
+      show the real, shipped `AgentReplied` shape. A full
+      pico → corridor → floorplan diagram replacing this doc's own
+      "Shipped example" sections still doesn't exist there — this doc
+      stays the deep-dive reference, `docs/architecture.md` a condensed
+      cross-reference to it.
 - [x] `AgentHighlighted`/`AgentUnhighlighted` (map to `agentSelected`/
       `agentDeselected`) — floorplan now subscribes to both
       (`OfficeService.highlight_agent`/`unhighlight_agent`, gated on
@@ -786,8 +825,20 @@ original one-rich-event design decision.
 - [x] `AgentToolStarted`/`AgentStatusChanged` — floorplan now subscribes to
       both (`OfficeService.start_tool_activity`/`set_status`, gated on
       `is_tracked`). `AgentToolStarted`'s paired-clear-dataclass question
-      (below) is still open — no automated publisher exists yet;
-      `testbench` can publish either manually today.
+      is resolved (no — see below). No automated publisher exists yet for
+      either; `testbench` can publish either manually today.
+- [x] Defensive subscription cleanup: `corridor/adapters/cog_base.py::on_cog_remove`
+      listens for Red's `cog_remove` dispatch (fired unconditionally after
+      every cog removal, crash-mid-`cog_unload()` or not) and calls
+      `unsubscribe_owner(cog.qualified_name)` — see "Subscription
+      lifecycle" below.
+- [x] Headless/ghost rendering driven by `agent.is_bot` — floorplan's
+      translation sets `isHeadless=agent.is_bot` when building
+      `agentCreated`/`existingAgents` (`pixelagents/application/office.py`).
+      Fixed alongside a pre-existing drift: `isExternal=True` was never
+      actually wired at either `agent_created` call site despite being
+      documented as such — now genuinely set for every Discord-derived
+      agent.
 - [ ] Headless/ghost rendering driven by `agent.is_bot` — **no new
       dataclass** (`AgentRef.is_bot` already covers it); floorplan-side
       translation work only: set `isHeadless=agent.is_bot` when building
@@ -834,19 +885,21 @@ the vendor pin bump to `df517d1`.
 2. **Headless agents: distinguishes bot accounts from human members —
    still needs no new corridor dataclass.** `AgentRef.is_bot` already
    carries the fact that drives this. What changed is that it's now
-   *implementable*: floorplan's translation, wherever it builds
-   `agentCreated`/`existingAgents` for any agent this bus (or its own
-   presence mirroring) describes, sets the new `isHeadless` field from
-   `agent.is_bot` directly. This is worth being precise about: **it
-   requires zero involvement from corridor's bus.** `is_bot` is
-   `discord.Member.bot`, which floorplan's own presence-mirroring code
-   already reads directly from the Discord gateway
-   (`floorplan/adapters/discord_gateway.py`'s `_member_snapshot`) — it
+   *implementable*, and now implemented: `OfficeService.spawn`/`reconcile`
+   (`pixelagents/application/office.py`) pass `is_headless=snapshot.is_bot`
+   into every `agent_created(...)` call, and `existing_agents_message`
+   builds a `headlessAgents` map alongside `externalAgents` from a new
+   `self._agent_is_bot` cache (keyed by bare `user_id` — `is_bot` is
+   guild-invariant). This is worth being precise about: **it requires zero
+   involvement from corridor's bus.** `is_bot` is `discord.Member.bot`,
+   which floorplan's own presence-mirroring code already reads directly
+   from the Discord gateway and forwards into `AgentSnapshot.is_bot` — it
    doesn't need an `AgentActivityEvent` to learn a fact it already has.
-   The domain model doesn't change; only floorplan's existing translation
-   code gains one more field to set. Still not implemented as of this PR
-   (verified via grep: `isHeadless`/`headlessAgents` appear nowhere in
-   `pixelagents/` or `floorplan/`) — tracked in the checklist above.
+   The domain model doesn't change; only `OfficeService`'s existing
+   translation code gained the field. Verified via grep:
+   `isHeadless`/`headlessAgents` now appear in
+   `pixelagents/contracts/outbound.py` and
+   `pixelagents/application/office.py`.
 
 ## Verifying this design: two committed contracts
 

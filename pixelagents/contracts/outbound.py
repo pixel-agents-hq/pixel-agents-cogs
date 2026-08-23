@@ -21,6 +21,7 @@ class _AgentCreatedRequired(TypedDict):
 
 class AgentCreatedMessage(_AgentCreatedRequired, total=False):
     isExternal: bool
+    isHeadless: bool
 
 
 class AgentClosedMessage(TypedDict):
@@ -44,6 +45,7 @@ class ExistingAgentsMessage(TypedDict):
     agentMeta: Mapping[str, object]
     folderNames: Mapping[str, str]
     externalAgents: Mapping[str, bool]
+    headlessAgents: Mapping[str, bool]
 
 
 class _AgentTeamInfoRequired(TypedDict):
@@ -139,6 +141,7 @@ def agent_created(
     hue_shift: int,
     *,
     is_external: bool | None = None,
+    is_headless: bool | None = None,
 ) -> AgentCreatedMessage:
     message: AgentCreatedMessage = {
         "type": "agentCreated",
@@ -149,6 +152,8 @@ def agent_created(
     }
     if is_external is not None:
         message["isExternal"] = is_external
+    if is_headless is not None:
+        message["isHeadless"] = is_headless
     return message
 
 

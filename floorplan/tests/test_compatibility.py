@@ -258,6 +258,7 @@ class TestWebSocketBootstrapContract(unittest.IsolatedAsyncioTestCase):
             "agentMeta": {},
             "folderNames": {},
             "externalAgents": {},
+            "headlessAgents": {},
         }
         assert messages[9] == {"type": "layoutLoaded", "layout": layout}
 

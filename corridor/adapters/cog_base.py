@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable, Sequence
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 
 import discord
 from redbot.core import commands
@@ -272,23 +272,37 @@ class CogBase:
 
     def list_tools(self) -> tuple[RegisteredTool, ...]:
         """Every registered tool, unfiltered by permission. Prefer
-        `list_tools_for` when the caller has an invoking member to check
+        `list_tools_for` when the caller has an invoking context to check
         against."""
 
         return self._tool_registry.list_tools()
 
-    async def list_tools_for(self, member: discord.Member) -> tuple[RegisteredTool, ...]:
-        """Every registered tool `member` is allowed to invoke, per
-        `capabilities_satisfy` -- the one call a consumer (pico's tool loop)
-        needs to build an LLM-visible tool list that already respects
-        corridor's permission groups."""
+    async def list_tools_for(self, ctx: commands.Context) -> tuple[RegisteredTool, ...]:
+        """Every registered tool `ctx.author` is allowed to invoke.
+
+        Explicit corridor permission groups and inferred Discord command
+        checks are both evaluated here, before a consumer exposes tools to
+        an LLM. A failing or broken command check omits only that tool.
+        """
 
         allowed: list[RegisteredTool] = []
         for tool in self._tool_registry.list_tools():
-            if tool.required_group is None or await self.capabilities_satisfy(
-                member, tool.required_group
+            if tool.required_group is not None and not await self.capabilities_satisfy(
+                cast(discord.Member, ctx.author), tool.required_group
             ):
-                allowed.append(tool)
+                continue
+            if tool.availability_check is not None:
+                try:
+                    if not await tool.availability_check(ctx):
+                        continue
+                except Exception:
+                    log.warning(
+                        "corridor: availability check failed for LLM tool %r; omitting it",
+                        tool.name,
+                        exc_info=True,
+                    )
+                    continue
+            allowed.append(tool)
         return tuple(allowed)
 
     # --- settings mutation, used by settings_ui.py and [p]corridor commands ---

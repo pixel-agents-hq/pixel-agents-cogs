@@ -23,6 +23,7 @@ from .models import (
     ReplyField,
     ReplyMode,
     ReplyPreferences,
+    ToolAvailabilityCheck,
     ToolHandler,
 )
 
@@ -52,6 +53,7 @@ __all__ = [
     "ReplyMode",
     "ReplyPreferences",
     "ToolHandler",
+    "ToolAvailabilityCheck",
     "ToolDescription",
     "llm_tool",
     "llm_tool_spec",

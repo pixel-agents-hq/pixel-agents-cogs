@@ -104,10 +104,11 @@ class TestCrossCogTools(unittest.IsolatedAsyncioTestCase):
     async def test_filters_through_corridors_permission_check(self) -> None:
         corridor = FakeCorridor()
         member = SimpleNamespace(id=1)
+        ctx = _ctx(member)
 
-        await _cross_cog_tools(corridor, _ctx(member))
+        await _cross_cog_tools(corridor, ctx)
 
-        self.assertEqual(corridor.list_tools_for_calls, [member])
+        self.assertEqual(corridor.list_tools_for_calls, [ctx])
 
     async def test_a_tool_that_fails_to_adapt_is_skipped_without_dropping_others(self) -> None:
         corridor = FakeCorridor()

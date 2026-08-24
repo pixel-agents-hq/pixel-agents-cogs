@@ -6,7 +6,7 @@ from typing import Any
 
 from redbot.core.bot import Red
 
-from ..application import TimeService
+from ..application import TextService, TimeService
 from ..dependency_loader import ensure_corridor_loaded
 from ..infrastructure import SystemClock
 
@@ -15,8 +15,8 @@ class CogBase:
     """Wire services once and own resources spanning the Cog lifetime.
 
     No Red Config here: unlike most cogs in this repo, deskutils has
-    nothing to persist -- `[p]deskutils time` only ever reads the system
-    clock and a caller-supplied zone name, both stateless.
+    nothing to persist -- its commands only read the system clock,
+    caller-supplied text, or Discord messages already visible to the caller.
     """
 
     bot: Red
@@ -24,6 +24,7 @@ class CogBase:
     def __init__(self, bot: Red) -> None:
         self.bot = bot
         self._service = TimeService(SystemClock())
+        self._text_service = TextService()
         self._corridor: Any = None
 
     async def cog_load(self) -> None:
@@ -39,7 +40,7 @@ class CogBase:
         # So unloading corridor cascades to unload this cog too, instead of
         # leaving it running with a stale corridor reference.
         self._corridor.register_dependent("deskutils")
-        # Scans self for @llm_tool-decorated commands (time_command) and
+        # Scans self for @llm_tool-decorated commands and
         # registers each -- inert if pico (or any other LLM-tool consumer)
         # never loads, corridor's registry just holds it unread. See
         # docs/corridor-tool-registry-design.md.

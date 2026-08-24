@@ -1,8 +1,8 @@
-"""Framework-agnostic application logic.
+"""Framework-agnostic time and text application logic.
 
 TimeService depends only on the Clock Protocol below, never on
 datetime.now() directly -- swap in a fixed/fake clock in tests without
-monkeypatching stdlib.
+monkeypatching stdlib. TextService is pure and has no dependencies.
 """
 
 from __future__ import annotations
@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import Protocol
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from ..domain import CurrentTime
+from ..domain import CurrentTime, TextStatistics
 
 
 class Clock(Protocol):
@@ -48,3 +48,10 @@ class TimeService:
             return ZoneInfo(name)
         except (ZoneInfoNotFoundError, ValueError) as exc:
             raise UnknownTimeZoneError(name) from exc
+
+
+class TextService:
+    """Pure text statistics used by both Discord and LLM invocations."""
+
+    def count(self, text: str) -> TextStatistics:
+        return TextStatistics(characters=len(text), words=len(text.split()))

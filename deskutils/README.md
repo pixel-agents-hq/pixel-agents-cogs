@@ -1,8 +1,9 @@
 # deskutils
 
-Get the current time in Discord-native and timezone-aware formats.
+Small stateless utilities for time, text counting, and message quoting.
 
-A utility cog providing a command to fetch the current time, posted to Discord using native per-user localized timestamps and explicit timezone-aware formatting.
+A utility cog providing Discord-native time output, character/word counts,
+and safe quotes of messages the invoking member can access.
 
 ## Installing
 
@@ -21,15 +22,17 @@ Nothing to configure -- deskutils has no persistent settings.
 | Command | Description |
 |---|---|
 | `[p]deskutils time [timezone]` | Show the current time: Discord's native timestamp markup (auto-localized per viewer) plus explicit UTC. Pass an IANA `timezone` (e.g. `America/New_York`) to also show it explicitly in that zone. Requires the `employee` permission tier (unrestricted by default). |
+| `[p]deskutils count <text>` | Count all characters (including whitespace) and whitespace-delimited words in text. |
+| `[p]deskutils quote [message-link]` | Quote the replied-to message, or a same-server message supplied by link, with its author and source link. |
 
-`time_command` also carries `@corridor.domain.llm_tool(...)` directly, so
+All three commands are registered as Corridor LLM tools, so
 if [`pico`](../pico) is installed, loaded, and enabled for a guild, a user
-can just ask it "what time is it?" in chat instead of running the command
-by hand -- pico calls the exact same command, which replies the exact same
-way (same permission check, same embed) whether triggered by prefix or by
-an LLM tool call. The tool result also gives pico the epoch, UTC value,
-Discord timestamp markup, and any requested named-zone localization, so
-the LLM receives the information that was displayed. See
+can ask for time or text statistics, or reply to a message and ask Pico to
+quote it. `count` and `quote` deliberately use bare `@llm_tool()` decorators:
+their names come from the qualified Discord command, descriptions from
+their docstrings, parameter descriptions from parameter names, and
+availability from native command checks. `time` keeps its existing explicit
+metadata. Each tool returns the information displayed to the LLM. See
 [`docs/corridor-tool-registry-design.md`](../docs/corridor-tool-registry-design.md).
 Nothing to configure for this either: registration happens automatically at
 `cog_load` and is inert if pico isn't loaded.

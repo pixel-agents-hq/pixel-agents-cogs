@@ -66,8 +66,8 @@ class FakeCorridor:
     def unregister_dependent(self, extension_name: str) -> None:
         self.registered_dependents.discard(extension_name)
 
-    async def list_tools_for(self, member: object) -> list[Any]:
-        self.list_tools_for_calls.append(member)
+    async def list_tools_for(self, ctx: object) -> list[Any]:
+        self.list_tools_for_calls.append(ctx)
         return self.tools_for_member
 
     async def send_reply(

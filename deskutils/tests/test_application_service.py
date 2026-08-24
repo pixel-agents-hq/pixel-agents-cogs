@@ -1,5 +1,8 @@
-"""TimeService is fully testable without Red: a fixed FakeClock satisfies
-the Clock protocol, no unittest.mock or real system clock needed."""
+"""Deskutils application services are fully testable without Red.
+
+A fixed FakeClock satisfies TimeService's Clock protocol; TextService is
+pure and needs no test doubles.
+"""
 
 from __future__ import annotations
 
@@ -7,7 +10,7 @@ import unittest
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from ..application import TimeService, UnknownTimeZoneError
+from ..application import TextService, TimeService, UnknownTimeZoneError
 from ..domain import CurrentTime
 
 FIXED_INSTANT = datetime(2026, 8, 23, 12, 30, 0, tzinfo=UTC)
@@ -45,3 +48,24 @@ class TestTimeService(unittest.TestCase):
     def test_resolve_zone_rejects_a_malformed_key(self) -> None:
         with self.assertRaises(UnknownTimeZoneError):
             self.service.resolve_zone("/etc/passwd")
+
+
+class TestTextService(unittest.TestCase):
+    def setUp(self) -> None:
+        self.service = TextService()
+
+    def test_counts_characters_including_whitespace_and_words(self) -> None:
+        statistics = self.service.count("one  two\nthree")
+
+        self.assertEqual(statistics.characters, 14)
+        self.assertEqual(statistics.words, 3)
+
+    def test_empty_and_whitespace_only_text_have_no_words(self) -> None:
+        self.assertEqual(self.service.count("").words, 0)
+        self.assertEqual(self.service.count(" \t\n").words, 0)
+
+    def test_unicode_uses_python_string_length(self) -> None:
+        statistics = self.service.count("café ☕")
+
+        self.assertEqual(statistics.characters, 6)
+        self.assertEqual(statistics.words, 2)

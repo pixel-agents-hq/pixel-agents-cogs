@@ -13,9 +13,37 @@ class FakeGuild:
         self.id = guild_id
 
 
+class FakeAuthor:
+    def __init__(self, author_id: int = 999) -> None:
+        self.id = author_id
+
+
+class FakePermissions:
+    def __init__(self, *, view_channel: bool = True, read_message_history: bool = True) -> None:
+        self.view_channel = view_channel
+        self.read_message_history = read_message_history
+
+
+class FakeChannel:
+    def __init__(self, channel_id: int = 456, permissions: FakePermissions | None = None) -> None:
+        self.id = channel_id
+        self._permissions = permissions or FakePermissions()
+
+    def permissions_for(self, author: object) -> FakePermissions:
+        return self._permissions
+
+
+class FakeInvokingMessage:
+    def __init__(self) -> None:
+        self.reference: object | None = None
+
+
 class FakeContext:
-    def __init__(self, guild_id: int = 12345) -> None:
-        self.guild = FakeGuild(guild_id)
+    def __init__(self, guild_id: int | None = 12345) -> None:
+        self.guild = FakeGuild(guild_id) if guild_id is not None else None
+        self.author = FakeAuthor()
+        self.channel = FakeChannel()
+        self.message = FakeInvokingMessage()
         self.sent: list[str] = []
 
     async def send(self, content: str = "") -> None:

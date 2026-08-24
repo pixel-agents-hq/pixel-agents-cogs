@@ -13,8 +13,21 @@ from ..domain import llm_tool
 
 
 class _StubCommand:
-    def __init__(self, callback: object) -> None:
+    def __init__(
+        self,
+        callback: object,
+        *,
+        qualified_name: str = "stub command",
+        allowed: bool = True,
+    ) -> None:
         self.callback = callback
+        self.qualified_name = qualified_name
+        self.allowed = allowed
+        self.can_run_calls: list[tuple[object, bool]] = []
+
+    async def can_run(self, ctx: object, *, check_all_parents: bool = False) -> bool:
+        self.can_run_calls.append((ctx, check_all_parents))
+        return self.allowed
 
 
 class _PlainCog:
@@ -52,6 +65,11 @@ async def _invalid_key_command(cog: object, ctx: object) -> dict[object, object]
     return {1: "not a string key"}
 
 
+@llm_tool()
+async def _inferred_command(cog: object, ctx: object, text: str) -> None:
+    """Count the supplied text."""
+
+
 class _CogWithInformationalTool:
     def __init__(self) -> None:
         self.informational_command = _StubCommand(_informational_command)
@@ -65,6 +83,15 @@ class _CogWithInvalidOutputTool:
 class _CogWithInvalidKeyTool:
     def __init__(self) -> None:
         self.invalid_key_command = _StubCommand(_invalid_key_command)
+
+
+class _CogWithInferredTool:
+    def __init__(self, *, allowed: bool = True) -> None:
+        self.inferred_command = _StubCommand(
+            _inferred_command,
+            qualified_name="deskutils count",
+            allowed=allowed,
+        )
 
 
 class TestCollectRegisteredTools(unittest.IsolatedAsyncioTestCase):
@@ -81,8 +108,32 @@ class TestCollectRegisteredTools(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(tool.required_group, "employee")
         self.assertEqual(
             tool.parameters,
-            {"type": "object", "properties": {"value": {"type": "string"}}, "required": []},
+            {
+                "type": "object",
+                "properties": {"value": {"type": "string", "description": "value for value"}},
+                "required": [],
+            },
         )
+        self.assertIsNone(tool.availability_check)
+
+    async def test_missing_metadata_is_inferred_from_the_command(self) -> None:
+        cog = _CogWithInferredTool()
+        tool = collect_registered_tools(cog)[0]
+        ctx = object()
+
+        self.assertEqual(tool.name, "deskutils_count")
+        self.assertEqual(tool.description, "Count the supplied text.")
+        self.assertEqual(
+            tool.parameters,
+            {
+                "type": "object",
+                "properties": {"text": {"type": "string", "description": "value for text"}},
+                "required": ["text"],
+            },
+        )
+        assert tool.availability_check is not None
+        self.assertTrue(await tool.availability_check(ctx))
+        self.assertEqual(cog.inferred_command.can_run_calls, [(ctx, True)])
 
     async def test_the_built_handler_invokes_the_callback_with_cog_and_ctx(self) -> None:
         cog = _CogWithOneTool()

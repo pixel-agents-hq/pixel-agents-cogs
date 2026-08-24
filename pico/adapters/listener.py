@@ -94,9 +94,9 @@ class ListenerMixin:
 
 async def _cross_cog_tools(corridor: Any, ctx: commands.Context) -> list[ToolSpec]:
     """Tools other cogs (e.g. deskutils) registered into corridor's shared
-    tool registry, filtered to what `ctx.author` is allowed to invoke
-    (corridor resolves that per-tool `required_group` gate the same way it
-    resolves one for a Discord command). Each adapted tool closes over this
+    tool registry, filtered to what this `ctx` is allowed to invoke
+    (corridor resolves an explicit permission group or the Discord
+    command's own checks). Each adapted tool closes over this
     same `ctx` -- most registered tools are just `@llm_tool`-decorated
     commands, so calling one invokes the real command callback in this same
     channel, as `ctx.author`. Adapting a misbehaving registration must
@@ -104,7 +104,7 @@ async def _cross_cog_tools(corridor: Any, ctx: commands.Context) -> list[ToolSpe
     failure is logged and skipped rather than propagated."""
 
     tools: list[ToolSpec] = []
-    for registered in await corridor.list_tools_for(ctx.author):
+    for registered in await corridor.list_tools_for(ctx):
         try:
             tools.append(CrossCogTool(registered, ctx))
         except Exception:

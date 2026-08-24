@@ -5,6 +5,7 @@ without them (see test_permission_service.py / test_reply_service.py)."""
 from __future__ import annotations
 
 import unittest
+from collections.abc import Awaitable, Callable
 
 from ..corridor import Corridor
 from ..domain import RegisteredTool, ReplyField, ReplyMode, llm_tool
@@ -15,13 +16,19 @@ async def _tool_handler(ctx: object, raw_input: object) -> dict[str, object]:
     return {}
 
 
-def _tool(name: str, *, required_group: str | None = None) -> RegisteredTool:
+def _tool(
+    name: str,
+    *,
+    required_group: str | None = None,
+    availability_check: Callable[[object], Awaitable[bool]] | None = None,
+) -> RegisteredTool:
     return RegisteredTool(
         name=name,
         description="A tool.",
         parameters={"type": "object", "properties": {}},
         handler=_tool_handler,
         required_group=required_group,
+        availability_check=availability_check,
     )
 
 
@@ -212,7 +219,7 @@ class TestCorridorApi(unittest.IsolatedAsyncioTestCase):
         self.corridor.register_tool(_tool("a"), owner="A")
         member = FakeMember(2, self.guild)
 
-        allowed = await self.corridor.list_tools_for(member)
+        allowed = await self.corridor.list_tools_for(FakeContext(author=member, guild=self.guild))
 
         self.assertEqual({tool.name for tool in allowed}, {"a"})
 
@@ -220,7 +227,7 @@ class TestCorridorApi(unittest.IsolatedAsyncioTestCase):
         self.corridor.register_tool(_tool("a", required_group="employee"), owner="A")
         member = FakeMember(2, self.guild)
 
-        allowed = await self.corridor.list_tools_for(member)
+        allowed = await self.corridor.list_tools_for(FakeContext(author=member, guild=self.guild))
 
         self.assertEqual({tool.name for tool in allowed}, {"a"})
 
@@ -231,7 +238,7 @@ class TestCorridorApi(unittest.IsolatedAsyncioTestCase):
         self.corridor.register_tool(_tool("a", required_group="building_manager"), owner="A")
         member = FakeMember(2, self.guild)
 
-        allowed = await self.corridor.list_tools_for(member)
+        allowed = await self.corridor.list_tools_for(FakeContext(author=member, guild=self.guild))
 
         self.assertEqual(allowed, ())
 
@@ -240,9 +247,40 @@ class TestCorridorApi(unittest.IsolatedAsyncioTestCase):
         self.corridor.register_tool(_tool("a", required_group="building_manager"), owner="A")
         member = FakeMember(2, self.guild, role_ids=(500,))
 
-        allowed = await self.corridor.list_tools_for(member)
+        allowed = await self.corridor.list_tools_for(FakeContext(author=member, guild=self.guild))
 
         self.assertEqual({tool.name for tool in allowed}, {"a"})
+
+    async def test_list_tools_for_uses_the_full_context_for_an_availability_check(self) -> None:
+        received: list[object] = []
+
+        async def availability_check(ctx: object) -> bool:
+            received.append(ctx)
+            return True
+
+        self.corridor.register_tool(_tool("a", availability_check=availability_check), owner="A")
+        member = FakeMember(2, self.guild)
+        ctx = FakeContext(author=member, guild=self.guild)
+
+        allowed = await self.corridor.list_tools_for(ctx)
+
+        self.assertEqual({tool.name for tool in allowed}, {"a"})
+        self.assertEqual(received, [ctx])
+
+    async def test_list_tools_for_omits_false_or_broken_availability_checks(self) -> None:
+        async def denied(ctx: object) -> bool:
+            return False
+
+        async def broken(ctx: object) -> bool:
+            raise RuntimeError("broken check")
+
+        self.corridor.register_tool(_tool("denied", availability_check=denied), owner="A")
+        self.corridor.register_tool(_tool("broken", availability_check=broken), owner="A")
+        member = FakeMember(2, self.guild)
+
+        allowed = await self.corridor.list_tools_for(FakeContext(author=member, guild=self.guild))
+
+        self.assertEqual(allowed, ())
 
     async def test_register_llm_tools_scans_a_cog_and_registers_its_decorated_commands(
         self,
@@ -262,5 +300,5 @@ class TestCorridorApi(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual({tool.name for tool in self.corridor.list_tools()}, {"a_tool"})
         member = FakeMember(2, self.guild)
-        allowed = await self.corridor.list_tools_for(member)
+        allowed = await self.corridor.list_tools_for(FakeContext(author=member, guild=self.guild))
         self.assertEqual({tool.name for tool in allowed}, {"a_tool"})

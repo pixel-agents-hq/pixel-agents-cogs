@@ -52,9 +52,12 @@ Any cog's own settings command can also embed the same controls inline via
 command.
 
 corridor also hosts a cross-cog **LLM tool registry**: apply
-`@corridor.domain.llm_tool(...)` directly to a command's callback and it
+`@corridor.domain.llm_tool()` directly to a command's callback and it
 becomes a tool `pico` (if loaded) can call directly from its tool-calling
-loop, gated by the same permission groups above. See
+loop. The decorator can infer the tool name from the qualified Discord
+command, its description from the callback docstring, parameter
+descriptions from their names, and availability from the command's native
+checks; every value can still be overridden explicitly. See
 [`docs/corridor-tool-registry-design.md`](../docs/corridor-tool-registry-design.md).
 
 ## What a dependent cog calls

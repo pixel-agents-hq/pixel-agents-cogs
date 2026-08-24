@@ -9,4 +9,4 @@ from .adapters.commands import CommandsMixin
 
 
 class Deskutils(CommandsMixin, CogBase, commands.Cog):
-    """Get the current time in Discord-native and timezone-aware formats."""
+    """Small stateless time, text, and message utilities."""

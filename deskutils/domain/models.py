@@ -23,3 +23,11 @@ class CurrentTime:
         takes."""
 
         return int(self.utc.timestamp())
+
+
+@dataclass(frozen=True, slots=True)
+class TextStatistics:
+    """Character and whitespace-delimited word counts for one string."""
+
+    characters: int
+    words: int

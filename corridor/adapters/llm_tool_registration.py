@@ -1,4 +1,4 @@
-"""Scans a cog instance for `@corridor.adapters.llm_tool`-decorated commands
+"""Scans a cog instance for `@corridor.domain.llm_tool`-decorated commands
 and turns each into a `RegisteredTool`, ready for `CogBase.register_tool`.
 
 Duck-typed via each attribute's `.callback` rather than discord.py's
@@ -18,7 +18,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from ..domain import RegisteredTool
-from .llm_tools import LLMToolSpec, llm_tool_spec
+from ..domain.llm_tools import LLMToolSpec, llm_tool_spec
 
 
 def collect_registered_tools(cog: object) -> list[RegisteredTool]:

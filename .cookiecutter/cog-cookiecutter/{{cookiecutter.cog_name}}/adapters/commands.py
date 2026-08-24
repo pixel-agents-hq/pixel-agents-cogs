@@ -12,7 +12,7 @@ from typing import Any
 
 from redbot.core import commands
 
-from corridor.adapters import llm_tool
+from corridor.domain import llm_tool
 
 from ..application import CounterService
 

@@ -22,7 +22,7 @@ Nothing to configure -- deskutils has no persistent settings.
 |---|---|
 | `[p]deskutils time [timezone]` | Show the current time: Discord's native timestamp markup (auto-localized per viewer) plus explicit UTC. Pass an IANA `timezone` (e.g. `America/New_York`) to also show it explicitly in that zone. Requires the `employee` permission tier (unrestricted by default). |
 
-`time_command` also carries `@corridor.adapters.llm_tool(...)` directly, so
+`time_command` also carries `@corridor.domain.llm_tool(...)` directly, so
 if [`pico`](../pico) is installed, loaded, and enabled for a guild, a user
 can just ask it "what time is it?" in chat instead of running the command
 by hand -- pico calls the exact same command, which replies the exact same

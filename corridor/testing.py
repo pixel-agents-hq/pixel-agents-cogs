@@ -15,7 +15,6 @@ This module itself must not import discord/redbot -- it's what stubs them.
 
 from __future__ import annotations
 
-import inspect
 import os
 import sys
 import types
@@ -384,56 +383,6 @@ def _install_discord() -> None:
     )
     discord.app_commands = discord_app_commands
     sys.modules["discord.app_commands"] = discord_app_commands
-
-    class _FakeCommandsParameter(inspect.Parameter):
-        """Faithful-enough port of `discord.ext.commands.Parameter`'s two
-        properties `corridor.adapters.llm_tools`'s `__signature__` patch
-        depends on surviving intact through a real Command's parameter
-        resolution: `required` (`self.default is empty`) and `converter`
-        (`self.annotation`, falling back to the default's type). Everything
-        else real discord.py's `Parameter` adds (slash-command-only
-        `description`/`displayed_default`/`displayed_name`) is out of scope
-        here -- nothing in this stub reads them. `.replace(annotation=...)`
-        needs no override: base `inspect.Parameter.replace()` already does
-        `type(self)(...)`, which preserves this subclass on its own."""
-
-        __slots__ = ()
-
-        @property
-        def required(self) -> bool:
-            return self.default is inspect.Parameter.empty
-
-        @property
-        def converter(self) -> Any:
-            if self.annotation is inspect.Parameter.empty:
-                if self.default not in (inspect.Parameter.empty, None):
-                    return type(self.default)
-                return str
-            return self.annotation
-
-    class _FakeCommandsSignature(inspect.Signature):
-        # The one thing real discord.py's own Signature subclass sets --
-        # `Signature.from_callable(...)` (inherited from stdlib `inspect`)
-        # honors this to build `_FakeCommandsParameter` instances instead
-        # of bare `inspect.Parameter`, confirmed against CPython's own
-        # `inspect` module, not assumed.
-        _parameter_cls = _FakeCommandsParameter
-
-    discord_ext_commands_parameters = _make_stub_module(
-        "discord.ext.commands.parameters",
-        Parameter=_FakeCommandsParameter,
-        Signature=_FakeCommandsSignature,
-    )
-    discord_ext_commands = _make_stub_module(
-        "discord.ext.commands",
-        Parameter=_FakeCommandsParameter,
-        parameters=discord_ext_commands_parameters,
-    )
-    discord_ext = _make_stub_module("discord.ext", commands=discord_ext_commands)
-    discord.ext = discord_ext
-    sys.modules["discord.ext"] = discord_ext
-    sys.modules["discord.ext.commands"] = discord_ext_commands
-    sys.modules["discord.ext.commands.parameters"] = discord_ext_commands_parameters
 
     sys.modules["discord"] = discord
 

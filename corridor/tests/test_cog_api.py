@@ -6,9 +6,8 @@ from __future__ import annotations
 
 import unittest
 
-from ..adapters import llm_tool
 from ..corridor import Corridor
-from ..domain import RegisteredTool, ReplyField, ReplyMode
+from ..domain import RegisteredTool, ReplyField, ReplyMode, llm_tool
 from .conftest import FakeBot, FakeContext, FakeGuild, FakeMember
 
 

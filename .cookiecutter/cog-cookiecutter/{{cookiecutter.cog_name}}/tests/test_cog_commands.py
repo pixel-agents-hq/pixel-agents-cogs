@@ -8,7 +8,7 @@ import unittest
 
 from redbot.core.errors import CogLoadError
 
-from corridor.adapters import llm_tool_spec
+from corridor.domain import llm_tool_spec
 
 from .. import setup
 from ..{{cookiecutter.cog_name}} import {{ cookiecutter.cog_name.replace('-', '_').split('_') | map('capitalize') | join }}

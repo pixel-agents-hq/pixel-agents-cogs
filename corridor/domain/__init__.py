@@ -1,3 +1,4 @@
+from .llm_tools import LLMToolSpec, llm_tool, llm_tool_spec
 from .models import (
     EMPLOYEE_KEY,
     OWNER_KEY,
@@ -27,6 +28,7 @@ from .models import (
 
 __all__ = [
     "EMPLOYEE_KEY",
+    "LLMToolSpec",
     "OWNER_KEY",
     "RESERVED_GROUP_KEYS",
     "AgentActivity",
@@ -50,4 +52,6 @@ __all__ = [
     "ReplyMode",
     "ReplyPreferences",
     "ToolHandler",
+    "llm_tool",
+    "llm_tool_spec",
 ]

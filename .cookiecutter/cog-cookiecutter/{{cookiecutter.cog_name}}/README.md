@@ -35,7 +35,7 @@ replace it with the cog's real command surface as it grows. Keep it in
 sync with adapters/commands.py; this is what a user reads before digging
 into the code. -->
 
-`bump` also carries `@corridor.adapters.llm_tool(...)` directly (see
+`bump` also carries `@corridor.domain.llm_tool(...)` directly (see
 `adapters/commands.py`), so if [`pico`](../pico) is installed, loaded, and
 enabled for a guild, its LLM can call it exactly as if a keyholder had run
 the command by hand -- same permission check, same reply, no separate code

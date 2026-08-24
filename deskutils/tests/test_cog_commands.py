@@ -13,8 +13,7 @@ import unittest
 
 from redbot.core.errors import CogLoadError
 
-from corridor.adapters import llm_tool_spec
-from corridor.domain import EMPLOYEE_KEY
+from corridor.domain import EMPLOYEE_KEY, llm_tool_spec
 
 from .. import setup
 from ..application import TimeService

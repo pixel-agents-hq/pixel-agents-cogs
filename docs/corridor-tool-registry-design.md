@@ -5,7 +5,7 @@
 > `Corridor` as `register_tool`/`unregister_tool_owner`/`list_tools`/
 > `list_tools_for`, with the same `on_cog_remove` defensive-cleanup backstop
 > the Pub/Sub bus gets. The recommended way to register a tool is the
-> `@corridor.adapters.llm_tool` decorator (`corridor/adapters/llm_tools.py`)
+> `@corridor.domain.llm_tool` decorator (`corridor/domain/llm_tools.py`)
 > applied directly to a command's callback, scanned and registered
 > automatically by `CogBase.register_llm_tools()`
 > (`corridor/adapters/llm_tool_registration.py`) at the registering cog's
@@ -17,15 +17,16 @@
 > also generates a decorated example (`bump`) by default, so every new cog
 > starts from a working pattern instead of copying one in from `deskutils`.
 >
-> `llm_tool` lives in `corridor/adapters/`, not `corridor/domain/` where it
-> started out -- it has a genuine, load-bearing dependency on discord.py's
-> own `Parameter`/`Signature` machinery (see "Per-parameter descriptions:
-> `typing.Annotated`, made safe" below for why), unlike `RegisteredTool`/
-> `ToolHandler`/`ToolRegistryService`, which stay framework-neutral. The
-> shared discord.py/redbot test stub (`corridor/testing.py`) was extended
-> with a small, behaviorally-faithful fake `discord.ext.commands.Parameter`/
-> `Signature` pair specifically so `llm_tool`'s own tests (and every
-> dependent cog's) keep working without a real discord.py installed.
+> `llm_tool` stays fully framework-neutral, like every other type in
+> `corridor.domain` -- see "Per-parameter descriptions: `typing.Annotated`,
+> made safe" below for how it makes natural `Annotated[X, "..."]` syntax
+> safe on a real Discord command parameter *without* needing any
+> discord.py import to do it. An earlier version of this decorator briefly
+> did need one (mutating a transient `func.__signature__`, which needed
+> discord.py's own `Parameter` class to survive contact with a real
+> `Command`) — abandoned once testing against real discord.py (not just
+> this repo's stub) surfaced a second, more fundamental problem with that
+> approach entirely, described below.
 
 ## Motivation
 
@@ -62,11 +63,14 @@ JSON-Schema dict inferred from the callback's own signature, a reference to
 the callback itself, and a permission-group key. The *decorator*
 (`@llm_tool`) itself is cog-agnostic the same way — it has no idea
 `deskutils` or `time_command` exist, it only inspects whatever function
-it's applied to — though, unlike the registry it feeds, it is *not*
-framework-neutral: it needs discord.py's own `Parameter`/`Signature`
-classes to do its job safely (see "Per-parameter descriptions:
-`typing.Annotated`, made safe" below), which is why it lives in
-`corridor/adapters/`, not `corridor/domain/`.
+it's applied to — and, like the registry it feeds, it stays fully
+framework-neutral: no discord.py (or pydantic) import anywhere in
+`corridor/domain/llm_tools.py`, which is exactly why it lives there rather
+than in `corridor/adapters/` alongside the rest of corridor's real
+discord.py-touching code. See "Per-parameter descriptions:
+`typing.Annotated`, made safe" below for how it manages that while still
+supporting natural `Annotated[X, "..."]` parameter descriptions safely on a
+real Discord command.
 
 ## Topology: corridor is the only piece that must be loaded
 
@@ -159,12 +163,11 @@ Nothing stops a cog from hand-building a `RegisteredTool` and calling
 `corridor.register_tool(tool, owner=...)` directly (useful for a tool
 that isn't really a Discord command at all), but the normal, expected path
 — since registering tools this way is meant to happen often, across many
-cogs, not just once for `deskutils` — is the `@corridor.adapters.llm_tool`
+cogs, not just once for `deskutils` — is the `@corridor.domain.llm_tool`
 decorator, applied directly to a command's own callback:
 
 ```python
-from corridor.adapters import llm_tool
-from corridor.domain import EMPLOYEE_KEY
+from corridor.domain import EMPLOYEE_KEY, llm_tool
 
 @deskutils_group.command(name="time")
 @llm_tool(
@@ -194,7 +197,7 @@ registered yet at this point — decoration just tags the function; see
 "Lifecycle" below for when the tag actually turns into a live
 `RegisteredTool`.
 
-`corridor.adapters.llm_tool_spec(func)` reads that marker back — used both
+`corridor.domain.llm_tool_spec(func)` reads that marker back — used both
 by corridor's own scanner and by a decorated cog's own tests (see
 `deskutils/tests/test_cog_commands.py::TestTimeCommandIsAnLLMTool`) to
 assert a command really did get tagged correctly, without needing
@@ -230,45 +233,61 @@ bypasses discord.py's real parameter conversion entirely — the SyntaxError
 surfaces at cog *load*, so it is at least loud, but the BadArgument case
 would only ever show up against a live bot.
 
-**The fix that makes natural `Annotated` syntax genuinely safe:** `@llm_tool`
-reads `Annotated[X, "description"]` for its own purposes, then — before
-returning — patches the callback's `__signature__` to a version with
-`Annotated` stripped back down to the bare `X`, so discord.py's own command
-construction (which runs *next*, when the outer `@x.command(...)` decorator
-wraps this same function) never sees `Annotated` at all. This isn't a
-discord.py-specific trick: `inspect.Signature.from_callable()` has always
-honored an explicit `__signature__` attribute over introspecting a
-callable's raw code — confirmed directly against CPython's `inspect`
-module — and discord.py's command construction goes through exactly that
-call (`discord.ext.commands.parameters.Signature`, a thin `inspect.Signature`
-subclass). The patched parameters have to be built from discord.py's own
-`Parameter` class, not bare `inspect.Parameter` — verified that a bare
-`inspect.Parameter` in the patched signature lets a real `Command()`
-*construct* without error, but crashes with `AttributeError: 'Parameter'
-object has no attribute 'converter'` the moment the command is actually
-*invoked*, since discord.py's real `Command.transform()` depends on that
-property existing on whatever it finds there.
+**First fix attempt — insufficient, caught by real bot load, not by this
+repo's stub-based tests:** `@llm_tool` read `Annotated[X, "description"]`
+for its own purposes, then, before returning, patched the callback's
+`__signature__` to a version with `Annotated` stripped back down to the
+bare `X`, reasoning that `inspect.Signature.from_callable()` honors an
+explicit `__signature__` override over introspecting a callable's raw
+code, and that discord.py's own command construction goes through exactly
+that call. This passed every test written against it, including
+constructing a real `discord.ext.commands.Command` directly and invoking
+it — but those tests only ever constructed the `Command` *once*. A real
+bot does not: `discord.ext.commands.cog.Cog.__new__` copies every command
+fresh per `Cog` instance (`_update_copy` → `self.__class__(self.callback,
+**self.__original_kwargs__)` → a brand new `Command` re-derived from the
+callback), and — the specific step that broke this — `discord.ext.commands
+.hybrid.HybridAppCommand.__init__` (which every `@hybrid_group.command()`
+command like `deskutils time` goes through) *temporarily* sets
+`wrapped.callback.__signature__` to build a slash-command equivalent, then
+explicitly `del`s it in a `finally` block once done. So the very next time
+anything re-derives that callback's signature — including the next `Cog`
+instantiation, which happens for real the moment a live bot loads the
+cog — there is no override left to find, and `inspect.Signature
+.from_callable()` falls back to introspecting the raw code again, reading
+the original, untouched `Annotated[X, "description"]` straight out of
+`func.__annotations__`. This is exactly the `SyntaxError` from above,
+reappearing at real cog load despite every test passing, because this
+repo's shared discord.py/redbot test stub (`corridor/testing.py`) doesn't
+implement `Cog.__new__`'s per-instance command copying at all — a whole
+class of bug this stub fundamentally cannot catch.
 
-This is why `llm_tool` needs `discord.ext.commands.Parameter` (public API)
-and `discord.ext.commands.parameters.Signature` (not exposed at the public
-`discord.ext.commands` namespace, only reachable via that internal path) —
-and why it now lives in `corridor/adapters/`, which already has a real
-discord.py dependency throughout, rather than `corridor/domain/`. The
-shared test stub (`corridor/testing.py`) gained a small, behaviorally
-faithful fake of both (`required`/`converter` properties, a
-`_parameter_cls`-driven `Signature` subclass) specifically so `llm_tool`'s
-own decoration logic — which runs at cog *import* time, in every test
-process, not just in production — has something real to import and patch
-against under this repo's stub-based test suite.
+**The fix that actually survives that copying:** `@llm_tool` mutates the
+callback's own `func.__annotations__` dictionary *in place* — not a
+transient `__signature__` override on top of it, the dictionary
+`inspect.Signature.from_callable()` falls back to reading whenever no
+`__signature__` override exists. Every future re-derivation of this
+callback's signature discord.py ever does — at decoration time, and again
+every time `HybridAppCommand.__init__` borrows-then-deletes `__signature__`,
+and again every time `Cog.__new__` copies the command per instance — reads
+this same, already-clean `__annotations__` dict, because there is nothing
+left to delete out from under it. This needs no discord.py import at all:
+it's a plain mutation of a plain function attribute, using only `inspect`/
+`typing` on the decorated callback's own signature — which is exactly why
+`llm_tool` stays in `corridor/domain/llm_tools.py`, not
+`corridor/adapters/`.
 
-Verified end to end, not just read from source: decorating a callback with
-`Annotated[str | None, "An IANA time zone name."]`, wrapping it in a real
-`@discord.ext.commands.command(...)`, and constructing the `Command`
-produces `Command.params['timezone'].converter == Optional[str]`,
-`required == False`, a clean auto-generated help string
-(`<ctx> [timezone]`, no `Annotated`/description leakage), correct real
-argument conversion through `run_converters`, and the original callback
-still fully callable with its own business logic intact.
+Verified end to end, not just read from source, and specifically against
+the failure mode the first attempt missed: repeated `Cog` instantiation
+(not just one `Command()` construction) via the actual `deskutils.deskutils
+.Deskutils` class against a genuinely installed `discord.py==2.7.1` +
+`redbot==3.5.24` (not just this repo's stub), instantiated three times in
+a row, confirming `cog.time_command.params['timezone'].required == False`
+and `.converter == typing.Optional[str]` correctly on *every* instantiation
+— not just the first — plus correct real argument conversion through
+`run_converters`, a clean auto-generated help string with no
+`Annotated`/description leakage, and `llm_tool_spec(Deskutils.time_command
+.callback)` still reporting the original description throughout.
 
 ## Lifecycle (mirrors `EventBusService` exactly)
 

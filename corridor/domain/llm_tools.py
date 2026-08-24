@@ -1,34 +1,31 @@
 """`@llm_tool`: mark a Red command callback as a cross-cog LLM tool.
 
-Lives here, not in `corridor/domain/` -- unlike every other type in
-`corridor.domain`, this module has a real, load-bearing dependency on
-discord.py's own `Parameter`/`Signature` machinery (`discord.ext.commands`).
-It needs that machinery to make a genuinely natural
-`typing.Annotated[X, "a description"]` on a command parameter safe to use
-*at all*: discord.py's own command-parameter resolution reads the exact
-same annotation this decorator does, and (verified against the installed
-`discord.py==2.7.1`) already gives `Annotated[X, Y]` a meaning of its own
--- `Y` is the actual converter/type to use, not descriptive metadata about
-`X`. Left alone, a plain description string in `Y` makes discord.py try to
-`eval()` it as Python source at cog load (`SyntaxError`); a custom
-non-string sentinel in `Y` instead gets treated as the parameter's real
-converter and breaks *every* invocation of the command with `BadArgument`
-(both confirmed by driving discord.py's own `evaluate_annotation`/
-`run_converters` directly -- see docs/corridor-tool-registry-design.md).
+Framework-neutral -- only `inspect`/`typing` on the decorated callback's own
+signature, no discord.py/redbot import -- so it's safe to apply at module
+import time in any cog, before corridor is even guaranteed loaded. The
+actual registration into corridor's cross-cog tool registry happens later,
+at the registering cog's own `cog_load`, via
+`corridor.adapters.llm_tool_registration.collect_registered_tools` (a
+duck-typed scan of the cog for commands whose callback carries the marker
+this module attaches) -- see docs/corridor-tool-registry-design.md.
 
-The fix: `@llm_tool` reads the natural, single-metadata-item `Annotated`
-form for its own purposes, then -- before returning -- patches the
-callback's `__signature__` to a version with `Annotated` stripped back to
-the bare type, built from discord.py's own `Parameter` class. This isn't a
-discord.py-specific trick: `inspect.Signature.from_callable()` has always
-honored an explicit `__signature__` attribute over introspecting a
-callable's raw code (confirmed directly against CPython's `inspect`
-module), and discord.py's command construction goes through exactly that
-call. discord.py's later parameter resolution (`Command.__init__` at
-decoration time, `Command.transform()` at real invocation time) then never
-sees `Annotated` at all -- it sees a completely ordinary, un-annotated-past-
-the-base-type parameter, indistinguishable from one that was never
-decorated with `@llm_tool` in the first place.
+Per-parameter descriptions use natural `typing.Annotated[X, "a description"]`
+syntax, same as FastAPI/pydantic. This is safe on a *real* Discord command
+parameter -- despite discord.py's own command-parameter resolution reading
+the exact same annotation and (verified against `discord.py==2.7.1`)
+already giving `Annotated[X, Y]` a meaning of its own (`Y` is the real
+type/converter to use, not descriptive metadata) -- because `@llm_tool`
+mutates the callback's own `func.__annotations__` in place, replacing each
+`Annotated[...]`-wrapped parameter with its bare type, before returning.
+Every future re-derivation of the signature discord.py ever does (at
+decoration time, and again every time a `Cog` instance is built --
+`Cog.__new__` copies each command fresh per instance, and
+`discord.ext.commands.hybrid.HybridAppCommand.__init__` additionally
+borrows-then-deletes a command's `__signature__` while building its slash-
+command equivalent) reads this same, already-clean `__annotations__` dict,
+not the original `Annotated` one -- so unlike a transient `__signature__`
+override (verified directly: it does not survive that borrow-then-delete
+step, which broke a real bot load in CI), this survives indefinitely.
 """
 
 from __future__ import annotations
@@ -39,8 +36,6 @@ import typing
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, TypeVar
-
-from discord.ext.commands.parameters import Signature
 
 _MARKER_ATTR = "__corridor_llm_tool__"
 
@@ -88,11 +83,10 @@ def llm_tool(*, name: str, description: str, required_group: str | None = None) 
     ```
 
     This is safe to write directly on a real Discord command parameter --
-    `@llm_tool` strips `Annotated` back down to the bare type on the
-    callback's exposed signature before discord.py's own command
-    construction ever inspects it (see this module's docstring for why
-    that step exists and what it protects against). Nothing needs to be
-    duplicated: the type is written once, in its natural position.
+    see this module's own docstring for exactly what `@llm_tool` does to
+    make that true (mutating `func.__annotations__`, not a transient
+    `__signature__` override) and why the more obvious-looking fix wasn't
+    enough on its own.
 
     Bypasses whatever `@commands.check`-style decorators (`guild_only`,
     `is_owner`, ...) the command may also carry: corridor invokes the
@@ -104,16 +98,11 @@ def llm_tool(*, name: str, description: str, required_group: str | None = None) 
 
     def decorator(func: F) -> F:
         hints = typing.get_type_hints(func, include_extras=True)
-        original_params = list(Signature.from_callable(func).parameters.values())
-        leading, tail = (
-            original_params[:_LEADING_PARAMS_TO_SKIP],
-            original_params[_LEADING_PARAMS_TO_SKIP:],
-        )
+        params = list(inspect.signature(func).parameters.values())[_LEADING_PARAMS_TO_SKIP:]
 
         properties: dict[str, object] = {}
         required: list[str] = []
-        clean_params = list(leading)
-        for param in tail:
+        for param in params:
             annotation = hints.get(param.name, str)
             bare_type, param_description = _strip_annotated(annotation)
             json_type = _json_type_for(func, param.name, bare_type)
@@ -123,13 +112,14 @@ def llm_tool(*, name: str, description: str, required_group: str | None = None) 
             properties[param.name] = prop
             if param.default is inspect.Parameter.empty:
                 required.append(param.name)
-            clean_params.append(param.replace(annotation=bare_type))
-
-        # The whole point: discord.py's own command construction (which
-        # runs next, when the outer `@x.command(...)` decorator wraps this
-        # same function) reads this signature, not the original one with
-        # `Annotated` still in it.
-        func.__signature__ = Signature(clean_params)  # type: ignore[attr-defined]
+            if bare_type is not annotation:
+                # The whole point: every later re-derivation of this
+                # callback's signature discord.py ever does -- including
+                # ones this decorator has no visibility into, deep inside
+                # Cog/HybridCommand construction -- reads this same
+                # __annotations__ dict, so it never has a chance to
+                # misinterpret `Annotated`'s second argument again.
+                func.__annotations__[param.name] = bare_type
 
         spec = LLMToolSpec(
             name=name,

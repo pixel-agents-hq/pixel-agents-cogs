@@ -1,17 +1,13 @@
-"""llm_tool/llm_tool_spec are testable under this repo's discord.py stub
-(corridor.testing.install_stubs, installed package-wide by conftest.py) --
-`corridor/adapters/llm_tools.py` genuinely needs discord.py's own
-Parameter/Signature machinery (see that module's docstring for why), which
-is why this suite -- unlike most of corridor's application/domain-layer
-tests -- can't run with zero discord.py stubbing at all."""
+"""llm_tool/llm_tool_spec are fully testable without Red: they only
+inspect the decorated callable's own signature, no discord.py/redbot
+stubbing needed."""
 
 from __future__ import annotations
 
-import inspect
 import unittest
 from typing import Annotated
 
-from ..adapters import llm_tool, llm_tool_spec
+from ..domain import llm_tool, llm_tool_spec
 
 
 class TestLLMToolSpec(unittest.TestCase):
@@ -96,10 +92,9 @@ class TestLLMToolSpec(unittest.TestCase):
 
 class TestAnnotatedParameterDescriptions(unittest.TestCase):
     """The natural, single-metadata-item `Annotated[X, "description"]` --
-    verified separately (see docs/corridor-tool-registry-design.md) to be
-    unsafe to leave in place on a real Discord command parameter, which is
-    why `llm_tool` also patches `__signature__` -- covered by
-    TestSignaturePatchedForDiscordPy below."""
+    made safe on a real Discord command parameter by mutating
+    `func.__annotations__` in place (see TestAnnotationsArePatchedInPlace
+    below), not merely by reading it for the schema."""
 
     def test_annotated_optional_str_carries_its_description(self) -> None:
         @llm_tool(name="a_tool", description="Does a thing.")
@@ -148,16 +143,25 @@ class TestAnnotatedParameterDescriptions(unittest.TestCase):
             ) -> None: ...
 
 
-class TestSignaturePatchedForDiscordPy(unittest.TestCase):
-    """`@llm_tool` must strip `Annotated` back down to the bare type on the
-    callback's own exposed signature, so that discord.py's own command
-    construction -- which reads this exact signature next, when the outer
-    `@x.command(...)` decorator wraps this same function -- never sees
-    `Annotated` at all. See llm_tools.py's module docstring for why a
-    plain `Annotated[X, "text"]` left in place is actually unsafe (not
-    just untidy) on a real Discord command parameter."""
+class TestAnnotationsArePatchedInPlace(unittest.TestCase):
+    """`@llm_tool` mutates `func.__annotations__` itself -- not merely a
+    transient `func.__signature__` override -- specifically because a
+    `__signature__` override does not survive discord.py's own repeated
+    re-derivation of a command's signature (verified directly: real
+    discord.py's `HybridAppCommand.__init__` borrows a hybrid command's
+    `__signature__` to build its slash-command equivalent, then explicitly
+    `del`s it in a `finally` block; every subsequent Cog instantiation --
+    `Cog.__new__` copies each command fresh per instance -- then re-derives
+    the signature from `__annotations__` alone, with no override left to
+    find. A previous version of this decorator relied on `__signature__`
+    alone and passed every test in this file, then broke a real bot's cog
+    load in CI, which no test here could reach: the discord/redbot stub
+    this repo tests against doesn't implement `Cog.__new__`'s per-instance
+    command copying at all. This test asserts the one thing that survives
+    that copying regardless: the callback's own `__annotations__` dict is
+    permanently clean, not just the schema this decorator reports)."""
 
-    def test_patched_signature_has_no_annotated_left(self) -> None:
+    def test_annotated_parameter_is_replaced_with_its_bare_type(self) -> None:
         @llm_tool(name="a_tool", description="Does a thing.")
         def command(
             self: object,
@@ -165,40 +169,27 @@ class TestSignaturePatchedForDiscordPy(unittest.TestCase):
             timezone: Annotated[str | None, "An IANA time zone name."] = None,
         ) -> None: ...
 
-        patched = inspect.signature(command).parameters["timezone"]
-        self.assertEqual(patched.annotation, str | None)
-        self.assertEqual(patched.default, None)
+        self.assertEqual(command.__annotations__["timezone"], str | None)
 
-    def test_patched_signature_leaves_self_and_ctx_untouched(self) -> None:
-        @llm_tool(name="a_tool", description="Does a thing.")
-        def command(self: object, ctx: object) -> None: ...
-
-        params = list(inspect.signature(command).parameters)
-        self.assertEqual(params, ["self", "ctx"])
-
-    def test_patched_parameters_still_resolve_required_and_converter(self) -> None:
-        # These two properties don't exist on plain inspect.Parameter --
-        # they're discord.ext.commands.Parameter's own additions, and are
-        # exactly what a real Command's parameter resolution depends on at
-        # both decoration and invocation time.
-        @llm_tool(name="a_tool", description="Does a thing.")
-        def command(
-            self: object,
-            ctx: object,
-            timezone: Annotated[str | None, "An IANA time zone name."] = None,
-        ) -> None: ...
-
-        patched = inspect.signature(command).parameters["timezone"]
-        self.assertFalse(patched.required)  # type: ignore[attr-defined]
-        self.assertEqual(patched.converter, str | None)  # type: ignore[attr-defined]
-
-    def test_a_parameter_with_no_annotated_is_unaffected_by_patching(self) -> None:
+    def test_a_parameter_without_annotated_is_left_untouched(self) -> None:
         @llm_tool(name="a_tool", description="Does a thing.")
         def command(self: object, ctx: object, name: str) -> None: ...
 
-        patched = inspect.signature(command).parameters["name"]
-        self.assertEqual(patched.annotation, str)
-        self.assertTrue(patched.required)  # type: ignore[attr-defined]
+        # Still the PEP-563 string form (`from __future__ import
+        # annotations` is in effect for this test module too) -- @llm_tool
+        # has no reason to touch a parameter it never needed to change.
+        self.assertEqual(command.__annotations__["name"], "str")
+
+    def test_self_and_ctx_are_left_untouched(self) -> None:
+        @llm_tool(name="a_tool", description="Does a thing.")
+        def command(
+            self: object,
+            ctx: object,
+            timezone: Annotated[str | None, "An IANA time zone name."] = None,
+        ) -> None: ...
+
+        self.assertEqual(command.__annotations__["self"], "object")
+        self.assertEqual(command.__annotations__["ctx"], "object")
 
 
 if __name__ == "__main__":

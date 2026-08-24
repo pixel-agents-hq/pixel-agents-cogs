@@ -11,8 +11,7 @@ from typing import Annotated, Any
 
 from redbot.core import commands
 
-from corridor.adapters import llm_tool
-from corridor.domain import EMPLOYEE_KEY, ReplyField
+from corridor.domain import EMPLOYEE_KEY, ReplyField, llm_tool
 
 from ..application import TimeService, UnknownTimeZoneError
 

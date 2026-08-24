@@ -8,12 +8,27 @@ from typing import Any
 from discord import app_commands
 from redbot.core import commands
 
+from corridor.domain import EMPLOYEE_KEY, llm_tool
+
 from ..application import LAYOUT_SORT_CHOICES, CatalogueResult
 from ..contracts.layout import RawOfficeLayout
 from ..contracts.outbound import layout_loaded
 from ..domain import normalize_http_url
 from .admin_commands import AdminCommandsMixin
 from .cog_base import PixelAgentsBase
+from .layout_tools import (
+    PERMISSION_DENIED_MESSAGE,
+    SEARCH_TOOL_DESCRIPTION,
+    VIEW_TOOL_DESCRIPTION,
+    LayoutQuery,
+    LayoutSlug,
+    LayoutSort,
+    LayoutTag,
+    layout_detail_output,
+    layout_search_output,
+    search_input_error,
+    tool_error,
+)
 from .layout_views import LayoutBrowseView, LayoutDetailView
 
 
@@ -142,32 +157,44 @@ class CatalogueCommandsMixin(PixelAgentsBase):
     @app_commands.choices(
         sort=[app_commands.Choice(name=choice, value=choice) for choice in LAYOUT_SORT_CHOICES]
     )
+    @llm_tool(
+        name="floorplan_layout_search",
+        description=SEARCH_TOOL_DESCRIPTION,
+        required_group=EMPLOYEE_KEY,
+    )
     async def cmd_layout_search(
         self,
         ctx: commands.Context,
-        query: str | None = None,
-        tag: str | None = None,
-        sort: str = "newest",
-    ) -> None:
+        query: LayoutQuery = None,
+        tag: LayoutTag = None,
+        sort: LayoutSort = "newest",
+    ) -> dict[str, object]:
         """Search Pixel Index for shared office layouts."""
 
+        if not await self._corridor.require_permission(ctx, EMPLOYEE_KEY):
+            return tool_error("permission_denied", PERMISSION_DENIED_MESSAGE)
         if ctx.interaction:
             await ctx.interaction.response.defer()
+        invalid = search_input_error(query, tag, sort)
+        if invalid is not None:
+            error, message = invalid
+            await self._send_public(ctx, message)
+            return tool_error(error, message)
         if sort not in LAYOUT_SORT_CHOICES:
             sort = "newest"
         result = await self._catalogue_service.search(query=query, tag=tag, sort=sort)
         if result.error is not None:
             await self._send_public(ctx, result.error.message)
-            return
+            return tool_error(result.error.code.value, result.error.message)
         page = result.value
         if page is None:
-            await self._send_public(
-                ctx, "Pixel Index returned an unexpected response. Try again later."
-            )
-            return
+            message = "Pixel Index returned an unexpected response. Try again later."
+            await self._send_public(ctx, message)
+            return tool_error("unexpected_response", message)
+        output = layout_search_output(page, query=query, tag=tag, sort=sort)
         if not page.layouts:
             await self._send_public(ctx, "No layouts found on Pixel Index.")
-            return
+            return output
         bases = await self._catalogue_service.bases()
         await self._send_public(
             ctx,
@@ -183,24 +210,40 @@ class CatalogueCommandsMixin(PixelAgentsBase):
                 web_base=bases.web,
             ),
         )
+        return output
 
     @floorplan_layout_group.command(name="view")
     @app_commands.describe(slug="Pixel Index layout slug")
-    async def cmd_layout_view(self, ctx: commands.Context, slug: str) -> None:
+    @llm_tool(
+        name="floorplan_layout_view",
+        description=VIEW_TOOL_DESCRIPTION,
+        required_group=EMPLOYEE_KEY,
+    )
+    async def cmd_layout_view(
+        self,
+        ctx: commands.Context,
+        slug: LayoutSlug,
+    ) -> dict[str, object]:
         """Show a single Pixel Index layout by slug."""
 
+        if not await self._corridor.require_permission(ctx, EMPLOYEE_KEY):
+            return tool_error("permission_denied", PERMISSION_DENIED_MESSAGE)
         if ctx.interaction:
             await ctx.interaction.response.defer()
-        result = await self._catalogue_service.detail(slug.strip().lower())
+        if not isinstance(slug, str) or not slug.strip():
+            message = "Please provide a non-empty Pixel Index layout slug."
+            await self._send_public(ctx, message)
+            return tool_error("invalid_slug", message)
+        normalized_slug = slug.strip().lower()
+        result = await self._catalogue_service.detail(normalized_slug)
         if result.error is not None:
             await self._send_public(ctx, result.error.message)
-            return
+            return tool_error(result.error.code.value, result.error.message)
         detail = result.value
         if detail is None:
-            await self._send_public(
-                ctx, "Pixel Index returned an unexpected response. Try again later."
-            )
-            return
+            message = "Pixel Index returned an unexpected response. Try again later."
+            await self._send_public(ctx, message)
+            return tool_error("unexpected_response", message)
         bases = await self._catalogue_service.bases()
         await self._send_public(
             ctx,
@@ -212,3 +255,4 @@ class CatalogueCommandsMixin(PixelAgentsBase):
                 web_base=bases.web,
             ),
         )
+        return layout_detail_output(detail, api_base=bases.api, web_base=bases.web)

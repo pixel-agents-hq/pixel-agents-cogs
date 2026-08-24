@@ -366,6 +366,66 @@ class TestPixelagentsResolution(unittest.IsolatedAsyncioTestCase):
         ensure_importable.assert_awaited_once_with(bot, "pixelagents")
 
 
+class TestLLMToolRegistration(unittest.IsolatedAsyncioTestCase):
+    async def test_cog_lifecycle_registers_and_unregisters_layout_tools(self) -> None:
+        bot = MagicMock(guilds=[])
+        bot.wait_until_red_ready = AsyncMock()
+        corridor = FakeCorridor()
+        cog = FloorplanCog(bot)
+
+        def close_initial_sync(coroutine, **_kwargs):
+            coroutine.close()
+            return MagicMock()
+
+        with (
+            patch(
+                "floorplan.adapters.cog_base.ensure_corridor_loaded",
+                new=AsyncMock(return_value=corridor),
+            ),
+            patch(
+                "corridor.dependency_loader.ensure_loaded",
+                new=AsyncMock(return_value=FakePixelAgents()),
+            ),
+            patch.object(cog, "_notify_owners_dashboard_missing_if_unloaded", new=AsyncMock()),
+            patch.object(cog._pixel_index_client, "start", new=AsyncMock()),
+            patch.object(cog._pixel_index_client, "close", new=AsyncMock()),
+            patch.object(cog, "_start_server", new=AsyncMock()),
+            patch.object(cog._websocket_server, "stop", new=AsyncMock()),
+            patch.object(cog._task_supervisor, "create", side_effect=close_initial_sync),
+            patch.object(cog._task_supervisor, "shutdown", new=AsyncMock()),
+        ):
+            await cog.cog_load()
+            self.assertEqual(corridor.registered_llm_tools_calls, [(cog, "Floorplan")])
+
+            await cog.cog_unload()
+
+        self.assertEqual(corridor.unregistered_tool_owners, ["Floorplan"])
+
+    async def test_failed_cog_load_unregisters_layout_tools(self) -> None:
+        bot = MagicMock(guilds=[])
+        corridor = FakeCorridor()
+        cog = FloorplanCog(bot)
+
+        with (
+            patch(
+                "floorplan.adapters.cog_base.ensure_corridor_loaded",
+                new=AsyncMock(return_value=corridor),
+            ),
+            patch(
+                "corridor.dependency_loader.ensure_loaded",
+                new=AsyncMock(side_effect=RuntimeError("pixelagents failed")),
+            ),
+            patch.object(cog._pixel_index_client, "close", new=AsyncMock()),
+            patch.object(cog._websocket_server, "stop", new=AsyncMock()),
+            patch.object(cog._task_supervisor, "shutdown", new=AsyncMock()),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "pixelagents failed"):
+                await cog.cog_load()
+
+        self.assertEqual(corridor.registered_llm_tools_calls, [(cog, "Floorplan")])
+        self.assertEqual(corridor.unregistered_tool_owners, ["Floorplan"])
+
+
 class TestCogLoadCleansUpOnFailure(unittest.IsolatedAsyncioTestCase):
     """Regression test for a real incident: Red only calls cog_unload() for
     a cog_load() that returned without raising (bot.extensions[name] is set

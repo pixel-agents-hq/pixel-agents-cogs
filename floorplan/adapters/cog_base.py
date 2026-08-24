@@ -183,12 +183,12 @@ class PixelAgentsBase:
         # Deferred: see pixelagents/__init__.py's docstring on why a cached module-scope import here would be unsafe.
         from corridor.dependency_loader import ensure_loaded
 
-        # Red skips cog_unload() for a cog_load() that raised -- a crash
-        # after _start_server() binds would leak that socket forever.
+        # Red does not call cog_unload() after a failed cog_load(), so clean up here.
         self._closing = False
         try:
             self._corridor = await ensure_corridor_loaded(self.bot)
             self._corridor.register_dependent("floorplan")
+            self._corridor.register_llm_tools(self, owner="Floorplan")
             self._pixelagents = await ensure_loaded(self.bot, "pixelagents", "PixelAgents")
             await self._notify_owners_dashboard_missing_if_unloaded()
             self._task_supervisor.open()
@@ -209,13 +209,13 @@ class PixelAgentsBase:
     async def cog_unload(self) -> None:
         self._closing = True
         if self._corridor is not None:
+            self._corridor.unregister_tool_owner("Floorplan")
             self._corridor.unregister_dependent("floorplan")
         await self._task_supervisor.shutdown()
         self._sync_task = None
         await self._websocket_server.stop()
         await self._pixel_index_client.close()
 
-    # Cross-adapter hooks resolved by the composed Cog's MRO.
     async def _notify_owners_dashboard_missing_if_unloaded(self) -> None: ...
     async def _check_auth(self, user_id: int) -> bool:
         raise NotImplementedError

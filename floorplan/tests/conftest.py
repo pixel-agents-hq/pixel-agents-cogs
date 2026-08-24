@@ -690,11 +690,15 @@ class FakeCorridor:
     out, nothing sent -- see corridor/application/reply_service.py.
     """
 
-    def __init__(self, keyholders=frozenset(), owners=frozenset(), reply_mode="text"):
+    def __init__(self, keyholders=frozenset(), owners=frozenset(), reply_mode="text",
+                 allow_employee=True):
         self._keyholders = keyholders
         self._owners = owners
+        self._allow_employee = allow_employee
         self.reply_mode = reply_mode
         self.registered_dependents = set()
+        self.registered_llm_tools_calls = []
+        self.unregistered_tool_owners = []
         self.capability_checks = []
         self.rendered_replies = []
         self.published = []
@@ -705,6 +709,12 @@ class FakeCorridor:
 
     def unregister_dependent(self, extension_name):
         self.registered_dependents.discard(extension_name)
+
+    def register_llm_tools(self, cog, *, owner):
+        self.registered_llm_tools_calls.append((cog, owner))
+
+    def unregister_tool_owner(self, owner):
+        self.unregistered_tool_owners.append(owner)
 
     async def publish_event(self, event):
         """Mirrors corridor's real EventBusService.publish: records every
@@ -729,8 +739,16 @@ class FakeCorridor:
         self.capability_checks.append((member_id, group_key))
         if member_id in self._owners:
             return True
+        if group_key == "employee":
+            return self._allow_employee
         if group_key == "keyholder":
             return member_id in self._keyholders
+        return False
+
+    async def require_permission(self, ctx, group_key):
+        if await self.capabilities_satisfy(ctx.author, group_key):
+            return True
+        await ctx.send("You don't have permission to do that.")
         return False
 
     async def render_reply(

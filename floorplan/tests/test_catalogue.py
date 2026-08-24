@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import aiohttp
 
+from corridor.domain import EMPLOYEE_KEY, llm_tool_spec
 from floorplan.adapters.layout_views import LayoutBrowseView, LayoutDetailView
 from floorplan.application.catalogue import (
     CatalogueBases,
@@ -20,7 +21,7 @@ from floorplan.application.catalogue import (
 from floorplan.contracts.pixel_index import LayoutDetail, LayoutListResponse
 from floorplan.floorplan import Floorplan as FloorplanCog
 from floorplan.infrastructure.pixel_index import PixelIndexClient
-from floorplan.tests.conftest import _FakeInteraction
+from floorplan.tests.conftest import FakeCorridor, _FakeInteraction
 
 
 def layout_summary(slug: str = "office") -> dict[str, object]:
@@ -471,6 +472,7 @@ class TestCatalogueViewsAndCommands(unittest.IsolatedAsyncioTestCase):
         bot = MagicMock(guilds=[])
         bot.is_owner = AsyncMock(return_value=False)
         cog = FloorplanCog(bot)
+        cog._corridor = FakeCorridor()
         cog._catalogue_service.search = AsyncMock(return_value=CatalogueResult(value=self.page()))
         cog._catalogue_service.bases = AsyncMock(
             return_value=CatalogueBases("https://api.example", "https://web.example")
@@ -478,7 +480,7 @@ class TestCatalogueViewsAndCommands(unittest.IsolatedAsyncioTestCase):
         cog._send_public = AsyncMock()
         context = MagicMock(interaction=None, author=SimpleNamespace(id=7))
 
-        await cog.cmd_layout_search(context, query="cozy", tag=None, sort="invalid")
+        result = await cog.cmd_layout_search(context, query="cozy", tag=None, sort="invalid")
 
         cog._catalogue_service.search.assert_awaited_once_with(
             query="cozy", tag=None, sort="newest"
@@ -487,13 +489,96 @@ class TestCatalogueViewsAndCommands(unittest.IsolatedAsyncioTestCase):
         sent_view = cog._send_public.await_args.kwargs["view"]
         assert isinstance(sent_view, LayoutBrowseView)
         assert sent_view.catalogue is cog._catalogue_service
+        assert result == {
+            "status": "ok",
+            "message": "Displayed 1 Pixel Index layout(s) in Discord.",
+            "query": "cozy",
+            "tag": None,
+            "sort": "newest",
+            "total": 1,
+            "returned": 1,
+            "has_more": False,
+            "layouts": [
+                {
+                    "slug": "office",
+                    "title": "Office",
+                    "description": "A tidy office",
+                    "tags": ["cozy"],
+                    "author": None,
+                    "visible_columns": None,
+                    "visible_rows": None,
+                    "furniture_count": None,
+                }
+            ],
+        }
+        assert cog._corridor.capability_checks == [(7, EMPLOYEE_KEY)]
+
+    async def test_empty_search_returns_an_llm_readable_success(self) -> None:
+        bot = MagicMock(guilds=[])
+        cog = FloorplanCog(bot)
+        cog._corridor = FakeCorridor()
+        cog._catalogue_service.search = AsyncMock(
+            return_value=CatalogueResult(value=LayoutListResponse(layouts=[], total=0))
+        )
+        cog._catalogue_service.bases = AsyncMock()
+        cog._send_public = AsyncMock()
+        context = MagicMock(interaction=None, author=SimpleNamespace(id=7))
+
+        result = await cog.cmd_layout_search(context)
+
+        assert result == {
+            "status": "ok",
+            "message": "No layouts found on Pixel Index.",
+            "query": None,
+            "tag": None,
+            "sort": "newest",
+            "total": 0,
+            "returned": 0,
+            "has_more": False,
+            "layouts": [],
+        }
+        cog._send_public.assert_awaited_once_with(context, "No layouts found on Pixel Index.")
+        cog._catalogue_service.bases.assert_not_awaited()
+
+    async def test_search_error_is_returned_to_the_llm_and_posted(self) -> None:
+        bot = MagicMock(guilds=[])
+        cog = FloorplanCog(bot)
+        cog._corridor = FakeCorridor()
+        error = CatalogueError(CatalogueErrorCode.TIMEOUT, "Pixel Index timed out.")
+        cog._catalogue_service.search = AsyncMock(return_value=CatalogueResult(error=error))
+        cog._send_public = AsyncMock()
+        context = MagicMock(interaction=None, author=SimpleNamespace(id=7))
+
+        result = await cog.cmd_layout_search(context)
+
+        assert result == {
+            "status": "error",
+            "error": "timeout",
+            "message": "Pixel Index timed out.",
+        }
+        cog._send_public.assert_awaited_once_with(context, "Pixel Index timed out.")
+
+    async def test_search_rejects_non_string_raw_tool_input(self) -> None:
+        bot = MagicMock(guilds=[])
+        cog = FloorplanCog(bot)
+        cog._corridor = FakeCorridor()
+        cog._catalogue_service.search = AsyncMock()
+        cog._send_public = AsyncMock()
+        context = MagicMock(interaction=None, author=SimpleNamespace(id=7))
+
+        result = await cog.cmd_layout_search(context, query=7)  # type: ignore[arg-type]
+
+        assert result["status"] == "error"
+        assert result["error"] == "invalid_query"
+        cog._catalogue_service.search.assert_not_awaited()
 
     async def test_view_command_normalizes_slug_and_uses_current_bases(self) -> None:
         bot = MagicMock(guilds=[])
         bot.is_owner = AsyncMock(return_value=False)
         cog = FloorplanCog(bot)
+        cog._corridor = FakeCorridor()
         cog._catalogue_service.detail = AsyncMock(
-            return_value=CatalogueResult(value=layout_detail())
+            return_value=CatalogueResult(value=layout_detail("default"))
         )
         cog._catalogue_service.bases = AsyncMock(
             return_value=CatalogueBases("https://api.example", "https://web.example")
@@ -501,9 +586,105 @@ class TestCatalogueViewsAndCommands(unittest.IsolatedAsyncioTestCase):
         cog._send_public = AsyncMock()
         context = MagicMock(interaction=None, author=SimpleNamespace(id=7))
 
-        await cog.cmd_layout_view(context, "  OFFICE  ")
+        result = await cog.cmd_layout_view(context, "  DEFAULT  ")
 
-        cog._catalogue_service.detail.assert_awaited_once_with("office")
+        cog._catalogue_service.detail.assert_awaited_once_with("default")
         sent_view = cog._send_public.await_args.kwargs["view"]
         assert isinstance(sent_view, LayoutDetailView)
         assert sent_view.api_base == "https://api.example"
+        assert result["status"] == "ok"
+        assert result["message"] == "Displayed `Office` in Discord."
+        detail_output = result["layout"]
+        assert isinstance(detail_output, dict)
+        assert detail_output["slug"] == "default"
+        assert detail_output["preview_url"] == (
+            "https://api.example/api/v1/layouts/default/preview.png"
+        )
+        assert detail_output["download_url"] == (
+            "https://api.example/api/v1/layouts/default/download"
+        )
+        assert detail_output["web_url"] == "https://web.example/layouts/default"
+        assert "layout" not in detail_output
+
+    async def test_view_rejects_empty_raw_tool_slug(self) -> None:
+        bot = MagicMock(guilds=[])
+        cog = FloorplanCog(bot)
+        cog._corridor = FakeCorridor()
+        cog._catalogue_service.detail = AsyncMock()
+        cog._send_public = AsyncMock()
+        context = MagicMock(interaction=None, author=SimpleNamespace(id=7))
+
+        result = await cog.cmd_layout_view(context, "   ")
+
+        assert result["status"] == "error"
+        assert result["error"] == "invalid_slug"
+        cog._catalogue_service.detail.assert_not_awaited()
+
+    async def test_employee_permission_denial_stops_before_search(self) -> None:
+        bot = MagicMock(guilds=[])
+        cog = FloorplanCog(bot)
+        cog._corridor = FakeCorridor(allow_employee=False)
+        cog._catalogue_service.search = AsyncMock()
+        cog._send_public = AsyncMock()
+        context = MagicMock(interaction=None, author=SimpleNamespace(id=7))
+        context.send = AsyncMock()
+
+        result = await cog.cmd_layout_search(context)
+
+        assert result["status"] == "error"
+        assert result["error"] == "permission_denied"
+        cog._catalogue_service.search.assert_not_awaited()
+        context.send.assert_awaited_once_with("You don't have permission to do that.")
+
+
+class TestLayoutCommandsAreLLMTools:
+    def test_search_tool_schema_describes_filters_and_sort_enum(self) -> None:
+        command = FloorplanCog.cmd_layout_search
+        spec = llm_tool_spec(getattr(command, "callback", command))
+
+        assert spec is not None
+        assert spec.name == "floorplan_layout_search"
+        assert spec.required_group == EMPLOYEE_KEY
+        assert spec.parameters == {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": (
+                        "Optional text to search for in layout titles and descriptions. "
+                        "Omit to list available layouts."
+                    ),
+                },
+                "tag": {
+                    "type": "string",
+                    "description": "Optional exact tag used to filter layouts.",
+                },
+                "sort": {
+                    "type": "string",
+                    "description": "Sort order for results.",
+                    "enum": ["newest", "furniture", "largest", "title"],
+                },
+            },
+            "required": [],
+        }
+
+    def test_view_tool_schema_requires_the_exact_slug(self) -> None:
+        command = FloorplanCog.cmd_layout_view
+        spec = llm_tool_spec(getattr(command, "callback", command))
+
+        assert spec is not None
+        assert spec.name == "floorplan_layout_view"
+        assert spec.required_group == EMPLOYEE_KEY
+        assert "use 'default'" in spec.description
+        assert spec.parameters == {
+            "type": "object",
+            "properties": {
+                "slug": {
+                    "type": "string",
+                    "description": (
+                        "Exact Pixel Index layout slug returned by search, e.g. 'default'."
+                    ),
+                }
+            },
+            "required": ["slug"],
+        }

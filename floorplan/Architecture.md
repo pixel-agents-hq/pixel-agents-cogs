@@ -213,6 +213,16 @@ it does not connect to the index database or renderer directly:
   -> GET <pixel_index_api_url>/api/v1/layouts/<slug>
   -> use <pixel_index_web_url>/layouts/<slug> for "View on site"
 
+Pico: "What layouts are available?"
+  -> Corridor invokes floorplan_layout_search with the triggering context
+  -> the same command posts LayoutBrowseView
+  -> the tool result returns structured summaries to the LLM
+
+Pico: "Show me the default layout."
+  -> Corridor invokes floorplan_layout_view with slug="default"
+  -> the same command posts LayoutDetailView
+  -> the tool result returns displayed metadata and URLs, not the raw layout blob
+
 authorized "Load layout"
   -> validate the layout returned by Pixel Index
   -> persist it in Red's cog configuration
@@ -223,6 +233,15 @@ Browsing is public. Loading a layout uses the same editor authorization as
 local layout changes. The API and web origins are separate configuration
 keys, so deployments can point the cog at production, staging, or a
 self-hosted Pixel Index without rebuilding it.
+
+The two browsing callbacks carry Corridor's `@llm_tool` decorator and are
+registered for Floorplan's lifetime during `cog_load`. Their input schemas
+describe the optional search text/tag, enumerate the four supported sort
+orders, and require an exact slug for detail. Tool calls bypass Discord's
+dispatch checks, so the callbacks repeat the public Employee permission
+check and validate raw model arguments before reaching Pixel Index. Their
+return mappings are informational; Discord users still receive the rich
+Components V2 views built by the commands themselves.
 
 One public entry point:
 

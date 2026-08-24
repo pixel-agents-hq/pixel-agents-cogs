@@ -147,10 +147,15 @@ callback, and pico picks it up automatically -- no pico-specific
 integration code needed per registering cog.
 [`deskutils`](../deskutils) decorates its `time` command this way, so if
 it's installed alongside pico, a user can just ask "what time is it?"
-instead of running `[p]deskutils time` by hand -- and pico calling that
-tool *is* running the command: same permission check, same
-`corridor.send_reply` call, sent from inside the command itself, not
-composed by the LLM from returned data.
+instead of running `[p]deskutils time` by hand. [`floorplan`](../floorplan)
+does the same for its public Pixel Index layout commands: “what layouts are
+available?” posts the interactive search view, while “show me the default
+layout” posts the detail view for slug `default`. The Floorplan tools also
+return structured summaries to the model, with the raw layout blob omitted.
+
+Pico calling any of these tools *is* running the command: the same permission
+check and Discord reply/view happen inside the command itself, rather than
+being composed by the LLM from returned data.
 
 Per-message, pico asks corridor for every tool the *triggering user*
 (`ctx.author`) is allowed to invoke (`corridor.list_tools_for`, filtered by

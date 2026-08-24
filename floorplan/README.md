@@ -61,6 +61,23 @@ with the setup link above — see
 | `[p]floorplan layout search [query] [tag] [sort]` | Browse Pixel Index layouts |
 | `[p]floorplan layout view <slug>` | View and optionally load a layout |
 
+## Natural-language layout browsing
+
+When Pico is loaded and enabled, the public layout commands are also
+available through Corridor's shared LLM tool registry. For example:
+
+- “What layouts are available?” calls `floorplan_layout_search` without
+  filters and posts the same interactive five-result browse view as the
+  Discord command.
+- “Show me the default layout.” calls `floorplan_layout_view` with the Pixel
+  Index slug `default` and posts the same detail/preview view.
+
+Search also accepts the command's existing `query`, `tag`, and `sort`
+criteria. Both tools return structured, LLM-readable metadata in addition to
+posting the Discord view; the detail tool deliberately omits the full raw
+layout JSON. Viewing a layout does not load it automatically—the existing
+button and Keyholder authorization still control loading.
+
 See [Architecture.md](Architecture.md) for the full command list and
 configuration keys.
 

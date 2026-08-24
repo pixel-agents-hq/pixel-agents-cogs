@@ -7,11 +7,12 @@ the guild has already configured for every other cog.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Annotated, Any
 
 from redbot.core import commands
 
-from corridor.domain import EMPLOYEE_KEY, ReplyField, llm_tool
+from corridor.adapters import llm_tool
+from corridor.domain import EMPLOYEE_KEY, ReplyField
 
 from ..application import TimeService, UnknownTimeZoneError
 
@@ -38,11 +39,14 @@ class CommandsMixin:
             "(e.g. 'America/New_York') to also get it localized to that zone."
         ),
         required_group=EMPLOYEE_KEY,
-        parameter_descriptions={
-            "timezone": "An IANA time zone name, e.g. 'America/New_York' or 'Europe/London'."
-        },
     )
-    async def time_command(self, ctx: commands.Context, timezone: str | None = None) -> None:
+    async def time_command(
+        self,
+        ctx: commands.Context,
+        timezone: Annotated[
+            str | None, "An IANA time zone name, e.g. 'America/New_York' or 'Europe/London'."
+        ] = None,
+    ) -> None:
         """Show the current time.
 
         Always includes Discord's native timestamp markup, which each

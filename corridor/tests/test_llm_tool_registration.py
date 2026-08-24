@@ -8,8 +8,8 @@ from __future__ import annotations
 import unittest
 from typing import Any
 
+from ..adapters import llm_tool
 from ..adapters.llm_tool_registration import collect_registered_tools
-from ..domain import llm_tool
 
 
 class _StubCommand:

@@ -52,7 +52,7 @@ Any cog's own settings command can also embed the same controls inline via
 command.
 
 corridor also hosts a cross-cog **LLM tool registry**: apply
-`@corridor.domain.llm_tool(...)` directly to a command's callback and it
+`@corridor.adapters.llm_tool(...)` directly to a command's callback and it
 becomes a tool `pico` (if loaded) can call directly from its tool-calling
 loop, gated by the same permission groups above. See
 [`docs/corridor-tool-registry-design.md`](../docs/corridor-tool-registry-design.md).

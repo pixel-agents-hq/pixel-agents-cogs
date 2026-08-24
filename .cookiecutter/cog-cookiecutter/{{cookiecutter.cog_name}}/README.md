@@ -35,14 +35,16 @@ replace it with the cog's real command surface as it grows. Keep it in
 sync with adapters/commands.py; this is what a user reads before digging
 into the code. -->
 
-`bump` also carries `@corridor.domain.llm_tool(...)` directly (see
+`bump` also carries `@corridor.adapters.llm_tool(...)` directly (see
 `adapters/commands.py`), so if [`pico`](../pico) is installed, loaded, and
 enabled for a guild, its LLM can call it exactly as if a keyholder had run
 the command by hand -- same permission check, same reply, no separate code
 path. Delete that decorator from a command that shouldn't be LLM-callable;
-it's opt-in per command, not something every command needs. A command
-with parameters of its own should also pass `parameter_descriptions=` (see
-that decorator's docstring) so an LLM knows what each one means. See
+it's opt-in per command, not something every command needs. A command with
+parameters of its own should give each one a description an LLM would need
+by wrapping its type in `typing.Annotated` right in the signature (safe to
+do directly -- `@llm_tool` strips it back down before discord.py's own
+command construction ever sees it; see that decorator's docstring). See
 [`docs/corridor-tool-registry-design.md`](../docs/corridor-tool-registry-design.md)
 for the full design.
 

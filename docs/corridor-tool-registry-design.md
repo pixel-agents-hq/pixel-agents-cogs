@@ -5,17 +5,27 @@
 > `Corridor` as `register_tool`/`unregister_tool_owner`/`list_tools`/
 > `list_tools_for`, with the same `on_cog_remove` defensive-cleanup backstop
 > the Pub/Sub bus gets. The recommended way to register a tool is the
-> `@corridor.domain.llm_tool` decorator (`corridor/domain/llm_tools.py`) applied
-> directly to a command's callback, scanned and registered automatically by
-> `CogBase.register_llm_tools()` (`corridor/adapters/llm_tool_registration.py`)
-> at the registering cog's own `cog_load` -- `register_tool` itself stays the
-> lower-level primitive underneath it. `deskutils` registers its `time`
-> command this way, the first (and, as of this doc, only) tool in a shipped
-> cog; `pico` is the first (and only) consumer, adapting a registration
-> into its own `ToolSpec` at `pico/tools/cross_cog.py`.
-> `.cookiecutter/cog-cookiecutter` also generates a decorated example
-> (`bump`) by default, so every new cog starts from a working pattern
-> instead of copying one in from `deskutils`.
+> `@corridor.adapters.llm_tool` decorator (`corridor/adapters/llm_tools.py`)
+> applied directly to a command's callback, scanned and registered
+> automatically by `CogBase.register_llm_tools()`
+> (`corridor/adapters/llm_tool_registration.py`) at the registering cog's
+> own `cog_load` -- `register_tool` itself stays the lower-level primitive
+> underneath it. `deskutils` registers its `time` command this way, the
+> first (and, as of this doc, only) tool in a shipped cog; `pico` is the
+> first (and only) consumer, adapting a registration into its own
+> `ToolSpec` at `pico/tools/cross_cog.py`. `.cookiecutter/cog-cookiecutter`
+> also generates a decorated example (`bump`) by default, so every new cog
+> starts from a working pattern instead of copying one in from `deskutils`.
+>
+> `llm_tool` lives in `corridor/adapters/`, not `corridor/domain/` where it
+> started out -- it has a genuine, load-bearing dependency on discord.py's
+> own `Parameter`/`Signature` machinery (see "Per-parameter descriptions:
+> `typing.Annotated`, made safe" below for why), unlike `RegisteredTool`/
+> `ToolHandler`/`ToolRegistryService`, which stay framework-neutral. The
+> shared discord.py/redbot test stub (`corridor/testing.py`) was extended
+> with a small, behaviorally-faithful fake `discord.ext.commands.Parameter`/
+> `Signature` pair specifically so `llm_tool`'s own tests (and every
+> dependent cog's) keep working without a real discord.py installed.
 
 ## Motivation
 
@@ -49,10 +59,14 @@ and filters *registrations*, it never contains a tool's actual behavior.
 `deskutils/adapters/commands.py`, calling into `deskutils`' own
 `TimeService` — corridor only ever sees a name, a description, a
 JSON-Schema dict inferred from the callback's own signature, a reference to
-the callback itself, and a permission-group key. Even the *decorator*
-(`@llm_tool`) is framework-neutral and cog-agnostic — it has no idea
-`deskutils` or `time_command` exist; it only inspects whatever function it's
-applied to.
+the callback itself, and a permission-group key. The *decorator*
+(`@llm_tool`) itself is cog-agnostic the same way — it has no idea
+`deskutils` or `time_command` exist, it only inspects whatever function
+it's applied to — though, unlike the registry it feeds, it is *not*
+framework-neutral: it needs discord.py's own `Parameter`/`Signature`
+classes to do its job safely (see "Per-parameter descriptions:
+`typing.Annotated`, made safe" below), which is why it lives in
+`corridor/adapters/`, not `corridor/domain/`.
 
 ## Topology: corridor is the only piece that must be loaded
 
@@ -97,7 +111,12 @@ feature and would exist with zero cogs ever touching `register_tool`.
 | `corridor` + `pico` | n/a (deskutils not installed) | pico responds via its native reply tool only — `list_tools_for` returns `()`, exactly as if this feature didn't exist |
 | `corridor` + `deskutils` + `pico` | ✅ works | ✅ pico calls `deskutils_time` directly |
 
-## The contract: framework-neutral, not pydantic
+## The registry contract: framework-neutral, not pydantic
+
+This section is about `RegisteredTool`/`ToolHandler` -- the *registry's*
+contract, which stays framework-neutral regardless of how a given tool got
+registered. `llm_tool`, the decorator most tools go through to get there,
+is a different story -- see "Per-parameter descriptions" below.
 
 `pico`'s own `ToolSpec` Protocol (`pico/tools/base.py`) is pydantic-typed —
 `Input`/`Output` are `type[BaseModel]`. That's an internal implementation
@@ -140,11 +159,12 @@ Nothing stops a cog from hand-building a `RegisteredTool` and calling
 `corridor.register_tool(tool, owner=...)` directly (useful for a tool
 that isn't really a Discord command at all), but the normal, expected path
 — since registering tools this way is meant to happen often, across many
-cogs, not just once for `deskutils` — is the `@corridor.domain.llm_tool`
+cogs, not just once for `deskutils` — is the `@corridor.adapters.llm_tool`
 decorator, applied directly to a command's own callback:
 
 ```python
-from corridor.domain import EMPLOYEE_KEY, llm_tool
+from corridor.adapters import llm_tool
+from corridor.domain import EMPLOYEE_KEY
 
 @deskutils_group.command(name="time")
 @llm_tool(
@@ -153,11 +173,12 @@ from corridor.domain import EMPLOYEE_KEY, llm_tool
                 "timezone name (e.g. 'America/New_York') to also get it "
                 "localized to that zone.",
     required_group=EMPLOYEE_KEY,
-    parameter_descriptions={
-        "timezone": "An IANA time zone name, e.g. 'America/New_York' or 'Europe/London'.",
-    },
 )
-async def time_command(self, ctx: commands.Context, timezone: str | None = None) -> None:
+async def time_command(
+    self,
+    ctx: commands.Context,
+    timezone: Annotated[str | None, "An IANA time zone name, e.g. 'America/New_York'."] = None,
+) -> None:
     ...  # unchanged -- require_permission, TimeService, send_reply
 ```
 
@@ -173,38 +194,81 @@ registered yet at this point — decoration just tags the function; see
 "Lifecycle" below for when the tag actually turns into a live
 `RegisteredTool`.
 
-`parameter_descriptions` adds a per-parameter `"description"` to that
-inferred schema — worth setting for any parameter whose name/type alone
-wouldn't tell an LLM what to pass (`timezone` above, for a tool with more
-than one parameter this matters a lot more than it does here). A key with
-no matching parameter raises `TypeError` at decoration time too, so a
-typo — or a stale description left behind after a rename — fails loudly
-instead of silently describing nothing.
+`corridor.adapters.llm_tool_spec(func)` reads that marker back — used both
+by corridor's own scanner and by a decorated cog's own tests (see
+`deskutils/tests/test_cog_commands.py::TestTimeCommandIsAnLLMTool`) to
+assert a command really did get tagged correctly, without needing
+corridor's adapter-layer scanning machinery at all.
 
-**Do not reach for `typing.Annotated[X, "a description"]` on the
-parameter itself instead of `parameter_descriptions`.** It looks like the
-obvious move — it's how FastAPI/pydantic attach field metadata — but
-verified against the actual installed `discord.py==2.7.1`:
-`discord.utils.evaluate_annotation` already special-cases
-`Annotated[X, Y]` for its *own* purposes, and treats `Y` as the real
-type/converter to use for the parameter, not as descriptive text. Handing
-it a plain string there makes it try to `eval()` that string as Python
-source, raising `SyntaxError` the moment the cog is loaded:
+### Per-parameter descriptions: `typing.Annotated`, made safe
+
+An earlier version of this decorator took a separate `parameter_descriptions=
+{"timezone": "..."}` keyword instead, specifically to avoid a real,
+verified hazard: `timezone`'s annotation is read by *two* different
+things — `llm_tool`, for the LLM's schema, and discord.py's own
+command-parameter parser, for real command dispatch. Against the installed
+`discord.py==2.7.1`, `discord.utils.evaluate_annotation` already gives
+`Annotated[X, Y]` a meaning of its own: `Y` is treated as the actual
+type/converter to use, not descriptive metadata about `X`. A plain
+description string there makes discord.py try to `eval()` it as Python
+source at cog load:
 
 ```python
 >>> discord.utils.evaluate_annotation("An IANA time zone name.", {}, {}, {})
 SyntaxError: invalid syntax
 ```
 
-`parameter_descriptions` exists specifically so a description can be
-attached without touching the one annotation discord.py's own command
-parsing also reads.
+and a custom, non-string sentinel object there (`Annotated[str, ToolDescription(...)]`)
+avoids that crash only to fail every real invocation instead — discord.py
+resolves the parameter's *converter* to the sentinel instance itself, which
+isn't callable, so `[p]deskutils time America/New_York` raises
+`BadArgument: Converting to "ToolDescription" failed for parameter "timezone".`
+every single time (confirmed by driving `discord.ext.commands.converter._actual_conversion`
+directly). Neither failure mode is caught by this repo's own test
+convention of calling `command.callback(cog, ctx, ...)` directly, which
+bypasses discord.py's real parameter conversion entirely — the SyntaxError
+surfaces at cog *load*, so it is at least loud, but the BadArgument case
+would only ever show up against a live bot.
 
-`corridor.domain.llm_tool_spec(func)` reads that marker back — used both
-by corridor's own scanner and by a decorated cog's own tests (see
-`deskutils/tests/test_cog_commands.py::TestTimeCommandIsAnLLMTool`) to
-assert a command really did get tagged correctly, without needing
-corridor's adapter-layer scanning machinery at all.
+**The fix that makes natural `Annotated` syntax genuinely safe:** `@llm_tool`
+reads `Annotated[X, "description"]` for its own purposes, then — before
+returning — patches the callback's `__signature__` to a version with
+`Annotated` stripped back down to the bare `X`, so discord.py's own command
+construction (which runs *next*, when the outer `@x.command(...)` decorator
+wraps this same function) never sees `Annotated` at all. This isn't a
+discord.py-specific trick: `inspect.Signature.from_callable()` has always
+honored an explicit `__signature__` attribute over introspecting a
+callable's raw code — confirmed directly against CPython's `inspect`
+module — and discord.py's command construction goes through exactly that
+call (`discord.ext.commands.parameters.Signature`, a thin `inspect.Signature`
+subclass). The patched parameters have to be built from discord.py's own
+`Parameter` class, not bare `inspect.Parameter` — verified that a bare
+`inspect.Parameter` in the patched signature lets a real `Command()`
+*construct* without error, but crashes with `AttributeError: 'Parameter'
+object has no attribute 'converter'` the moment the command is actually
+*invoked*, since discord.py's real `Command.transform()` depends on that
+property existing on whatever it finds there.
+
+This is why `llm_tool` needs `discord.ext.commands.Parameter` (public API)
+and `discord.ext.commands.parameters.Signature` (not exposed at the public
+`discord.ext.commands` namespace, only reachable via that internal path) —
+and why it now lives in `corridor/adapters/`, which already has a real
+discord.py dependency throughout, rather than `corridor/domain/`. The
+shared test stub (`corridor/testing.py`) gained a small, behaviorally
+faithful fake of both (`required`/`converter` properties, a
+`_parameter_cls`-driven `Signature` subclass) specifically so `llm_tool`'s
+own decoration logic — which runs at cog *import* time, in every test
+process, not just in production — has something real to import and patch
+against under this repo's stub-based test suite.
+
+Verified end to end, not just read from source: decorating a callback with
+`Annotated[str | None, "An IANA time zone name."]`, wrapping it in a real
+`@discord.ext.commands.command(...)`, and constructing the `Command`
+produces `Command.params['timezone'].converter == Optional[str]`,
+`required == False`, a clean auto-generated help string
+(`<ctx> [timezone]`, no `Annotated`/description leakage), correct real
+argument conversion through `run_converters`, and the original callback
+still fully callable with its own business logic intact.
 
 ## Lifecycle (mirrors `EventBusService` exactly)
 

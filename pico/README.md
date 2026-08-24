@@ -142,7 +142,7 @@ Discord is through a tool's own handler (currently only the reply tool).
 ## Cross-cog tools
 
 Any other cog can turn one of its own commands into an LLM-callable tool by
-applying `@corridor.domain.llm_tool(...)` directly to the command's
+applying `@corridor.adapters.llm_tool(...)` directly to the command's
 callback, and pico picks it up automatically -- no pico-specific
 integration code needed per registering cog.
 [`deskutils`](../deskutils) decorates its `time` command this way, so if

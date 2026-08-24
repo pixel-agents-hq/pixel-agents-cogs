@@ -12,7 +12,7 @@ from typing import Any
 
 from redbot.core import commands
 
-from corridor.domain import llm_tool
+from corridor.adapters import llm_tool
 
 from ..application import CounterService
 
@@ -50,10 +50,13 @@ class CommandsMixin:
     # `parameters`'s JSON Schema is inferred from this callback's own
     # signature -- `bump` takes none beyond `self`/`ctx`, so there's
     # nothing to describe here. A command with its own parameters (like
-    # deskutils' `time_command`) should also pass `parameter_descriptions=
-    # {"param_name": "..."}` for any parameter an LLM would need explained
-    # -- see that decorator's own docstring for why NOT to use
-    # `typing.Annotated` on the parameter itself for this.
+    # deskutils' `time_command`) should give each one a description an LLM
+    # would need by wrapping its type in `typing.Annotated`, right in the
+    # signature -- e.g. `count: Annotated[int, "How many to bump by."]`.
+    # `@llm_tool` strips `Annotated` back down to the bare type before
+    # discord.py's own command construction ever sees it, so this is safe
+    # to write directly on a real command parameter -- see that
+    # decorator's own docstring for the full story.
     @llm_tool(
         name="{{cookiecutter.cog_name}}_bump",
         description="Increment this server's count by one.",

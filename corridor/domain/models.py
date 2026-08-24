@@ -291,7 +291,7 @@ class RegisteredTool:
     triggering Discord `commands.Context`, untyped here so this module
     never imports discord.py) plus a plain JSON-object-shaped Mapping of
     arguments, and returns one. Most registrations come from
-    `@corridor.domain.llm_tool`-decorated commands (see
+    `@corridor.adapters.llm_tool`-decorated commands (see
     `corridor/adapters/llm_tool_registration.py`), whose handler simply
     invokes the real command callback with that same `ctx` -- `register_tool`
     itself stays the lower-level primitive for a tool that isn't a Discord

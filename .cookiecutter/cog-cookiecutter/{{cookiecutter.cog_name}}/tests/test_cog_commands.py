@@ -8,6 +8,8 @@ import unittest
 
 from redbot.core.errors import CogLoadError
 
+from corridor.domain import llm_tool_spec
+
 from .. import setup
 from ..{{cookiecutter.cog_name}} import {{ cookiecutter.cog_name.replace('-', '_').split('_') | map('capitalize') | join }}
 from .conftest import FakeBot, FakeContext, FakeCorridor
@@ -107,3 +109,51 @@ class TestDependentRegistration(unittest.IsolatedAsyncioTestCase):
         await cog.cog_unload()
 
         self.assertNotIn("{{cookiecutter.cog_name}}", bot.corridor.registered_dependents)
+
+
+class TestBumpIsAnLLMTool(unittest.TestCase):
+    """`bump` carries `@llm_tool(...)` directly -- this is this cog's own
+    regression guard that the decoration is correct, without needing
+    corridor's adapter-layer scanner (that's covered by corridor's own
+    test suite)."""
+
+    def test_decoration_matches_the_commands_own_permission_tier(self) -> None:
+        spec = llm_tool_spec({{ cookiecutter.cog_name.replace('-', '_').split('_') | map('capitalize') | join }}.bump.callback)
+
+        assert spec is not None
+        self.assertEqual(spec.name, "{{cookiecutter.cog_name}}_bump")
+        self.assertEqual(spec.required_group, "keyholder")
+        self.assertEqual(spec.parameters, {"type": "object", "properties": {}, "required": []})
+
+
+class TestToolRegistration(unittest.IsolatedAsyncioTestCase):
+    """`bump`'s `@llm_tool` decoration is scanned and registered into
+    corridor's cross-cog tool registry at cog_load -- inert unless
+    something (pico) reads corridor's registry, but always
+    registered/unregistered in step with the cog's own lifecycle
+    regardless of whether anything ever does. What `register_llm_tools`
+    actually does with a decorated command is corridor's own concern, not
+    duplicated here -- this only verifies this cog asks for it correctly."""
+
+    async def test_cog_load_registers_the_llm_tools(self) -> None:
+        bot = FakeBot()
+        cog = {{ cookiecutter.cog_name.replace('-', '_').split('_') | map('capitalize') | join }}(bot=bot)
+
+        await cog.cog_load()
+
+        self.assertEqual(
+            bot.corridor.registered_llm_tools_calls,
+            [(cog, "{{ cookiecutter.cog_name.replace('-', '_').split('_') | map('capitalize') | join }}")],
+        )
+
+    async def test_cog_unload_unregisters_the_llm_tools(self) -> None:
+        bot = FakeBot()
+        cog = {{ cookiecutter.cog_name.replace('-', '_').split('_') | map('capitalize') | join }}(bot=bot)
+        await cog.cog_load()
+
+        await cog.cog_unload()
+
+        self.assertIn(
+            "{{ cookiecutter.cog_name.replace('-', '_').split('_') | map('capitalize') | join }}",
+            bot.corridor.unregistered_tool_owners,
+        )

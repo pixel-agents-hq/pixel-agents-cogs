@@ -88,6 +88,49 @@ class TestLLMToolSpec(unittest.TestCase):
             @llm_tool(name="a_tool", description="Does a thing.")
             def command(self: object, ctx: object, members: list[str]) -> None: ...
 
+    def test_parameter_descriptions_are_attached_to_the_matching_property(self) -> None:
+        @llm_tool(
+            name="a_tool",
+            description="Does a thing.",
+            parameter_descriptions={"timezone": "An IANA time zone name."},
+        )
+        def command(self: object, ctx: object, timezone: str | None = None) -> None: ...
+
+        spec = llm_tool_spec(command)
+        assert spec is not None
+        self.assertEqual(
+            spec.parameters["properties"],
+            {"timezone": {"type": "string", "description": "An IANA time zone name."}},
+        )
+
+    def test_a_parameter_with_no_description_has_none_in_the_schema(self) -> None:
+        @llm_tool(
+            name="a_tool",
+            description="Does a thing.",
+            parameter_descriptions={"name": "Who to greet."},
+        )
+        def command(self: object, ctx: object, name: str, count: int) -> None: ...
+
+        spec = llm_tool_spec(command)
+        assert spec is not None
+        self.assertEqual(
+            spec.parameters["properties"],
+            {
+                "name": {"type": "string", "description": "Who to greet."},
+                "count": {"type": "integer"},
+            },
+        )
+
+    def test_a_description_for_an_unknown_parameter_raises_at_decoration_time(self) -> None:
+        with self.assertRaises(TypeError):
+
+            @llm_tool(
+                name="a_tool",
+                description="Does a thing.",
+                parameter_descriptions={"nonexistent": "..."},
+            )
+            def command(self: object, ctx: object, name: str) -> None: ...
+
 
 if __name__ == "__main__":
     unittest.main()

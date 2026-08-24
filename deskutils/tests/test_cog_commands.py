@@ -151,7 +151,18 @@ class TestTimeCommandIsAnLLMTool(unittest.TestCase):
         self.assertEqual(spec.required_group, EMPLOYEE_KEY)
         self.assertEqual(
             spec.parameters,
-            {"type": "object", "properties": {"timezone": {"type": "string"}}, "required": []},
+            {
+                "type": "object",
+                "properties": {
+                    "timezone": {
+                        "type": "string",
+                        "description": (
+                            "An IANA time zone name, e.g. 'America/New_York' or 'Europe/London'."
+                        ),
+                    }
+                },
+                "required": [],
+            },
         )
 
 

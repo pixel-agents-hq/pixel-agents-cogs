@@ -38,6 +38,9 @@ class CommandsMixin:
             "(e.g. 'America/New_York') to also get it localized to that zone."
         ),
         required_group=EMPLOYEE_KEY,
+        parameter_descriptions={
+            "timezone": "An IANA time zone name, e.g. 'America/New_York' or 'Europe/London'."
+        },
     )
     async def time_command(self, ctx: commands.Context, timezone: str | None = None) -> None:
         """Show the current time.

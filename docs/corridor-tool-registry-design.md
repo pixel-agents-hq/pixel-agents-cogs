@@ -10,9 +10,12 @@
 > `CogBase.register_llm_tools()` (`corridor/adapters/llm_tool_registration.py`)
 > at the registering cog's own `cog_load` -- `register_tool` itself stays the
 > lower-level primitive underneath it. `deskutils` registers its `time`
-> command this way, the first (and, as of this doc, only) tool; `pico` is
-> the first (and only) consumer, adapting a registration into its own
-> `ToolSpec` at `pico/tools/cross_cog.py`.
+> command this way, the first (and, as of this doc, only) tool in a shipped
+> cog; `pico` is the first (and only) consumer, adapting a registration
+> into its own `ToolSpec` at `pico/tools/cross_cog.py`.
+> `.cookiecutter/cog-cookiecutter` also generates a decorated example
+> (`bump`) by default, so every new cog starts from a working pattern
+> instead of copying one in from `deskutils`.
 
 ## Motivation
 
@@ -150,6 +153,9 @@ from corridor.domain import EMPLOYEE_KEY, llm_tool
                 "timezone name (e.g. 'America/New_York') to also get it "
                 "localized to that zone.",
     required_group=EMPLOYEE_KEY,
+    parameter_descriptions={
+        "timezone": "An IANA time zone name, e.g. 'America/New_York' or 'Europe/London'.",
+    },
 )
 async def time_command(self, ctx: commands.Context, timezone: str | None = None) -> None:
     ...  # unchanged -- require_permission, TimeService, send_reply
@@ -166,6 +172,33 @@ an `LLMToolSpec` marker on the function object itself. Nothing is
 registered yet at this point — decoration just tags the function; see
 "Lifecycle" below for when the tag actually turns into a live
 `RegisteredTool`.
+
+`parameter_descriptions` adds a per-parameter `"description"` to that
+inferred schema — worth setting for any parameter whose name/type alone
+wouldn't tell an LLM what to pass (`timezone` above, for a tool with more
+than one parameter this matters a lot more than it does here). A key with
+no matching parameter raises `TypeError` at decoration time too, so a
+typo — or a stale description left behind after a rename — fails loudly
+instead of silently describing nothing.
+
+**Do not reach for `typing.Annotated[X, "a description"]` on the
+parameter itself instead of `parameter_descriptions`.** It looks like the
+obvious move — it's how FastAPI/pydantic attach field metadata — but
+verified against the actual installed `discord.py==2.7.1`:
+`discord.utils.evaluate_annotation` already special-cases
+`Annotated[X, Y]` for its *own* purposes, and treats `Y` as the real
+type/converter to use for the parameter, not as descriptive text. Handing
+it a plain string there makes it try to `eval()` that string as Python
+source, raising `SyntaxError` the moment the cog is loaded:
+
+```python
+>>> discord.utils.evaluate_annotation("An IANA time zone name.", {}, {}, {})
+SyntaxError: invalid syntax
+```
+
+`parameter_descriptions` exists specifically so a description can be
+attached without touching the one annotation discord.py's own command
+parsing also reads.
 
 `corridor.domain.llm_tool_spec(func)` reads that marker back — used both
 by corridor's own scanner and by a decorated cog's own tests (see

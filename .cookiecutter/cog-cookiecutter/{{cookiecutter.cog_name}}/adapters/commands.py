@@ -12,6 +12,8 @@ from typing import Any
 
 from redbot.core import commands
 
+from corridor.domain import llm_tool
+
 from ..application import CounterService
 
 
@@ -37,6 +39,26 @@ class CommandsMixin:
         await self._corridor.send_reply(ctx, title="Count", description=str(snapshot.count))
 
     @{{cookiecutter.cog_name}}_group.command(name="bump")
+    # @llm_tool marks this callback as a cross-cog LLM tool: any cog with
+    # `pico` loaded can then have its LLM call this exact command directly
+    # (same permission check, same reply) instead of a user typing it by
+    # hand -- see docs/corridor-tool-registry-design.md. Delete this
+    # decorator (and the now-unused `llm_tool` import above) if this
+    # command shouldn't be LLM-callable; it's entirely optional per
+    # command, not something every command needs.
+    #
+    # `parameters`'s JSON Schema is inferred from this callback's own
+    # signature -- `bump` takes none beyond `self`/`ctx`, so there's
+    # nothing to describe here. A command with its own parameters (like
+    # deskutils' `time_command`) should also pass `parameter_descriptions=
+    # {"param_name": "..."}` for any parameter an LLM would need explained
+    # -- see that decorator's own docstring for why NOT to use
+    # `typing.Annotated` on the parameter itself for this.
+    @llm_tool(
+        name="{{cookiecutter.cog_name}}_bump",
+        description="Increment this server's count by one.",
+        required_group="keyholder",
+    )
     async def bump(self, ctx: commands.Context) -> None:
         """Increment this server's count by one. Requires the keyholder tier."""
 

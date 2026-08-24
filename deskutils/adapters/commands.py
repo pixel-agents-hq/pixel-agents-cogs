@@ -11,7 +11,7 @@ from typing import Any
 
 from redbot.core import commands
 
-from corridor.domain import EMPLOYEE_KEY, ReplyField
+from corridor.domain import EMPLOYEE_KEY, ReplyField, llm_tool
 
 from ..application import TimeService, UnknownTimeZoneError
 
@@ -31,6 +31,14 @@ class CommandsMixin:
             await ctx.send_help()
 
     @deskutils_group.command(name="time")
+    @llm_tool(
+        name="deskutils_time",
+        description=(
+            "Get the current date and time. Optionally pass an IANA timezone name "
+            "(e.g. 'America/New_York') to also get it localized to that zone."
+        ),
+        required_group=EMPLOYEE_KEY,
+    )
     async def time_command(self, ctx: commands.Context, timezone: str | None = None) -> None:
         """Show the current time.
 

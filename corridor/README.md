@@ -51,9 +51,10 @@ Any cog's own settings command can also embed the same controls inline via
 `build_shared_settings_container()`, rather than sending users to a separate
 command.
 
-corridor also hosts a cross-cog **LLM tool registry**: any cog can register
-one of its commands as a tool `pico` (if loaded) can call directly from its
-tool-calling loop, gated by the same permission groups above. See
+corridor also hosts a cross-cog **LLM tool registry**: apply
+`@corridor.domain.llm_tool(...)` directly to a command's callback and it
+becomes a tool `pico` (if loaded) can call directly from its tool-calling
+loop, gated by the same permission groups above. See
 [`docs/corridor-tool-registry-design.md`](../docs/corridor-tool-registry-design.md).
 
 ## What a dependent cog calls
@@ -66,15 +67,16 @@ await corridor.send_reply(ctx, title="Count", description=str(snapshot.count))
 if not await corridor.require_permission(ctx, "keyholder"):
     return
 
-corridor.register_tool(my_registered_tool, owner="MyCog")  # in cog_load
+corridor.register_llm_tools(self, owner="MyCog")  # in cog_load, scans self for @llm_tool commands
 corridor.unregister_tool_owner("MyCog")  # in cog_unload
 ```
 
 `send_reply` renders per the guild's stored reply preference and sends it;
 `require_permission` runs the permission check and sends its own decline
 message on failure, so the caller just returns early on `False`;
-`register_tool`/`unregister_tool_owner` add/remove an LLM-callable tool
-from corridor's cross-cog registry.
+`register_llm_tools`/`unregister_tool_owner` add/remove every
+`@llm_tool`-decorated command on a cog from corridor's cross-cog registry
+in one call.
 
 ## Docs
 

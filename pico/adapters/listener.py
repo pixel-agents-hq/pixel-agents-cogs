@@ -75,7 +75,7 @@ class ListenerMixin:
         tools: list[ToolSpec] = [
             ReplyTool(self._corridor, ctx, guild_id=guild.id, bot_user_id=_bot_user_id(self.bot))
         ]
-        tools.extend(await _cross_cog_tools(self._corridor, ctx.author))
+        tools.extend(await _cross_cog_tools(self._corridor, ctx))
         result = await self._tool_loop_service.run(
             base_url=settings.llm_base_url,
             api_key=settings.llm_api_key or "",
@@ -92,18 +92,21 @@ class ListenerMixin:
         )
 
 
-async def _cross_cog_tools(corridor: Any, member: discord.Member) -> list[ToolSpec]:
+async def _cross_cog_tools(corridor: Any, ctx: commands.Context) -> list[ToolSpec]:
     """Tools other cogs (e.g. deskutils) registered into corridor's shared
-    tool registry, filtered to what `member` is allowed to invoke (corridor
-    resolves that per-tool `required_group` gate the same way it resolves
-    one for a Discord command). Adapting a misbehaving registration must
+    tool registry, filtered to what `ctx.author` is allowed to invoke
+    (corridor resolves that per-tool `required_group` gate the same way it
+    resolves one for a Discord command). Each adapted tool closes over this
+    same `ctx` -- most registered tools are just `@llm_tool`-decorated
+    commands, so calling one invokes the real command callback in this same
+    channel, as `ctx.author`. Adapting a misbehaving registration must
     never take down this turn's whole tool loop, so one tool's conversion
     failure is logged and skipped rather than propagated."""
 
     tools: list[ToolSpec] = []
-    for registered in await corridor.list_tools_for(member):
+    for registered in await corridor.list_tools_for(ctx.author):
         try:
-            tools.append(CrossCogTool(registered))
+            tools.append(CrossCogTool(registered, ctx))
         except Exception:
             log.warning(
                 "pico: could not adapt cross-cog tool %r, skipping",

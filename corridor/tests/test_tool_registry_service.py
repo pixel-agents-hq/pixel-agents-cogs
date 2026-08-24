@@ -10,7 +10,7 @@ from ..application import ToolRegistryService
 from ..domain import RegisteredTool
 
 
-async def _handler(raw_input: object) -> dict[str, object]:
+async def _handler(ctx: object, raw_input: object) -> dict[str, object]:
     return {}
 
 

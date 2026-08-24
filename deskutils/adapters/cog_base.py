@@ -9,7 +9,6 @@ from redbot.core.bot import Red
 from ..application import TimeService
 from ..dependency_loader import ensure_corridor_loaded
 from ..infrastructure import SystemClock
-from .tools import build_time_tool
 
 
 class CogBase:
@@ -40,10 +39,11 @@ class CogBase:
         # So unloading corridor cascades to unload this cog too, instead of
         # leaving it running with a stale corridor reference.
         self._corridor.register_dependent("deskutils")
-        # Inert if pico (or any other LLM-tool consumer) never loads --
-        # corridor's registry just holds it unread. See
+        # Scans self for @llm_tool-decorated commands (time_command) and
+        # registers each -- inert if pico (or any other LLM-tool consumer)
+        # never loads, corridor's registry just holds it unread. See
         # docs/corridor-tool-registry-design.md.
-        self._corridor.register_tool(build_time_tool(self._service), owner="Deskutils")
+        self._corridor.register_llm_tools(self, owner="Deskutils")
 
     async def cog_unload(self) -> None:
         """Extension point for teardown work."""

@@ -13,6 +13,8 @@ import unittest
 
 from redbot.core.errors import CogLoadError
 
+from corridor.domain import EMPLOYEE_KEY, llm_tool_spec
+
 from .. import setup
 from ..application import TimeService
 from ..deskutils import Deskutils
@@ -135,11 +137,33 @@ class TestDependentRegistration(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("deskutils", bot.corridor.registered_dependents)
 
 
+class TestTimeCommandIsAnLLMTool(unittest.TestCase):
+    """`time_command` carries `@llm_tool(...)` directly -- this is
+    deskutils' own regression guard that the decoration is correct,
+    without needing corridor's adapter-layer scanner (that's covered by
+    corridor's own test suite)."""
+
+    def test_decoration_matches_the_commands_own_permission_tier(self) -> None:
+        spec = llm_tool_spec(Deskutils.time_command.callback)
+
+        assert spec is not None
+        self.assertEqual(spec.name, "deskutils_time")
+        self.assertEqual(spec.required_group, EMPLOYEE_KEY)
+        self.assertEqual(
+            spec.parameters,
+            {"type": "object", "properties": {"timezone": {"type": "string"}}, "required": []},
+        )
+
+
 class TestToolRegistration(unittest.IsolatedAsyncioTestCase):
-    """The `time` command's underlying TimeService is also registered as a
-    cross-cog LLM tool -- inert unless something (pico) reads corridor's
-    registry, but always registered/unregistered in step with the cog's own
-    lifecycle regardless of whether anything ever does."""
+    """`time_command`'s `@llm_tool` decoration is scanned and registered
+    into corridor's cross-cog tool registry at cog_load -- inert unless
+    something (pico) reads corridor's registry, but always
+    registered/unregistered in step with the cog's own lifecycle
+    regardless of whether anything ever does. What `register_llm_tools`
+    actually does with a decorated command is corridor's own concern
+    (corridor/tests/test_llm_tool_registration.py), not duplicated here --
+    this only verifies deskutils asks for it correctly."""
 
     async def test_cog_load_registers_the_time_tool(self) -> None:
         bot = FakeBot()
@@ -147,9 +171,7 @@ class TestToolRegistration(unittest.IsolatedAsyncioTestCase):
 
         await cog.cog_load()
 
-        self.assertIn("Deskutils", bot.corridor.registered_tools)
-        tool = bot.corridor.registered_tools["Deskutils"]
-        self.assertEqual(tool.name, "deskutils_time")  # type: ignore[attr-defined]
+        self.assertEqual(bot.corridor.registered_llm_tools_calls, [(cog, "Deskutils")])
 
     async def test_cog_unload_unregisters_the_time_tool(self) -> None:
         bot = FakeBot()
@@ -158,4 +180,4 @@ class TestToolRegistration(unittest.IsolatedAsyncioTestCase):
 
         await cog.cog_unload()
 
-        self.assertNotIn("Deskutils", bot.corridor.registered_tools)
+        self.assertIn("Deskutils", bot.corridor.unregistered_tool_owners)

@@ -278,7 +278,7 @@ class AgentPresenceChanged:
 # consumers" shape as the Pub/Sub bus above, applied to LLM tool-calling
 # (pico) instead of Discord-vocabulary events.
 
-ToolHandler = Callable[[Mapping[str, object]], Awaitable[Mapping[str, object]]]
+ToolHandler = Callable[[object, Mapping[str, object]], Awaitable[Mapping[str, object]]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -287,11 +287,18 @@ class RegisteredTool:
     tool registry. Deliberately framework-neutral, like every other type in
     this module: `parameters` is a plain OpenAI-style JSON Schema dict (no
     pydantic dependency required just to register one), and `handler` takes
-    and returns a plain JSON-object-shaped Mapping, not a typed model. A
-    consumer that wants richer typing (pico's ToolLoopService, which is
-    pydantic-based internally) adapts this shape itself at its own
-    boundary -- see pico/tools/cross_cog.py -- rather than this registry
-    picking a framework for every registrant.
+    an opaque per-invocation context (`ctx: object` -- typically the
+    triggering Discord `commands.Context`, untyped here so this module
+    never imports discord.py) plus a plain JSON-object-shaped Mapping of
+    arguments, and returns one. Most registrations come from
+    `@corridor.domain.llm_tool`-decorated commands (see
+    `corridor/adapters/llm_tool_registration.py`), whose handler simply
+    invokes the real command callback with that same `ctx` -- `register_tool`
+    itself stays the lower-level primitive for a tool that isn't a Discord
+    command at all. A consumer that wants richer typing (pico's
+    ToolLoopService, which is pydantic-based internally) adapts this shape
+    itself at its own boundary -- see pico/tools/cross_cog.py -- rather than
+    this registry picking a framework for every registrant.
 
     `required_group` gates which invoking member's LLM call is even offered
     this tool, using corridor's own permission-group vocabulary

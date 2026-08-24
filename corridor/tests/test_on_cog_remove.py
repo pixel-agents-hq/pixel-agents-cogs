@@ -18,7 +18,7 @@ from ..domain import RegisteredTool
 from .conftest import FakeBot
 
 
-async def _tool_handler(raw_input: object) -> dict[str, object]:
+async def _tool_handler(ctx: object, raw_input: object) -> dict[str, object]:
     return {}
 
 

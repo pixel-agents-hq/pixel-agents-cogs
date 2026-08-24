@@ -141,20 +141,26 @@ Discord is through a tool's own handler (currently only the reply tool).
 
 ## Cross-cog tools
 
-Any other cog can register one of its own commands as an LLM-callable tool
-in corridor's cross-cog tool registry (`corridor.register_tool`), and pico
-picks it up automatically -- no pico-specific integration code needed per
-registering cog. [`deskutils`](../deskutils) registers its `time` command
-this way, so if it's installed alongside pico, a user can just ask "what
-time is it?" instead of running `[p]deskutils time` by hand.
+Any other cog can turn one of its own commands into an LLM-callable tool by
+applying `@corridor.domain.llm_tool(...)` directly to the command's
+callback, and pico picks it up automatically -- no pico-specific
+integration code needed per registering cog.
+[`deskutils`](../deskutils) decorates its `time` command this way, so if
+it's installed alongside pico, a user can just ask "what time is it?"
+instead of running `[p]deskutils time` by hand -- and pico calling that
+tool *is* running the command: same permission check, same
+`corridor.send_reply` call, sent from inside the command itself, not
+composed by the LLM from returned data.
 
 Per-message, pico asks corridor for every tool the *triggering user*
 (`ctx.author`) is allowed to invoke (`corridor.list_tools_for`, filtered by
 the same permission groups a Discord command would check) and adapts each
 into pico's own tool-calling shape
 ([`tools/cross_cog.py`](tools/cross_cog.py)) alongside the native reply
-tool. If a registering cog isn't installed, corridor's registry is simply
-empty and pico behaves exactly as if this feature didn't exist. See
+tool, passing this same turn's `ctx` through so the invoked command runs
+exactly as it would from a real message. If a registering cog isn't
+installed, corridor's registry is simply empty and pico behaves exactly as
+if this feature didn't exist. See
 [`docs/corridor-tool-registry-design.md`](../docs/corridor-tool-registry-design.md)
 for the full design.
 

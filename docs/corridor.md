@@ -104,11 +104,13 @@ doesn't allow mixing V1 embeds and V2 components in the same message).
 ## Cross-cog LLM tool registry
 
 A third thing corridor centralizes, same shape as its Pub/Sub event bus:
-any cog can register a Discord-command-equivalent as an LLM-callable tool
-(`corridor.register_tool`), so `pico` (if loaded) can invoke it directly
-from its tool-calling loop instead of a user needing to run the command by
-hand — without `pico` and the registering cog ever depending on each
-other. See [`docs/corridor-tool-registry-design.md`](corridor-tool-registry-design.md)
+any cog can register a command as an LLM-callable tool — normally by
+applying `@corridor.domain.llm_tool(...)` directly to the command's
+callback and calling `corridor.register_llm_tools(self, owner=...)` from
+`cog_load` — so `pico` (if loaded) can invoke it directly from its
+tool-calling loop instead of a user needing to run the command by hand —
+without `pico` and the registering cog ever depending on each other. See
+[`docs/corridor-tool-registry-design.md`](corridor-tool-registry-design.md)
 for the full rationale, lifecycle, and the framework-neutral (plain
 JSON-Schema dict, not pydantic) contract this uses.
 
@@ -124,8 +126,8 @@ await corridor.send_reply(ctx, title="Count", description=str(snapshot.count))
 if not await corridor.require_permission(ctx, "keyholder"):
     return
 
-corridor.register_tool(my_registered_tool, owner="MyCog")  # in cog_load
-corridor.unregister_tool_owner("MyCog")                    # in cog_unload
+corridor.register_llm_tools(self, owner="MyCog")  # in cog_load, scans self for @llm_tool commands
+corridor.unregister_tool_owner("MyCog")           # in cog_unload
 ```
 
 `send_reply` picks text vs. embed per the guild's stored preference and

@@ -74,7 +74,7 @@ class TestMessageText(unittest.TestCase):
         self.assertEqual(_message_text(message), "First\nSecond")
 
 
-async def _handler(raw_input: dict) -> dict:
+async def _handler(ctx: object, raw_input: dict) -> dict:
     return {}
 
 
@@ -87,12 +87,16 @@ def _registered_tool(name: str = "a") -> RegisteredTool:
     )
 
 
+def _ctx(author: object = None) -> SimpleNamespace:
+    return SimpleNamespace(author=author if author is not None else SimpleNamespace())
+
+
 class TestCrossCogTools(unittest.IsolatedAsyncioTestCase):
     async def test_returns_one_adapted_tool_per_registered_entry(self) -> None:
         corridor = FakeCorridor()
         corridor.tools_for_member = [_registered_tool("a"), _registered_tool("b")]
 
-        tools = await _cross_cog_tools(corridor, SimpleNamespace())
+        tools = await _cross_cog_tools(corridor, _ctx())
 
         self.assertEqual({tool.name for tool in tools}, {"a", "b"})
         self.assertTrue(all(isinstance(tool, CrossCogTool) for tool in tools))
@@ -101,7 +105,7 @@ class TestCrossCogTools(unittest.IsolatedAsyncioTestCase):
         corridor = FakeCorridor()
         member = SimpleNamespace(id=1)
 
-        await _cross_cog_tools(corridor, member)
+        await _cross_cog_tools(corridor, _ctx(member))
 
         self.assertEqual(corridor.list_tools_for_calls, [member])
 
@@ -111,6 +115,6 @@ class TestCrossCogTools(unittest.IsolatedAsyncioTestCase):
         object.__setattr__(broken, "parameters", None)  # malformed: not mapping-shaped
         corridor.tools_for_member = [broken, _registered_tool("healthy")]
 
-        tools = await _cross_cog_tools(corridor, SimpleNamespace())
+        tools = await _cross_cog_tools(corridor, _ctx())
 
         self.assertEqual([tool.name for tool in tools], ["healthy"])

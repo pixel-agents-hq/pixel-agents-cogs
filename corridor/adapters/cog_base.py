@@ -32,6 +32,7 @@ from ..domain import (
 )
 from ..infrastructure import RedCorridorRepository
 from .api import BotIconResolver, BotOwnerRegistry, DiscordMemberRef, send_rendered_reply
+from .llm_tool_registration import collect_registered_tools
 
 log = logging.getLogger("red.corridor")
 
@@ -244,9 +245,22 @@ class CogBase:
         """Register `tool` for cross-cog discovery -- called from the
         registering cog's own `cog_load`. `owner` should be that cog's
         class name (matching `subscribe_event`'s convention), so
-        `on_cog_remove`'s defensive cleanup above lines up with it."""
+        `on_cog_remove`'s defensive cleanup above lines up with it.
+
+        The lower-level primitive: prefer `register_llm_tools` for a tool
+        that's really just a `@domain.llm_tool`-decorated command -- this
+        one is for a `RegisteredTool` built by hand (not backed by any
+        Discord command at all)."""
 
         self._tool_registry.register(tool, owner=owner)
+
+    def register_llm_tools(self, cog: object, *, owner: str) -> None:
+        """Scan `cog` for every command decorated with `@domain.llm_tool`
+        and register each one -- called from the registering cog's own
+        `cog_load`, same `owner` convention as `register_tool` above."""
+
+        for tool in collect_registered_tools(cog):
+            self.register_tool(tool, owner=owner)
 
     def unregister_tool_owner(self, owner: str) -> None:
         """Call from the registering cog's own `cog_unload` -- corridor

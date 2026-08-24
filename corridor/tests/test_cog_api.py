@@ -7,11 +7,11 @@ from __future__ import annotations
 import unittest
 
 from ..corridor import Corridor
-from ..domain import RegisteredTool, ReplyField, ReplyMode
+from ..domain import RegisteredTool, ReplyField, ReplyMode, llm_tool
 from .conftest import FakeBot, FakeContext, FakeGuild, FakeMember
 
 
-async def _tool_handler(raw_input: object) -> dict[str, object]:
+async def _tool_handler(ctx: object, raw_input: object) -> dict[str, object]:
     return {}
 
 
@@ -243,3 +243,24 @@ class TestCorridorApi(unittest.IsolatedAsyncioTestCase):
         allowed = await self.corridor.list_tools_for(member)
 
         self.assertEqual({tool.name for tool in allowed}, {"a"})
+
+    async def test_register_llm_tools_scans_a_cog_and_registers_its_decorated_commands(
+        self,
+    ) -> None:
+        class _StubCommand:
+            def __init__(self, callback: object) -> None:
+                self.callback = callback
+
+        @llm_tool(name="a_tool", description="Does a thing.", required_group="employee")
+        async def command(cog: object, ctx: object) -> None:
+            return None
+
+        fake_cog = type("FakeCog", (), {})()
+        fake_cog.some_command = _StubCommand(command)  # type: ignore[attr-defined]
+
+        self.corridor.register_llm_tools(fake_cog, owner="SomeCog")
+
+        self.assertEqual({tool.name for tool in self.corridor.list_tools()}, {"a_tool"})
+        member = FakeMember(2, self.guild)
+        allowed = await self.corridor.list_tools_for(member)
+        self.assertEqual({tool.name for tool in allowed}, {"a_tool"})

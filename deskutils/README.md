@@ -22,10 +22,12 @@ Nothing to configure -- deskutils has no persistent settings.
 |---|---|
 | `[p]deskutils time [timezone]` | Show the current time: Discord's native timestamp markup (auto-localized per viewer) plus explicit UTC. Pass an IANA `timezone` (e.g. `America/New_York`) to also show it explicitly in that zone. Requires the `employee` permission tier (unrestricted by default). |
 
-The `time` command's logic is also registered as an LLM-callable tool in
-corridor's cross-cog tool registry, so if [`pico`](../pico) is installed,
-loaded, and enabled for a guild, a user can just ask it "what time is it?"
-in chat instead of running the command by hand -- see
+`time_command` also carries `@corridor.domain.llm_tool(...)` directly, so
+if [`pico`](../pico) is installed, loaded, and enabled for a guild, a user
+can just ask it "what time is it?" in chat instead of running the command
+by hand -- pico calls the exact same command, which replies the exact same
+way (same permission check, same embed) whether triggered by prefix or by
+an LLM tool call. See
 [`docs/corridor-tool-registry-design.md`](../docs/corridor-tool-registry-design.md).
 Nothing to configure for this either: registration happens automatically at
 `cog_load` and is inert if pico isn't loaded.

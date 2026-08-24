@@ -36,7 +36,8 @@ class FakeCorridor:
         self.replies: list[dict[str, Any]] = []
         self.permission_checks: list[object] = []
         self.registered_dependents: set[str] = set()
-        self.registered_tools: dict[str, object] = {}
+        self.registered_llm_tools_calls: list[tuple[object, str]] = []
+        self.unregistered_tool_owners: list[str] = []
 
     def register_dependent(self, extension_name: str) -> None:
         self.registered_dependents.add(extension_name)
@@ -44,11 +45,11 @@ class FakeCorridor:
     def unregister_dependent(self, extension_name: str) -> None:
         self.registered_dependents.discard(extension_name)
 
-    def register_tool(self, tool: object, *, owner: str) -> None:
-        self.registered_tools[owner] = tool
+    def register_llm_tools(self, cog: object, *, owner: str) -> None:
+        self.registered_llm_tools_calls.append((cog, owner))
 
     def unregister_tool_owner(self, owner: str) -> None:
-        self.registered_tools.pop(owner, None)
+        self.unregistered_tool_owners.append(owner)
 
     async def send_reply(
         self,

@@ -47,10 +47,16 @@ def _passthrough_input_model(tool_name: str, parameters: dict[str, Any]) -> type
 
 
 class CrossCogTool:
-    """Wraps one corridor `RegisteredTool` as a pico `ToolSpec`."""
+    """Wraps one corridor `RegisteredTool` as a pico `ToolSpec`, closing
+    over the triggering turn's `ctx` -- most registered tools are just
+    `@llm_tool`-decorated commands (see
+    `corridor/adapters/llm_tool_registration.py`), whose handler invokes
+    the real command callback with this same `ctx`, exactly as if a human
+    had typed the command in this same channel."""
 
-    def __init__(self, tool: RegisteredTool) -> None:
+    def __init__(self, tool: RegisteredTool, ctx: object) -> None:
         self._tool = tool
+        self._ctx = ctx
         self.name = tool.name
         self.description = tool.description
         # Eager, not lazy inside the Input property: a malformed
@@ -71,7 +77,7 @@ class CrossCogTool:
         return _PassthroughOutput
 
     async def handler(self, raw_input: BaseModel) -> BaseModel:
-        result = await self._tool.handler(raw_input.model_dump())
+        result = await self._tool.handler(self._ctx, raw_input.model_dump())
         return _PassthroughOutput.model_validate(dict(result))
 
 

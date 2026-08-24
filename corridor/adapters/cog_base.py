@@ -14,17 +14,25 @@ import discord
 from redbot.core import commands
 from redbot.core.bot import Red
 
-from ..application import EventBusService, PermissionService, ReplyContent, ReplyService
+from ..application import (
+    EventBusService,
+    PermissionService,
+    ReplyContent,
+    ReplyService,
+    ToolRegistryService,
+)
 from ..domain import (
     GuildSettings,
     IconPreference,
     PermissionGroupDef,
+    RegisteredTool,
     RenderedReply,
     ReplyField,
     ReplyMode,
 )
 from ..infrastructure import RedCorridorRepository
 from .api import BotIconResolver, BotOwnerRegistry, DiscordMemberRef, send_rendered_reply
+from .llm_tool_registration import collect_registered_tools
 
 log = logging.getLogger("red.corridor")
 
@@ -44,6 +52,7 @@ class CogBase:
         self._permission_service = PermissionService(BotOwnerRegistry(bot))
         self._reply_service = ReplyService(BotIconResolver(bot))
         self._event_bus = EventBusService()
+        self._tool_registry = ToolRegistryService()
         self._dependents: set[str] = set()
 
     async def cog_load(self) -> None:
@@ -228,6 +237,59 @@ class CogBase:
         in the opposite (corridor-unloads-first) direction."""
 
         self._event_bus.unsubscribe_owner(cog.qualified_name)
+        self._tool_registry.unregister_owner(cog.qualified_name)
+
+    # --- Cross-cog LLM tool registry -------------------------------------------
+
+    def register_tool(self, tool: RegisteredTool, *, owner: str) -> None:
+        """Register `tool` for cross-cog discovery -- called from the
+        registering cog's own `cog_load`. `owner` should be that cog's
+        class name (matching `subscribe_event`'s convention), so
+        `on_cog_remove`'s defensive cleanup above lines up with it.
+
+        The lower-level primitive: prefer `register_llm_tools` for a tool
+        that's really just a `@domain.llm_tool`-decorated command -- this
+        one is for a `RegisteredTool` built by hand (not backed by any
+        Discord command at all)."""
+
+        self._tool_registry.register(tool, owner=owner)
+
+    def register_llm_tools(self, cog: object, *, owner: str) -> None:
+        """Scan `cog` for every command decorated with `@domain.llm_tool`
+        and register each one -- called from the registering cog's own
+        `cog_load`, same `owner` convention as `register_tool` above."""
+
+        for tool in collect_registered_tools(cog):
+            self.register_tool(tool, owner=owner)
+
+    def unregister_tool_owner(self, owner: str) -> None:
+        """Call from the registering cog's own `cog_unload` -- corridor
+        does not track/cascade a registrant's lifecycle the way
+        `register_dependent` does the reverse direction for a dependent
+        cog."""
+
+        self._tool_registry.unregister_owner(owner)
+
+    def list_tools(self) -> tuple[RegisteredTool, ...]:
+        """Every registered tool, unfiltered by permission. Prefer
+        `list_tools_for` when the caller has an invoking member to check
+        against."""
+
+        return self._tool_registry.list_tools()
+
+    async def list_tools_for(self, member: discord.Member) -> tuple[RegisteredTool, ...]:
+        """Every registered tool `member` is allowed to invoke, per
+        `capabilities_satisfy` -- the one call a consumer (pico's tool loop)
+        needs to build an LLM-visible tool list that already respects
+        corridor's permission groups."""
+
+        allowed: list[RegisteredTool] = []
+        for tool in self._tool_registry.list_tools():
+            if tool.required_group is None or await self.capabilities_satisfy(
+                member, tool.required_group
+            ):
+                allowed.append(tool)
+        return tuple(allowed)
 
     # --- settings mutation, used by settings_ui.py and [p]corridor commands ---
 

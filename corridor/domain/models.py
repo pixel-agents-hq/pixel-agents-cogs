@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Literal
@@ -265,6 +266,58 @@ class AgentPresenceChanged:
     display_name: str
     status: Literal["online", "idle", "dnd", "offline"]
     activities: tuple[AgentActivity, ...] = ()
+
+
+# --- corridor's cross-cog LLM tool registry -----------------------------
+#
+# A framework-neutral extension point: any cog can register()/list_tools()
+# through ToolRegistryService (corridor/application/tool_registry_service.py)
+# without either side needing to know the other exists. See
+# docs/corridor-tool-registry-design.md for the full rationale -- in short,
+# this is the same "optional cross-cog capability, silent no-op with zero
+# consumers" shape as the Pub/Sub bus above, applied to LLM tool-calling
+# (pico) instead of Discord-vocabulary events.
+
+ToolHandler = Callable[[object, Mapping[str, object]], Awaitable[Mapping[str, object]]]
+
+
+@dataclass(frozen=True, slots=True)
+class RegisteredTool:
+    """One LLM-callable tool another cog has registered into corridor's
+    tool registry. Deliberately framework-neutral, like every other type in
+    this module: `parameters` is a plain OpenAI-style JSON Schema dict (no
+    pydantic dependency required just to register one), and `handler` takes
+    an opaque per-invocation context (`ctx: object` -- typically the
+    triggering Discord `commands.Context`, untyped here so this module
+    never imports discord.py) plus a plain JSON-object-shaped Mapping of
+    arguments, and returns one. Most registrations come from
+    `@corridor.domain.llm_tool`-decorated commands (see
+    `corridor/adapters/llm_tool_registration.py`), whose handler invokes
+    the real command callback with that same `ctx` and forwards a mapping
+    it returns (or supplies a status acknowledgement when it returns
+    `None`) -- `register_tool` itself stays the lower-level primitive for a
+    tool that isn't a Discord command at all. A consumer that wants richer
+    typing (pico's ToolLoopService, which is pydantic-based internally)
+    adapts this shape itself at its own boundary -- see
+    pico/tools/cross_cog.py -- rather than this registry picking a
+    framework for every registrant.
+
+    `required_group` gates which invoking member's LLM call is even offered
+    this tool, using corridor's own permission-group vocabulary
+    (`PermissionGroupDef.key` / `EMPLOYEE_KEY` / ...) -- resolved the same
+    way `require_permission` resolves it for a Discord command. `None`
+    means no gate beyond whatever the handler itself may choose to
+    enforce.
+
+    Not hashable in practice (`parameters`/`handler` aren't) -- store and
+    look these up by `name`, never in a set or as a dict key.
+    """
+
+    name: str
+    description: str
+    parameters: Mapping[str, object]
+    handler: ToolHandler
+    required_group: str | None = None
 
 
 # The closed set of classes a cog actually publish()es/subscribe()s to.

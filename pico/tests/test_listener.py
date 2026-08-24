@@ -14,7 +14,11 @@ from __future__ import annotations
 import unittest
 from types import SimpleNamespace
 
-from ..adapters.listener import _message_text
+from corridor.domain import RegisteredTool
+
+from ..adapters.listener import _cross_cog_tools, _message_text
+from ..tools.cross_cog import CrossCogTool
+from .conftest import FakeCorridor
 
 
 def _field(name: str, value: str) -> SimpleNamespace:
@@ -68,3 +72,49 @@ class TestMessageText(unittest.TestCase):
         message = _message(embeds=[_embed(title="First"), _embed(title="Second")])
 
         self.assertEqual(_message_text(message), "First\nSecond")
+
+
+async def _handler(ctx: object, raw_input: dict) -> dict:
+    return {}
+
+
+def _registered_tool(name: str = "a") -> RegisteredTool:
+    return RegisteredTool(
+        name=name,
+        description="A tool.",
+        parameters={"type": "object", "properties": {}},
+        handler=_handler,
+    )
+
+
+def _ctx(author: object = None) -> SimpleNamespace:
+    return SimpleNamespace(author=author if author is not None else SimpleNamespace())
+
+
+class TestCrossCogTools(unittest.IsolatedAsyncioTestCase):
+    async def test_returns_one_adapted_tool_per_registered_entry(self) -> None:
+        corridor = FakeCorridor()
+        corridor.tools_for_member = [_registered_tool("a"), _registered_tool("b")]
+
+        tools = await _cross_cog_tools(corridor, _ctx())
+
+        self.assertEqual({tool.name for tool in tools}, {"a", "b"})
+        self.assertTrue(all(isinstance(tool, CrossCogTool) for tool in tools))
+
+    async def test_filters_through_corridors_permission_check(self) -> None:
+        corridor = FakeCorridor()
+        member = SimpleNamespace(id=1)
+
+        await _cross_cog_tools(corridor, _ctx(member))
+
+        self.assertEqual(corridor.list_tools_for_calls, [member])
+
+    async def test_a_tool_that_fails_to_adapt_is_skipped_without_dropping_others(self) -> None:
+        corridor = FakeCorridor()
+        broken = _registered_tool("broken")
+        object.__setattr__(broken, "parameters", None)  # malformed: not mapping-shaped
+        corridor.tools_for_member = [broken, _registered_tool("healthy")]
+
+        tools = await _cross_cog_tools(corridor, _ctx())
+
+        self.assertEqual([tool.name for tool in tools], ["healthy"])

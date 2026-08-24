@@ -58,8 +58,16 @@ class FakeCorridor:
         title: str | None = None,
         description: str | None = None,
         content: str | None = None,
+        fields: object = (),
     ) -> None:
-        self.replies.append({"title": title, "description": description, "content": content})
+        self.replies.append(
+            {
+                "title": title,
+                "description": description,
+                "content": content,
+                "fields": list(fields),  # type: ignore[call-overload]
+            }
+        )
 
     async def require_permission(self, ctx: object, group: object) -> bool:
         self.permission_checks.append(group)

@@ -57,12 +57,18 @@ class FakeCorridor:
         self.replies: list[dict[str, Any]] = []
         self.registered_dependents: set[str] = set()
         self._next_message_id = 1
+        self.tools_for_member: list[Any] = []
+        self.list_tools_for_calls: list[Any] = []
 
     def register_dependent(self, extension_name: str) -> None:
         self.registered_dependents.add(extension_name)
 
     def unregister_dependent(self, extension_name: str) -> None:
         self.registered_dependents.discard(extension_name)
+
+    async def list_tools_for(self, member: object) -> list[Any]:
+        self.list_tools_for_calls.append(member)
+        return self.tools_for_member
 
     async def send_reply(
         self,

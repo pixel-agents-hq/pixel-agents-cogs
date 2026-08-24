@@ -14,7 +14,21 @@ from dataclasses import dataclass
 from types import SimpleNamespace
 
 from ..corridor import Corridor
+from ..domain import RegisteredTool
 from .conftest import FakeBot
+
+
+async def _tool_handler(ctx: object, raw_input: object) -> dict[str, object]:
+    return {}
+
+
+def _tool(name: str) -> RegisteredTool:
+    return RegisteredTool(
+        name=name,
+        description="A tool.",
+        parameters={"type": "object", "properties": {}},
+        handler=_tool_handler,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,6 +77,20 @@ class TestOnCogRemove(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(floorplan_received, [])
         self.assertEqual(pico_received, [_Ping("hi")])
+
+    async def test_removed_owners_registered_tools_are_dropped(self) -> None:
+        self.corridor.register_tool(_tool("a"), owner="Deskutils")
+
+        await self.corridor.on_cog_remove(SimpleNamespace(qualified_name="Deskutils"))
+
+        self.assertEqual(self.corridor.list_tools(), ())
+
+    async def test_removal_of_an_unrelated_cog_leaves_other_owners_tools_registered(self) -> None:
+        self.corridor.register_tool(_tool("a"), owner="Deskutils")
+
+        await self.corridor.on_cog_remove(SimpleNamespace(qualified_name="SomeOtherCog"))
+
+        self.assertEqual({tool.name for tool in self.corridor.list_tools()}, {"a"})
 
     async def test_does_not_affect_the_dependent_cascade(self) -> None:
         """This is additive to, not a replacement for, register_dependent's

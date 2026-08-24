@@ -1,3 +1,4 @@
+from .llm_tools import LLMToolSpec, ToolDescription, llm_tool, llm_tool_spec
 from .models import (
     EMPLOYEE_KEY,
     OWNER_KEY,
@@ -17,14 +18,17 @@ from .models import (
     MemberCapabilities,
     PermissionGroupDef,
     PermissionSettings,
+    RegisteredTool,
     RenderedReply,
     ReplyField,
     ReplyMode,
     ReplyPreferences,
+    ToolHandler,
 )
 
 __all__ = [
     "EMPLOYEE_KEY",
+    "LLMToolSpec",
     "OWNER_KEY",
     "RESERVED_GROUP_KEYS",
     "AgentActivity",
@@ -42,8 +46,13 @@ __all__ = [
     "MemberCapabilities",
     "PermissionGroupDef",
     "PermissionSettings",
+    "RegisteredTool",
     "RenderedReply",
     "ReplyField",
     "ReplyMode",
     "ReplyPreferences",
+    "ToolHandler",
+    "ToolDescription",
+    "llm_tool",
+    "llm_tool_spec",
 ]

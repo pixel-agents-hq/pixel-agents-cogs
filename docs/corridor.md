@@ -101,6 +101,19 @@ is unrelated to this — it's Discord's interactive-UI system, used only for
 corridor's *settings panel*, not for the embeds a reply renders as (Discord
 doesn't allow mixing V1 embeds and V2 components in the same message).
 
+## Cross-cog LLM tool registry
+
+A third thing corridor centralizes, same shape as its Pub/Sub event bus:
+any cog can register a command as an LLM-callable tool — normally by
+applying `@corridor.domain.llm_tool(...)` directly to the command's
+callback and calling `corridor.register_llm_tools(self, owner=...)` from
+`cog_load` — so `pico` (if loaded) can invoke it directly from its
+tool-calling loop instead of a user needing to run the command by hand —
+without `pico` and the registering cog ever depending on each other. See
+[`docs/corridor-tool-registry-design.md`](corridor-tool-registry-design.md)
+for the full rationale, lifecycle, and the framework-neutral (plain
+JSON-Schema dict, not pydantic) contract this uses.
+
 ## What a dependent cog calls
 
 Everything a generated cog needs is exposed on the loaded `Corridor` Cog
@@ -112,6 +125,9 @@ await corridor.send_reply(ctx, title="Count", description=str(snapshot.count))
 
 if not await corridor.require_permission(ctx, "keyholder"):
     return
+
+corridor.register_llm_tools(self, owner="MyCog")  # in cog_load, scans self for @llm_tool commands
+corridor.unregister_tool_owner("MyCog")           # in cog_unload
 ```
 
 `send_reply` picks text vs. embed per the guild's stored preference and
@@ -159,8 +175,9 @@ ephemeral slash-command response, a deferred followup, ...) — something
 instead: same `ReplyMode` rendering, returned as a `RenderedReply` DTO
 instead of sent, so the caller does its own send. floorplan's `ReplyMixin`
 ([`floorplan/adapters/replies.py`](../floorplan/adapters/replies.py)) is
-the reference example. Every command handler across corridor/floorplan/pixelagents/
-toolbox is checked for this by
+the reference example. Every command handler across
+corridor/deskutils/floorplan/pico/pixelagents/testbench/toolbox is checked
+for this by
 [`contracts/discord_replies/lint_reply_channel.py`](../contracts/discord_replies/lint_reply_channel.py)
 (run in CI by `cogs-quality.yml`), which fails on any raw
 `ctx.send()`/`interaction.response.send_message()`/`interaction.followup.send()`

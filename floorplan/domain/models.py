@@ -34,6 +34,7 @@ class GuildSettings:
     guild_id: SnowflakeId
     enabled: bool
     include_bots: bool
+    private: bool = False
 
 
 @dataclass(frozen=True, slots=True)

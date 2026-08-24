@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from copy import deepcopy
 from math import isfinite
 from typing import Any, Protocol, TypeAlias, TypeVar, cast
@@ -23,6 +23,12 @@ DEFAULT_PIXEL_INDEX_WEB_URL = "https://pixel-index.vercel.app"
 # These dictionaries are the canonical registration contract. Config keys,
 # scopes, and defaults must remain stable because existing installations have
 # data stored under this identifier.
+#
+# `layout`/`seats` used to live here (one shared office for every guild).
+# Issue #4 split each guild into its own independently-viewable "universe",
+# so they moved to GUILD_DEFAULTS below -- the keys stay registered here,
+# unwritten from now on, purely so `_migrate_legacy_global_layout_and_seats`
+# can still read a pre-split installation's shared layout/seats exactly once.
 GLOBAL_DEFAULTS: dict[str, object] = {
     "ws_host": "0.0.0.0",
     "ws_port": 3210,
@@ -33,10 +39,19 @@ GLOBAL_DEFAULTS: dict[str, object] = {
     "seats": {},
     "pixel_index_api_url": DEFAULT_PIXEL_INDEX_API_URL,
     "pixel_index_web_url": DEFAULT_PIXEL_INDEX_WEB_URL,
+    "layout_migrated_to_guild_scope": False,
+    # A genuine agent (e.g. architect) has no guild scope at all -- its seat
+    # assignment lives here, not in any one guild's own `seats`, since it
+    # renders on every connected browser regardless of which guild's office
+    # is open. See docs/office-agent-identity-design.md.
+    "genuine_agent_seats": {},
 }
 GUILD_DEFAULTS: dict[str, object] = {
     "enabled": False,
     "include_bots": True,
+    "private": False,
+    "layout": None,
+    "seats": {},
 }
 
 JsonObject: TypeAlias = dict[str, Any]
@@ -55,7 +70,7 @@ class RedSettingsRepository:
 
     def __init__(self, config: Any) -> None:
         self._config = config
-        self._seat_lock = asyncio.Lock()
+        self._seat_locks: dict[int, asyncio.Lock] = {}
 
     @classmethod
     def create(cls, cog: object) -> RedSettingsRepository:
@@ -104,6 +119,7 @@ class RedSettingsRepository:
             guild_id=guild_id,
             enabled=cast(bool, await guild.enabled()),
             include_bots=cast(bool, await guild.include_bots()),
+            private=cast(bool, await guild.private()),
         )
 
     def _guild_group(self, guild_ref: int | GuildReference) -> tuple[int, Any]:
@@ -122,6 +138,10 @@ class RedSettingsRepository:
     async def guild_include_bots(self, guild_ref: int | GuildReference) -> bool:
         _, guild = self._guild_group(guild_ref)
         return cast(bool, await guild.include_bots())
+
+    async def guild_private(self, guild_ref: int | GuildReference) -> bool:
+        _, guild = self._guild_group(guild_ref)
+        return cast(bool, await guild.private())
 
     async def ws_host(self) -> str:
         return cast(str, await self._config.ws_host())
@@ -144,11 +164,23 @@ class RedSettingsRepository:
     async def pixel_index_web_url(self) -> str:
         return cast(str, await self._config.pixel_index_web_url())
 
-    async def layout(self) -> JsonObject | None:
+    async def guild_layout(self, guild_id: int) -> JsonObject | None:
+        value = cast(JsonObject | None, await self._config.guild_from_id(guild_id).layout())
+        return deepcopy(value)
+
+    async def guild_seats(self, guild_id: int) -> SeatRecords:
+        value = cast(SeatRecords | None, await self._config.guild_from_id(guild_id).seats())
+        return deepcopy(value or {})
+
+    async def _legacy_global_layout(self) -> JsonObject | None:
+        """Read-only: the pre-issue-#4 shared layout, for one-time migration."""
+
         value = cast(JsonObject | None, await self._config.layout())
         return deepcopy(value)
 
-    async def seats(self) -> SeatRecords:
+    async def _legacy_global_seats(self) -> SeatRecords:
+        """Read-only: the pre-issue-#4 shared seats, for one-time migration."""
+
         value = cast(SeatRecords | None, await self._config.seats())
         return deepcopy(value or {})
 
@@ -192,17 +224,74 @@ class RedSettingsRepository:
             raise ValueError("Include bots setting must be a boolean.")
         await self._config.guild_from_id(guild_id).include_bots.set(value)
 
-    async def set_layout(self, layout: JsonObject | None) -> None:
-        await self._config.layout.set(deepcopy(layout))
+    async def set_guild_private(self, guild_id: int, value: bool) -> None:
+        if not isinstance(value, bool):
+            raise ValueError("Private setting must be a boolean.")
+        await self._config.guild_from_id(guild_id).private.set(value)
 
-    async def mutate_seats(
+    async def set_guild_layout(self, guild_id: int, layout: JsonObject | None) -> None:
+        await self._config.guild_from_id(guild_id).layout.set(deepcopy(layout))
+
+    def _seat_lock(self, guild_id: int) -> asyncio.Lock:
+        lock = self._seat_locks.get(guild_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._seat_locks[guild_id] = lock
+        return lock
+
+    async def mutate_guild_seats(
         self,
+        guild_id: int,
         mutation: Callable[[SeatRecords], MutationResult],
     ) -> MutationResult:
         """Atomically apply a synchronous read-modify-write seat mutation."""
 
-        async with self._seat_lock:
-            seats = await self.seats()
+        async with self._seat_lock(guild_id):
+            seats = await self.guild_seats(guild_id)
             result = mutation(seats)
-            await self._config.seats.set(seats)
+            await self._config.guild_from_id(guild_id).seats.set(seats)
             return result
+
+    # Sentinel guild_id (real Discord snowflakes are always positive) --
+    # the genuine-agent seat store shares the same lock machinery as
+    # per-guild seats without needing a second dict of locks.
+    _GENUINE_AGENT_SEAT_LOCK_KEY = 0
+
+    async def genuine_agent_seats(self) -> SeatRecords:
+        value = cast(SeatRecords | None, await self._config.genuine_agent_seats())
+        return deepcopy(value or {})
+
+    async def mutate_genuine_agent_seats(
+        self,
+        mutation: Callable[[SeatRecords], MutationResult],
+    ) -> MutationResult:
+        """Atomically apply a synchronous read-modify-write seat mutation
+        for genuine agents (see GLOBAL_DEFAULTS' `genuine_agent_seats`)."""
+
+        async with self._seat_lock(self._GENUINE_AGENT_SEAT_LOCK_KEY):
+            seats = await self.genuine_agent_seats()
+            result = mutation(seats)
+            await self._config.genuine_agent_seats.set(seats)
+            return result
+
+    async def migrate_legacy_global_layout_and_seats(self, guild_ids: Sequence[int]) -> None:
+        """One-time: seed every given guild's own layout/seats from the
+        pre-issue-#4 shared global record, idempotent via a Config flag.
+
+        Only guilds that don't already have their own layout are seeded --
+        a guild that was never enabled before the split has nothing to
+        inherit, and a guild already migrated (or given its own layout
+        since) must never be clobbered by re-running this.
+        """
+
+        if cast(bool, await self._config.layout_migrated_to_guild_scope()):
+            return
+        legacy_layout = await self._legacy_global_layout()
+        legacy_seats = await self._legacy_global_seats()
+        if legacy_layout is not None:
+            for guild_id in guild_ids:
+                guild = self._config.guild_from_id(guild_id)
+                if cast(JsonObject | None, await guild.layout()) is None:
+                    await guild.layout.set(deepcopy(legacy_layout))
+                    await guild.seats.set(deepcopy(legacy_seats))
+        await self._config.layout_migrated_to_guild_scope.set(True)

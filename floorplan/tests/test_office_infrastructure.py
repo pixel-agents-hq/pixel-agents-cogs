@@ -89,7 +89,7 @@ class TestClientHub(unittest.IsolatedAsyncioTestCase):
         hub.add(anonymous, is_editor=False)
         hub.add(allowed, user_id=1, is_editor=False)
         hub.add(denied, user_id=2, is_editor=True)
-        authorize = AsyncMock(side_effect=lambda user_id: user_id == 1)
+        authorize = AsyncMock(side_effect=lambda user_id, guild_id: user_id == 1)
 
         await hub.reauthorize(authorize)
 
@@ -112,15 +112,17 @@ class TestClientHub(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(hub.clients, {})
 
 
-def make_server(*, handler=None, authorize=None, tickets=None):
+def make_server(*, handler=None, authorize=None, can_view=None, tickets=None):
     hub = ClientHub()
     application_handler = handler or AsyncMock()
     authorizer = authorize or AsyncMock(return_value=False)
+    viewer_check = can_view or AsyncMock(return_value=True)
     ticket_store = tickets or TicketStore(token_factory=lambda: "ticket")
     server = WebSocketServer(
         clients=hub,
         tickets=ticket_store,
         authorize=authorizer,
+        can_view=viewer_check,
         handle_application_message=application_handler,
         health_snapshot=lambda: {"status": "ok", "clients": hub.client_count},
     )
@@ -180,7 +182,7 @@ class TestWebSocketServer(unittest.IsolatedAsyncioTestCase):
         ticket = tickets.mint(888)
         server = None
 
-        async def handler(_socket, _message):
+        async def handler(_socket, _message, _guild_id):
             seen.append(server.clients.get(_socket))
 
         server, _, _, _, _ = make_server(
@@ -189,14 +191,53 @@ class TestWebSocketServer(unittest.IsolatedAsyncioTestCase):
             tickets=tickets,
         )
         request = MagicMock()
-        request.query = {"ticket": ticket}
+        request.query = {"ticket": ticket, "guild": "100"}
 
         with patch("floorplan.infrastructure.websocket.web.WebSocketResponse", return_value=socket):
             await server.handle_ws(request)
 
         self.assertEqual(len(seen), 1)
         self.assertEqual(seen[0].user_id, 888)
+        self.assertEqual(seen[0].guild_id, 100)
         self.assertTrue(seen[0].is_editor)
+
+    async def test_connect_without_a_guild_query_param_is_rejected_before_upgrade(self) -> None:
+        server, _, _, _, _ = make_server()
+        request = MagicMock()
+        request.query = {}
+
+        response = await server.handle_ws(request)
+
+        self.assertEqual(response.status, 403)
+
+    async def test_connect_denied_by_can_view_never_upgrades_the_socket(self) -> None:
+        can_view = AsyncMock(return_value=False)
+        server, hub, _, _, _ = make_server(can_view=can_view)
+        request = MagicMock()
+        request.query = {"guild": "200"}
+
+        response = await server.handle_ws(request)
+
+        self.assertEqual(response.status, 403)
+        self.assertEqual(hub.client_count, 0)
+        can_view.assert_awaited_once_with(None, 200)
+
+    async def test_connect_allowed_by_can_view_upgrades_and_tags_the_guild(self) -> None:
+        seen = []
+        socket = _PreparedSocket([_FakeWSMessage(json.dumps({"type": "webviewReady"}))])
+
+        async def handler(_socket, _message, _guild_id):
+            seen.append(hub.clients.get(_socket))
+
+        server, hub, _, _, _ = make_server(handler=handler, can_view=AsyncMock(return_value=True))
+        request = MagicMock()
+        request.query = {"guild": "100"}
+
+        with patch("floorplan.infrastructure.websocket.web.WebSocketResponse", return_value=socket):
+            await server.handle_ws(request)
+
+        self.assertEqual(len(seen), 1)
+        self.assertEqual(seen[0].guild_id, 100)
 
     async def test_viewer_mutations_are_denied_before_delegation(self) -> None:
         server, hub, handler, _, _ = make_server()

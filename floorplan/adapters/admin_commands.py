@@ -52,7 +52,7 @@ class AdminCommandsMixin(PixelAgentsBase):
         await self._sync_webview_assets()
         global_settings = await self._settings_service.global_settings()
         guild_settings = await self._settings_service.guild_settings(guild.id)
-        tracked = sum(guild_id == guild.id for guild_id, _ in self._agents)
+        tracked = len(self._universes.get_or_create(guild.id).office.active_agents)
 
         def yn(value: bool) -> str:
             return "✅" if value else "🛑"
@@ -76,6 +76,7 @@ class AdminCommandsMixin(PixelAgentsBase):
             ReplyField("Msg Tool Clear Delay", f"{global_settings.message_tool_clear_delay}s"),
             ReplyField("Guild Enabled", yn(guild_settings.enabled)),
             ReplyField("Include Bots", yn(guild_settings.include_bots)),
+            ReplyField("Private", yn(guild_settings.private)),
             ReplyField("Tracked Agents", str(tracked)),
             ReplyField("Broadcast Rich Presence", yn(global_settings.broadcast_rich_presence)),
             ReplyField("Broadcast Messages", yn(global_settings.broadcast_messages)),
@@ -90,9 +91,7 @@ class AdminCommandsMixin(PixelAgentsBase):
             client_count=self._client_hub.client_count,
             editor_count=self._client_hub.editor_count,
             assets_loaded=bool(self._assets.get("characters")),
-            tracked_agents=sum(
-                1 for agent_guild_id, _ in self._agents if agent_guild_id == guild_id
-            ),
+            tracked_agents=len(self._universes.get_or_create(guild_id).office.active_agents),
         )
 
     @floorplan_group.command(name="settings")
@@ -196,6 +195,19 @@ class AdminCommandsMixin(PixelAgentsBase):
         await self._reply(ctx, f"include_bots set to `{value}`. Running sync…")
         if result is not None:
             await self._reply(ctx, result)
+
+    @floorplan_group.command(name="private")
+    @commands.admin_or_permissions(manage_guild=True)
+    @app_commands.describe(value="Whether this guild's office is private (members only) or public")
+    async def cmd_private(self, ctx: commands.Context, value: bool) -> None:
+        """Set whether this guild's office universe is private or public."""
+
+        guild = self._guild(ctx)
+        await self._settings_service.set_private(guild.id, value)
+        await self._reply(
+            ctx,
+            f"This server's office is now `{'private' if value else 'public'}`.",
+        )
 
     @floorplan_group.command(name="sync")
     @commands.admin_or_permissions(administrator=True)

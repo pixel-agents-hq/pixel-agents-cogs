@@ -297,7 +297,14 @@ class LayoutDetailView(discord.ui.LayoutView):  # type: ignore[misc, unused-igno
         self.add_item(container)
 
     async def _on_load(self, interaction: discord.Interaction) -> None:
-        result = await self.catalogue.load_layout(interaction.user.id, self.detail.slug)
+        if interaction.guild_id is None:
+            await interaction.response.send_message(
+                "Loading a layout requires a server.", ephemeral=True
+            )
+            return
+        result = await self.catalogue.load_layout(
+            interaction.user.id, interaction.guild_id, self.detail.slug
+        )
         if result.error is not None:
             message = result.error.message
         else:

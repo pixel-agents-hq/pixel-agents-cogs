@@ -21,8 +21,9 @@ from floorplan.contracts.websocket import (
 from .client_hub import Authorize, ClientHub
 from .tickets import TicketStore
 
-ApplicationMessageHandler = Callable[[web.WebSocketResponse, ClientMessage], Awaitable[None]]
+ApplicationMessageHandler = Callable[[web.WebSocketResponse, ClientMessage, int], Awaitable[None]]
 HealthSnapshot = Callable[[], Mapping[str, object]]
+CanView = Callable[[int | None, int], Awaitable[bool]]
 
 _EDITOR_MESSAGE_TYPES = (SaveLayoutMessage, SaveAgentSeatsMessage, ImportLayoutMessage)
 
@@ -36,6 +37,7 @@ class WebSocketServer:
         clients: ClientHub,
         tickets: TicketStore,
         authorize: Authorize,
+        can_view: CanView,
         handle_application_message: ApplicationMessageHandler,
         health_snapshot: HealthSnapshot,
         logger: logging.Logger | None = None,
@@ -43,6 +45,7 @@ class WebSocketServer:
         self.clients = clients
         self.tickets = tickets
         self._authorize = authorize
+        self._can_view = can_view
         self._handle_application_message = handle_application_message
         self._health_snapshot = health_snapshot
         self._log = logger or logging.getLogger(__name__)
@@ -97,16 +100,35 @@ class WebSocketServer:
         del request
         return web.json_response(dict(self._health_snapshot()))
 
-    async def handle_ws(self, request: web.Request) -> web.WebSocketResponse:
-        socket = web.WebSocketResponse(heartbeat=30.0, max_msg_size=0)
-        await socket.prepare(request)
+    @staticmethod
+    def _parse_guild(raw: str | None) -> int | None:
+        if raw is None:
+            return None
+        try:
+            return int(raw)
+        except ValueError:
+            return None
+
+    async def handle_ws(self, request: web.Request) -> web.StreamResponse:
+        guild_id = self._parse_guild(request.query.get("guild"))
+        if guild_id is None:
+            return web.Response(status=403, text="Missing or invalid guild.")
 
         ticket = request.query.get("ticket", "")
         user_id = self.tickets.resolve(ticket) if ticket else None
-        is_editor = await self._authorize_safely(user_id) if user_id is not None else False
-        self.clients.add(socket, user_id=user_id, is_editor=is_editor)
+        if not await self._can_view_safely(user_id, guild_id):
+            return web.Response(status=403, text="Not authorized to view this office.")
+
+        socket = web.WebSocketResponse(heartbeat=30.0, max_msg_size=0)
+        await socket.prepare(request)
+
+        is_editor = (
+            await self._authorize_safely(user_id, guild_id) if user_id is not None else False
+        )
+        self.clients.add(socket, guild_id=guild_id, user_id=user_id, is_editor=is_editor)
         self._log.info(
-            "floorplan: office client connected (%s, %d total)",
+            "floorplan: office client connected (guild %d, %s, %d total)",
+            guild_id,
             "editor" if is_editor else "viewer",
             self.clients.client_count,
         )
@@ -144,30 +166,44 @@ class WebSocketServer:
     async def handle_message(self, socket: web.WebSocketResponse, message: ClientMessage) -> None:
         """Apply transport authorization, then delegate application behavior."""
 
+        state = self.clients.get(socket)
+        guild_id = state.guild_id if state is not None else 0
+
         if isinstance(message, AuthorizeMessage):
             user_id = self.tickets.resolve(message.ticket)
             if user_id is None:
                 return
-            is_editor = await self._authorize_safely(user_id)
+            is_editor = await self._authorize_safely(user_id, guild_id)
             self.clients.identify(socket, user_id, is_editor=is_editor)
             if is_editor:
                 self._log.info("floorplan: office client upgraded to editor")
             return
 
-        state = self.clients.get(socket)
         if isinstance(message, _EDITOR_MESSAGE_TYPES) and not (
             state is not None and state.is_editor
         ):
             self._log.info("floorplan: dropped %s from an unauthorized office client", message.type)
             return
         try:
-            await self._handle_application_message(socket, message)
+            await self._handle_application_message(socket, message, guild_id)
         except Exception as exc:
             self._log.error("floorplan: client message error: %s", exc, exc_info=True)
 
-    async def _authorize_safely(self, user_id: int) -> bool:
+    async def _authorize_safely(self, user_id: int, guild_id: int) -> bool:
         try:
-            return await self._authorize(user_id)
+            return await self._authorize(user_id, guild_id)
         except Exception as exc:
-            self._log.error("floorplan: authorization failed for user %d: %s", user_id, exc)
+            self._log.error(
+                "floorplan: authorization failed for user %d in guild %d: %s",
+                user_id,
+                guild_id,
+                exc,
+            )
+            return False
+
+    async def _can_view_safely(self, user_id: int | None, guild_id: int) -> bool:
+        try:
+            return await self._can_view(user_id, guild_id)
+        except Exception as exc:
+            self._log.error("floorplan: view authorization failed for guild %d: %s", guild_id, exc)
             return False

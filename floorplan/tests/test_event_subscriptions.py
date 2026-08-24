@@ -95,21 +95,21 @@ class TestOnAgentPresenceChanged(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("agentCreated", sent_types)
 
     async def test_offline_cached_member_closed(self):
-        self.cog._agents[(100, 1)] = ("online", "Tin")
+        self.cog._universes.get_or_create(100).office.active_agents[(100, 1)] = ("online", "Tin")
         await self.cog._on_agent_presence_changed(_presence(status="offline"))
         sent_types = [json.loads(s)["type"] for s in self.ws._sent]
         self.assertIn("agentClosed", sent_types)
-        self.assertNotIn((100, 1), self.cog._agents)
+        self.assertNotIn((100, 1), self.cog._universes.get_or_create(100).office.active_agents)
 
     async def test_folder_change_closes_and_respawns(self):
-        self.cog._agents[(100, 1)] = ("online", "Tin")
+        self.cog._universes.get_or_create(100).office.active_agents[(100, 1)] = ("online", "Tin")
         await self.cog._on_agent_presence_changed(_presence(status="dnd"))
         sent_types = [json.loads(s)["type"] for s in self.ws._sent]
         self.assertIn("agentClosed", sent_types)
         self.assertIn("agentCreated", sent_types)
 
     async def test_name_change_only_sends_team_info(self):
-        self.cog._agents[(100, 1)] = ("online", "Tin")
+        self.cog._universes.get_or_create(100).office.active_agents[(100, 1)] = ("online", "Tin")
         await self.cog._on_agent_presence_changed(
             _presence(status="online", display_name="Newname")
         )
@@ -119,18 +119,21 @@ class TestOnAgentPresenceChanged(unittest.IsolatedAsyncioTestCase):
         self.assertIn("agentTeamInfo", sent_types)
 
     async def test_no_change_sends_nothing(self):
-        self.cog._agents[(100, 1)] = ("online", "Tin")
+        self.cog._universes.get_or_create(100).office.active_agents[(100, 1)] = ("online", "Tin")
         await self.cog._on_agent_presence_changed(_presence(status="online", display_name="Tin"))
         self.assertEqual(len(self.ws._sent), 0)
 
     async def test_bot_excluded_when_include_bots_false(self):
         await _enable_guild(self.cog, 100, include_bots=False)
         await self.cog._on_agent_presence_changed(_presence(status="online", is_bot=True))
-        self.assertNotIn((100, 1), self.cog._agents)
+        self.assertNotIn((100, 1), self.cog._universes.get_or_create(100).office.active_agents)
 
     async def test_bot_cached_excluded_closes(self):
         await _enable_guild(self.cog, 100, include_bots=False)
-        self.cog._agents[(100, 99)] = ("online", "BotName")
+        self.cog._universes.get_or_create(100).office.active_agents[(100, 99)] = (
+            "online",
+            "BotName",
+        )
         await self.cog._on_agent_presence_changed(
             _presence(user_id=99, status="online", is_bot=True)
         )
@@ -158,26 +161,32 @@ class TestOnAgentPresenceChangedClose(unittest.IsolatedAsyncioTestCase):
         await _enable_guild(self.cog, 100)
 
     async def test_close_sends_agent_closed(self):
-        self.cog._agents[(100, 1)] = ("online", "Tin")
+        self.cog._universes.get_or_create(100).office.active_agents[(100, 1)] = ("online", "Tin")
         await self.cog._on_agent_presence_changed(_presence(status="offline"))
         sent_types = [json.loads(s)["type"] for s in self.ws._sent]
         self.assertIn("agentClosed", sent_types)
 
     async def test_close_removes_from_registry(self):
-        self.cog._agents[(100, 1)] = ("online", "Tin")
+        self.cog._universes.get_or_create(100).office.active_agents[(100, 1)] = ("online", "Tin")
         await self.cog._on_agent_presence_changed(_presence(status="offline"))
-        self.assertNotIn((100, 1), self.cog._agents)
+        self.assertNotIn((100, 1), self.cog._universes.get_or_create(100).office.active_agents)
 
     async def test_close_nonexistent_is_noop(self):
         await self.cog._on_agent_presence_changed(_presence(user_id=999, status="offline"))
         self.assertEqual(len(self.ws._sent), 0)
 
-    async def test_close_user_active_in_other_guild_does_not_send_closed(self):
-        self.cog._agents[(100, 1)] = ("online", "Tin")
-        self.cog._agents[(200, 1)] = ("idle", "Tin")
+    async def test_close_is_independent_of_the_same_users_status_in_another_guild(self):
+        """Issue #4: each guild is its own independent universe now -- unlike
+        the pre-split merged office, staying "online" in guild 200 must not
+        suppress guild 100's own agentClosed when its own presence goes
+        offline."""
+
+        self.cog._universes.get_or_create(100).office.active_agents[(100, 1)] = ("online", "Tin")
+        self.cog._universes.get_or_create(200).office.active_agents[(200, 1)] = ("idle", "Tin")
         await self.cog._on_agent_presence_changed(_presence(status="offline"))
         sent_types = [json.loads(s)["type"] for s in self.ws._sent]
-        self.assertNotIn("agentClosed", sent_types)
+        self.assertIn("agentClosed", sent_types)
+        self.assertIn((200, 1), self.cog._universes.get_or_create(200).office.active_agents)
 
 
 class TestOnAgentReplied(unittest.IsolatedAsyncioTestCase):
@@ -192,7 +201,7 @@ class TestOnAgentReplied(unittest.IsolatedAsyncioTestCase):
         await _enable_guild(self.cog, 100)
 
     async def test_message_sends_tool_start(self):
-        self.cog._agents[(100, 1)] = ("online", "Tin")
+        self.cog._universes.get_or_create(100).office.active_agents[(100, 1)] = ("online", "Tin")
         await self.cog._on_agent_replied(
             AgentReplied(
                 agent=AgentRef(discord_user_id=1, guild_id=100, is_bot=False),
@@ -207,7 +216,7 @@ class TestOnAgentReplied(unittest.IsolatedAsyncioTestCase):
         panel (with the message text) is visible immediately, without hover
         or "Always Show Labels"."""
 
-        self.cog._agents[(100, 1)] = ("online", "Tin")
+        self.cog._universes.get_or_create(100).office.active_agents[(100, 1)] = ("online", "Tin")
         await self.cog._on_agent_replied(
             AgentReplied(
                 agent=AgentRef(discord_user_id=1, guild_id=100, is_bot=False),
@@ -216,10 +225,10 @@ class TestOnAgentReplied(unittest.IsolatedAsyncioTestCase):
         )
         sent = [json.loads(s) for s in self.ws._sent]
         self.assertEqual([m["type"] for m in sent], ["agentToolStart", "agentSelected"])
-        self.assertEqual(sent[1]["id"], self.cog._office_service.agent_id(1))
+        self.assertEqual(sent[1]["id"], self.cog._agent_id(1))
 
     async def test_message_truncates_long_content(self):
-        self.cog._agents[(100, 1)] = ("online", "Tin")
+        self.cog._universes.get_or_create(100).office.active_agents[(100, 1)] = ("online", "Tin")
         await self.cog._on_agent_replied(
             AgentReplied(
                 agent=AgentRef(discord_user_id=1, guild_id=100, is_bot=False), summary="x" * 100
@@ -244,7 +253,7 @@ class TestOnAgentReplied(unittest.IsolatedAsyncioTestCase):
         on_message even published now lives here instead."""
 
         await self.cog.config.guild_from_id(100).enabled.set(False)
-        self.cog._agents[(100, 1)] = ("online", "Tin")
+        self.cog._universes.get_or_create(100).office.active_agents[(100, 1)] = ("online", "Tin")
         await self.cog._on_agent_replied(
             AgentReplied(
                 agent=AgentRef(discord_user_id=1, guild_id=100, is_bot=False),
@@ -255,7 +264,7 @@ class TestOnAgentReplied(unittest.IsolatedAsyncioTestCase):
 
     async def test_broadcast_messages_disabled_is_a_noop(self):
         await self.cog.config.broadcast_messages.set(False)
-        self.cog._agents[(100, 1)] = ("online", "Tin")
+        self.cog._universes.get_or_create(100).office.active_agents[(100, 1)] = ("online", "Tin")
         await self.cog._on_agent_replied(
             AgentReplied(
                 agent=AgentRef(discord_user_id=1, guild_id=100, is_bot=False),
@@ -270,7 +279,7 @@ class TestOnAgentReplied(unittest.IsolatedAsyncioTestCase):
         visible without needing hover, so clearing must not also emit a
         status ping."""
 
-        self.cog._agents[(100, 1)] = ("online", "Tin")
+        self.cog._universes.get_or_create(100).office.active_agents[(100, 1)] = ("online", "Tin")
         await self.cog._on_agent_replied(
             AgentReplied(
                 agent=AgentRef(discord_user_id=1, guild_id=100, is_bot=False),
@@ -279,9 +288,7 @@ class TestOnAgentReplied(unittest.IsolatedAsyncioTestCase):
         )
         self.ws._sent.clear()
 
-        await self.cog._clear_tool_after_delay(
-            self.cog._office_service.agent_id(1), 0, guild_id=100, user_id=1
-        )
+        await self.cog._clear_tool_after_delay(self.cog._agent_id(1), 0, guild_id=100, user_id=1)
 
         sent_types = [json.loads(s)["type"] for s in self.ws._sent]
         self.assertEqual(sent_types, ["agentToolsClear"])
@@ -293,14 +300,12 @@ class TestOnAgentHighlighted(unittest.IsolatedAsyncioTestCase):
         self.ws = _connect(self.cog)
 
     async def test_tracked_agent_sends_agent_selected(self):
-        self.cog._agents[(100, 1)] = ("online", "Tin")
+        self.cog._universes.get_or_create(100).office.active_agents[(100, 1)] = ("online", "Tin")
         await self.cog._on_agent_highlighted(
             AgentHighlighted(agent=AgentRef(discord_user_id=1, guild_id=100, is_bot=False))
         )
         sent = [json.loads(s) for s in self.ws._sent]
-        self.assertEqual(
-            sent, [{"type": "agentSelected", "id": self.cog._office_service.agent_id(1)}]
-        )
+        self.assertEqual(sent, [{"type": "agentSelected", "id": self.cog._agent_id(1)}])
 
     async def test_not_tracked_is_a_noop(self):
         await self.cog._on_agent_highlighted(
@@ -315,14 +320,12 @@ class TestOnAgentUnhighlighted(unittest.IsolatedAsyncioTestCase):
         self.ws = _connect(self.cog)
 
     async def test_tracked_agent_sends_agent_deselected(self):
-        self.cog._agents[(100, 1)] = ("online", "Tin")
+        self.cog._universes.get_or_create(100).office.active_agents[(100, 1)] = ("online", "Tin")
         await self.cog._on_agent_unhighlighted(
             AgentUnhighlighted(agent=AgentRef(discord_user_id=1, guild_id=100, is_bot=False))
         )
         sent = [json.loads(s) for s in self.ws._sent]
-        self.assertEqual(
-            sent, [{"type": "agentDeselected", "id": self.cog._office_service.agent_id(1)}]
-        )
+        self.assertEqual(sent, [{"type": "agentDeselected", "id": self.cog._agent_id(1)}])
 
     async def test_not_tracked_is_a_noop(self):
         await self.cog._on_agent_unhighlighted(
@@ -337,7 +340,7 @@ class TestOnAgentToolStarted(unittest.IsolatedAsyncioTestCase):
         self.ws = _connect(self.cog)
 
     async def test_tracked_agent_sends_agent_tool_start(self):
-        self.cog._agents[(100, 1)] = ("online", "Tin")
+        self.cog._universes.get_or_create(100).office.active_agents[(100, 1)] = ("online", "Tin")
         await self.cog._on_agent_tool_started(
             AgentToolStarted(
                 agent=AgentRef(discord_user_id=1, guild_id=100, is_bot=False),
@@ -352,7 +355,7 @@ class TestOnAgentToolStarted(unittest.IsolatedAsyncioTestCase):
             [
                 {
                     "type": "agentToolStart",
-                    "id": self.cog._office_service.agent_id(1),
+                    "id": self.cog._agent_id(1),
                     "toolId": "tool-1",
                     "toolName": "MyTool",
                     "status": "Running",
@@ -361,7 +364,7 @@ class TestOnAgentToolStarted(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_missing_tool_name_defaults_to_empty_string(self):
-        self.cog._agents[(100, 1)] = ("online", "Tin")
+        self.cog._universes.get_or_create(100).office.active_agents[(100, 1)] = ("online", "Tin")
         await self.cog._on_agent_tool_started(
             AgentToolStarted(
                 agent=AgentRef(discord_user_id=1, guild_id=100, is_bot=False),
@@ -389,7 +392,7 @@ class TestOnAgentStatusChanged(unittest.IsolatedAsyncioTestCase):
         self.ws = _connect(self.cog)
 
     async def test_tracked_agent_sends_agent_status(self):
-        self.cog._agents[(100, 1)] = ("online", "Tin")
+        self.cog._universes.get_or_create(100).office.active_agents[(100, 1)] = ("online", "Tin")
         await self.cog._on_agent_status_changed(
             AgentStatusChanged(
                 agent=AgentRef(discord_user_id=1, guild_id=100, is_bot=False),
@@ -403,7 +406,7 @@ class TestOnAgentStatusChanged(unittest.IsolatedAsyncioTestCase):
             [
                 {
                     "type": "agentStatus",
-                    "id": self.cog._office_service.agent_id(1),
+                    "id": self.cog._agent_id(1),
                     "status": "waiting",
                     "awaitingInput": True,
                 }

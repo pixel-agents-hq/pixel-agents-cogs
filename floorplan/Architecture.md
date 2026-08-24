@@ -5,11 +5,13 @@
 1. **Serves the Pixel Agents office** — hosts the browser bundle
    [`pixelagents`](../pixelagents) builds, through the Red Web Dashboard
    third-party page system, and serves the office WebSocket protocol
-   itself.
+   itself. Every enabled guild gets its own independent office
+   "universe" (own agents, own layout) — see
+   [Per-guild office universes and visibility](#per-guild-office-universes-and-visibility).
 2. **Mirrors Discord presence** — turns guild presence, activity, and message
    events into the office's `ServerMessage` protocol.
 3. **Integrates with Pixel Index** — browses the public layout catalogue from
-   Discord and loads selected layouts into the shared office.
+   Discord and loads selected layouts into a guild's own office.
 
 floorplan is the Pixel Agents runtime adapter for Red: it serves the
 browser bundle and implements the office WebSocket protocol directly. It
@@ -32,7 +34,7 @@ Runtime behavior is organized by responsibility:
 |---|---|
 | `domain/` | Immutable, framework-free agent, activity, message, seat, and settings snapshots |
 | `contracts/` | Validated WebSocket ingress, outbound message builders, layout schema, and Pixel Index response models |
-| `application/` | Office reconciliation, presence projection, settings side effects, catalogue use cases, and supervised tasks |
+| `application/` | Per-guild office universe registry, presence projection, settings side effects, catalogue use cases, and supervised tasks |
 | `infrastructure/` | Red Config, Discord normalization, aiohttp/WebSocket lifecycle, connected clients, tickets, Pixel Index HTTP, and webview assets |
 | `adapters/` | Red commands, Discord listeners, Dashboard routes, Discord views, WebSocket application dispatch, and response policy |
 | `floorplan.py` | The `Floorplan` Cog composition |
@@ -51,6 +53,7 @@ Resource ownership is intentionally singular:
 | Delayed clears and initial synchronization | `TaskSupervisor` |
 | Decoded bundle assets | `WebviewAssetProvider` |
 | Editor session tickets | `TicketStore` |
+| Per-guild office agent registries | `UniverseRegistry` (one `OfficeService`/`PresenceService` pair per guild) |
 
 Shutdown first prevents new sends, then cancels and awaits supervised tasks,
 closes the office listener and sockets, and finally closes the shared Pixel
@@ -86,6 +89,85 @@ matters for keeping this acyclic: it AST-walks every file directly under
 `application/` and fails if any has a two-level relative import (`from
 ..infrastructure ...` / `from ..adapters ...`) reaching outward into a
 layer meant to depend on it, not the other way around.
+
+## Per-guild office universes and visibility
+
+Issue #4 replaced the original single, all-enabled-guilds-merged office with
+one independent universe per guild: its own agent population *and* its own
+layout/seats, reachable from its own dashboard URL, with an optional
+private/public toggle.
+
+- **`application/universe.py::UniverseRegistry`** owns one `GuildOffice`
+  (a `pixelagents.application.office.OfficeService` + `PresenceService`
+  pair) per guild, created lazily on first use. `pixelagents`' `OfficeService`
+  class itself is untouched — each instance simply only ever receives
+  snapshots for its own `guild_id`, so its `(guild_id, user_id)`-keyed
+  cross-guild dedup helpers are permanently inert per-instance. Every
+  gateway/event call site already carries a `guild_id` (`discord_gateway.py`,
+  `event_subscriptions.py`), so routing to
+  `self._universes.get_or_create(guild_id)` instead of one shared service is
+  the only change at each call site.
+- **Genuine agents (e.g. architect) stay outside `UniverseRegistry`.** A
+  genuine agent (`pixelagents.domain.GenuineAgentKey`, see
+  `docs/office-agent-identity-design.md`) has no guild scope at all, so
+  `cog_base.py` keeps one separate, always-existing `OfficeService`
+  instance for it (`self._office_service`), constructed with the unscoped
+  `self._send` (every connected client, regardless of guild) instead of
+  `broadcast_to_guild`. `office_gateway.py::_merge_genuine_agents_into_bootstrap`
+  folds its roster into each guild's own bootstrap sequence so a
+  newly-connecting browser sees an already-online genuine agent too, not
+  just live push updates.
+- **One `ClientHub`, one `/ws` port, guild-tagged clients.** The vendored
+  webview hardcodes `<origin>/ws` (see "Routing" below) with no room for a
+  guild parameter of its own, so there's still exactly one WebSocket
+  listener. `ClientState` now carries the `guild_id` the socket connected
+  for, and `ClientHub.broadcast_to_guild` filters delivery to it — a message
+  from guild A's `OfficeService` never reaches a guild B viewer. The
+  connecting client tells the server which universe it wants via `?guild=`
+  on the `/ws` URL, injected client-side by a small shim (below) rather than
+  the vendored bundle itself.
+- **Layout and seats are now per-guild Config**, not one shared global
+  record: `set_guild_layout`/`guild_layout`/`guild_seats`/
+  `mutate_guild_seats` on `RedSettingsRepository`. A one-time
+  `migrate_legacy_global_layout_and_seats` (run once at `cog_load`, guarded
+  by the `layout_migrated_to_guild_scope` flag) seeds every currently-known
+  guild's own layout/seats from the pre-split shared record, so an existing
+  single-office deployment's customized layout isn't lost on upgrade — it
+  just becomes every guild's own starting point instead of one shared value.
+  Editor authorization (`_can_edit_layout_user`) is narrowed the same way:
+  editing guild A's layout requires being a keyholder *in guild A*, not "any
+  enabled guild" as before.
+- **The dashboard root (`dashboard_webview`) is now a server-rendered
+  menu** (`infrastructure/menu.py::render_menu`), not the vendored SPA — it
+  lists every enabled, public guild's own office as a direct link
+  (`office?guild=<id>`). A small inline script backgrounds-fetches a ticket
+  the same way the office page's own shim does (see "Editor authorization"
+  below), then asks the new `servers` route which private guilds that
+  ticket's holder belongs to, and reveals those as `office-login?guild=<id>`
+  links. This never forces a login-redirect on page load; an anonymous
+  visitor just sees the public list.
+- **`dashboard_office(guild)`** serves one guild's office (the same SPA
+  response `dashboard_webview` used to return) if that guild is enabled and
+  public; otherwise a 404 pointing at the login route. `guild` is
+  deliberately not named `guild_id` — Red Dashboard infers a *forced login*
+  context id from that name (and `user_id`/`member_id`), so a `guild_id`
+  parameter here would break the "public office needs no login" property
+  entirely. **`dashboard_office_login(user_id, guild)`** is the private-guild
+  counterpart: `user_id` reuses the exact context-id name `dashboard_session`
+  already proves forces Red Dashboard's Discord OAuth login, and the handler
+  then independently re-verifies actual guild membership itself
+  (`_can_view_office`, reusing `_get_auth_member`) rather than assuming
+  Dashboard enforces a `guild_id`-shaped membership check on our behalf —
+  correctness only depends on the already-proven `user_id`-forces-login
+  behavior, nothing unverified. Both routes inject the guild id into the
+  served bundle via `WebviewAssetProvider.dashboard_office_response`'s
+  `_guild_shim`, the same "monkeypatch `WebSocket` before the bundle runs"
+  technique `TICKET_SHIM` already uses for the ticket handshake.
+- **`WebSocketServer.handle_ws`** reads `?guild=` before upgrading the
+  connection at all: missing/invalid/disabled/unauthorized-private all
+  return a plain 403 instead of a socket. This is on top of, not instead of,
+  the HTTP-level gating above — a still-open tab whose guild flips private
+  after connecting, or a stale ticket, is caught here too.
 
 ## The webview bundle
 
@@ -308,12 +390,26 @@ network namespace.
 GET /third-party/floorplan            (public — no login required)
   → third_parties_blueprint.third_party
   → DASHBOARDRPC_THIRDPARTIES__DATA_RECEIVE over RPC
-  → dashboard_webview() → index.html + authorize shim
+  → dashboard_webview() → the server menu (infrastructure/menu.py)
+
+GET /third-party/floorplan/office?guild=<id>        (public)
+  → dashboard_office(guild) → index.html + ticket/guild shims, if the
+    guild is enabled and public; a 404 pointing at office-login otherwise
   → rendered with standalone: true
+
+GET /third-party/floorplan/office-login?guild=<id>  (login required)
+  → dashboard_office_login(user_id, guild) → same as dashboard_office,
+    after Red Dashboard's own Discord OAuth login resolves user_id and
+    _can_view_office confirms guild membership
 
 GET /third-party/floorplan/session    (login required)
   → dashboard_session(user_id=…) → {"ticket": "…"} as JSON
   → fetched in the background by the shim, not navigated to directly
+
+GET /third-party/floorplan/servers?ticket=<ticket>  (public, ticket optional)
+  → dashboard_servers(ticket) → {"private": [{"id", "name"}, …]}
+  → which private, enabled guilds the ticket's holder (if any) may view;
+    fetched by the menu page's own inline script
 
 GET /third-party/floorplan/static/<asset_path>
   → third_party_static()  (a redstack patch, not upstream reddash)
@@ -397,11 +493,15 @@ On receiving `authorize` the cog resolves the ticket and applies:
 ```text
 Allow if ANY of:
   1. the user is a bot owner
-  2. the user satisfies corridor's "keyholder" permission group in an
-     enabled guild (corridor's Owner tier -- bot owner or guild
-     Administrator permission -- always satisfies this)
+  2. the user satisfies corridor's "keyholder" permission group in the
+     one guild this socket connected for (corridor's Owner tier -- bot
+     owner or guild Administrator permission -- always satisfies this)
 Deny otherwise
 ```
+
+Narrowed to the connecting socket's own guild (unlike the pre-issue-#4 "any
+enabled guild" check): each guild now owns its own layout, so a keyholder in
+guild A gets no special standing over guild B's office.
 
 Permission configuration (which Discord roles count as Keyholder, and the
 Owner/Employee tier display names) lives entirely in corridor, configured
@@ -424,17 +524,26 @@ Global:
 | `message_tool_clear_delay` | `2.0` | Seconds the message bubble stays visible |
 | `broadcast_rich_presence` | `True` | Send Spotify/game activity as bubbles |
 | `broadcast_messages` | `True` | Send messages as bubbles |
-| `layout` | `None` | The office layout; falls back to the bundled default |
-| `seats` | `{}` | agent ID → `{palette, hueShift, seatId}` |
 | `pixel_index_api_url` | `https://pixel-index-api-staging.nntin.xyz` | Pixel Index API used for health checks, search, and layout retrieval |
 | `pixel_index_web_url` | `https://pixel-index.vercel.app` | Pixel Index frontend used for layout links |
+| `layout` | `None` | **Legacy, read-only.** The pre-issue-#4 shared office layout; kept registered only so `migrate_legacy_global_layout_and_seats` can read it once |
+| `seats` | `{}` | **Legacy, read-only.** Same as `layout`, above |
+| `layout_migrated_to_guild_scope` | `False` | Guards the one-time layout/seats migration below so it never re-runs |
+| `genuine_agent_seats` | `{}` | Seat assignments for genuine agents (e.g. architect) -- no guild to key off, so they share this one global store instead of any guild's own `seats` |
 
-Guild: `enabled` (`False`), `include_bots` (`True`). No user-scoped values are
+Guild: `enabled` (`False`), `include_bots` (`True`), `private` (`False`),
+`layout` (`None` — falls back to the bundled default), `seats` (`{}` —
+agent ID → `{palette, hueShift, seatId}`). No user-scoped values are
 registered.
 
 This is a fresh Config store (own identifier, `cog_name="floorplan"`),
-separate from pixelagents' — a pre-split installation's guild-enabled,
-layout, and seats data does not carry over automatically.
+separate from pixelagents' — a pre-split installation's guild-enabled data
+does not carry over automatically. Issue #4 moved `layout`/`seats` from
+global to per-guild; `RedSettingsRepository.migrate_legacy_global_layout_and_seats`
+(called once from `cog_load`) seeds every guild's own copy from the old
+shared value the first time this version runs, so an existing single-office
+deployment's customized layout isn't lost — see
+["Per-guild office universes and visibility"](#per-guild-office-universes-and-visibility).
 
 ## Agent identity
 
@@ -472,6 +581,7 @@ randomly among the least-used, and hue-shift once all six are taken.
 | `[p]floorplan status` | Configuration, client count, asset state |
 | `[p]floorplan settings` | Components V2 administration panel for all settings and runtime status |
 | `[p]floorplan enable` / `disable` | Guild mirroring on/off |
+| `[p]floorplan private <bool>` | This guild's office private (members only) vs. public — requires "Manage Server" |
 | `[p]floorplan sync` / `despawnall` | Reconcile / clear agents |
 | `[p]floorplan includebots <bool>` | Mirror bot users |
 | `[p]floorplan wsport <port>` | Office server port |

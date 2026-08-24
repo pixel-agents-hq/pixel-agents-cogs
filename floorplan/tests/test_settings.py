@@ -82,12 +82,12 @@ class TestRedSettingsRepository(unittest.IsolatedAsyncioTestCase):
             def mutation(seats: dict) -> None:
                 seats[agent_id] = {"seatId": f"desk-{agent_id}"}
 
-            await repository.mutate_seats(mutation)
+            await repository.mutate_guild_seats(123, mutation)
 
         await asyncio.gather(add_record("-1"), add_record("-2"))
 
         self.assertEqual(
-            await repository.seats(),
+            await repository.guild_seats(123),
             {
                 "-1": {"seatId": "desk--1"},
                 "-2": {"seatId": "desk--2"},
@@ -163,6 +163,42 @@ class TestSettingsService(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(await repository.message_tool_clear_delay(), 2.0)
 
+    async def test_migration_seeds_every_guild_from_the_legacy_shared_layout(self) -> None:
+        repository, config = make_repository()
+        legacy_layout = {"version": 1, "cols": 1, "rows": 1, "tiles": [1], "furniture": []}
+        legacy_seats = {"-1": {"seatId": "desk-1"}}
+        await config.layout.set(legacy_layout)
+        await config.seats.set(legacy_seats)
+
+        await repository.migrate_legacy_global_layout_and_seats([100, 200])
+
+        self.assertEqual(await repository.guild_layout(100), legacy_layout)
+        self.assertEqual(await repository.guild_seats(100), legacy_seats)
+        self.assertEqual(await repository.guild_layout(200), legacy_layout)
+
+    async def test_migration_is_idempotent_and_never_clobbers_a_customized_guild_layout(
+        self,
+    ) -> None:
+        repository, config = make_repository()
+        await config.layout.set({"version": 1, "cols": 1, "rows": 1, "tiles": [1], "furniture": []})
+
+        await repository.migrate_legacy_global_layout_and_seats([100])
+        custom_layout = {"version": 1, "cols": 2, "rows": 2, "tiles": [1, 1, 1, 1], "furniture": []}
+        await repository.set_guild_layout(100, custom_layout)
+
+        # A second migration run (e.g. a reload, or a guild joining later)
+        # must not overwrite a guild's own already-set layout.
+        await repository.migrate_legacy_global_layout_and_seats([100])
+
+        self.assertEqual(await repository.guild_layout(100), custom_layout)
+
+    async def test_migration_without_a_legacy_layout_is_a_noop(self) -> None:
+        repository, _ = make_repository()
+
+        await repository.migrate_legacy_global_layout_and_seats([100])
+
+        self.assertIsNone(await repository.guild_layout(100))
+
 
 class TestSettingsCommandParity(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
@@ -233,15 +269,16 @@ class TestRichPresenceDisableBehavior(unittest.IsolatedAsyncioTestCase):
         bot.is_owner = AsyncMock(return_value=False)
         cog = FloorplanCog(bot)
         cog._corridor = FakeCorridor()
-        cog._agents[(1, 10)] = ("online", "Agent")
-        cog._presence_cache[(1, 10)] = "Listening to music"
+        universe = cog._universes.get_or_create(1)
+        universe.office.active_agents[(1, 10)] = ("online", "Agent")
+        universe.presence.cache[(1, 10)] = "Listening to music"
         connected_socket = _FakeClientWebSocketResponse()
-        cog._client_hub.add(connected_socket, is_editor=False)
+        cog._client_hub.add(connected_socket, guild_id=1, is_editor=False)
         ctx = TestSettingsCommandParity.context()
 
         await cog.cmd_richpresence(ctx, False)
 
-        self.assertEqual(cog._presence_cache, {})
+        self.assertEqual(universe.presence.cache, {})
         self.assertFalse(await cog.config.broadcast_rich_presence())
         self.assertIn(
             "agentToolsClear",
@@ -249,6 +286,6 @@ class TestRichPresenceDisableBehavior(unittest.IsolatedAsyncioTestCase):
         )
 
         new_socket = _FakeClientWebSocketResponse()
-        await cog._send_bootstrap(new_socket)
+        await cog._send_bootstrap(new_socket, 1)
         bootstrap_messages = [json.loads(payload) for payload in new_socket._sent]
         self.assertFalse(any(message["type"] == "agentToolStart" for message in bootstrap_messages))

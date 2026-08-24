@@ -33,6 +33,8 @@ class SettingsRepository(Protocol):
 
     async def set_guild_include_bots(self, guild_id: int, value: bool) -> None: ...
 
+    async def set_guild_private(self, guild_id: int, value: bool) -> None: ...
+
     async def set_pixel_index_api_url(self, value: str) -> str: ...
 
     async def set_pixel_index_web_url(self, value: str) -> str: ...
@@ -102,6 +104,11 @@ class SettingsService:
         if settings.enabled:
             return await self._sync_guild(guild_id)
         return None
+
+    async def set_private(self, guild_id: int, value: bool) -> None:
+        if not isinstance(value, bool):
+            raise ValueError("Private setting must be a boolean.")
+        await self._repository.set_guild_private(guild_id, value)
 
     async def set_pixel_index_api_url(self, value: str) -> str:
         clean = normalize_http_url(value)

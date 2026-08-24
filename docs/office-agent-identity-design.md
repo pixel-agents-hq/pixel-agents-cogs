@@ -8,6 +8,23 @@
 > were Discord-snowflake-shaped by construction and had no representation
 > for an agent that isn't a Discord account at all. Every item in the
 > "Implementation checklist" below has landed.
+>
+> **Superseded in part by issue #4.** "The surprising part: there is
+> already only one canvas" below is no longer true — floorplan now
+> renders one independent office universe per guild (`UniverseRegistry`,
+> `floorplan/application/universe.py`), each with its own `OfficeService`
+> instance. A genuine agent still has no guild scope, so it still needs
+> exactly one entry, not one per guild — but "one entry" is no longer the
+> same object every browser happens to share. It now lives on a second,
+> dedicated `OfficeService` instance (`PixelAgentsBase._office_service`,
+> separate from `_universes`), broadcasting unscoped
+> (`ClientHub.broadcast`, not `broadcast_to_guild`) so it still reaches
+> every connected browser regardless of which guild's universe is open.
+> `office_gateway.py::_merge_genuine_agents_into_bootstrap` folds that
+> instance's roster into each guild's own bootstrap so a newly-connecting
+> browser sees an already-online genuine agent too. The "no per-guild
+> fan-out or replication" non-goal below is unaffected by this — there is
+> still exactly one genuine-agent registry, not N.
 
 ## Motivation
 

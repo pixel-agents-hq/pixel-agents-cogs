@@ -405,9 +405,10 @@ sequenceDiagram
   that stays each subscriber's own responsibility. An event with
   `guild_id=None` (a genuine agent, e.g. architect) isn't guild-scoped at
   all — floorplan's subscriber handlers resolve it to a `GenuineAgentKey`
-  and render it on the one shared office canvas unconditionally, rather
-  than checking any guild's settings. See
-  `docs/office-agent-identity-design.md`.
+  and render it on every connected browser unconditionally (a dedicated,
+  unscoped `OfficeService` instance, separate from the per-guild
+  `UniverseRegistry` issue #4 introduced), rather than checking any
+  guild's settings. See `docs/office-agent-identity-design.md`.
 - **Ordering and backpressure.** Explicitly out of scope — event volume
   is bounded by Discord message/interaction rates and A2A task volume,
   nowhere near where ordering or backpressure would matter.

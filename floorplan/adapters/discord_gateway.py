@@ -43,7 +43,7 @@ class DiscordGatewayMixin(PixelAgentsBase):
         guild_settings = await self._settings_repository.guild_settings(guild)
         rich_presence_enabled = await self._settings_repository.broadcast_rich_presence()
         snapshots = tuple(self._member_snapshot(member) for member in guild.members)
-        return await self._office_service.sync_guild(
+        return await self._universes.get_or_create(guild.id).office.sync_guild(
             guild.id,
             snapshots,
             include_bots=guild_settings.include_bots,
@@ -62,7 +62,13 @@ class DiscordGatewayMixin(PixelAgentsBase):
         return not (self._member_snapshot(member).is_bot and not include_bots)
 
     def _agent_status(self, member: discord.Member) -> str:
-        return self._presence_service.agent_status(self._member_snapshot(member))
+        return self._universes.get_or_create(member.guild.id).presence.agent_status(
+            self._member_snapshot(member)
+        )
 
     async def _despawn_guild(self, guild: discord.Guild) -> None:
-        await self._office_service.despawn_guild(guild.id)
+        # Clears this guild's tracked agents; the (now-empty) OfficeService
+        # itself stays in the registry -- `cmd_despawnall` reuses this same
+        # path without disabling the guild, so tearing the universe down
+        # here would just force an immediate, wasteful recreation.
+        await self._universes.get_or_create(guild.id).office.despawn_guild(guild.id)

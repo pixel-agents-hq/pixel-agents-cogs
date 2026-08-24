@@ -6,11 +6,15 @@ Serves the Pixel Agents office and mirrors Discord presence into it.
 browser bundle — built by [`pixelagents`](../pixelagents) — as a Red
 Dashboard third-party page and serves its WebSocket protocol directly,
 turning Discord guild presence (online/idle/dnd status, rich presence,
-messages) into animated characters in a shared office. It also browses the
-public [Pixel Index](https://github.com/pixel-agents-hq/index) layout
-catalogue from Discord and can load a selected layout into the office.
-Editing the office layout is delegated to corridor's Keyholder permission
-tier — floorplan holds no role IDs of its own.
+messages) into animated characters in the office. Each enabled guild is its
+own independent office "universe" — its own agents and its own layout —
+listed on a server menu at the dashboard's root page; a guild's admins can
+mark it private (Discord "Manage Server" permission required) so only its
+own members can view it. It also browses the public
+[Pixel Index](https://github.com/pixel-agents-hq/index) layout catalogue
+from Discord and can load a selected layout into a guild's own office.
+Editing a guild's office layout is delegated to corridor's Keyholder
+permission tier — floorplan holds no role IDs of its own.
 
 This cog used to be part of a single combined `pixelagents` Cog; [issue
 #21](https://github.com/pixel-agents-hq/pixel-agents-cogs/issues/21) split
@@ -45,8 +49,10 @@ with the setup link above — see
 1. Set who may edit the office layout via corridor:
    `[p]corridorsettings` (the Keyholder permission tier).
 2. Enable a guild: `[p]floorplan enable`.
-3. The office is served at `/third-party/floorplan`; route `/ws` on that
-   host to the port from `[p]floorplan wsport` (default `3210`).
+3. Optionally make the guild private (members only): `[p]floorplan private true`.
+4. The server menu is served at `/third-party/floorplan`, listing every
+   enabled guild's own office; route `/ws` on that host to the port from
+   `[p]floorplan wsport` (default `3210`).
 
 ## Commands
 
@@ -55,6 +61,7 @@ with the setup link above — see
 | `[p]floorplan status` | Configuration, client count, asset state |
 | `[p]floorplan settings` | Components V2 administration panel |
 | `[p]floorplan enable` / `disable` | Guild mirroring on/off |
+| `[p]floorplan private <bool>` | Make this guild's office private (members only) or public — requires "Manage Server" |
 | `[p]floorplan sync` / `despawnall` | Reconcile / clear agents |
 | `[p]floorplan wsport <port>` | Office server port |
 | `[p]floorplan index` | Pixel Index endpoints and API health |

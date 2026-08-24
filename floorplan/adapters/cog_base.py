@@ -16,7 +16,13 @@ from redbot.core.bot import Red
 from pixelagents.application.office import OfficeService
 from pixelagents.application.presence import PresenceService
 
-from ..application import CatalogueService, SettingsService, TaskSupervisor
+from ..application import (
+    CatalogueService,
+    GenuineAgentSeatRepository,
+    SettingsService,
+    TaskSupervisor,
+    UniverseRegistry,
+)
 from ..contracts.layout import RawOfficeLayout
 from ..contracts.websocket import ClientMessage
 from ..dependency_loader import ensure_corridor_loaded
@@ -62,9 +68,15 @@ class PixelAgentsBase:
             sync_guild=self._sync_guild_from_settings,
             despawn_guild=self._despawn_guild_from_settings,
         )
+        self._universes = UniverseRegistry(
+            repository=self._settings_repository,
+            send_to_guild=self._send_to_guild,
+            logger=log,
+        )
+        # Genuine agents have no guild scope; see universe.py's docstring.
         self._presence_service = PresenceService(self._send)
         self._office_service = OfficeService(
-            self._settings_repository,
+            GenuineAgentSeatRepository(self._settings_repository),
             self._send,
             presence=self._presence_service,
             logger=log,
@@ -91,37 +103,15 @@ class PixelAgentsBase:
             clients=self._client_hub,
             tickets=self._ticket_store,
             authorize=self._authorize_office_client,
+            can_view=self._can_view_office,
             handle_application_message=self._handle_application_message,
             health_snapshot=self._health_snapshot,
             logger=log,
         )
 
-    @property
-    def _agents(self) -> dict[tuple[int, int], tuple[str, str]]:
-        """Compatibility view of service-owned active agents."""
-
-        return self._office_service.active_agents
-
-    @_agents.setter
-    def _agents(self, value: dict[tuple[int, int], tuple[str, str]]) -> None:
-        self._office_service.replace_active_agents(value)
-
-    @property
-    def _presence_cache(self) -> dict[tuple[int, int], str]:
-        """Compatibility view of the presence service's transition cache."""
-
-        return self._presence_service.cache
-
-    @_presence_cache.setter
-    def _presence_cache(self, value: dict[tuple[int, int], str]) -> None:
-        self._presence_service.replace_cache(value)
-
-    @property
-    def _logged_collisions(self) -> set[int]:
-        return self._office_service.logged_collisions
-
     async def _clear_rich_presence_bubbles(self) -> None:
-        await self._office_service.clear_presence()
+        for universe in self._universes.all():
+            await universe.office.clear_presence()
 
     async def _reauthorize_editors_after_settings_change(self) -> None:
         await self._client_hub.reauthorize(self._check_auth)
@@ -144,6 +134,10 @@ class PixelAgentsBase:
     async def _send(self, message: Mapping[str, object]) -> None:
         if not self._closing:
             await self._client_hub.broadcast(message)
+
+    async def _send_to_guild(self, guild_id: int, message: Mapping[str, object]) -> None:
+        if not self._closing:
+            await self._client_hub.broadcast_to_guild(guild_id, message)
 
     def _load_assets(self) -> None:
         self._webview_assets.load_assets()
@@ -204,6 +198,9 @@ class PixelAgentsBase:
     async def _initial_sync(self) -> None:
         wait_until_ready: Callable[[], Awaitable[None]] = self.bot.wait_until_red_ready
         await wait_until_ready()
+        await self._settings_repository.migrate_legacy_global_layout_and_seats(
+            [guild.id for guild in self.bot.guilds]
+        )
         await self._sync_all_guilds()
 
     async def cog_unload(self) -> None:
@@ -217,20 +214,23 @@ class PixelAgentsBase:
         await self._pixel_index_client.close()
 
     async def _notify_owners_dashboard_missing_if_unloaded(self) -> None: ...
-    async def _check_auth(self, user_id: int) -> bool:
+    async def _check_auth(self, user_id: int, guild_id: int) -> bool:
         raise NotImplementedError
 
-    async def _authorize_office_client(self, user_id: int) -> bool:
+    async def _authorize_office_client(self, user_id: int, guild_id: int) -> bool:
         raise NotImplementedError
 
-    async def _can_edit_layout_user(self, user_id: int) -> bool:
+    async def _can_view_office(self, user_id: int | None, guild_id: int) -> bool:
         raise NotImplementedError
 
-    async def _publish_catalogue_layout(self, layout: RawOfficeLayout) -> None:
+    async def _can_edit_layout_user(self, user_id: int, guild_id: int) -> bool:
+        raise NotImplementedError
+
+    async def _publish_catalogue_layout(self, guild_id: int, layout: RawOfficeLayout) -> None:
         raise NotImplementedError
 
     async def _handle_application_message(
-        self, socket: web.WebSocketResponse, message: ClientMessage
+        self, socket: web.WebSocketResponse, message: ClientMessage, guild_id: int
     ) -> None:
         raise NotImplementedError
 

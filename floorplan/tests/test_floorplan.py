@@ -80,28 +80,15 @@ def _make_cog():
     return cog
 
 
-def _connect(cog, authorized=False):
+def _connect(cog, authorized=False, guild_id=100):
     """Attach a fake office client to the cog and return it."""
     socket = _FakeClientWebSocketResponse()
-    cog._client_hub.add(socket, is_editor=authorized)
+    cog._client_hub.add(socket, guild_id=guild_id, is_editor=authorized)
     return socket
 
 
 def _sent_types(socket):
     return [json.loads(raw)["type"] for raw in socket._sent]
-
-
-def _make_enabled_cog():
-    cog = _make_cog()
-
-    class _EnabledGuildConfig:
-        def __getattr__(self, name):
-            from floorplan.tests.conftest import _FakeGuildConfigAttr
-            data = {"enabled": True, "include_bots": True}
-            return _FakeGuildConfigAttr(data, name)
-
-    cog.config.guild = lambda guild: _EnabledGuildConfig()
-    return cog
 
 
 def _valid_layout():
@@ -269,18 +256,18 @@ class TestBootstrap(unittest.IsolatedAsyncioTestCase):
         self.ws = _connect(self.cog)
 
     async def test_capabilities_arrive_first(self):
-        await self.cog._send_bootstrap(self.ws)
+        await self.cog._send_bootstrap(self.ws, 100)
         self.assertEqual(_sent_types(self.ws)[0], "providerCapabilities")
 
     async def test_layout_arrives_after_existing_agents(self):
         """The webview buffers existingAgents and only builds characters on
         layoutLoaded, so a layout-first bootstrap renders an empty office."""
-        await self.cog._send_bootstrap(self.ws)
+        await self.cog._send_bootstrap(self.ws, 100)
         types = _sent_types(self.ws)
         self.assertLess(types.index("existingAgents"), types.index("layoutLoaded"))
 
     async def test_sends_every_asset_family(self):
-        await self.cog._send_bootstrap(self.ws)
+        await self.cog._send_bootstrap(self.ws, 100)
         types = _sent_types(self.ws)
         for expected in (
             "characterSpritesLoaded", "floorTilesLoaded", "wallTilesLoaded",
@@ -289,11 +276,50 @@ class TestBootstrap(unittest.IsolatedAsyncioTestCase):
             self.assertIn(expected, types)
 
     async def test_replays_presence_bubbles_after_layout(self):
-        self.cog._agents[(100, 1)] = ("online", "Tin")
-        self.cog._presence_cache[(100, 1)] = "Spotify"
-        await self.cog._send_bootstrap(self.ws)
+        universe = self.cog._universes.get_or_create(100)
+        universe.office.active_agents[(100, 1)] = ("online", "Tin")
+        universe.presence.cache[(100, 1)] = "Spotify"
+        await self.cog._send_bootstrap(self.ws, 100)
         types = _sent_types(self.ws)
         self.assertGreater(types.index("agentToolStart"), types.index("layoutLoaded"))
+
+    async def test_genuine_agent_is_merged_into_the_guild_bootstrap(self):
+        """A genuine agent (e.g. architect) has no guild scope, so it never
+        appears in a guild's own OfficeService -- a newly-connecting
+        browser must still see one already online via the merged
+        existingAgents/agentTeamInfo entries (see
+        _merge_genuine_agents_into_bootstrap)."""
+
+        from pixelagents.domain import GenuineAgentKey
+
+        await self.cog._office_service.reconcile_genuine_agent(
+            GenuineAgentKey("architect"), "architect", "online"
+        )
+        self.ws._sent.clear()  # drop the live spawn broadcast; test the bootstrap itself
+        await self.cog._send_bootstrap(self.ws, 100)
+        messages = [json.loads(s) for s in self.ws._sent]
+        genuine_id = self.cog._office_service.genuine_agent_id("architect")
+
+        existing = next(m for m in messages if m["type"] == "existingAgents")
+        self.assertIn(genuine_id, existing["agents"])
+
+        team_info_ids = [m["id"] for m in messages if m["type"] == "agentTeamInfo"]
+        self.assertIn(genuine_id, team_info_ids)
+
+        layout_index = next(i for i, m in enumerate(messages) if m["type"] == "layoutLoaded")
+        genuine_team_info_index = next(
+            i
+            for i, m in enumerate(messages)
+            if m["type"] == "agentTeamInfo" and m["id"] == genuine_id
+        )
+        self.assertGreater(genuine_team_info_index, layout_index)
+
+    async def test_no_genuine_agents_leaves_bootstrap_unchanged(self):
+        await self.cog._send_bootstrap(self.ws, 100)
+        messages = [json.loads(s) for s in self.ws._sent]
+        existing = next(m for m in messages if m["type"] == "existingAgents")
+        self.assertEqual(existing["agents"], [])
+        self.assertEqual([m for m in messages if m["type"] == "agentTeamInfo"], [])
 
 
 class TestPixelagentsResolution(unittest.IsolatedAsyncioTestCase):
@@ -535,19 +561,54 @@ class TestDashboardWebviewHosting(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["status"], 1)
         self.assertEqual(result["error_code"], 404)
 
-    async def test_dashboard_webview_returns_index_html(self):
+    async def test_dashboard_webview_returns_a_server_menu(self):
+        cog = _make_cog()
+
+        result = await cog.dashboard_webview()
+
+        self.assertEqual(result["status"], 0)
+        self.assertTrue(result["web_content"]["standalone"])
+        self.assertIn("Pixel Agents", result["web_content"]["source"])
+
+    async def test_dashboard_office_returns_index_html_for_a_public_enabled_guild(self):
+        from types import SimpleNamespace
+
         cog = _make_cog()
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "index.html").write_text("<!doctype html><div id=\"root\"></div>", encoding="utf-8")
             cog._webview_assets = WebviewAssetProvider(root)
             cog._pixelagents = FakePixelAgents(dist_path=root)
+            cog.bot.get_guild = MagicMock(return_value=SimpleNamespace(id=100))
+            await cog.config.guild_from_id(100).enabled.set(True)
 
-            result = await cog.dashboard_webview()
+            result = await cog.dashboard_office(guild="100")
 
         self.assertEqual(result["status"], 0)
         self.assertTrue(result["web_content"]["standalone"])
         self.assertIn("root", result["web_content"]["source"])
+
+    async def test_dashboard_office_rejects_a_disabled_guild(self):
+        cog = _make_cog()
+        cog.bot.get_guild = MagicMock(return_value=None)
+
+        result = await cog.dashboard_office(guild="999")
+
+        self.assertEqual(result["status"], 1)
+        self.assertEqual(result["error_code"], 404)
+
+    async def test_dashboard_office_rejects_a_private_guild(self):
+        from types import SimpleNamespace
+
+        cog = _make_cog()
+        cog.bot.get_guild = MagicMock(return_value=SimpleNamespace(id=100))
+        await cog.config.guild_from_id(100).enabled.set(True)
+        await cog.config.guild_from_id(100).private.set(True)
+
+        result = await cog.dashboard_office(guild="100")
+
+        self.assertEqual(result["status"], 1)
+        self.assertEqual(result["error_code"], 404)
 
 
 class TestDashboardMissingOwnerNotification(unittest.IsolatedAsyncioTestCase):
@@ -657,23 +718,27 @@ class TestSendExistingAgents(unittest.IsolatedAsyncioTestCase):
         self.ws = _connect(self.cog)
 
     async def test_empty_agents(self):
-        await self.cog._send_existing_agents()
+        await self.cog._send_existing_agents(100)
         msg = json.loads(self.ws._sent[0])
         self.assertEqual(msg["type"], "existingAgents")
         self.assertEqual(msg["agents"], [])
 
     async def test_single_agent(self):
-        self.cog._agents[(100, 1)] = ("online", "Tin")
-        await self.cog._send_existing_agents()
+        self.cog._universes.get_or_create(100).office.active_agents[(100, 1)] = ("online", "Tin")
+        await self.cog._send_existing_agents(100)
         msg = json.loads(self.ws._sent[0])
         expected_id = _discord_id_to_agent_id(1)
         self.assertIn(expected_id, msg["agents"])
         self.assertEqual(msg["folderNames"][str(expected_id)], "online")
 
-    async def test_same_user_two_guilds_deduplicated(self):
-        self.cog._agents[(100, 1)] = ("online", "Tin")
-        self.cog._agents[(200, 1)] = ("idle", "Tin")
-        await self.cog._send_existing_agents()
+    async def test_same_user_in_another_guild_is_a_separate_universe(self):
+        """Issue #4: each guild's OfficeService is now independent -- a user
+        active in guild 200 must not appear in (or affect the count of)
+        guild 100's own existingAgents broadcast."""
+
+        self.cog._universes.get_or_create(100).office.active_agents[(100, 1)] = ("online", "Tin")
+        self.cog._universes.get_or_create(200).office.active_agents[(200, 1)] = ("idle", "Tin")
+        await self.cog._send_existing_agents(100)
         msg = json.loads(self.ws._sent[0])
         self.assertEqual(len(msg["agents"]), 1)
 
@@ -693,30 +758,32 @@ class TestSendExistingAgents(unittest.IsolatedAsyncioTestCase):
 # ---------------------------------------------------------------------------
 
 class TestCheckAuth(unittest.IsolatedAsyncioTestCase):
+    GUILD_ID = 100
+
     async def asyncSetUp(self):
         self.cog = _make_cog()
 
-    def _enable_guild(self, guild):
-        async def _enabled():
-            return True
+    def _enable_guild(self, guild, *, enabled=True):
+        async def _flag():
+            return enabled
 
         guild_cfg = MagicMock()
-        guild_cfg.enabled = _enabled
+        guild_cfg.enabled = _flag
         self.cog.config.guild = MagicMock(return_value=guild_cfg)
-        self.cog.bot.guilds = [guild]
+        self.cog.bot.get_guild = MagicMock(return_value=guild)
 
     async def test_zero_user_id_denied(self):
-        self.assertFalse(await self.cog._check_auth(0))
+        self.assertFalse(await self.cog._check_auth(0, self.GUILD_ID))
 
     async def test_bot_owner_allowed(self):
         self.cog.bot.is_owner = AsyncMock(return_value=True)
-        self.assertTrue(await self.cog._check_auth(12345))
+        self.assertTrue(await self.cog._check_auth(12345, self.GUILD_ID))
 
     async def test_keyholder_denied_when_no_guild_membership(self):
         self.cog._corridor = FakeCorridor(keyholders=frozenset({12345}))
-        self.cog.bot.guilds = []
+        self.cog.bot.get_guild = MagicMock(return_value=None)
 
-        self.assertFalse(await self.cog._check_auth(12345))
+        self.assertFalse(await self.cog._check_auth(12345, self.GUILD_ID))
 
     async def test_keyholder_allows(self):
         self.cog._corridor = FakeCorridor(keyholders=frozenset({12345}))
@@ -727,7 +794,7 @@ class TestCheckAuth(unittest.IsolatedAsyncioTestCase):
         guild.get_member = MagicMock(return_value=member)
         self._enable_guild(guild)
 
-        self.assertTrue(await self.cog._check_auth(12345))
+        self.assertTrue(await self.cog._check_auth(12345, self.GUILD_ID))
         guild.fetch_member.assert_not_called()
         self.assertIn((12345, "keyholder"), self.cog._corridor.capability_checks)
 
@@ -741,7 +808,7 @@ class TestCheckAuth(unittest.IsolatedAsyncioTestCase):
         guild.fetch_member = AsyncMock(return_value=member)
         self._enable_guild(guild)
 
-        self.assertTrue(await self.cog._check_auth(12345))
+        self.assertTrue(await self.cog._check_auth(12345, self.GUILD_ID))
         guild.fetch_member.assert_awaited_once_with(12345)
 
     async def test_corridor_owner_allows_without_keyholder_role(self):
@@ -753,7 +820,7 @@ class TestCheckAuth(unittest.IsolatedAsyncioTestCase):
         guild.get_member = MagicMock(return_value=member)
         self._enable_guild(guild)
 
-        self.assertTrue(await self.cog._check_auth(12345))
+        self.assertTrue(await self.cog._check_auth(12345, self.GUILD_ID))
 
     async def test_non_keyholder_denied(self):
         self.cog._corridor = FakeCorridor(keyholders=frozenset({999}))
@@ -764,7 +831,7 @@ class TestCheckAuth(unittest.IsolatedAsyncioTestCase):
         guild.get_member = MagicMock(return_value=member)
         self._enable_guild(guild)
 
-        self.assertFalse(await self.cog._check_auth(12345))
+        self.assertFalse(await self.cog._check_auth(12345, self.GUILD_ID))
 
     async def test_uncached_member_fetch_failure_denied(self):
         self.cog._corridor = FakeCorridor(keyholders=frozenset({12345}))
@@ -773,7 +840,7 @@ class TestCheckAuth(unittest.IsolatedAsyncioTestCase):
         guild.fetch_member = AsyncMock(side_effect=Exception("not found"))
         self._enable_guild(guild)
 
-        self.assertFalse(await self.cog._check_auth(12345))
+        self.assertFalse(await self.cog._check_auth(12345, self.GUILD_ID))
         guild.fetch_member.assert_awaited_once_with(12345)
 
     async def test_disabled_guild_is_skipped(self):
@@ -783,16 +850,9 @@ class TestCheckAuth(unittest.IsolatedAsyncioTestCase):
 
         guild = MagicMock()
         guild.get_member = MagicMock(return_value=member)
+        self._enable_guild(guild, enabled=False)
 
-        async def _disabled():
-            return False
-
-        guild_cfg = MagicMock()
-        guild_cfg.enabled = _disabled
-        self.cog.config.guild = MagicMock(return_value=guild_cfg)
-        self.cog.bot.guilds = [guild]
-
-        self.assertFalse(await self.cog._check_auth(12345))
+        self.assertFalse(await self.cog._check_auth(12345, self.GUILD_ID))
 
 
 # ---------------------------------------------------------------------------
@@ -808,18 +868,18 @@ class TestHandleClientMessage(unittest.IsolatedAsyncioTestCase):
     async def test_webview_ready_triggers_bootstrap(self):
         self.cog._send_bootstrap = AsyncMock()
         await self.cog._handle_client_message(self.viewer, {"type": "webviewReady"})
-        self.cog._send_bootstrap.assert_awaited_once_with(self.viewer)
+        self.cog._send_bootstrap.assert_awaited_once_with(self.viewer, 100)
 
     async def test_viewer_cannot_save_layout(self):
         await self.cog._handle_client_message(
             self.viewer, {"type": "saveLayout", "layout": _valid_layout()}
         )
-        self.assertIsNone(await self.cog.config.layout())
+        self.assertIsNone(await self.cog.config.guild_from_id(100).layout())
 
     async def test_editor_can_save_layout(self):
         layout = _valid_layout()
         await self.cog._handle_client_message(self.editor, {"type": "saveLayout", "layout": layout})
-        self.assertEqual(await self.cog.config.layout(), layout)
+        self.assertEqual(await self.cog.config.guild_from_id(100).layout(), layout)
 
     async def test_saved_layout_is_mirrored_to_other_tabs(self):
         await self.cog._handle_client_message(
@@ -833,20 +893,20 @@ class TestHandleClientMessage(unittest.IsolatedAsyncioTestCase):
         await self.cog._handle_client_message(
             self.editor, {"type": "saveLayout", "layout": {"version": 99}}
         )
-        self.assertIsNone(await self.cog.config.layout())
+        self.assertIsNone(await self.cog.config.guild_from_id(100).layout())
 
     async def test_viewer_cannot_save_seats(self):
         await self.cog._handle_client_message(
             self.viewer, {"type": "saveAgentSeats", "seats": {"-1": {"seatId": "a"}}}
         )
-        self.assertEqual(await self.cog.config.seats(), {})
+        self.assertEqual(await self.cog.config.guild_from_id(100).seats(), {})
 
     async def test_editor_seats_are_persisted(self):
         await self.cog._handle_client_message(
             self.editor,
             {"type": "saveAgentSeats", "seats": {"-1": {"seatId": "chair:1", "palette": 2}}},
         )
-        seats = await self.cog.config.seats()
+        seats = await self.cog.config.guild_from_id(100).seats()
         self.assertEqual(seats["-1"]["seatId"], "chair:1")
         self.assertEqual(seats["-1"]["palette"], 2)
 
@@ -854,7 +914,7 @@ class TestHandleClientMessage(unittest.IsolatedAsyncioTestCase):
         await self.cog._handle_client_message(
             self.editor, {"type": "saveAgentSeats", "seats": {"-1": {"palette": 999}}}
         )
-        self.assertNotIn("palette", (await self.cog.config.seats())["-1"])
+        self.assertNotIn("palette", (await self.cog.config.guild_from_id(100).seats())["-1"])
 
     async def test_authorize_with_valid_ticket_upgrades_viewer_to_editor(self):
         self.cog._check_auth = AsyncMock(return_value=True)
@@ -879,13 +939,17 @@ class TestHandleClientMessage(unittest.IsolatedAsyncioTestCase):
 
 class TestTicketInjection(unittest.IsolatedAsyncioTestCase):
     async def _render(self, html):
+        from types import SimpleNamespace
+
         cog = _make_cog()
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "index.html").write_text(html, encoding="utf-8")
             cog._webview_assets = WebviewAssetProvider(root)
             cog._pixelagents = FakePixelAgents(dist_path=root)
-            result = await cog.dashboard_webview()
+            cog.bot.get_guild = MagicMock(return_value=SimpleNamespace(id=100))
+            await cog.config.guild_from_id(100).enabled.set(True)
+            result = await cog.dashboard_office(guild="100")
         return cog, result["web_content"]["source"]
 
     async def test_shim_is_injected_before_the_bundle(self):
@@ -955,20 +1019,16 @@ class TestLayoutOwnership(unittest.IsolatedAsyncioTestCase):
 
     async def test_saved_layout_wins_over_bundled_default(self):
         layout = _valid_layout()
-        await self.cog.config.layout.set(layout)
+        await self.cog.config.guild_from_id(100).layout.set(layout)
         self.cog._default_layout = lambda: {"version": 1, "cols": 9, "rows": 9,
                                             "tiles": [0] * 81, "furniture": []}
-        self.assertEqual(await self.cog._current_layout(), layout)
+        self.assertEqual(await self.cog._current_layout(100), layout)
 
     async def test_falls_back_to_bundled_default(self):
         default = _valid_layout()
         self.cog._default_layout = lambda: default
-        self.assertEqual(await self.cog._current_layout(), default)
+        self.assertEqual(await self.cog._current_layout(100), default)
 
-
-# ---------------------------------------------------------------------------
-# Tests: listener routing
-# ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
 # Tests: commands
@@ -1189,7 +1249,7 @@ class TestLoadPixelIndexLayout(unittest.IsolatedAsyncioTestCase):
 
     async def test_rejects_unauthorized_user(self):
         self.cog.bot.is_owner = AsyncMock(return_value=False)
-        ok, message = await self.cog._load_pixel_index_layout(12345, "office")
+        ok, message = await self.cog._load_pixel_index_layout(12345, 100, "office")
         self.assertFalse(ok)
         self.assertIn("not authorized", message)
 
@@ -1200,7 +1260,7 @@ class TestLoadPixelIndexLayout(unittest.IsolatedAsyncioTestCase):
         self.cog._catalogue_service.detail = AsyncMock(
             return_value=CatalogueResult(value=LayoutDetail.model_validate(detail))
         )
-        ok, message = await self.cog._load_pixel_index_layout(12345, "office")
+        ok, message = await self.cog._load_pixel_index_layout(12345, 100, "office")
         self.assertFalse(ok)
         self.assertIn("invalid", message)
 
@@ -1213,10 +1273,10 @@ class TestLoadPixelIndexLayout(unittest.IsolatedAsyncioTestCase):
         )
         client = _connect(self.cog)
 
-        ok, message = await self.cog._load_pixel_index_layout(12345, "office")
+        ok, message = await self.cog._load_pixel_index_layout(12345, 100, "office")
 
         self.assertTrue(ok)
-        self.assertEqual(await self.cog.config.layout(), model.layout)
+        self.assertEqual(await self.cog.config.guild_from_id(100).layout(), model.layout)
         self.assertIn("layoutLoaded", _sent_types(client))
 
 
@@ -1320,7 +1380,7 @@ class TestLayoutDetailView(unittest.IsolatedAsyncioTestCase):
         await view._on_load(interaction)
 
         self.cog._catalogue_service.load_layout.assert_awaited_with(
-            interaction.user.id, "office"
+            interaction.user.id, interaction.guild_id, "office"
         )
         interaction.response.send_message.assert_awaited_with(
             "Loaded `Office` into the office.", ephemeral=True

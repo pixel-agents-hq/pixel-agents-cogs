@@ -1,11 +1,15 @@
 """Subscriber handlers for corridor's Discord-vocabulary Pub/Sub bus.
 
 The only place floorplan translates a bus-originated event back into
-pixelagents.domain snapshots and drives the *existing*
-OfficeService/PresenceService entry points -- reconcile()/send_message_activity()
-are called completely unchanged; only who calls them, and with what
-reconstructed snapshot, is new here. See discord_gateway.py for the
-publishing half of this split.
+pixelagents.domain snapshots and drives OfficeService/PresenceService.
+Discord-account identities (`AgentKey`) are dispatched to that guild's own
+`UniverseRegistry` universe (see docs/office-agent-identity-design.md's
+"per-guild universes" note); a genuine agent (`GenuineAgentKey`, e.g.
+architect) has no guild scope at all, so it's dispatched to the single,
+dedicated `self._office_service` instead and broadcast unscoped (every
+connected browser, regardless of which guild's office it's viewing) --
+see cog_base.py for why that instance exists separately from the registry.
+See discord_gateway.py for the publishing half of this split.
 """
 
 from __future__ import annotations
@@ -120,9 +124,9 @@ class EventSubscriptionsMixin(PixelAgentsBase):
         if identity is None:
             return
         if isinstance(identity, GenuineAgentKey):
-            # No guild scope applies -- a genuine agent renders on the one
-            # shared canvas unconditionally. See
-            # docs/office-agent-identity-design.md.
+            # No guild scope applies -- a genuine agent renders on every
+            # connected browser unconditionally, not any one guild's
+            # universe. See docs/office-agent-identity-design.md.
             await self._office_service.reconcile_genuine_agent(
                 identity, event.display_name, event.status
             )
@@ -130,7 +134,8 @@ class EventSubscriptionsMixin(PixelAgentsBase):
         guild_settings = await self._settings_repository.guild_settings(identity.guild_id)
         if not guild_settings.enabled:
             return
-        await self._office_service.reconcile(
+        office = self._universes.get_or_create(identity.guild_id).office
+        await office.reconcile(
             _agent_snapshot(event, identity),
             include_bots=guild_settings.include_bots,
             rich_presence_enabled=await self._settings_repository.broadcast_rich_presence(),
@@ -138,9 +143,11 @@ class EventSubscriptionsMixin(PixelAgentsBase):
 
     async def _on_agent_replied(self, event: AgentReplied) -> None:
         identity = _office_identity(event.agent)
-        if identity is None or not self._office_service.is_tracked(identity):
+        if identity is None:
             return
         if isinstance(identity, GenuineAgentKey):
+            if not self._office_service.is_tracked(identity):
+                return
             await self._office_service.send_genuine_agent_activity(identity, event.summary)
             delay = await self._settings_repository.message_tool_clear_delay()
             agent_id = self._office_service.genuine_agent_id(identity.agent_key)
@@ -148,6 +155,9 @@ class EventSubscriptionsMixin(PixelAgentsBase):
                 self._clear_tool_after_delay(agent_id, delay),
                 name=f"floorplan-agent-replied-clear-{identity.agent_key}",
             )
+            return
+        office = self._universes.get_or_create(identity.guild_id).office
+        if not office.is_tracked(identity):
             return
         # corridor now publishes AgentReplied unconditionally (every guild,
         # tracked or not) -- these two checks replace the guild-enabled/
@@ -160,53 +170,86 @@ class EventSubscriptionsMixin(PixelAgentsBase):
         snapshot = MessageSnapshot(
             key=identity, message_id=next(_synthetic_message_ids), content=event.summary
         )
-        await self._office_service.send_message_activity(snapshot)
+        await office.send_message_activity(snapshot)
         delay = await self._settings_repository.message_tool_clear_delay()
         self._task_supervisor.create(
             self._clear_tool_after_delay(
-                self._office_service.agent_id(identity.user_id),
-                delay,
-                identity.guild_id,
-                identity.user_id,
+                office.agent_id(identity.user_id), delay, identity.guild_id, identity.user_id
             ),
             name=f"floorplan-agent-replied-clear-{identity.guild_id}-{identity.user_id}",
         )
 
     async def _on_agent_highlighted(self, event: AgentHighlighted) -> None:
         identity = _office_identity(event.agent)
-        if identity is None or not self._office_service.is_tracked(identity):
+        if identity is None:
             return
-        await self._office_service.highlight_agent(identity)
+        if isinstance(identity, GenuineAgentKey):
+            if not self._office_service.is_tracked(identity):
+                return
+            await self._office_service.highlight_agent(identity)
+            return
+        office = self._universes.get_or_create(identity.guild_id).office
+        if not office.is_tracked(identity):
+            return
+        await office.highlight_agent(identity)
 
     async def _on_agent_unhighlighted(self, event: AgentUnhighlighted) -> None:
         identity = _office_identity(event.agent)
-        if identity is None or not self._office_service.is_tracked(identity):
+        if identity is None:
             return
-        await self._office_service.unhighlight_agent(identity)
+        if isinstance(identity, GenuineAgentKey):
+            if not self._office_service.is_tracked(identity):
+                return
+            await self._office_service.unhighlight_agent(identity)
+            return
+        office = self._universes.get_or_create(identity.guild_id).office
+        if not office.is_tracked(identity):
+            return
+        await office.unhighlight_agent(identity)
 
     async def _on_agent_tool_started(self, event: AgentToolStarted) -> None:
         identity = _office_identity(event.agent)
-        if identity is None or not self._office_service.is_tracked(identity):
+        if identity is None:
             return
-        await self._office_service.start_tool_activity(
-            identity, event.tool_id, event.status, event.tool_name
-        )
+        if isinstance(identity, GenuineAgentKey):
+            if not self._office_service.is_tracked(identity):
+                return
+            await self._office_service.start_tool_activity(
+                identity, event.tool_id, event.status, event.tool_name
+            )
+            return
+        office = self._universes.get_or_create(identity.guild_id).office
+        if not office.is_tracked(identity):
+            return
+        await office.start_tool_activity(identity, event.tool_id, event.status, event.tool_name)
 
     async def _on_agent_status_changed(self, event: AgentStatusChanged) -> None:
         identity = _office_identity(event.agent)
-        if identity is None or not self._office_service.is_tracked(identity):
+        if identity is None:
             return
-        await self._office_service.set_status(identity, event.status, event.awaiting_input)
+        if isinstance(identity, GenuineAgentKey):
+            if not self._office_service.is_tracked(identity):
+                return
+            await self._office_service.set_status(identity, event.status, event.awaiting_input)
+            return
+        office = self._universes.get_or_create(identity.guild_id).office
+        if not office.is_tracked(identity):
+            return
+        await office.set_status(identity, event.status, event.awaiting_input)
 
     async def _clear_tool_after_delay(
         self, agent_id: int, delay: float, guild_id: int = 0, user_id: int = 0
     ) -> None:
         # Moved here from discord_gateway.py -- only ever invoked from
         # _on_agent_replied now, never from a raw gateway listener.
+        # guild_id/user_id both unset means a genuine agent's clear (no
+        # per-guild AgentKey to build) -- self._send is the same unscoped,
+        # every-connected-browser broadcast reconcile_genuine_agent uses.
         await asyncio.sleep(delay)
         if self._closing:
             return
         if guild_id and user_id:
-            await self._office_service.clear_message_activity(AgentKey(guild_id, user_id))
+            office = self._universes.get_or_create(guild_id).office
+            await office.clear_message_activity(AgentKey(guild_id, user_id))
         else:
             await self._send({"type": "agentToolsClear", "id": agent_id})

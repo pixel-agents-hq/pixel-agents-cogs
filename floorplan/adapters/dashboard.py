@@ -9,8 +9,10 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, TypeVar
 
+import discord
 from redbot.core import commands
 
+from ..infrastructure.menu import render_menu
 from .cog_base import PixelAgentsBase
 
 log = logging.getLogger("red.d_cogs.floorplan")
@@ -114,12 +116,54 @@ class DashboardMixin(PixelAgentsBase):
     def _resolve_ticket(self, ticket: str) -> int | None:
         return self._ticket_store.resolve(ticket)
 
-    # This signature must stay context-free so the office page remains public.
-    @dashboard_page(name=None, description="Pixel Agents webview.", methods=("GET",))
+    @staticmethod
+    def _parse_int(raw: str) -> int | None:
+        try:
+            return int(raw)
+        except ValueError:
+            return None
+
+    async def _visible_public_guilds(self) -> list[discord.Guild]:
+        visible = []
+        for guild in self.bot.guilds:
+            if not await self._settings_repository.guild_enabled(guild):
+                continue
+            if not await self._settings_repository.guild_private(guild):
+                visible.append(guild)
+        return visible
+
+    async def _visible_private_guilds(self, user_id: int | None) -> list[discord.Guild]:
+        visible = []
+        for guild in self.bot.guilds:
+            if not await self._settings_repository.guild_enabled(guild):
+                continue
+            if not await self._settings_repository.guild_private(guild):
+                continue
+            if await self._can_view_office(user_id, guild.id):
+                visible.append(guild)
+        return visible
+
+    async def _guild_office_is_public(self, guild_id: int) -> bool:
+        guild = self.bot.get_guild(guild_id)
+        if guild is None or not await self._settings_repository.guild_enabled(guild):
+            return False
+        return not await self._settings_repository.guild_private(guild)
+
+    @staticmethod
+    def _office_not_found(message: str) -> dict[str, object]:
+        return {"status": 1, "error_code": 404, "error_message": message}
+
+    @staticmethod
+    def _office_forbidden(message: str) -> dict[str, object]:
+        return {"status": 1, "error_code": 403, "error_message": message}
+
+    # This signature must stay context-free so the server menu remains public.
+    @dashboard_page(name=None, description="Pixel Agents server menu.", methods=("GET",))
     async def dashboard_webview(self, **kwargs: object) -> dict[str, object]:
         del kwargs
-        await self._sync_webview_assets()
-        return self._webview_assets.dashboard_webview_response()
+        public_guilds = await self._visible_public_guilds()
+        source = render_menu([(guild.id, guild.name) for guild in public_guilds])
+        return {"status": 0, "web_content": {"standalone": True, "source": source}}
 
     @dashboard_page(
         name="session",
@@ -139,6 +183,65 @@ class DashboardMixin(PixelAgentsBase):
                 "headers": {"Cache-Control": "no-store"},
             },
         }
+
+    @dashboard_page(
+        name="servers",
+        description="Pixel Agents private server list for a session ticket.",
+        methods=("GET",),
+        hidden=True,
+    )
+    async def dashboard_servers(self, ticket: str = "", **kwargs: object) -> dict[str, object]:
+        del kwargs
+        user_id = self._resolve_ticket(ticket) if ticket else None
+        private_guilds = await self._visible_private_guilds(user_id)
+        body = json.dumps(
+            {"private": [{"id": guild.id, "name": guild.name} for guild in private_guilds]}
+        ).encode()
+        return {
+            "status": 0,
+            "raw_response": {
+                "status": 200,
+                "content_type": "application/json",
+                "body_base64": base64.b64encode(body).decode("ascii"),
+                "headers": {"Cache-Control": "no-store"},
+            },
+        }
+
+    # `guild` (not `guild_id`) deliberately -- a `guild_id`-named parameter
+    # would make Red Dashboard force a login on every visit (see
+    # Architecture.md), which would break public offices. This route stays
+    # public and only ever serves a guild that is both enabled and public.
+    @dashboard_page(name="office", description="Pixel Agents office.", methods=("GET",))
+    async def dashboard_office(self, guild: str, **kwargs: object) -> dict[str, object]:
+        del kwargs
+        guild_id = self._parse_int(guild)
+        if guild_id is None or not await self._guild_office_is_public(guild_id):
+            return self._office_not_found(
+                "This server's office is unavailable or private. If you're a member, "
+                f"try logging in: office-login?guild={guild}"
+            )
+        await self._sync_webview_assets()
+        return self._webview_assets.dashboard_office_response(guild_id)
+
+    # `user_id` forces Red Dashboard's existing Discord OAuth login (the
+    # same context-id name `dashboard_session` already relies on) -- this
+    # handler still re-checks guild membership itself via `_can_view_office`
+    # rather than trusting Dashboard to enforce that on our behalf.
+    @dashboard_page(
+        name="office-login",
+        description="Pixel Agents office (private servers).",
+        methods=("GET",),
+        hidden=True,
+    )
+    async def dashboard_office_login(
+        self, user_id: int, guild: str, **kwargs: object
+    ) -> dict[str, object]:
+        del kwargs
+        guild_id = self._parse_int(guild)
+        if guild_id is None or not await self._can_view_office(user_id, guild_id):
+            return self._office_forbidden("You are not authorized to view this server's office.")
+        await self._sync_webview_assets()
+        return self._webview_assets.dashboard_office_response(guild_id)
 
     @dashboard_page(
         name="static", description="Pixel Agents static asset.", methods=("GET", "HEAD")

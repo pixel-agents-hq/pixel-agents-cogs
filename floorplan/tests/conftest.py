@@ -67,8 +67,9 @@ class _FakeInteractionFollowup:
 
 
 class _FakeInteraction:
-    def __init__(self, guild=None, user=None, client=None):
+    def __init__(self, guild=None, user=None, client=None, guild_id=None):
         self.guild = guild
+        self.guild_id = guild_id if guild_id is not None else getattr(guild, "id", 100)
         self.user = user or MagicMock()
         self.client = client
         self.response = _FakeInteractionResponse()

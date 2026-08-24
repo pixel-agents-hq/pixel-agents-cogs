@@ -83,11 +83,11 @@ class CatalogueRepository(Protocol):
 
     async def pixel_index_web_url(self) -> str: ...
 
-    async def set_layout(self, layout: RawOfficeLayout | None) -> None: ...
+    async def set_guild_layout(self, guild_id: int, layout: RawOfficeLayout | None) -> None: ...
 
 
-CanEditLayout = Callable[[int], Awaitable[bool]]
-PublishLayout = Callable[[RawOfficeLayout], Awaitable[None]]
+CanEditLayout = Callable[[int, int], Awaitable[bool]]
+PublishLayout = Callable[[int, RawOfficeLayout], Awaitable[None]]
 
 
 class CatalogueService:
@@ -139,10 +139,10 @@ class CatalogueService:
         base_url = await self._repository.pixel_index_api_url()
         return await self._gateway.detail(base_url, slug)
 
-    async def load_layout(self, user_id: int, slug: str) -> CatalogueResult[str]:
+    async def load_layout(self, user_id: int, guild_id: int, slug: str) -> CatalogueResult[str]:
         """Authorize, validate, persist, and publish one indexed layout."""
 
-        if not await self._can_edit_layout(user_id):
+        if not await self._can_edit_layout(user_id, guild_id):
             return CatalogueResult(
                 error=CatalogueError(
                     CatalogueErrorCode.UNAUTHORIZED,
@@ -173,8 +173,8 @@ class CatalogueService:
                 )
             )
 
-        await self._repository.set_layout(layout)
-        await self._publish_layout(layout)
+        await self._repository.set_guild_layout(guild_id, layout)
+        await self._publish_layout(guild_id, layout)
         return CatalogueResult(value=f"Loaded `{detail.title or slug}` into the office.")
 
 

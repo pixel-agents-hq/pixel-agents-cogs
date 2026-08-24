@@ -160,11 +160,11 @@ class TestCogTaskLifecycle(unittest.IsolatedAsyncioTestCase):
             AgentPresenceChanged, cog._on_agent_presence_changed, owner="Floorplan"
         )
         cog._corridor.subscribe_event(AgentReplied, cog._on_agent_replied, owner="Floorplan")
-        cog._agents[(1, 2)] = ("online", "Agent")
+        cog._universes.get_or_create(1).office.active_agents[(1, 2)] = ("online", "Agent")
         await cog.config.guild_from_id(1).enabled.set(True)
         await cog.config.message_tool_clear_delay.set(3600.0)
         socket = _FakeClientWebSocketResponse()
-        cog._client_hub.add(socket)
+        cog._client_hub.add(socket, guild_id=1)
         # corridor now publishes AgentReplied directly (on_message moved to
         # corridor/adapters/discord_gateway.py) -- drive the subscriber
         # handler the same way corridor's publish would dispatch to it.

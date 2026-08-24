@@ -9,14 +9,16 @@ from dataclasses import dataclass
 
 from aiohttp import web
 
-Authorize = Callable[[int], Awaitable[bool]]
+Authorize = Callable[[int, int], Awaitable[bool]]
 
 
 @dataclass(slots=True)
 class ClientState:
-    """Runtime identity and editor authorization for one connected socket."""
+    """Runtime identity, universe, and editor authorization for one
+    connected socket."""
 
     socket: web.WebSocketResponse
+    guild_id: int
     user_id: int | None = None
     is_editor: bool = False
 
@@ -40,10 +42,11 @@ class ClientHub:
         self,
         socket: web.WebSocketResponse,
         *,
+        guild_id: int = 0,
         user_id: int | None = None,
         is_editor: bool = False,
     ) -> ClientState:
-        state = ClientState(socket=socket, user_id=user_id, is_editor=is_editor)
+        state = ClientState(socket=socket, guild_id=guild_id, user_id=user_id, is_editor=is_editor)
         self.clients[socket] = state
         return state
 
@@ -60,6 +63,41 @@ class ClientHub:
             return
         state.user_id = user_id
         state.is_editor = is_editor
+
+    async def broadcast_to_guild(
+        self,
+        guild_id: int,
+        message: Mapping[str, object],
+        *,
+        exclude: web.WebSocketResponse | None = None,
+    ) -> int:
+        """Like `broadcast`, but delivered only to clients viewing `guild_id`."""
+
+        try:
+            payload = json.dumps(message)
+        except (TypeError, ValueError) as exc:
+            self._log.error(
+                "floorplan: refusing to broadcast unserializable %s: %s",
+                message.get("type"),
+                exc,
+            )
+            return 0
+
+        sent = 0
+        for socket, state in list(self.clients.items()):
+            if state.guild_id != guild_id or socket is exclude:
+                continue
+            if socket.closed:
+                self.remove(socket)
+                continue
+            try:
+                await socket.send_str(payload)
+            except Exception as exc:
+                self._log.debug("floorplan: broadcast error: %s", exc)
+                self.remove(socket)
+            else:
+                sent += 1
+        return sent
 
     async def send_to(self, socket: web.WebSocketResponse, message: Mapping[str, object]) -> bool:
         """Serialize and send a message to one socket without leaking failures."""
@@ -135,7 +173,7 @@ class ClientHub:
             if state.user_id is None:
                 continue
             try:
-                state.is_editor = await authorize(state.user_id)
+                state.is_editor = await authorize(state.user_id, state.guild_id)
             except Exception as exc:
                 # A failed authorization refresh must fail closed.
                 state.is_editor = False

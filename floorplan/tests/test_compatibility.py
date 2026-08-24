@@ -30,8 +30,16 @@ GLOBAL_DEFAULTS = {
     "seats": {},
     "pixel_index_api_url": "https://pixel-index-api-staging.nntin.xyz",
     "pixel_index_web_url": "https://pixel-index.vercel.app",
+    "layout_migrated_to_guild_scope": False,
+    "genuine_agent_seats": {},
 }
-GUILD_DEFAULTS = {"enabled": False, "include_bots": True}
+GUILD_DEFAULTS = {
+    "enabled": False,
+    "include_bots": True,
+    "private": False,
+    "layout": None,
+    "seats": {},
+}
 
 
 def make_cog() -> FloorplanCog:
@@ -95,7 +103,7 @@ class TestDashboardContract(unittest.IsolatedAsyncioTestCase):
             "dashboard_webview": {
                 "metadata": {
                     "name": None,
-                    "description": "Pixel Agents webview.",
+                    "description": "Pixel Agents server menu.",
                     "methods": ("GET",),
                 },
                 "required": set(),
@@ -108,6 +116,32 @@ class TestDashboardContract(unittest.IsolatedAsyncioTestCase):
                     "hidden": True,
                 },
                 "required": {"user_id"},
+            },
+            "dashboard_servers": {
+                "metadata": {
+                    "name": "servers",
+                    "description": "Pixel Agents private server list for a session ticket.",
+                    "methods": ("GET",),
+                    "hidden": True,
+                },
+                "required": set(),
+            },
+            "dashboard_office": {
+                "metadata": {
+                    "name": "office",
+                    "description": "Pixel Agents office.",
+                    "methods": ("GET",),
+                },
+                "required": {"guild"},
+            },
+            "dashboard_office_login": {
+                "metadata": {
+                    "name": "office-login",
+                    "description": "Pixel Agents office (private servers).",
+                    "methods": ("GET",),
+                    "hidden": True,
+                },
+                "required": {"user_id", "guild"},
             },
             "dashboard_static": {
                 "metadata": {
@@ -178,7 +212,8 @@ class TestServerContract(unittest.IsolatedAsyncioTestCase):
         cog = make_cog()
         cog._client_hub.add(MagicMock(), is_editor=False)
         cog._client_hub.add(MagicMock(), user_id=42, is_editor=True)
-        cog._agents = {(1, 10): ("online", "One"), (2, 10): ("idle", "One")}
+        cog._universes.get_or_create(1).office.active_agents[(1, 10)] = ("online", "One")
+        cog._universes.get_or_create(2).office.active_agents[(2, 10)] = ("idle", "One")
         cog._assets = {"walls": [], "characters": []}
 
         response = await cog._handle_health(MagicMock())
@@ -186,7 +221,10 @@ class TestServerContract(unittest.IsolatedAsyncioTestCase):
         assert json.loads(response.text) == {
             "status": "ok",
             "clients": 2,
-            "agents": 1,
+            # Issue #4: guilds 1 and 2 are now independent universes, so the
+            # same user_id appearing in both counts twice -- no more
+            # cross-guild dedup.
+            "agents": 2,
             "assets": ["characters", "walls"],
         }
 
@@ -195,7 +233,7 @@ class TestWebSocketBootstrapContract(unittest.IsolatedAsyncioTestCase):
     async def test_full_bootstrap_order_and_wire_shapes_are_stable(self):
         cog = make_cog()
         layout = {"version": 1, "cols": 1, "rows": 1, "tiles": [1], "furniture": []}
-        await cog.config.layout.set(layout)
+        await cog.config.guild_from_id(100).layout.set(layout)
         cog._assets = {
             "characters": [{"down": [], "up": [], "right": []}],
             "floors": [["floor"]],
@@ -206,7 +244,7 @@ class TestWebSocketBootstrapContract(unittest.IsolatedAsyncioTestCase):
         }
         socket = _FakeClientWebSocketResponse()
 
-        await cog._send_bootstrap(socket)
+        await cog._send_bootstrap(socket, 100)
 
         messages = [json.loads(payload) for payload in socket._sent]
         assert [message["type"] for message in messages] == [
@@ -292,6 +330,7 @@ class TestCommandContract:
             "includebots",
             "sync",
             "despawnall",
+            "private",
             "index",
             "layout",
         }
@@ -316,6 +355,10 @@ class TestCommandContract:
 
         for name in direct_admin_commands:
             assert root.subcommands[name].__permissions__ == {"administrator": True}
+        # "private" is deliberately Manage-Server-gated, not administrator-only
+        # -- issue #4 asks for the Discord "Manage Server" permission, not the
+        # bot-admin tier every other setting here uses.
+        assert root.subcommands["private"].__permissions__ == {"manage_guild": True}
         assert root.subcommands["index"].__wrapped__.__permissions__ == {"administrator": True}
         assert root.subcommands["index"].subcommands["set"].__permissions__ == {
             "administrator": True

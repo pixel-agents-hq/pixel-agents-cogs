@@ -200,7 +200,8 @@ class SettingsPanelView(discord.ui.LayoutView):  # type: ignore[misc, unused-ign
                 f"Messages: {_enabled(global_settings.broadcast_messages)}\n\n"
                 "**This guild**\n"
                 f"Presence mirroring: {_enabled(guild_settings.enabled)} · "
-                f"Include bots: {_enabled(guild_settings.include_bots)}\n\n"
+                f"Include bots: {_enabled(guild_settings.include_bots)} · "
+                f"Visibility: {'Private 🔒' if guild_settings.private else 'Public 🌐'}\n\n"
                 "**Message activity (global)**\n"
                 f"Clear delay: {_inline_code(global_settings.message_tool_clear_delay)} seconds"
             )
@@ -221,6 +222,12 @@ class SettingsPanelView(discord.ui.LayoutView):  # type: ignore[misc, unused-ign
             )
         )
         toggles.add_item(self._button("Toggle bots", self._toggle_bots))
+        toggles.add_item(
+            self._button(
+                "Make public" if guild_settings.private else "Make private",
+                self._toggle_private,
+            )
+        )
         container.add_item(toggles)
 
         container.add_item(
@@ -375,6 +382,15 @@ class SettingsPanelView(discord.ui.LayoutView):  # type: ignore[misc, unused-ign
                 return await self.service.enable_guild(self.guild_id)
 
         await self.apply_mutation(interaction, mutation, slow=True)
+
+    async def _toggle_private(self, interaction: discord.Interaction) -> None:
+        value = not self.guild_settings.private
+
+        async def mutation() -> MutationResult:
+            await self.service.set_private(self.guild_id, value)
+            return None
+
+        await self.apply_mutation(interaction, mutation)
 
     async def _toggle_bots(self, interaction: discord.Interaction) -> None:
         value = not self.guild_settings.include_bots

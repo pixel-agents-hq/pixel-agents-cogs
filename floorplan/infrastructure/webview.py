@@ -86,6 +86,34 @@ TICKET_SHIM = """<script>
 })();
 </script>"""
 
+# Injected before TICKET_SHIM so the office WebSocket connects scoped to one
+# guild's universe -- upstream hardcodes `<origin>/ws` with no room for a
+# guild parameter of its own (see Architecture.md), so this rewrites the URL
+# at construction time the same way TICKET_SHIM patches `WebSocket` to inject
+# the ticket, rather than touching the vendored bundle.
+_GUILD_SHIM_TEMPLATE = """<script>
+(function () {{
+  var Native = window.WebSocket;
+  function Patched(url, protocols) {{
+    if (typeof url === 'string' && url.indexOf('/ws') !== -1) {{
+      var sep = url.indexOf('?') === -1 ? '?' : '&';
+      url = url + sep + 'guild={guild_id}';
+    }}
+    return protocols === undefined ? new Native(url) : new Native(url, protocols);
+  }}
+  Patched.prototype = Native.prototype;
+  Patched.CONNECTING = Native.CONNECTING;
+  Patched.OPEN = Native.OPEN;
+  Patched.CLOSING = Native.CLOSING;
+  Patched.CLOSED = Native.CLOSED;
+  window.WebSocket = Patched;
+}})();
+</script>"""
+
+
+def _guild_shim(guild_id: int) -> str:
+    return _GUILD_SHIM_TEMPLATE.format(guild_id=int(guild_id))
+
 
 class WebviewAssetProvider:
     """Resolve, load, and render files below one immutable webview root."""
@@ -139,9 +167,7 @@ class WebviewAssetProvider:
         guessed, _ = mimetypes.guess_type(asset_path)
         return guessed or "application/octet-stream"
 
-    def dashboard_webview_response(self) -> dict[str, object]:
-        """Build the public Dashboard page with the ticket shim first."""
-
+    def _render_shell(self, extra_head: str) -> dict[str, object]:
         index_path = self.resolve("index.html")
         if index_path is None:
             message = self.build_status or (
@@ -158,13 +184,27 @@ class WebviewAssetProvider:
         # (including the bundle's own <script>/<link> tags further down) to
         # affect how they resolve, per the HTML spec.
         base_tag = f'<base href="{self.base_href}">' if self.base_href else ""
-        injection = base_tag + TICKET_SHIM
+        injection = base_tag + extra_head
         match = re.search(r"<head[^>]*>", source, re.IGNORECASE)
         if match:
             source = source[: match.end()] + "\n" + injection + source[match.end() :]
         else:
             source = injection + source
         return {"status": 0, "web_content": {"standalone": True, "source": source}}
+
+    def dashboard_webview_response(self) -> dict[str, object]:
+        """Build the public Dashboard page with the ticket shim first."""
+
+        return self._render_shell(TICKET_SHIM)
+
+    def dashboard_office_response(self, guild_id: int) -> dict[str, object]:
+        """Build one guild's own office page: the same bundle, with the
+        office WebSocket scoped to that guild's universe via `_guild_shim`,
+        injected ahead of the ticket shim (order doesn't matter functionally
+        -- each shim forwards the (possibly already-rewritten) URL to the
+        next, see `_guild_shim`'s module docstring)."""
+
+        return self._render_shell(_guild_shim(guild_id) + TICKET_SHIM)
 
     def dashboard_static_response(
         self, asset_path: str, *, head_only: bool = False

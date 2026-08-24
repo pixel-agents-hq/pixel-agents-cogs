@@ -46,6 +46,18 @@ assign one or more Discord roles to the `keyholder` group. There is no
 floorplan-specific permission command — changing corridor's `keyholder`
 role set immediately changes who can edit the floorplan office layout.
 
+## Visibility is a separate axis from editing
+
+`[p]floorplan private <bool>` controls whether a guild's own office
+universe is publicly viewable or restricted to that guild's members — a
+different question from *who may edit* the layout (Keyholder, above).
+It's gated by Discord's own "Manage Server" (`manage_guild`) permission (or
+the bot's admin tier), not corridor's Keyholder group: a guild's admins
+decide whether their own office is visible to the internet, independently
+of who's allowed to rearrange furniture in it. See
+[Architecture.md](Architecture.md#per-guild-office-universes-and-visibility)
+for how a private guild's viewer access is actually checked.
+
 ## Notes
 
 - Permission groups in corridor are **independent, unranked tiers** —

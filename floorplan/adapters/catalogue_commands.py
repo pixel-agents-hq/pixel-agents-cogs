@@ -127,13 +127,15 @@ class CatalogueCommandsMixin(PixelAgentsBase):
     async def _pixel_index_layout(self, slug: str) -> tuple[bool, Any]:
         return self._legacy_catalogue_result(await self._catalogue_service.detail(slug))
 
-    async def _load_pixel_index_layout(self, user_id: int, slug: str) -> tuple[bool, str]:
-        result = await self._catalogue_service.load_layout(user_id, slug)
+    async def _load_pixel_index_layout(
+        self, user_id: int, guild_id: int, slug: str
+    ) -> tuple[bool, str]:
+        result = await self._catalogue_service.load_layout(user_id, guild_id, slug)
         ok, value = self._legacy_catalogue_result(result)
         return ok, str(value)
 
-    async def _publish_catalogue_layout(self, layout: RawOfficeLayout) -> None:
-        await self._send(layout_loaded(layout))
+    async def _publish_catalogue_layout(self, guild_id: int, layout: RawOfficeLayout) -> None:
+        await self._send_to_guild(guild_id, layout_loaded(layout))
 
     @staticmethod
     def _legacy_catalogue_result(result: CatalogueResult[Any]) -> tuple[bool, Any]:

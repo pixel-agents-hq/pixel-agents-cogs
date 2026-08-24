@@ -35,6 +35,38 @@ class _CogWithOneTool:
         self.time_command = _StubCommand(_command)
 
 
+@llm_tool(name="informational_tool", description="Returns information.")
+async def _informational_command(
+    cog: object, ctx: object, value: str | None = None
+) -> dict[str, object]:
+    return {"status": "ok", "received": value}
+
+
+@llm_tool(name="invalid_output_tool", description="Returns the wrong type.")
+async def _invalid_output_command(cog: object, ctx: object) -> str:
+    return "not a mapping"
+
+
+@llm_tool(name="invalid_key_tool", description="Returns the wrong key type.")
+async def _invalid_key_command(cog: object, ctx: object) -> dict[object, object]:
+    return {1: "not a string key"}
+
+
+class _CogWithInformationalTool:
+    def __init__(self) -> None:
+        self.informational_command = _StubCommand(_informational_command)
+
+
+class _CogWithInvalidOutputTool:
+    def __init__(self) -> None:
+        self.invalid_output_command = _StubCommand(_invalid_output_command)
+
+
+class _CogWithInvalidKeyTool:
+    def __init__(self) -> None:
+        self.invalid_key_command = _StubCommand(_invalid_key_command)
+
+
 class TestCollectRegisteredTools(unittest.IsolatedAsyncioTestCase):
     def test_a_cog_with_nothing_decorated_yields_nothing(self) -> None:
         self.assertEqual(collect_registered_tools(_PlainCog()), [])
@@ -61,6 +93,25 @@ class TestCollectRegisteredTools(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(cog.calls, [(cog, ctx, {"value": "hi"})])
         self.assertEqual(result, {"status": "ok"})
+
+    async def test_the_built_handler_forwards_an_informational_mapping(self) -> None:
+        tool = collect_registered_tools(_CogWithInformationalTool())[0]
+
+        result = await tool.handler(object(), {"value": "hi"})
+
+        self.assertEqual(result, {"status": "ok", "received": "hi"})
+
+    async def test_the_built_handler_rejects_a_non_mapping_result(self) -> None:
+        tool = collect_registered_tools(_CogWithInvalidOutputTool())[0]
+
+        with self.assertRaisesRegex(TypeError, "expected a mapping or None"):
+            await tool.handler(object(), {})
+
+    async def test_the_built_handler_rejects_a_mapping_with_non_string_keys(self) -> None:
+        tool = collect_registered_tools(_CogWithInvalidKeyTool())[0]
+
+        with self.assertRaisesRegex(TypeError, "mapping with a non-string key"):
+            await tool.handler(object(), {})
 
     def test_a_callback_reachable_under_two_names_is_only_registered_once(self) -> None:
         cog = _CogWithOneTool()

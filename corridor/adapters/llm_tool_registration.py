@@ -50,8 +50,19 @@ def _build_registered_tool(cog: object, callback: Any, spec: LLMToolSpec) -> Reg
     # repo's own tests already do by hand
     # (`cog.time_command.callback(cog, ctx, ...)`).
     async def handler(ctx: object, raw_args: Mapping[str, object]) -> Mapping[str, object]:
-        await callback(cog, ctx, **raw_args)
-        return {"status": "ok"}
+        result = await callback(cog, ctx, **raw_args)
+        if result is None:
+            return {"status": "ok"}
+        if not isinstance(result, Mapping):
+            raise TypeError(
+                f"llm_tool: {callback.__qualname__} returned {type(result).__name__}, "
+                "expected a mapping or None"
+            )
+        if not all(isinstance(key, str) for key in result):
+            raise TypeError(
+                f"llm_tool: {callback.__qualname__} returned a mapping with a non-string key"
+            )
+        return dict(result)
 
     return RegisteredTool(
         name=spec.name,

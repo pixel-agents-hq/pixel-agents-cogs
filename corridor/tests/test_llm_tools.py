@@ -7,7 +7,7 @@ from __future__ import annotations
 import unittest
 from typing import Annotated
 
-from ..domain import llm_tool, llm_tool_spec
+from ..domain import ToolDescription, llm_tool, llm_tool_spec
 
 
 class TestLLMToolSpec(unittest.TestCase):
@@ -90,18 +90,18 @@ class TestLLMToolSpec(unittest.TestCase):
             def command(self: object, ctx: object, members: list[str]) -> None: ...
 
 
-class TestAnnotatedParameterDescriptions(unittest.TestCase):
-    """The natural, single-metadata-item `Annotated[X, "description"]` --
+class TestAnnotatedToolDescriptions(unittest.TestCase):
+    """The natural `Annotated[X, ToolDescription(...)]` shape --
     made safe on a real Discord command parameter by mutating
     `func.__annotations__` in place (see TestAnnotationsArePatchedInPlace
     below), not merely by reading it for the schema."""
 
-    def test_annotated_optional_str_carries_its_description(self) -> None:
+    def test_optional_str_carries_its_description(self) -> None:
         @llm_tool(name="a_tool", description="Does a thing.")
         def command(
             self: object,
             ctx: object,
-            timezone: Annotated[str | None, "An IANA time zone name."] = None,
+            timezone: Annotated[str | None, ToolDescription("An IANA time zone name.")] = None,
         ) -> None: ...
 
         spec = llm_tool_spec(command)
@@ -112,19 +112,91 @@ class TestAnnotatedParameterDescriptions(unittest.TestCase):
         )
         self.assertEqual(spec.parameters["required"], [])
 
-    def test_annotated_required_int_carries_its_description_and_stays_required(self) -> None:
+    def test_numeric_bounds_and_enum_are_emitted_and_parameter_stays_required(self) -> None:
         @llm_tool(name="a_tool", description="Does a thing.")
         def command(
-            self: object, ctx: object, count: Annotated[int, "How many to fetch."]
+            self: object,
+            ctx: object,
+            count: Annotated[
+                int,
+                ToolDescription("How many to fetch.", minimum=1, maximum=5, enum=(1, 3, 5)),
+            ],
         ) -> None: ...
 
         spec = llm_tool_spec(command)
         assert spec is not None
         self.assertEqual(
             spec.parameters["properties"],
-            {"count": {"type": "integer", "description": "How many to fetch."}},
+            {
+                "count": {
+                    "type": "integer",
+                    "description": "How many to fetch.",
+                    "minimum": 1,
+                    "maximum": 5,
+                    "enum": [1, 3, 5],
+                }
+            },
         )
         self.assertEqual(spec.parameters["required"], ["count"])
+
+    def test_float_bounds_are_emitted_for_a_number_schema(self) -> None:
+        @llm_tool(name="a_tool", description="Does a thing.")
+        def command(
+            self: object,
+            ctx: object,
+            ratio: Annotated[float, ToolDescription("A ratio.", minimum=0.5, maximum=1)],
+        ) -> None: ...
+
+        spec = llm_tool_spec(command)
+        assert spec is not None
+        self.assertEqual(
+            spec.parameters["properties"],
+            {
+                "ratio": {
+                    "type": "number",
+                    "description": "A ratio.",
+                    "minimum": 0.5,
+                    "maximum": 1,
+                }
+            },
+        )
+
+    def test_enums_support_each_inferred_primitive_type(self) -> None:
+        @llm_tool(name="a_tool", description="Does a thing.")
+        def command(
+            self: object,
+            ctx: object,
+            name: Annotated[str, ToolDescription("A name.", enum=("a", "b"))],
+            count: Annotated[int, ToolDescription("A count.", enum=(1, 2))],
+            ratio: Annotated[float, ToolDescription("A ratio.", enum=(1, 2.5))],
+            flag: Annotated[bool, ToolDescription("A flag.", enum=(True, False))],
+        ) -> None: ...
+
+        spec = llm_tool_spec(command)
+        assert spec is not None
+        self.assertEqual(
+            spec.parameters["properties"],
+            {
+                "name": {"type": "string", "description": "A name.", "enum": ["a", "b"]},
+                "count": {"type": "integer", "description": "A count.", "enum": [1, 2]},
+                "ratio": {"type": "number", "description": "A ratio.", "enum": [1, 2.5]},
+                "flag": {
+                    "type": "boolean",
+                    "description": "A flag.",
+                    "enum": [True, False],
+                },
+            },
+        )
+
+    def test_raw_string_metadata_is_ignored(self) -> None:
+        @llm_tool(name="a_tool", description="Does a thing.")
+        def command(
+            self: object, ctx: object, timezone: Annotated[str, "Former shorthand."]
+        ) -> None: ...
+
+        spec = llm_tool_spec(command)
+        assert spec is not None
+        self.assertEqual(spec.parameters["properties"], {"timezone": {"type": "string"}})
 
     def test_a_parameter_without_annotated_has_no_description(self) -> None:
         @llm_tool(name="a_tool", description="Does a thing.")
@@ -139,7 +211,128 @@ class TestAnnotatedParameterDescriptions(unittest.TestCase):
 
             @llm_tool(name="a_tool", description="Does a thing.")
             def command(
-                self: object, ctx: object, members: Annotated[list[str], "A list."]
+                self: object,
+                ctx: object,
+                members: Annotated[list[str], ToolDescription("A list.")],
+            ) -> None: ...
+
+    def test_more_than_one_tool_description_raises(self) -> None:
+        with self.assertRaises(TypeError):
+
+            @llm_tool(name="a_tool", description="Does a thing.")
+            def command(
+                self: object,
+                ctx: object,
+                count: Annotated[int, ToolDescription("First."), ToolDescription("Second.")],
+            ) -> None: ...
+
+
+class TestToolDescriptionValidation(unittest.TestCase):
+    def test_description_must_be_a_string(self) -> None:
+        with self.assertRaises(TypeError):
+
+            @llm_tool(name="a_tool", description="Does a thing.")
+            def command(
+                self: object,
+                ctx: object,
+                count: Annotated[
+                    int,
+                    ToolDescription(1),  # type: ignore[arg-type]
+                ],
+            ) -> None: ...
+
+    def test_bounds_on_a_non_numeric_parameter_raise(self) -> None:
+        with self.assertRaises(TypeError):
+
+            @llm_tool(name="a_tool", description="Does a thing.")
+            def command(
+                self: object,
+                ctx: object,
+                name: Annotated[str, ToolDescription("A name.", minimum=1)],
+            ) -> None: ...
+
+    def test_non_finite_and_reversed_bounds_raise(self) -> None:
+        with self.assertRaises(TypeError):
+
+            @llm_tool(name="a_tool", description="Does a thing.")
+            def non_finite(
+                self: object,
+                ctx: object,
+                ratio: Annotated[float, ToolDescription("A ratio.", minimum=float("nan"))],
+            ) -> None: ...
+
+        with self.assertRaises(TypeError):
+
+            @llm_tool(name="a_tool", description="Does a thing.")
+            def reversed_bounds(
+                self: object,
+                ctx: object,
+                count: Annotated[int, ToolDescription("A count.", minimum=2, maximum=1)],
+            ) -> None: ...
+
+    def test_enum_must_be_a_non_empty_tuple(self) -> None:
+        with self.assertRaises(TypeError):
+
+            @llm_tool(name="a_tool", description="Does a thing.")
+            def list_enum(
+                self: object,
+                ctx: object,
+                name: Annotated[
+                    str,
+                    ToolDescription("A name.", enum=["a"]),  # type: ignore[arg-type]
+                ],
+            ) -> None: ...
+
+        with self.assertRaises(TypeError):
+
+            @llm_tool(name="a_tool", description="Does a thing.")
+            def empty_enum(
+                self: object,
+                ctx: object,
+                name: Annotated[str, ToolDescription("A name.", enum=())],
+            ) -> None: ...
+
+    def test_enum_values_must_be_unique_and_match_the_parameter_type(self) -> None:
+        with self.assertRaises(TypeError):
+
+            @llm_tool(name="a_tool", description="Does a thing.")
+            def duplicate_enum(
+                self: object,
+                ctx: object,
+                count: Annotated[int, ToolDescription("A count.", enum=(1, 1))],
+            ) -> None: ...
+
+        with self.assertRaises(TypeError):
+
+            @llm_tool(name="a_tool", description="Does a thing.")
+            def wrong_type(
+                self: object,
+                ctx: object,
+                count: Annotated[
+                    int,
+                    ToolDescription("A count.", enum=("one",)),  # type: ignore[arg-type]
+                ],
+            ) -> None: ...
+
+    def test_numeric_enum_values_must_respect_bounds_and_be_finite(self) -> None:
+        with self.assertRaises(TypeError):
+
+            @llm_tool(name="a_tool", description="Does a thing.")
+            def outside_bounds(
+                self: object,
+                ctx: object,
+                count: Annotated[
+                    int, ToolDescription("A count.", minimum=1, maximum=2, enum=(0, 1))
+                ],
+            ) -> None: ...
+
+        with self.assertRaises(TypeError):
+
+            @llm_tool(name="a_tool", description="Does a thing.")
+            def non_finite(
+                self: object,
+                ctx: object,
+                ratio: Annotated[float, ToolDescription("A ratio.", enum=(1.0, float("inf")))],
             ) -> None: ...
 
 
@@ -166,7 +359,7 @@ class TestAnnotationsArePatchedInPlace(unittest.TestCase):
         def command(
             self: object,
             ctx: object,
-            timezone: Annotated[str | None, "An IANA time zone name."] = None,
+            timezone: Annotated[str | None, ToolDescription("An IANA time zone name.")] = None,
         ) -> None: ...
 
         self.assertEqual(command.__annotations__["timezone"], str | None)
@@ -185,7 +378,7 @@ class TestAnnotationsArePatchedInPlace(unittest.TestCase):
         def command(
             self: object,
             ctx: object,
-            timezone: Annotated[str | None, "An IANA time zone name."] = None,
+            timezone: Annotated[str | None, ToolDescription("An IANA time zone name.")] = None,
         ) -> None: ...
 
         self.assertEqual(command.__annotations__["self"], "object")

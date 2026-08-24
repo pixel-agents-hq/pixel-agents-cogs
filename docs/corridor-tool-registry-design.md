@@ -1,476 +1,310 @@
-# Corridor cross-cog tool registry: design
+# Corridor cross-cog LLM tool registry
 
-> **Status: shipped.** `corridor.application.ToolRegistryService`
-> (`register`/`unregister_owner`/`list_tools`) is implemented and wired onto
-> `Corridor` as `register_tool`/`unregister_tool_owner`/`list_tools`/
-> `list_tools_for`, with the same `on_cog_remove` defensive-cleanup backstop
-> the Pub/Sub bus gets. The recommended way to register a tool is the
-> `@corridor.domain.llm_tool` decorator (`corridor/domain/llm_tools.py`)
-> applied directly to a command's callback, scanned and registered
-> automatically by `CogBase.register_llm_tools()`
-> (`corridor/adapters/llm_tool_registration.py`) at the registering cog's
-> own `cog_load` -- `register_tool` itself stays the lower-level primitive
-> underneath it. `deskutils` registers its `time` command this way, the
-> first (and, as of this doc, only) tool in a shipped cog; `pico` is the
-> first (and only) consumer, adapting a registration into its own
-> `ToolSpec` at `pico/tools/cross_cog.py`. `.cookiecutter/cog-cookiecutter`
-> also generates a decorated example (`bump`) by default, so every new cog
-> starts from a working pattern instead of copying one in from `deskutils`.
->
-> `llm_tool` stays fully framework-neutral, like every other type in
-> `corridor.domain` -- see "Per-parameter descriptions: `typing.Annotated`,
-> made safe" below for how it makes natural `Annotated[X, "..."]` syntax
-> safe on a real Discord command parameter *without* needing any
-> discord.py import to do it. An earlier version of this decorator briefly
-> did need one (mutating a transient `func.__signature__`, which needed
-> discord.py's own `Parameter` class to survive contact with a real
-> `Command`) — abandoned once testing against real discord.py (not just
-> this repo's stub) surfaced a second, more fundamental problem with that
-> approach entirely, described below.
+## Overview
 
-## Motivation
-
-`deskutils` ships `[p]deskutils time`, a Discord command a human runs by
-hand. `pico` is an LLM-backed cog that can *only* act through a bounded
-tool-calling loop (`docs/architecture.md` §4) — it never sends raw text,
-only pre-declared tool calls. Making pico able to answer "what time is it?"
-in chat means giving its tool loop access to the same time logic the
-Discord command uses.
-
-Wiring that directly would mean either `deskutils` depending on `pico`
-(wrong: `deskutils` should work standalone, pico is one of potentially many
-optional consumers) or `pico` hardcoding a `deskutils`-shaped tool itself
-(wrong: `pico`'s tool loop shouldn't need to know every cog that might ever
-want to offer it a tool). This is the same problem corridor's PubSub event
-bus already solves for "floorplan wants to hear about things pico does, and
-vice versa, without either depending on the other" — see
-[`docs/corridor-pubsub-design.md`](corridor-pubsub-design.md). A tool
-registry is that same shape (register/list, owner-scoped cleanup, silent
-no-op with zero consumers), applied to LLM tool-calling instead of Discord
-events, so it's implemented as a second corridor-hosted service rather than
-a new architectural pattern.
-
-**Does this make corridor a general shared-code library?**
-[`docs/corridor.md`](corridor.md#what-this-is-not) is explicit that
-corridor isn't one — extracting shared UI/business logic was deliberately
-rejected as premature abstraction. The tool registry doesn't cross that
-line for the same reason the event bus doesn't: corridor stores, scans for,
-and filters *registrations*, it never contains a tool's actual behavior.
-`deskutils`' `time_command` body still lives entirely in
-`deskutils/adapters/commands.py`, calling into `deskutils`' own
-`TimeService` — corridor only ever sees a name, a description, a
-JSON-Schema dict inferred from the callback's own signature, a reference to
-the callback itself, and a permission-group key. The *decorator*
-(`@llm_tool`) itself is cog-agnostic the same way — it has no idea
-`deskutils` or `time_command` exist, it only inspects whatever function
-it's applied to — and, like the registry it feeds, it stays fully
-framework-neutral: no discord.py (or pydantic) import anywhere in
-`corridor/domain/llm_tools.py`, which is exactly why it lives there rather
-than in `corridor/adapters/` alongside the rest of corridor's real
-discord.py-touching code. See "Per-parameter descriptions:
-`typing.Annotated`, made safe" below for how it manages that while still
-supporting natural `Annotated[X, "..."]` parameter descriptions safely on a
-real Discord command.
-
-## Topology: corridor is the only piece that must be loaded
-
-Every cog in this repo is a genuine Red-DiscordBot plugin — installable,
-loadable, and unloadable independently — and this feature is designed so
-that stays true. `deskutils` and `pico` each declare `corridor` in
-`required_cogs` (the one thing they cannot function without); neither
-declares the other, and neither imports so much as a type from the other's
-package. The only edge between them is mediated entirely through corridor,
-at runtime, through the registry described below:
+Corridor hosts an in-process registry of tools that optional LLM consumers
+can discover without depending directly on the cogs that provide them.
+Today, Pico is the consumer and `deskutils_time` is a production example,
+but neither side imports the other:
 
 ```mermaid
-flowchart BT
-    corridor["corridor<br/><small>required_cogs is empty — nothing this repo<br/>ships can make it fail to load.<br/>Hosts ToolRegistryService.</small>"]
-    deskutils["deskutils<br/><small>optional producer<br/>registers deskutils_time if loaded</small>"]
-    pico["pico<br/><small>optional consumer<br/>reads the registry if loaded &amp; enabled</small>"]
+flowchart LR
+    D["Providing cog<br/>for example deskutils"]
+    C["corridor<br/>ToolRegistryService"]
+    P["pico<br/>tool-calling loop"]
 
-    deskutils -->|"required_cogs<br/>(must be loaded)"| corridor
-    pico -->|"required_cogs<br/>(must be loaded)"| corridor
-    deskutils -.->|"register_llm_tools(self, ...)<br/>at cog_load"| corridor
-    corridor -.->|"list_tools_for()<br/>at on_message, if RESPOND"| pico
-
-    classDef required stroke-width:3px;
-    class corridor required;
+    D -->|"register_llm_tools at cog_load"| C
+    P -->|"list_tools_for invoking member"| C
+    C -->|"permission-filtered RegisteredTool values"| P
 ```
 
-Solid arrows are the only ones Red actually enforces (`required_cogs` —
-corridor refuses to let a dependent load without it, via
-`ensure_corridor_loaded`). Dashed arrows are the tool-registry traffic this
-doc describes, and they are the *only* place `deskutils` and `pico` come
-anywhere near each other — there is deliberately no dashed (or any) edge
-drawn directly between them. Remove either dashed arrow's endpoint cog from
-the bot entirely and the other endpoint keeps working exactly as it did
-before this feature existed; remove corridor and neither `deskutils` nor
-`pico` can even load, tool registry or not — that dependency predates this
-feature and would exist with zero cogs ever touching `register_tool`.
+Both the provider and consumer depend only on Corridor. If Pico is absent,
+registrations remain inert. If a provider is absent, Pico simply receives
+fewer tools. The registry is process-scoped, while each invocation still
+receives the triggering Discord context and can perform guild-specific
+work.
 
-| Installed | `[p]deskutils time` (Discord command) | pico answers "what time is it?" |
-|---|---|---|
-| `corridor` only | n/a (deskutils not installed) | n/a (pico not installed) |
-| `corridor` + `deskutils` | ✅ works | n/a (pico not installed) |
-| `corridor` + `pico` | n/a (deskutils not installed) | pico responds via its native reply tool only — `list_tools_for` returns `()`, exactly as if this feature didn't exist |
-| `corridor` + `deskutils` + `pico` | ✅ works | ✅ pico calls `deskutils_time` directly |
+## Registry contract
 
-## The registry contract: framework-neutral, not pydantic
-
-This section is about `RegisteredTool`/`ToolHandler` -- the *registry's*
-contract, which stays framework-neutral regardless of how a given tool got
-registered. `llm_tool`, the decorator most tools go through to get there,
-is a different story -- see "Per-parameter descriptions" below.
-
-`pico`'s own `ToolSpec` Protocol (`pico/tools/base.py`) is pydantic-typed —
-`Input`/`Output` are `type[BaseModel]`. That's an internal implementation
-detail of how `pico/infrastructure/llm_client.py` talks to an
-OpenAI-compatible endpoint, not a repo-wide convention: corridor's domain
-layer has zero pydantic (or discord.py) imports by design, matching every
-other type in `corridor/domain/models.py`. Requiring every registering cog
-to build real pydantic models just to participate would force a new
-runtime dependency (`pydantic`) onto cogs like `deskutils` that otherwise
-need nothing beyond `redbot`/`corridor` — for a purely *optional*
-integration that may never be exercised on a given install.
-
-So `corridor.domain.RegisteredTool` is plain data:
+The shared contract is deliberately framework-neutral. Corridor's domain
+layer imports neither discord.py nor pydantic:
 
 ```python
-ToolHandler = Callable[[object, Mapping[str, object]], Awaitable[Mapping[str, object]]]
+ToolHandler = Callable[
+    [object, Mapping[str, object]],
+    Awaitable[Mapping[str, object]],
+]
+
 
 @dataclass(frozen=True, slots=True)
 class RegisteredTool:
     name: str
     description: str
-    parameters: Mapping[str, object]   # OpenAI-style JSON Schema
-    handler: ToolHandler               # (ctx, args) in, dict out
-    required_group: str | None = None  # corridor permission-group key
+    parameters: Mapping[str, object]
+    handler: ToolHandler
+    required_group: str | None = None
 ```
 
-`parameters` is handed to the LLM byte-for-byte as-is; `handler` takes an
-opaque per-invocation `ctx` (typed `object` here so this module never
-imports discord.py — see "Why `handler` needs a `ctx`" below) plus a plain
-JSON-object-shaped `Mapping` of arguments, and returns one — no schema
-reconstruction on pico's side, no type mapping. The one side that *does*
-need pydantic (`pico`, which already depends on it) does the bridging
-itself, entirely inside its own package — see "The pico-side adapter"
-below. No other cog, and no future registering cog, needs to know pydantic
-exists.
+- `name` is globally unique within the bot process.
+- `description` and `parameters` are sent to the LLM as the function-tool
+  description and input JSON Schema.
+- `handler(ctx, arguments)` receives the original Discord context and a
+  JSON-object-shaped mapping, then returns a JSON-object-shaped mapping.
+- `required_group` uses Corridor's permission-group keys. `None` means the
+  registry adds no permission gate.
 
-### Building one by hand is rare — `@llm_tool` is the normal path
+`Corridor.register_tool(tool, owner=...)` is the low-level API for tools
+that are not Discord commands. Most providers should use decorated command
+registration instead.
 
-Nothing stops a cog from hand-building a `RegisteredTool` and calling
-`corridor.register_tool(tool, owner=...)` directly (useful for a tool
-that isn't really a Discord command at all), but the normal, expected path
-— since registering tools this way is meant to happen often, across many
-cogs, not just once for `deskutils` — is the `@corridor.domain.llm_tool`
-decorator, applied directly to a command's own callback:
+## Turning a Discord command into a tool
+
+Apply `@corridor.domain.llm_tool` directly to the callback, below the
+Discord command decorator:
 
 ```python
-from corridor.domain import EMPLOYEE_KEY, llm_tool
+from typing import Annotated
 
-@deskutils_group.command(name="time")
+from corridor.domain import EMPLOYEE_KEY, ToolDescription, llm_tool
+
+
+@counter_group.command(name="project")
 @llm_tool(
-    name="deskutils_time",
-    description="Get the current date and time. Optionally pass an IANA "
-                "timezone name (e.g. 'America/New_York') to also get it "
-                "localized to that zone.",
+    name="counter_project",
+    description="Project the count after future increments without changing it.",
     required_group=EMPLOYEE_KEY,
 )
-async def time_command(
+async def project(
     self,
     ctx: commands.Context,
-    timezone: Annotated[str | None, "An IANA time zone name, e.g. 'America/New_York'."] = None,
-) -> None:
-    ...  # unchanged -- require_permission, TimeService, send_reply
+    amount: Annotated[
+        int,
+        ToolDescription(
+            "The number of increments to project.",
+            minimum=1,
+            maximum=10,
+        ),
+    ],
+) -> dict[str, object]:
+    if not await self._corridor.require_permission(ctx, EMPLOYEE_KEY):
+        return {"status": "error", "error": "permission_denied"}
+
+    # Tool calls invoke this callback directly, so validate raw values even
+    # though Discord converts arguments for human command invocations.
+    if isinstance(amount, bool) or not isinstance(amount, int) or not 1 <= amount <= 10:
+        message = "Amount must be a whole number from 1 through 10."
+        await self._corridor.send_reply(ctx, title="Projection", description=message)
+        return {"status": "error", "error": "invalid_amount", "message": message}
+
+    snapshot = await self._service.show(ctx.guild.id)
+    projected = snapshot.count + amount
+    await self._corridor.send_reply(
+        ctx,
+        title="Projection",
+        description=f"Current: {snapshot.count}; after {amount}: {projected}",
+    )
+    return {
+        "status": "ok",
+        "current_count": snapshot.count,
+        "amount": amount,
+        "projected_count": projected,
+    }
 ```
 
-`@llm_tool` is the *innermost* decorator, directly above `async def` —
-applied to the plain callback before `@deskutils_group.command(...)` wraps
-it into a discord.py `Command`. It infers `parameters`'s JSON Schema from
-the callback's own signature (skipping the leading `self`/`ctx` every Red
-command has: `str`/`int`/`float`/`bool`, optionally `| None`, map directly;
-anything else raises `TypeError` immediately, at decoration/import time,
-not later at registration or consumption time) and attaches everything as
-an `LLMToolSpec` marker on the function object itself. Nothing is
-registered yet at this point — decoration just tags the function; see
-"Lifecycle" below for when the tag actually turns into a live
-`RegisteredTool`.
+The callback remains one implementation for both invocation paths:
 
-`corridor.domain.llm_tool_spec(func)` reads that marker back — used both
-by corridor's own scanner and by a decorated cog's own tests (see
-`deskutils/tests/test_cog_commands.py::TestTimeCommandIsAnLLMTool`) to
-assert a command really did get tagged correctly, without needing
-corridor's adapter-layer scanning machinery at all.
+- A human runs the Discord command; discord.py converts the arguments and
+  ignores the callback's return value.
+- An LLM calls the registered tool; Corridor invokes the same callback
+  with the same `ctx`, preserves its Discord side effects, and forwards its
+  returned mapping to the LLM.
 
-### Per-parameter descriptions: `typing.Annotated`, made safe
+Decorated callbacks may return a string-keyed `Mapping[str, object]` for an
+informational tool result. Returning `None` produces the backward-compatible
+`{"status": "ok"}` acknowledgement. Any other return type, or a mapping
+with non-string keys, raises `TypeError` as an authoring error.
 
-An earlier version of this decorator took a separate `parameter_descriptions=
-{"timezone": "..."}` keyword instead, specifically to avoid a real,
-verified hazard: `timezone`'s annotation is read by *two* different
-things — `llm_tool`, for the LLM's schema, and discord.py's own
-command-parameter parser, for real command dispatch. Against the installed
-`discord.py==2.7.1`, `discord.utils.evaluate_annotation` already gives
-`Annotated[X, Y]` a meaning of its own: `Y` is treated as the actual
-type/converter to use, not descriptive metadata about `X`. A plain
-description string there makes discord.py try to `eval()` it as Python
-source at cog load:
+## Input schema inference
+
+`llm_tool` skips the leading `self` and `ctx` parameters and infers an
+object schema from the remaining callback signature.
+
+Supported parameter types are:
+
+| Python annotation | JSON Schema type |
+|---|---|
+| `str` | `string` |
+| `int` | `integer` |
+| `float` | `number` |
+| `bool` | `boolean` |
+| any supported type `| None` | the same schema type |
+
+A parameter without a default is included in `required`; a parameter with
+a default is optional. Unsupported annotations fail immediately when the
+module is imported and the decorator runs.
+
+Use one `ToolDescription` inside `typing.Annotated` to enrich a property:
 
 ```python
->>> discord.utils.evaluate_annotation("An IANA time zone name.", {}, {}, {})
-SyntaxError: invalid syntax
+amount: Annotated[
+    int,
+    ToolDescription(
+        "How many items to process.",
+        minimum=1,
+        maximum=20,
+        enum=(1, 5, 10, 20),
+    ),
+]
+
+style: Annotated[
+    str,
+    ToolDescription(
+        "How much detail to include.",
+        enum=("compact", "detailed"),
+    ),
+] = "compact"
 ```
 
-and a custom, non-string sentinel object there (`Annotated[str, ToolDescription(...)]`)
-avoids that crash only to fail every real invocation instead — discord.py
-resolves the parameter's *converter* to the sentinel instance itself, which
-isn't callable, so `[p]deskutils time America/New_York` raises
-`BadArgument: Converting to "ToolDescription" failed for parameter "timezone".`
-every single time (confirmed by driving `discord.ext.commands.converter._actual_conversion`
-directly). Neither failure mode is caught by this repo's own test
-convention of calling `command.callback(cog, ctx, ...)` directly, which
-bypasses discord.py's real parameter conversion entirely — the SyntaxError
-surfaces at cog *load*, so it is at least loud, but the BadArgument case
-would only ever show up against a live bot.
+`ToolDescription` supports:
 
-**First fix attempt — insufficient, caught by real bot load, not by this
-repo's stub-based tests:** `@llm_tool` read `Annotated[X, "description"]`
-for its own purposes, then, before returning, patched the callback's
-`__signature__` to a version with `Annotated` stripped back down to the
-bare `X`, reasoning that `inspect.Signature.from_callable()` honors an
-explicit `__signature__` override over introspecting a callable's raw
-code, and that discord.py's own command construction goes through exactly
-that call. This passed every test written against it, including
-constructing a real `discord.ext.commands.Command` directly and invoking
-it — but those tests only ever constructed the `Command` *once*. A real
-bot does not: `discord.ext.commands.cog.Cog.__new__` copies every command
-fresh per `Cog` instance (`_update_copy` → `self.__class__(self.callback,
-**self.__original_kwargs__)` → a brand new `Command` re-derived from the
-callback), and — the specific step that broke this — `discord.ext.commands
-.hybrid.HybridAppCommand.__init__` (which every `@hybrid_group.command()`
-command like `deskutils time` goes through) *temporarily* sets
-`wrapped.callback.__signature__` to build a slash-command equivalent, then
-explicitly `del`s it in a `finally` block once done. So the very next time
-anything re-derives that callback's signature — including the next `Cog`
-instantiation, which happens for real the moment a live bot loads the
-cog — there is no override left to find, and `inspect.Signature
-.from_callable()` falls back to introspecting the raw code again, reading
-the original, untouched `Annotated[X, "description"]` straight out of
-`func.__annotations__`. This is exactly the `SyntaxError` from above,
-reappearing at real cog load despite every test passing, because this
-repo's shared discord.py/redbot test stub (`corridor/testing.py`) doesn't
-implement `Cog.__new__`'s per-instance command copying at all — a whole
-class of bug this stub fundamentally cannot catch.
+- required `description` text;
+- numeric `minimum` and `maximum` for `int` or `float` parameters;
+- a non-empty tuple of primitive `enum` values matching the inferred JSON
+  type.
 
-**The fix that actually survives that copying:** `@llm_tool` mutates the
-callback's own `func.__annotations__` dictionary *in place* — not a
-transient `__signature__` override on top of it, the dictionary
-`inspect.Signature.from_callable()` falls back to reading whenever no
-`__signature__` override exists. Every future re-derivation of this
-callback's signature discord.py ever does — at decoration time, and again
-every time `HybridAppCommand.__init__` borrows-then-deletes `__signature__`,
-and again every time `Cog.__new__` copies the command per instance — reads
-this same, already-clean `__annotations__` dict, because there is nothing
-left to delete out from under it. This needs no discord.py import at all:
-it's a plain mutation of a plain function attribute, using only `inspect`/
-`typing` on the decorated callback's own signature — which is exactly why
-`llm_tool` stays in `corridor/domain/llm_tools.py`, not
-`corridor/adapters/`.
+The decorator rejects incompatible bounds, non-finite or reversed bounds,
+empty or duplicate enums, enum values of the wrong type, enum values
+outside configured bounds, and multiple `ToolDescription` objects on one
+parameter. Raw string metadata is not a description shorthand and is
+ignored.
 
-Verified end to end, not just read from source, and specifically against
-the failure mode the first attempt missed: repeated `Cog` instantiation
-(not just one `Command()` construction) via the actual `deskutils.deskutils
-.Deskutils` class against a genuinely installed `discord.py==2.7.1` +
-`redbot==3.5.24` (not just this repo's stub), instantiated three times in
-a row, confirming `cog.time_command.params['timezone'].required == False`
-and `.converter == typing.Optional[str]` correctly on *every* instantiation
-— not just the first — plus correct real argument conversion through
-`run_converters`, a clean auto-generated help string with no
-`Annotated`/description leakage, and `llm_tool_spec(Deskutils.time_command
-.callback)` still reporting the original description throughout.
+### Schema constraints are not runtime validation
 
-## Lifecycle (mirrors `EventBusService` exactly)
+Pico intentionally passes registered input schemas through verbatim. Its
+synthetic pydantic input model uses `extra="allow"`; it does not reconstruct
+or enforce the schema. The schema guides the LLM, but model-generated
+arguments still arrive at the callback as raw JSON values.
 
-- **Register**: a cog calls `corridor.register_llm_tools(self, owner="<CogClassName>")`
-  from its own `cog_load`, after `register_dependent`. This scans `self`
-  (`corridor/adapters/llm_tool_registration.py::collect_registered_tools`)
-  for every command whose callback carries an `@llm_tool` marker and
-  registers one `RegisteredTool` per match, via the same underlying
-  `corridor.register_tool(tool, owner=...)` primitive a hand-built tool
-  would use. Re-registering the same name under the same `owner` overwrites
-  (idempotent across repeat `cog_load`s); a name collision from a
-  *different* owner raises — a real authoring conflict, not something to
-  silently shadow.
-- **Unregister**: the registering cog calls `corridor.unregister_tool_owner("<CogClassName>")`
-  from its own `cog_unload` — the reverse direction of
-  `register_dependent`/`unregister_dependent` (corridor doesn't
-  track/cascade a *registrant's* lifecycle the way it does a *dependent's*).
-  This half doesn't change whether the tool was registered by hand or via
-  `register_llm_tools` — it's still owner-scoped, one call.
-- **Defensive backstop**: `Corridor.on_cog_remove` (dispatched by Red
-  unconditionally after every cog removal, even one whose own `cog_unload`
-  raised partway through) also calls `unregister_owner(cog.qualified_name)`,
-  so a registration can never leak past its owning cog's actual removal.
-- **Owner-string convention**: `register_dependent`/`unregister_dependent`
-  use the lowercase *extension* name (`"deskutils"` — what
-  `bot.unload_extension` needs); `owner=` here (like `subscribe_event`)
-  uses the capitalized *Cog class* name (`"Deskutils"`, matching
-  `cog.qualified_name`) so the `on_cog_remove` backstop lines up with a
-  registrant's own manual `unregister_tool_owner` call.
-- **Scope**: one registry per bot process, not per guild — same as
-  `EventBusService`. A tool with guild-specific behavior would encode that
-  entirely inside its own `handler`, the same way it always would have as
-  a Discord command.
+That has two practical consequences for every decorated callback:
 
-## Why `handler` needs a `ctx` — and what that means for "does it reply?"
+1. Validate expected types, ranges, and enum membership in the callback.
+2. Do not rely only on discord.py converters or `@commands.check`
+   decorators. Tool invocation calls `.callback(cog, ctx, **arguments)`
+   directly and bypasses Discord's dispatch/conversion/check pipeline.
 
-`collect_registered_tools`'s handler for an `@llm_tool`-decorated command
-is, deliberately, `await callback(cog, ctx, **raw_args)` — it invokes the
-*exact same callback* Red would invoke for a real `[p]deskutils time`, with
-the *exact same* `ctx` object pico already built for this turn
-(`pico/adapters/listener.py`'s `ctx = await self.bot.get_context(message)`).
-**Calling this tool is invoking the command** — same `require_permission`
-check, same `corridor.send_reply` call, same everything. This is a direct,
-necessary consequence of decorating `time_command` itself rather than a
-separate data-returning function: the callback body needs a real `ctx` to
-do any of what it does, so `ToolHandler`'s signature carries one.
+`required_group` filters tool visibility before the LLM call, while an
+explicit `require_permission` inside the callback keeps the command itself
+and direct invocation safe. Use both with the same permission key.
 
-That's *why* invoking `deskutils_time` from pico now sends the Discord
-reply directly, as a side effect of the callback running — not "the tool
-returns data, and the LLM decides whether to compose a reply from it." The
-`{"status": "ok"}` the handler returns to the LLM is just an
-acknowledgement; the actual user-facing output already happened by the
-time the LLM sees that result.
+### Why `Annotated` is stripped in place
 
-Verified against the installed `discord.py==2.7.1` (not assumed):
-`Command.__init__` sets `self.callback = func` — literally the same
-function object `@llm_tool` marked, so the marker survives discord.py
-wrapping it into a `Command`/`HybridCommand` and copying it per cog
-instance. `collect_registered_tools` calls `.callback` directly with an
-explicit `cog` argument — not `command(ctx, ...)` — because real
-discord.py's `Command.__call__` auto-binds `self.cog`, but the redbot test
-stub's `_FakeCommand.__call__` (`corridor/testing.py`) does **not**;
-calling `.callback(cog, ctx, ...)` explicitly is the one invocation shape
-that behaves identically in both environments (and matches this repo's own
-existing test pattern, `cog.time_command.callback(cog, ctx, ...)`). The
-scanner also duck-types via `.callback` rather than discord.py's
-`Cog.walk_commands()`/`__cog_commands__`, since the test stub implements
-neither — relying on them would make this untestable under this repo's
-stub-based suite.
+discord.py assigns its own converter meaning to `Annotated[X, metadata]`.
+If `ToolDescription` reached command construction, Discord would attempt
+to use it as a converter. `llm_tool` therefore reads the metadata for the
+LLM schema and replaces the callback's annotation with its bare type in
+`func.__annotations__` before the command decorator runs.
 
-One more consequence worth flagging explicitly: `.callback(cog, ctx, ...)`
-bypasses whatever `@commands.check`-style decorators (`guild_only`,
-`is_owner`, ...) the command might also carry — corridor never goes
-through discord.py's own dispatch/check pipeline. `time_command` has none
-of those (only its own explicit `require_permission` call), so this is a
-non-issue here, but any future `@llm_tool`-decorated command that *does*
-rely on a `@commands.check` for access control needs to move that check
-into the callback's own body (or `required_group`) to have it actually
-enforced when invoked as a tool.
+Mutating the callback annotations, rather than temporarily overriding
+`__signature__`, is required because hybrid-command construction and Cog
+copying repeatedly derive fresh command parameters. The in-place bare type
+survives every derivation and keeps prefix, slash-command, help, and tool
+schema behavior aligned.
 
-## Permission gating
+## Registration, permissions, and cleanup
 
-`RegisteredTool.required_group` reuses corridor's existing permission-group
-vocabulary (`PermissionGroupDef.key` / `EMPLOYEE_KEY` / ...) rather than
-inventing a parallel one. `Corridor.list_tools_for(member)` — the one call
-a consumer needs — filters `list_tools()` through the same
-`capabilities_satisfy` a Discord command's `require_permission` call
-already uses, so a tool is offered to an LLM call under exactly the tier a
-human running the equivalent command would need. `deskutils`' `time` tool
-is gated on `EMPLOYEE_KEY` — the same tier the `[p]deskutils time` command
-itself now explicitly checks (`corridor.require_permission(ctx, EMPLOYEE_KEY)`),
-a single shared source of truth for "who can do this," whether by command
-or by tool call.
+A providing cog owns registration for its lifetime:
 
-Filtering happens *before* the LLM ever sees the tool (it's excluded from
-`tools=[...]` entirely for a member who doesn't satisfy the gate), not
-inside the handler — so an unauthorized user's LLM call never attempts,
-and never gets a confusing "permission denied" tool result; the tool
-simply isn't part of that turn's vocabulary at all.
+```python
+async def cog_load(self) -> None:
+    self._corridor = await ensure_corridor_loaded(self.bot)
+    self._corridor.register_dependent("my_cog")
+    self._corridor.register_llm_tools(self, owner="MyCog")
 
-## The pico-side adapter
 
-`pico/tools/cross_cog.py`'s `CrossCogTool` wraps one `RegisteredTool` as a
-`ToolSpec`, entirely additively — zero changes to `pico/tools/base.py`,
-`reply_tool.py`, or `application/tool_loop_service.py`. It closes over the
-triggering turn's `ctx` (constructed as `CrossCogTool(tool, ctx)`, mirroring
-`ReplyTool`'s own per-turn `ctx`) and passes it straight through to
-`tool.handler(ctx, args)` — see "Why `handler` needs a `ctx`" above for
-why that's there at all. Its synthetic `Input` class overrides the
-`model_json_schema()` classmethod to return the tool's own `parameters`
-dict verbatim (instead of pydantic's usual field-derived schema), and both
-`Input`/`Output` set `model_config = ConfigDict(extra="allow")` so any JSON
-object round-trips through them unvalidated — argument *validation* stays
-exactly where it always was, in the registering cog's own `handler`.
+async def cog_unload(self) -> None:
+    self._corridor.unregister_tool_owner("MyCog")
+    self._corridor.unregister_dependent("my_cog")
+```
 
-`pico/adapters/listener.py`'s `on_message` builds this turn's tool list
-(`_cross_cog_tools(corridor, ctx)`) only after the gate has already decided
-`RESPOND` — i.e. only when pico is loaded *and* enabled for the guild
-*and* the LLM is configured. If `deskutils` (or any registering cog) isn't
-installed, `list_tools_for` simply returns `()` and pico behaves exactly as
-it does today. If `pico` isn't installed, `deskutils.cog_load()` still
-calls `register_llm_tools` unconditionally — it just sits in corridor's
-registry, unread by anyone. Neither side needs to know or check whether the
-other is loaded.
+`register_llm_tools` scans attributes exposing `.callback`, reads each
+`LLMToolSpec` marker, and registers one tool per callback identity.
+Re-registering the same name for the same owner replaces it. Registering
+the same name for another owner raises `ValueError` instead of shadowing.
 
-## Example: one full turn
+The owner string is the Cog class name, matching `cog.qualified_name`.
+Manual unload removes all tools for that owner, and Corridor's
+`on_cog_remove` listener provides defensive cleanup if the provider's
+teardown does not complete.
+
+Consumers should call `await corridor.list_tools_for(member)`, not the
+unfiltered `list_tools()`. Corridor evaluates every `required_group` using
+the same capability logic as Discord command permission checks and omits
+unauthorized tools from the LLM's vocabulary entirely.
+
+## Pico adaptation and invocation flow
+
+Pico adapts every allowed `RegisteredTool` into `CrossCogTool`:
+
+- The synthetic `Input.model_json_schema()` returns `parameters` verbatim.
+- The input model passes the JSON object through without enforcing its
+  constraints.
+- The output model accepts the provider's arbitrary string-keyed mapping
+  and serializes it as the tool-result message for the next LLM iteration.
+- A malformed registration is logged and skipped without taking down the
+  rest of the turn.
+
+For `deskutils_time`, one complete turn looks like this:
 
 ```mermaid
 sequenceDiagram
     participant U as Discord user
-    participant P as pico<br/><small>(if loaded &amp; enabled)</small>
-    participant C as corridor<br/><small>(always loaded)</small>
-    participant D as deskutils<br/><small>(if loaded)</small>
+    participant P as Pico
+    participant C as Corridor
+    participant D as Deskutils
 
-    Note over D,C: cog_load -- runs whether or not pico is ever installed
     D->>C: register_llm_tools(self, owner="Deskutils")
-    Note over D,C: scans self for @llm_tool commands -> registers deskutils_time
-
-    U->>P: "what time is it?"
-    P->>P: GateService.decide() -> RESPOND
-    P->>P: ctx = await bot.get_context(message)
+    U->>P: "What time is it in New York?"
     P->>C: list_tools_for(ctx.author)
-    alt deskutils loaded and member satisfies "employee"
-        C-->>P: (deskutils_time,)
-    else deskutils not loaded
-        C-->>P: ()
-    end
-    P->>P: ToolLoopService.run(tools=[ReplyTool, CrossCogTool(deskutils_time, ctx)?])
-    opt LLM chooses to call deskutils_time
-        P->>D: CrossCogTool.handler(args) -> time_command.callback(cog, ctx, **args)
-        D->>D: require_permission(ctx, "employee") -- already known True, checked again
-        D->>D: TimeService.now() / resolve_zone()
-        D->>C: send_reply(ctx, ...) -- the actual, user-facing Discord reply
-        C-->>U: rendered reply
-        D-->>P: {"status": "ok"}
-    end
+    C-->>P: deskutils_time
+    P->>D: time_command.callback(cog, ctx, timezone="America/New_York")
+    D->>C: require_permission(ctx, "employee")
+    D->>D: TimeService.now() and resolve_zone()
+    D->>C: send_reply(ctx, title="Current time", fields=...)
+    C-->>U: rendered Discord reply
+    D-->>P: status, epoch_seconds, utc, discord_timestamp, timezone, localized
+    P->>P: append mapping as the tool result and continue the bounded loop
 ```
 
-If `pico` is never installed, nothing right of `deskutils`' own `cog_load`
-ever runs — the registration still happened and simply sits unread. If
-`deskutils` is never installed, the `alt` above always takes the "not
-loaded" branch and pico behaves exactly as it did before this feature
-existed, using only its native `ReplyTool`. Notice there's no longer a
-separate "LLM chooses to reply" step for this tool specifically — calling
-`deskutils_time` *is* the reply, sent from inside `time_command` itself
-(see "Why `handler` needs a `ctx`" above); the LLM only sees
-`{"status": "ok"}` back, an acknowledgement, not data to compose an answer
-from.
+The time command deliberately both replies in Discord and returns semantic
+information. The Discord user gets the answer immediately, while the LLM
+receives the same computed values for context. Expected failures return
+`status="error"` with a stable code and readable message while preserving
+the command's normal Discord warning or denial behavior.
 
-Spelled out:
+There is no output JSON Schema in `RegisteredTool`; only the input schema
+is advertised. Providers should therefore keep result mappings small,
+stable, JSON-serializable, and self-explanatory.
 
-1. `GateService.decide()` → `RESPOND`.
-2. `ctx = await bot.get_context(message)` → `ctx.author` is a real
-   `discord.Member`.
-3. `corridor.list_tools_for(ctx.author)` → `(deskutils_time,)` (`employee`
-   never restricts).
-4. `ToolLoopService.run(tools=[ReplyTool(...), CrossCogTool(deskutils_time, ctx)])`
-   → the LLM sees both in its tool list, calls `deskutils_time`.
-5. `CrossCogTool.handler` → `collect_registered_tools`'s handler →
-   `time_command.callback(cog, ctx, timezone=...)` — the *real* command
-   body: `require_permission`, `TimeService.now()`/`resolve_zone()`, and
-   `corridor.send_reply(ctx, ...)`, which is what the Discord user actually
-   sees. The LLM gets back only `{"status": "ok"}`.
-6. The LLM may still call `send_reply` (pico's native `ReplyTool`)
-   separately if it wants to say something *else* — but the time answer
-   itself already went out in step 5.
+## Author checklist
+
+When adding a decorated command:
+
+1. Put `@llm_tool` immediately above the callback and below the Discord
+   command decorator.
+2. Give the tool a globally distinctive name, normally prefixed with the
+   cog name.
+3. Use only supported primitive input annotations and add one
+   `ToolDescription` wherever the name/type is insufficient.
+4. Treat schema constraints as guidance and validate raw tool arguments in
+   the callback.
+5. Match `required_group` with an explicit callback permission check.
+6. Send Discord output through Corridor and return an informational mapping
+   when the LLM needs to know what happened.
+7. Return structured error mappings for expected failures; reserve raised
+   exceptions for authoring/programming errors.
+8. Test the inferred schema, callback behavior, mapping output, permission
+   denial, invalid raw arguments, registration lifecycle, and real
+   discord.py annotation/converter compatibility.
+
+The generated cog template contains no-input, bounded-integer, and string-
+enum command examples following this checklist.

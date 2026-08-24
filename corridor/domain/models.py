@@ -292,13 +292,15 @@ class RegisteredTool:
     never imports discord.py) plus a plain JSON-object-shaped Mapping of
     arguments, and returns one. Most registrations come from
     `@corridor.domain.llm_tool`-decorated commands (see
-    `corridor/adapters/llm_tool_registration.py`), whose handler simply
-    invokes the real command callback with that same `ctx` -- `register_tool`
-    itself stays the lower-level primitive for a tool that isn't a Discord
-    command at all. A consumer that wants richer typing (pico's
-    ToolLoopService, which is pydantic-based internally) adapts this shape
-    itself at its own boundary -- see pico/tools/cross_cog.py -- rather than
-    this registry picking a framework for every registrant.
+    `corridor/adapters/llm_tool_registration.py`), whose handler invokes
+    the real command callback with that same `ctx` and forwards a mapping
+    it returns (or supplies a status acknowledgement when it returns
+    `None`) -- `register_tool` itself stays the lower-level primitive for a
+    tool that isn't a Discord command at all. A consumer that wants richer
+    typing (pico's ToolLoopService, which is pydantic-based internally)
+    adapts this shape itself at its own boundary -- see
+    pico/tools/cross_cog.py -- rather than this registry picking a
+    framework for every registrant.
 
     `required_group` gates which invoking member's LLM call is even offered
     this tool, using corridor's own permission-group vocabulary

@@ -11,7 +11,7 @@ from typing import Annotated, Any
 
 from redbot.core import commands
 
-from corridor.domain import EMPLOYEE_KEY, ReplyField, llm_tool
+from corridor.domain import EMPLOYEE_KEY, ReplyField, ToolDescription, llm_tool
 
 from ..application import TimeService, UnknownTimeZoneError
 
@@ -43,9 +43,10 @@ class CommandsMixin:
         self,
         ctx: commands.Context,
         timezone: Annotated[
-            str | None, "An IANA time zone name, e.g. 'America/New_York' or 'Europe/London'."
+            str | None,
+            ToolDescription("An IANA time zone name, e.g. 'America/New_York' or 'Europe/London'."),
         ] = None,
-    ) -> None:
+    ) -> dict[str, object]:
         """Show the current time.
 
         Always includes Discord's native timestamp markup, which each
@@ -56,35 +57,55 @@ class CommandsMixin:
         """
 
         if not await self._corridor.require_permission(ctx, EMPLOYEE_KEY):
-            return
+            return {
+                "status": "error",
+                "error": "permission_denied",
+                "message": "The invoking member does not have permission to use this tool.",
+            }
 
         snapshot = self._service.now()
         epoch = snapshot.epoch_seconds
+        discord_timestamp = f"<t:{epoch}:F> (<t:{epoch}:R>)"
+        utc = snapshot.utc.strftime("%Y-%m-%d %H:%M:%S %Z")
         fields = [
             ReplyField(
                 "Discord (auto-localized per viewer)",
-                f"<t:{epoch}:F> (<t:{epoch}:R>)",
+                discord_timestamp,
                 inline=False,
             ),
-            ReplyField("UTC", snapshot.utc.strftime("%Y-%m-%d %H:%M:%S %Z"), inline=False),
+            ReplyField("UTC", utc, inline=False),
         ]
+        result: dict[str, object] = {
+            "status": "ok",
+            "epoch_seconds": epoch,
+            "utc": utc,
+            "discord_timestamp": discord_timestamp,
+        }
 
         if timezone is not None:
             try:
                 zone = self._service.resolve_zone(timezone)
             except UnknownTimeZoneError:
+                warning = (
+                    f"⚠️ Unknown time zone `{timezone}`. Use an IANA name, e.g. "
+                    "`America/New_York` or `Europe/London`."
+                )
                 await self._corridor.send_reply(
                     ctx,
                     title="deskutils",
-                    description=(
-                        f"⚠️ Unknown time zone `{timezone}`. Use an IANA name, e.g. "
-                        "`America/New_York` or `Europe/London`."
-                    ),
+                    description=warning,
                 )
-                return
+                return {
+                    "status": "error",
+                    "error": "unknown_timezone",
+                    "timezone": timezone,
+                    "message": warning,
+                }
             localized = snapshot.utc.astimezone(zone)
-            fields.append(
-                ReplyField(timezone, localized.strftime("%Y-%m-%d %H:%M:%S %Z"), inline=False)
-            )
+            localized_text = localized.strftime("%Y-%m-%d %H:%M:%S %Z")
+            fields.append(ReplyField(timezone, localized_text, inline=False))
+            result["timezone"] = timezone
+            result["localized"] = localized_text
 
         await self._corridor.send_reply(ctx, title="Current time", fields=fields)
+        return result

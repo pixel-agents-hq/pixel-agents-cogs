@@ -33,7 +33,7 @@ class TestTimeCommand(unittest.IsolatedAsyncioTestCase):
         self.ctx = FakeContext()
 
     async def test_time_shows_discord_markup_and_utc(self) -> None:
-        await self.cog.time_command.callback(self.cog, self.ctx, None)
+        result = await self.cog.time_command.callback(self.cog, self.ctx, None)
 
         self.assertEqual(len(self.bot.corridor.replies), 1)
         reply = self.bot.corridor.replies[0]
@@ -43,6 +43,15 @@ class TestTimeCommand(unittest.IsolatedAsyncioTestCase):
             f"<t:{EPOCH}:F> (<t:{EPOCH}:R>)",
         )
         self.assertEqual(reply["fields"][1].value, "2026-08-23 12:30:00 UTC")
+        self.assertEqual(
+            result,
+            {
+                "status": "ok",
+                "epoch_seconds": EPOCH,
+                "utc": "2026-08-23 12:30:00 UTC",
+                "discord_timestamp": f"<t:{EPOCH}:F> (<t:{EPOCH}:R>)",
+            },
+        )
 
     async def test_time_checks_employee_permission(self) -> None:
         await self.cog.time_command.callback(self.cog, self.ctx, None)
@@ -53,27 +62,41 @@ class TestTimeCommand(unittest.IsolatedAsyncioTestCase):
         self.bot.corridor = FakeCorridor(allow_permission=False)
         await self.cog.cog_load()
 
-        await self.cog.time_command.callback(self.cog, self.ctx, None)
+        result = await self.cog.time_command.callback(self.cog, self.ctx, None)
 
         self.assertEqual(self.bot.corridor.replies, [])
+        self.assertEqual(
+            result,
+            {
+                "status": "error",
+                "error": "permission_denied",
+                "message": "The invoking member does not have permission to use this tool.",
+            },
+        )
 
     async def test_time_with_a_valid_zone_adds_a_localized_field(self) -> None:
-        await self.cog.time_command.callback(self.cog, self.ctx, "America/New_York")
+        result = await self.cog.time_command.callback(self.cog, self.ctx, "America/New_York")
 
         reply = self.bot.corridor.replies[0]
         self.assertEqual(len(reply["fields"]), 3)
         zone_field = reply["fields"][2]
         self.assertEqual(zone_field.name, "America/New_York")
         self.assertEqual(zone_field.value, "2026-08-23 08:30:00 EDT")
+        self.assertEqual(result["timezone"], "America/New_York")
+        self.assertEqual(result["localized"], "2026-08-23 08:30:00 EDT")
 
     async def test_time_with_an_unknown_zone_replies_with_a_warning_instead(self) -> None:
-        await self.cog.time_command.callback(self.cog, self.ctx, "Not/A_Real_Zone")
+        result = await self.cog.time_command.callback(self.cog, self.ctx, "Not/A_Real_Zone")
 
         self.assertEqual(len(self.bot.corridor.replies), 1)
         reply = self.bot.corridor.replies[0]
         self.assertEqual(reply["title"], "deskutils")
         self.assertIn("Unknown time zone", reply["description"])
         self.assertIn("Not/A_Real_Zone", reply["description"])
+        self.assertEqual(result["status"], "error")
+        self.assertEqual(result["error"], "unknown_timezone")
+        self.assertEqual(result["timezone"], "Not/A_Real_Zone")
+        self.assertIn("Unknown time zone", result["message"])
 
 
 class TestCogLoadAutoLoadsCorridor(unittest.IsolatedAsyncioTestCase):

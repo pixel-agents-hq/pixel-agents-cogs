@@ -29,22 +29,24 @@ truly nothing to configure. -->
 |---|---|
 | `[p]{{cookiecutter.cog_name}} count` | Show this server's current count |
 | `[p]{{cookiecutter.cog_name}} bump` | Increment this server's count by one (requires the keyholder tier) |
+| `[p]{{cookiecutter.cog_name}} project <amount>` | Project the count after 1-10 increments without changing it |
+| `[p]{{cookiecutter.cog_name}} report [compact\|detailed]` | Report the count in one of two supported styles |
 
 <!-- TODO: this table describes the scaffolded CounterService example --
 replace it with the cog's real command surface as it grows. Keep it in
 sync with adapters/commands.py; this is what a user reads before digging
 into the code. -->
 
-`bump` also carries `@corridor.domain.llm_tool(...)` directly (see
-`adapters/commands.py`), so if [`pico`](../pico) is installed, loaded, and
-enabled for a guild, its LLM can call it exactly as if a keyholder had run
-the command by hand -- same permission check, same reply, no separate code
-path. Delete that decorator from a command that shouldn't be LLM-callable;
-it's opt-in per command, not something every command needs. A command with
-parameters of its own should give each one a description an LLM would need
-by wrapping its type in `typing.Annotated` right in the signature (safe to
-do directly -- `@llm_tool` strips it back down before discord.py's own
-command construction ever sees it; see that decorator's docstring). See
+`bump`, `project`, and `report` carry `@corridor.domain.llm_tool(...)`
+directly (see `adapters/commands.py`), so if [`pico`](../pico) is installed,
+loaded, and enabled for a guild, its LLM can call the same callbacks a
+human invokes. Together they demonstrate a no-input tool, bounded numeric
+input, a string enum, explicit permission/runtime checks, Discord replies,
+and informational mapping results returned to the LLM. Delete the
+decorator from a command that should not be LLM-callable; tools are opt-in
+per command. `ToolDescription` shapes the advertised JSON Schema but does
+not replace callback validation because tool calls bypass discord.py's
+argument conversion. See
 [`docs/corridor-tool-registry-design.md`](../docs/corridor-tool-registry-design.md)
 for the full design.
 

@@ -1,4 +1,4 @@
-from .llm_tools import LLMToolSpec, llm_tool, llm_tool_spec
+from .llm_tools import LLMToolSpec, ToolDescription, llm_tool, llm_tool_spec
 from .models import (
     EMPLOYEE_KEY,
     OWNER_KEY,
@@ -52,6 +52,7 @@ __all__ = [
     "ReplyMode",
     "ReplyPreferences",
     "ToolHandler",
+    "ToolDescription",
     "llm_tool",
     "llm_tool_spec",
 ]

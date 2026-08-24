@@ -37,10 +37,11 @@ class CogBase:
         # So unloading corridor cascades to unload this cog too, instead of
         # leaving it running with a stale corridor reference.
         self._corridor.register_dependent("{{cookiecutter.cog_name}}")
-        # Scans self for @llm_tool-decorated commands (bump, by default --
-        # see adapters/commands.py) and registers each. Inert if pico (or
-        # any other LLM-tool consumer) never loads: corridor's registry
-        # just holds it unread. See docs/corridor-tool-registry-design.md.
+        # Scans self for @llm_tool-decorated commands (the bump/project/
+        # report examples in adapters/commands.py) and registers each.
+        # Inert if pico (or any other LLM-tool consumer) never loads:
+        # corridor's registry just holds them unread. See
+        # docs/corridor-tool-registry-design.md.
         self._corridor.register_llm_tools(self, owner="{{ cookiecutter.cog_name.replace('-', '_').split('_') | map('capitalize') | join }}")
 
     async def cog_unload(self) -> None:

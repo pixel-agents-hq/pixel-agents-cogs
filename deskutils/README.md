@@ -27,7 +27,9 @@ if [`pico`](../pico) is installed, loaded, and enabled for a guild, a user
 can just ask it "what time is it?" in chat instead of running the command
 by hand -- pico calls the exact same command, which replies the exact same
 way (same permission check, same embed) whether triggered by prefix or by
-an LLM tool call. See
+an LLM tool call. The tool result also gives pico the epoch, UTC value,
+Discord timestamp markup, and any requested named-zone localization, so
+the LLM receives the information that was displayed. See
 [`docs/corridor-tool-registry-design.md`](../docs/corridor-tool-registry-design.md).
 Nothing to configure for this either: registration happens automatically at
 `cog_load` and is inert if pico isn't loaded.

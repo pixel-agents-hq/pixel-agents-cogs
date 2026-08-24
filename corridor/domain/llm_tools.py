@@ -9,13 +9,14 @@ at the registering cog's own `cog_load`, via
 duck-typed scan of the cog for commands whose callback carries the marker
 this module attaches) -- see docs/corridor-tool-registry-design.md.
 
-Per-parameter descriptions use natural `typing.Annotated[X, "a description"]`
-syntax, same as FastAPI/pydantic. This is safe on a *real* Discord command
-parameter -- despite discord.py's own command-parameter resolution reading
-the exact same annotation and (verified against `discord.py==2.7.1`)
-already giving `Annotated[X, Y]` a meaning of its own (`Y` is the real
-type/converter to use, not descriptive metadata) -- because `@llm_tool`
-mutates the callback's own `func.__annotations__` in place, replacing each
+Per-parameter JSON Schema metadata uses natural
+`typing.Annotated[X, ToolDescription(...)]` syntax, similar to
+FastAPI/pydantic. This is safe on a *real* Discord command parameter --
+despite discord.py's own command-parameter resolution reading the exact
+same annotation and (verified against `discord.py==2.7.1`) already giving
+`Annotated[X, Y]` a meaning of its own (`Y` is the real type/converter to
+use, not descriptive metadata) -- because `@llm_tool` mutates the
+callback's own `func.__annotations__` in place, replacing each
 `Annotated[...]`-wrapped parameter with its bare type, before returning.
 Every future re-derivation of the signature discord.py ever does (at
 decoration time, and again every time a `Cog` instance is built --
@@ -31,11 +32,12 @@ step, which broke a real bot load in CI), this survives indefinitely.
 from __future__ import annotations
 
 import inspect
+import math
 import types
 import typing
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 
 _MARKER_ATTR = "__corridor_llm_tool__"
 
@@ -46,6 +48,23 @@ _JSON_TYPES: dict[type, str] = {str: "string", int: "integer", float: "number", 
 # Every Red command callback starts `(self, ctx, ...)` -- neither is
 # LLM-visible, so the schema is built from whatever comes after them.
 _LEADING_PARAMS_TO_SKIP = 2
+
+
+@dataclass(frozen=True, slots=True)
+class ToolDescription:
+    """JSON Schema metadata for one `@llm_tool` callback parameter.
+
+    `description` applies to every supported parameter type. `minimum` and
+    `maximum` apply only to numeric parameters. `enum` accepts primitive
+    values matching the parameter's inferred JSON type. The decorator
+    validates combinations at import time and emits the configured fields
+    directly into the tool's property schema.
+    """
+
+    description: str
+    minimum: int | float | None = None
+    maximum: int | float | None = None
+    enum: tuple[str | int | float | bool, ...] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,18 +94,33 @@ def llm_tool(*, name: str, description: str, required_group: str | None = None) 
     `| None`) base types are supported -- anything else raises `TypeError`
     here, at decoration/import time, not later.
 
-    Give a parameter a description an LLM would need by wrapping its type
-    in `typing.Annotated`, exactly the way FastAPI/pydantic do:
+    Give a parameter schema metadata by wrapping its type in
+    `typing.Annotated` with a `ToolDescription`:
 
     ```python
-    timezone: Annotated[str | None, "An IANA time zone name, e.g. 'America/New_York'."] = None
+    timezone: Annotated[
+        str | None,
+        ToolDescription("An IANA time zone name, e.g. 'America/New_York'."),
+    ] = None
     ```
+
+    `ToolDescription` can also set `minimum`/`maximum` on an `int` or
+    `float` parameter, or an `enum` of allowed primitive values matching
+    the parameter's type. Invalid combinations raise `TypeError` here, at
+    decoration/import time. A raw string inside `Annotated` is not schema
+    metadata and is ignored.
 
     This is safe to write directly on a real Discord command parameter --
     see this module's own docstring for exactly what `@llm_tool` does to
     make that true (mutating `func.__annotations__`, not a transient
     `__signature__` override) and why the more obvious-looking fix wasn't
     enough on its own.
+
+    A callback may return a string-keyed `Mapping[str, object]` containing
+    information for the calling LLM. The registration adapter forwards
+    that mapping as the tool result. Returning `None` preserves the simple
+    `{"status": "ok"}` acknowledgement used by commands with no custom
+    result.
 
     Bypasses whatever `@commands.check`-style decorators (`guild_only`,
     `is_owner`, ...) the command may also carry: corridor invokes the
@@ -104,11 +138,13 @@ def llm_tool(*, name: str, description: str, required_group: str | None = None) 
         required: list[str] = []
         for param in params:
             annotation = hints.get(param.name, str)
-            bare_type, param_description = _strip_annotated(annotation)
-            json_type = _json_type_for(func, param.name, bare_type)
-            prop: dict[str, object] = {"type": json_type}
-            if param_description is not None:
-                prop["description"] = param_description
+            bare_type, tool_description = _strip_annotated(func, param.name, annotation)
+            parameter_type = _parameter_type_for(func, param.name, bare_type)
+            prop: dict[str, object] = {"type": _JSON_TYPES[parameter_type]}
+            if tool_description is not None:
+                prop.update(
+                    _tool_description_schema(func, param.name, parameter_type, tool_description)
+                )
             properties[param.name] = prop
             if param.default is inspect.Parameter.empty:
                 required.append(param.name)
@@ -144,34 +180,104 @@ def llm_tool_spec(func: Callable[..., object]) -> LLMToolSpec | None:
     return getattr(func, _MARKER_ATTR, None)
 
 
-def _strip_annotated(annotation: object) -> tuple[object, str | None]:
-    """`Annotated[X, "a description", ...]` -> `(X, "a description")`; any
-    non-`Annotated` annotation passes through unchanged with no
-    description. Only the first `str` metadata item counts as the
-    description -- a non-string metadata item (a real discord.py converter,
-    say) is left for discord.py itself to make sense of, not consumed
-    here."""
+def _strip_annotated(
+    func: Callable[..., object], param_name: str, annotation: object
+) -> tuple[object, ToolDescription | None]:
+    """Return an `Annotated` base type and its one `ToolDescription`.
+
+    Other metadata, including the former raw-string shorthand, is ignored.
+    The annotation itself is still stripped before discord.py can interpret
+    any metadata as a command converter.
+    """
 
     if typing.get_origin(annotation) is typing.Annotated:
         args = typing.get_args(annotation)
-        description = next((meta for meta in args[1:] if isinstance(meta, str)), None)
-        return args[0], description
+        descriptions = [meta for meta in args[1:] if isinstance(meta, ToolDescription)]
+        if len(descriptions) > 1:
+            raise TypeError(
+                f"llm_tool: {func.__qualname__}'s parameter {param_name!r} has more than "
+                "one ToolDescription -- supply at most one"
+            )
+        return args[0], descriptions[0] if descriptions else None
     return annotation, None
 
 
-def _json_type_for(func: Callable[..., object], param_name: str, annotation: object) -> str:
+def _parameter_type_for(func: Callable[..., object], param_name: str, annotation: object) -> type:
     if typing.get_origin(annotation) is types.UnionType:
         args = [arg for arg in typing.get_args(annotation) if arg is not type(None)]
         if len(args) == 1:
-            return _json_type_for(func, param_name, args[0])
-    json_type = _JSON_TYPES.get(annotation) if isinstance(annotation, type) else None
-    if json_type is None:
+            return _parameter_type_for(func, param_name, args[0])
+    if not isinstance(annotation, type) or annotation not in _JSON_TYPES:
         raise TypeError(
             f"llm_tool: {func.__qualname__}'s parameter {param_name!r} has an unsupported "
             f"type {annotation!r} -- only str/int/float/bool (optionally `| None`, optionally "
-            'wrapped in Annotated[..., "a description"]) are inferable into a JSON Schema'
+            "wrapped in Annotated[..., ToolDescription(...)]) are inferable into a JSON Schema"
         )
-    return json_type
+    return annotation
 
 
-__all__ = ["LLMToolSpec", "llm_tool", "llm_tool_spec"]
+def _tool_description_schema(
+    func: Callable[..., object],
+    param_name: str,
+    parameter_type: type,
+    metadata: ToolDescription,
+) -> dict[str, object]:
+    prefix = f"llm_tool: {func.__qualname__}'s parameter {param_name!r}"
+    if not isinstance(metadata.description, str):
+        raise TypeError(f"{prefix} has a ToolDescription.description that is not a string")
+
+    schema: dict[str, object] = {"description": metadata.description}
+    bounds = (("minimum", metadata.minimum), ("maximum", metadata.maximum))
+    for bound_name, bound in bounds:
+        if bound is None:
+            continue
+        if parameter_type not in (int, float):
+            raise TypeError(f"{prefix} sets {bound_name}, but its type is not numeric")
+        if not _is_finite_number(bound):
+            raise TypeError(f"{prefix}'s {bound_name} must be a finite int or float")
+        schema[bound_name] = bound
+
+    if (
+        metadata.minimum is not None
+        and metadata.maximum is not None
+        and metadata.minimum > metadata.maximum
+    ):
+        raise TypeError(f"{prefix}'s minimum must not be greater than its maximum")
+
+    if metadata.enum is not None:
+        if not isinstance(metadata.enum, tuple):
+            raise TypeError(f"{prefix}'s enum must be a tuple")
+        if not metadata.enum:
+            raise TypeError(f"{prefix}'s enum must contain at least one value")
+        for value in metadata.enum:
+            if not _enum_value_matches(value, parameter_type):
+                raise TypeError(
+                    f"{prefix}'s enum value {value!r} does not match {parameter_type.__name__}"
+                )
+            if isinstance(value, float) and not math.isfinite(value):
+                raise TypeError(f"{prefix}'s enum values must be finite")
+            numeric_value = cast(int | float, value)
+            if metadata.minimum is not None and numeric_value < metadata.minimum:
+                raise TypeError(f"{prefix}'s enum value {value!r} is below its minimum")
+            if metadata.maximum is not None and numeric_value > metadata.maximum:
+                raise TypeError(f"{prefix}'s enum value {value!r} is above its maximum")
+        if len(set(metadata.enum)) != len(metadata.enum):
+            raise TypeError(f"{prefix}'s enum values must be unique")
+        schema["enum"] = list(metadata.enum)
+
+    return schema
+
+
+def _is_finite_number(value: object) -> bool:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    return not isinstance(value, float) or math.isfinite(value)
+
+
+def _enum_value_matches(value: object, parameter_type: type) -> bool:
+    if parameter_type is float:
+        return _is_finite_number(value)
+    return type(value) is parameter_type
+
+
+__all__ = ["LLMToolSpec", "ToolDescription", "llm_tool", "llm_tool_spec"]

@@ -279,6 +279,7 @@ class AgentPresenceChanged:
 # (pico) instead of Discord-vocabulary events.
 
 ToolHandler = Callable[[object, Mapping[str, object]], Awaitable[Mapping[str, object]]]
+ToolAvailabilityCheck = Callable[[object], Awaitable[bool]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -306,8 +307,10 @@ class RegisteredTool:
     this tool, using corridor's own permission-group vocabulary
     (`PermissionGroupDef.key` / `EMPLOYEE_KEY` / ...) -- resolved the same
     way `require_permission` resolves it for a Discord command. `None`
-    means no gate beyond whatever the handler itself may choose to
-    enforce.
+    means no group gate. `availability_check`, when present, receives the opaque
+    invocation context and adds a second gate. Decorated Discord commands
+    use it to delegate to the command's native check pipeline when no
+    explicit `required_group` was supplied.
 
     Not hashable in practice (`parameters`/`handler` aren't) -- store and
     look these up by `name`, never in a set or as a dict key.
@@ -318,6 +321,7 @@ class RegisteredTool:
     parameters: Mapping[str, object]
     handler: ToolHandler
     required_group: str | None = None
+    availability_check: ToolAvailabilityCheck | None = None
 
 
 # The closed set of classes a cog actually publish()es/subscribe()s to.

@@ -14,7 +14,7 @@ flowchart LR
     P["pico<br/>tool-calling loop"]
 
     D -->|"register_llm_tools at cog_load"| C
-    P -->|"list_tools_for invoking member"| C
+    P -->|"list_tools_for invoking context"| C
     C -->|"permission-filtered RegisteredTool values"| P
 ```
 
@@ -34,6 +34,7 @@ ToolHandler = Callable[
     [object, Mapping[str, object]],
     Awaitable[Mapping[str, object]],
 ]
+ToolAvailabilityCheck = Callable[[object], Awaitable[bool]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,6 +44,7 @@ class RegisteredTool:
     parameters: Mapping[str, object]
     handler: ToolHandler
     required_group: str | None = None
+    availability_check: ToolAvailabilityCheck | None = None
 ```
 
 - `name` is globally unique within the bot process.
@@ -51,7 +53,10 @@ class RegisteredTool:
 - `handler(ctx, arguments)` receives the original Discord context and a
   JSON-object-shaped mapping, then returns a JSON-object-shaped mapping.
 - `required_group` uses Corridor's permission-group keys. `None` means the
-  registry adds no permission gate.
+  registry adds no group gate.
+- `availability_check(ctx)` is an optional second gate. Decorated commands
+  use it to run their native Red/discord.py checks when no explicit
+  `required_group` was supplied.
 
 `Corridor.register_tool(tool, owner=...)` is the low-level API for tools
 that are not Discord commands. Most providers should use decorated command
@@ -60,7 +65,20 @@ registration instead.
 ## Turning a Discord command into a tool
 
 Apply `@corridor.domain.llm_tool` directly to the callback, below the
-Discord command decorator:
+Discord command decorator. All arguments are optional:
+
+```python
+@deskutils_group.command(name="count")
+@llm_tool()
+async def count_command(self, ctx: commands.Context, *, text: str) -> dict[str, object]:
+    """Count all characters and whitespace-delimited words in text."""
+    ...
+```
+
+At registration this becomes `deskutils_count`, uses the cleaned docstring
+as its tool description, describes `text` as `value for text`, and uses the
+Discord command's own checks for availability. Supply any of the arguments
+when richer metadata or an explicit Corridor group is needed:
 
 ```python
 from typing import Annotated
@@ -143,6 +161,10 @@ A parameter without a default is included in `required`; a parameter with
 a default is optional. Unsupported annotations fail immediately when the
 module is imported and the decorator runs.
 
+Parameters without a `ToolDescription` receive the generic description
+`value for <parameter name>`. `ToolDescription` remains the way to replace
+that text or add bounds/enums:
+
 Use one `ToolDescription` inside `typing.Annotated` to enrich a property:
 
 ```python
@@ -192,9 +214,13 @@ That has two practical consequences for every decorated callback:
    decorators. Tool invocation calls `.callback(cog, ctx, **arguments)`
    directly and bypasses Discord's dispatch/conversion/check pipeline.
 
-`required_group` filters tool visibility before the LLM call, while an
-explicit `require_permission` inside the callback keeps the command itself
-and direct invocation safe. Use both with the same permission key.
+An explicit `required_group` filters tool visibility before the LLM call.
+When it is omitted, registration attaches a context-based availability
+check that calls `command.can_run(ctx, check_all_parents=True)`, covering
+global, cog, parent, disabled-command, and local checks. An explicit
+`require_permission` inside the callback remains appropriate for custom
+Corridor permissions and defense in depth because tool execution calls the
+callback directly.
 
 ### Why `Annotated` is stripped in place
 
@@ -236,10 +262,11 @@ Manual unload removes all tools for that owner, and Corridor's
 `on_cog_remove` listener provides defensive cleanup if the provider's
 teardown does not complete.
 
-Consumers should call `await corridor.list_tools_for(member)`, not the
-unfiltered `list_tools()`. Corridor evaluates every `required_group` using
-the same capability logic as Discord command permission checks and omits
-unauthorized tools from the LLM's vocabulary entirely.
+Consumers should call `await corridor.list_tools_for(ctx)`, not the
+unfiltered `list_tools()`. Corridor evaluates explicit groups against
+`ctx.author` and inferred command checks against the full context, omitting
+unauthorized tools from the LLM's vocabulary entirely. A check that raises
+is logged and fails closed for that tool without dropping other tools.
 
 ## Pico adaptation and invocation flow
 
@@ -264,7 +291,7 @@ sequenceDiagram
 
     D->>C: register_llm_tools(self, owner="Deskutils")
     U->>P: "What time is it in New York?"
-    P->>C: list_tools_for(ctx.author)
+    P->>C: list_tools_for(ctx)
     C-->>P: deskutils_time
     P->>D: time_command.callback(cog, ctx, timezone="America/New_York")
     D->>C: require_permission(ctx, "employee")
@@ -289,15 +316,16 @@ stable, JSON-serializable, and self-explanatory.
 
 When adding a decorated command:
 
-1. Put `@llm_tool` immediately above the callback and below the Discord
+1. Put `@llm_tool()` immediately above the callback and below the Discord
    command decorator.
-2. Give the tool a globally distinctive name, normally prefixed with the
-   cog name.
+2. Confirm the inferred qualified-command name is globally distinctive;
+   override `name` only when it is not.
 3. Use only supported primitive input annotations and add one
    `ToolDescription` wherever the name/type is insufficient.
 4. Treat schema constraints as guidance and validate raw tool arguments in
    the callback.
-5. Match `required_group` with an explicit callback permission check.
+5. Let native Discord checks be inferred, or pair an explicit
+   `required_group` with the same callback permission check.
 6. Send Discord output through Corridor and return an informational mapping
    when the LLM needs to know what happened.
 7. Return structured error mappings for expected failures; reserve raised

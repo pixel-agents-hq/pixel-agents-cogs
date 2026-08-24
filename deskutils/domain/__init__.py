@@ -1,3 +1,3 @@
-from .models import CurrentTime
+from .models import CurrentTime, TextStatistics
 
-__all__ = ["CurrentTime"]
+__all__ = ["CurrentTime", "TextStatistics"]

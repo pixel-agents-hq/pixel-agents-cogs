@@ -1,3 +1,3 @@
-from .service import Clock, TimeService, UnknownTimeZoneError
+from .service import Clock, TextService, TimeService, UnknownTimeZoneError
 
-__all__ = ["Clock", "TimeService", "UnknownTimeZoneError"]
+__all__ = ["Clock", "TextService", "TimeService", "UnknownTimeZoneError"]

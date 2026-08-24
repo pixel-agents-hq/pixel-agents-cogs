@@ -10,18 +10,198 @@ assertable at all."""
 from __future__ import annotations
 
 import unittest
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 from redbot.core.errors import CogLoadError
 
+from corridor.adapters.llm_tool_registration import collect_registered_tools
 from corridor.domain import EMPLOYEE_KEY, llm_tool_spec
 
 from .. import setup
+from ..adapters import commands as commands_adapter
 from ..application import TimeService
 from ..deskutils import Deskutils
-from .conftest import FakeBot, FakeContext, FakeCorridor
+from .conftest import FakeBot, FakeChannel, FakeContext, FakeCorridor, FakePermissions
 from .test_application_service import FIXED_INSTANT, FakeClock
 
 EPOCH = int(FIXED_INSTANT.timestamp())
+
+
+def _quoted_message(
+    ctx: FakeContext,
+    *,
+    content: str = "A useful message",
+    guild: object | None = None,
+    channel: FakeChannel | None = None,
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        id=987654321012345678,
+        guild=guild if guild is not None else ctx.guild,
+        channel=channel or ctx.channel,
+        author=SimpleNamespace(id=42, display_name="Linley"),
+        content=content,
+        jump_url="https://discord.com/channels/12345/456/987654321012345678",
+    )
+
+
+class TestCountCommand(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self) -> None:
+        self.bot = FakeBot()
+        self.cog = Deskutils(bot=self.bot)
+        await self.cog.cog_load()
+        self.ctx = FakeContext()
+
+    async def test_count_replies_with_character_and_word_totals(self) -> None:
+        result = await self.cog.count_command.callback(self.cog, self.ctx, text="one  two\nthree")
+
+        reply = self.bot.corridor.replies[0]
+        self.assertEqual(reply["title"], "Text count")
+        self.assertEqual(
+            [(field.name, field.value) for field in reply["fields"]],
+            [
+                ("Characters", "14"),
+                ("Words", "3"),
+            ],
+        )
+        self.assertEqual(result, {"status": "ok", "characters": 14, "words": 3})
+
+    async def test_count_rejects_non_string_raw_tool_input(self) -> None:
+        result = await self.cog.count_command.callback(
+            self.cog,
+            self.ctx,
+            text=12,  # type: ignore[arg-type]
+        )
+
+        self.assertEqual(result["error"], "invalid_text")
+        self.assertEqual(self.bot.corridor.replies[0]["title"], "Text count")
+
+
+class TestQuoteCommand(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self) -> None:
+        self.bot = FakeBot()
+        self.cog = Deskutils(bot=self.bot)
+        await self.cog.cog_load()
+        self.ctx = FakeContext()
+
+    async def test_quote_uses_the_replied_to_message(self) -> None:
+        target = _quoted_message(self.ctx)
+        self.ctx.message.reference = SimpleNamespace(
+            message_id=target.id,
+            channel_id=target.channel.id,
+            resolved=target,
+        )
+
+        result = await self.cog.quote_command.callback(self.cog, self.ctx)
+
+        reply = self.bot.corridor.replies[0]
+        self.assertEqual(reply["title"], "Quoted message")
+        self.assertEqual(reply["description"], ">>> A useful message")
+        self.assertEqual(
+            [(field.name, field.value) for field in reply["fields"]],
+            [
+                ("Author", "Linley"),
+                (
+                    "Source",
+                    "[Jump to message](https://discord.com/channels/12345/456/987654321012345678)",
+                ),
+            ],
+        )
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["content"], "A useful message")
+
+    async def test_quote_resolves_an_explicit_message_link(self) -> None:
+        target = _quoted_message(self.ctx)
+        converter = SimpleNamespace(convert=AsyncMock(return_value=target))
+
+        with patch.object(commands_adapter.commands, "MessageConverter", return_value=converter):
+            result = await self.cog.quote_command.callback(
+                self.cog,
+                self.ctx,
+                "https://discord.com/channels/12345/456/987654321012345678",
+            )
+
+        self.assertEqual(result["message_id"], target.id)
+        converter.convert.assert_awaited_once()
+
+    async def test_quote_requires_a_reply_or_link(self) -> None:
+        result = await self.cog.quote_command.callback(self.cog, self.ctx)
+
+        self.assertEqual(result["error"], "message_required")
+
+    async def test_quote_rejects_non_string_raw_tool_input(self) -> None:
+        result = await self.cog.quote_command.callback(
+            self.cog,
+            self.ctx,
+            12,  # type: ignore[arg-type]
+        )
+
+        self.assertEqual(result["error"], "invalid_message")
+
+    async def test_quote_rejects_cross_guild_or_unreadable_messages(self) -> None:
+        cross_guild = _quoted_message(self.ctx, guild=SimpleNamespace(id=999))
+        self.ctx.message.reference = SimpleNamespace(
+            message_id=cross_guild.id,
+            channel_id=cross_guild.channel.id,
+            resolved=cross_guild,
+        )
+
+        cross_guild_result = await self.cog.quote_command.callback(self.cog, self.ctx)
+
+        self.assertEqual(cross_guild_result["error"], "message_not_accessible")
+
+        unreadable_channel = FakeChannel(permissions=FakePermissions(view_channel=False))
+        unreadable = _quoted_message(self.ctx, channel=unreadable_channel)
+        self.ctx.message.reference = SimpleNamespace(
+            message_id=unreadable.id,
+            channel_id=unreadable.channel.id,
+            resolved=unreadable,
+        )
+
+        unreadable_result = await self.cog.quote_command.callback(self.cog, self.ctx)
+
+        self.assertEqual(unreadable_result["error"], "message_not_accessible")
+
+    async def test_quote_rejects_deleted_and_textless_messages(self) -> None:
+        self.ctx.message.reference = SimpleNamespace(
+            message_id=987654321012345678,
+            channel_id=self.ctx.channel.id,
+            resolved=None,
+        )
+        converter = SimpleNamespace(convert=AsyncMock(side_effect=RuntimeError("deleted")))
+
+        with patch.object(commands_adapter.commands, "MessageConverter", return_value=converter):
+            deleted_result = await self.cog.quote_command.callback(self.cog, self.ctx)
+
+        self.assertEqual(deleted_result["error"], "message_not_found")
+
+        textless = _quoted_message(self.ctx, content="  \n")
+        self.ctx.message.reference = SimpleNamespace(
+            message_id=textless.id,
+            channel_id=textless.channel.id,
+            resolved=textless,
+        )
+
+        textless_result = await self.cog.quote_command.callback(self.cog, self.ctx)
+
+        self.assertEqual(textless_result["error"], "empty_message")
+
+    async def test_quote_escapes_mentions_and_truncates_only_the_rendered_text(self) -> None:
+        content = "@everyone " + "x" * 1_800
+        target = _quoted_message(self.ctx, content=content)
+        self.ctx.message.reference = SimpleNamespace(
+            message_id=target.id,
+            channel_id=target.channel.id,
+            resolved=target,
+        )
+
+        result = await self.cog.quote_command.callback(self.cog, self.ctx)
+
+        rendered = self.bot.corridor.replies[0]["description"]
+        self.assertIn("@\u200beveryone", rendered)
+        self.assertTrue(rendered.endswith("…"))
+        self.assertLessEqual(len(rendered.removeprefix(">>> ")), 1_750)
+        self.assertEqual(result["content"], content)
 
 
 class TestTimeCommand(unittest.IsolatedAsyncioTestCase):
@@ -189,8 +369,64 @@ class TestTimeCommandIsAnLLMTool(unittest.TestCase):
         )
 
 
+class TestInferredLLMTools(unittest.IsolatedAsyncioTestCase):
+    def test_count_and_quote_omit_all_decorator_metadata(self) -> None:
+        count_spec = llm_tool_spec(Deskutils.count_command.callback)
+        quote_spec = llm_tool_spec(Deskutils.quote_command.callback)
+
+        assert count_spec is not None
+        assert quote_spec is not None
+        self.assertIsNone(count_spec.name)
+        self.assertIsNone(count_spec.required_group)
+        self.assertEqual(
+            count_spec.description,
+            "Count all characters and whitespace-delimited words in text.",
+        )
+        self.assertEqual(
+            count_spec.parameters,
+            {
+                "type": "object",
+                "properties": {"text": {"type": "string", "description": "value for text"}},
+                "required": ["text"],
+            },
+        )
+        self.assertIsNone(quote_spec.name)
+        self.assertIsNone(quote_spec.required_group)
+        self.assertEqual(
+            quote_spec.description,
+            "Quote a replied-to Discord message or one identified by a message link.",
+        )
+        self.assertEqual(
+            quote_spec.parameters,
+            {
+                "type": "object",
+                "properties": {
+                    "message_link": {
+                        "type": "string",
+                        "description": "value for message_link",
+                    }
+                },
+                "required": [],
+            },
+        )
+
+    async def test_registration_infers_names_and_native_command_availability(self) -> None:
+        cog = Deskutils(bot=FakeBot())
+        tools = {tool.name: tool for tool in collect_registered_tools(cog)}
+
+        self.assertEqual(set(tools), {"deskutils_time", "deskutils_count", "deskutils_quote"})
+        assert tools["deskutils_count"].availability_check is not None
+        assert tools["deskutils_quote"].availability_check is not None
+        guild_ctx = FakeContext()
+        dm_ctx = FakeContext(guild_id=None)
+        self.assertTrue(await tools["deskutils_count"].availability_check(guild_ctx))
+        self.assertTrue(await tools["deskutils_count"].availability_check(dm_ctx))
+        self.assertTrue(await tools["deskutils_quote"].availability_check(guild_ctx))
+        self.assertFalse(await tools["deskutils_quote"].availability_check(dm_ctx))
+
+
 class TestToolRegistration(unittest.IsolatedAsyncioTestCase):
-    """`time_command`'s `@llm_tool` decoration is scanned and registered
+    """Deskutils' `@llm_tool` decorations are scanned and registered
     into corridor's cross-cog tool registry at cog_load -- inert unless
     something (pico) reads corridor's registry, but always
     registered/unregistered in step with the cog's own lifecycle
@@ -199,7 +435,7 @@ class TestToolRegistration(unittest.IsolatedAsyncioTestCase):
     (corridor/tests/test_llm_tool_registration.py), not duplicated here --
     this only verifies deskutils asks for it correctly."""
 
-    async def test_cog_load_registers_the_time_tool(self) -> None:
+    async def test_cog_load_registers_the_llm_tools(self) -> None:
         bot = FakeBot()
         cog = Deskutils(bot=bot)
 

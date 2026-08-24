@@ -142,12 +142,13 @@ Discord is through a tool's own handler (currently only the reply tool).
 ## Cross-cog tools
 
 Any other cog can turn one of its own commands into an LLM-callable tool by
-applying `@corridor.domain.llm_tool(...)` directly to the command's
+applying `@corridor.domain.llm_tool()` directly to the command's
 callback, and pico picks it up automatically -- no pico-specific
 integration code needed per registering cog.
-[`deskutils`](../deskutils) decorates its `time` command this way, so if
-it's installed alongside pico, a user can just ask "what time is it?"
-instead of running `[p]deskutils time` by hand. [`floorplan`](../floorplan)
+[`deskutils`](../deskutils) exposes time, text counting, and Discord message
+quoting this way, so if it's installed alongside pico a user can ask
+"what time is it?", "how long is this text?", or reply to a message with
+"quote this" instead of running the commands by hand. [`floorplan`](../floorplan)
 does the same for its public Pixel Index layout commands: “what layouts are
 available?” posts the interactive search view, while “show me the default
 layout” posts the detail view for slug `default`. The Floorplan tools also
@@ -157,9 +158,9 @@ Pico calling any of these tools *is* running the command: the same permission
 check and Discord reply/view happen inside the command itself, rather than
 being composed by the LLM from returned data.
 
-Per-message, pico asks corridor for every tool the *triggering user*
-(`ctx.author`) is allowed to invoke (`corridor.list_tools_for`, filtered by
-the same permission groups a Discord command would check) and adapts each
+Per-message, pico asks corridor for every tool the *triggering context* is
+allowed to invoke (`corridor.list_tools_for`, filtered by explicit Corridor
+groups or the Discord command's native checks) and adapts each
 into pico's own tool-calling shape
 ([`tools/cross_cog.py`](tools/cross_cog.py)) alongside the native reply
 tool, passing this same turn's `ctx` through so the invoked command runs

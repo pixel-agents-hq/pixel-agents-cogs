@@ -73,13 +73,18 @@ class LLMToolSpec:
     `RegisteredTool` from a decorated callback, short of the live cog
     instance and Command object that only exist once the cog is loaded."""
 
-    name: str
+    name: str | None
     description: str
     parameters: dict[str, object]
     required_group: str | None
 
 
-def llm_tool(*, name: str, description: str, required_group: str | None = None) -> Callable[[F], F]:
+def llm_tool(
+    *,
+    name: str | None = None,
+    description: str | None = None,
+    required_group: str | None = None,
+) -> Callable[[F], F]:
     """Mark a Red command callback as a cross-cog, LLM-callable tool.
 
     Apply directly to the command's own callback -- the innermost
@@ -87,6 +92,13 @@ def llm_tool(*, name: str, description: str, required_group: str | None = None) 
     `CogBase.register_llm_tools()` (called from the owning cog's own
     `cog_load`) can find it and register it into the cross-cog tool
     registry automatically.
+
+    `name` defaults to the Discord command's qualified name with spaces
+    replaced by underscores (for example `deskutils time` becomes
+    `deskutils_time`). Because the Discord command object does not exist
+    until the outer command decorator runs, that default is resolved later
+    by the registration adapter. `description` defaults to this callback's
+    cleaned docstring; a callback without one must supply it explicitly.
 
     `parameters`'s JSON Schema is inferred from the callback's own
     signature/type hints, skipping the leading `self`/`ctx` parameters
@@ -122,15 +134,22 @@ def llm_tool(*, name: str, description: str, required_group: str | None = None) 
     `{"status": "ok"}` acknowledgement used by commands with no custom
     result.
 
-    Bypasses whatever `@commands.check`-style decorators (`guild_only`,
-    `is_owner`, ...) the command may also carry: corridor invokes the
-    callback directly, not through discord.py's command dispatch, so any
-    access control this tool needs must be enforced in the callback's own
-    body -- `required_group` above, or an explicit `require_permission`
-    call as the first statement, same as deskutils' `time_command`.
+    When `required_group` is omitted, corridor uses the Discord command's
+    own `can_run(..., check_all_parents=True)` result to decide whether the
+    tool is visible to an invoking context. Supplying `required_group`
+    preserves the explicit corridor permission-group gate. The callback is
+    still invoked directly rather than through Discord dispatch, so
+    callbacks should retain their own runtime validation and any explicit
+    permission check needed for defense in depth.
     """
 
     def decorator(func: F) -> F:
+        resolved_description = description if description is not None else inspect.getdoc(func)
+        if not resolved_description:
+            raise TypeError(
+                f"llm_tool: {func.__qualname__} has no description or docstring -- "
+                "supply description=... or add a callback docstring"
+            )
         hints = typing.get_type_hints(func, include_extras=True)
         params = list(inspect.signature(func).parameters.values())[_LEADING_PARAMS_TO_SKIP:]
 
@@ -140,7 +159,10 @@ def llm_tool(*, name: str, description: str, required_group: str | None = None) 
             annotation = hints.get(param.name, str)
             bare_type, tool_description = _strip_annotated(func, param.name, annotation)
             parameter_type = _parameter_type_for(func, param.name, bare_type)
-            prop: dict[str, object] = {"type": _JSON_TYPES[parameter_type]}
+            prop: dict[str, object] = {
+                "type": _JSON_TYPES[parameter_type],
+                "description": f"value for {param.name}",
+            }
             if tool_description is not None:
                 prop.update(
                     _tool_description_schema(func, param.name, parameter_type, tool_description)
@@ -159,7 +181,7 @@ def llm_tool(*, name: str, description: str, required_group: str | None = None) 
 
         spec = LLMToolSpec(
             name=name,
-            description=description,
+            description=resolved_description,
             parameters={"type": "object", "properties": properties, "required": required},
             required_group=required_group,
         )

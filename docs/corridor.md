@@ -105,14 +105,14 @@ doesn't allow mixing V1 embeds and V2 components in the same message).
 
 A third thing corridor centralizes, same shape as its Pub/Sub event bus:
 any cog can register a command as an LLM-callable tool — normally by
-applying `@corridor.domain.llm_tool(...)` directly to the command's
+applying `@corridor.domain.llm_tool()` directly to the command's
 callback and calling `corridor.register_llm_tools(self, owner=...)` from
 `cog_load` — so `pico` (if loaded) can invoke it directly from its
 tool-calling loop instead of a user needing to run the command by hand —
 without `pico` and the registering cog ever depending on each other. See
 [`docs/corridor-tool-registry-design.md`](corridor-tool-registry-design.md)
-for the full rationale, lifecycle, and the framework-neutral (plain
-JSON-Schema dict, not pydantic) contract this uses.
+for the inferred metadata and permission behavior, full lifecycle, and the
+framework-neutral (plain JSON-Schema dict, not pydantic) contract this uses.
 
 ## What a dependent cog calls
 

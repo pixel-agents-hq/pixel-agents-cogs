@@ -162,7 +162,14 @@ def _install_discord() -> None:
 
         return datetime.datetime.now(datetime.UTC)
 
-    discord_utils = _make_stub_module("discord.utils", utcnow=_utcnow)
+    def _escape_mentions(text: str) -> str:
+        import re
+
+        return re.sub(r"@(everyone|here|[!&]?[0-9]{17,20})", "@\u200b\\1", text)
+
+    discord_utils = _make_stub_module(
+        "discord.utils", utcnow=_utcnow, escape_mentions=_escape_mentions
+    )
     discord.utils = discord_utils
     sys.modules["discord.utils"] = discord_utils
 
@@ -442,24 +449,51 @@ def _install_redbot() -> None:
             return _FakeConfigValue(self._global_data, name)
 
     class _FakeCommand:
-        def __init__(self, func: Any) -> None:
+        def __init__(
+            self, func: Any, *, name: str | None = None, parent: _FakeCommand | None = None
+        ) -> None:
             self.callback = func
             self.__wrapped__ = func
             self.__name__ = getattr(func, "__name__", "command")
             self.__doc__ = getattr(func, "__doc__", "")
+            self.name = name or self.__name__
+            self.parent = parent
+
+        @property
+        def qualified_name(self) -> str:
+            if self.parent is None:
+                return self.name
+            return f"{self.parent.qualified_name} {self.name}"
 
         async def __call__(self, *args: object, **kwargs: object) -> object:
             return await self.__wrapped__(*args, **kwargs)
 
-        def command(self, **_kwargs: object) -> Any:
+        async def can_run(self, ctx: Any, *, check_all_parents: bool = False) -> bool:
+            if getattr(self.callback, "__guild_only__", False) and ctx.guild is None:
+                return False
+            if check_all_parents and self.parent is not None:
+                return await self.parent.can_run(ctx, check_all_parents=True)
+            return True
+
+        def command(self, **kwargs: object) -> Any:
             def decorator(func: Any) -> _FakeCommand:
-                return _FakeCommand(func)
+                name = kwargs.get("name")
+                return _FakeCommand(
+                    func,
+                    name=name if isinstance(name, str) else None,
+                    parent=self,
+                )
 
             return decorator
 
-        def group(self, **_kwargs: object) -> Any:
+        def group(self, **kwargs: object) -> Any:
             def decorator(func: Any) -> _FakeCommand:
-                return _FakeCommand(func)
+                name = kwargs.get("name")
+                return _FakeCommand(
+                    func,
+                    name=name if isinstance(name, str) else None,
+                    parent=self,
+                )
 
             return decorator
 
@@ -481,6 +515,7 @@ def _install_redbot() -> None:
         @staticmethod
         def guild_only() -> Any:
             def decorator(func: Any) -> Any:
+                func.__guild_only__ = True
                 return func
 
             return decorator
@@ -506,18 +541,24 @@ def _install_redbot() -> None:
             return decorator
 
         @staticmethod
-        def hybrid_command(**_kwargs: object) -> Any:
+        def hybrid_command(**kwargs: object) -> Any:
             def decorator(func: Any) -> _FakeCommand:
-                return _FakeCommand(func)
+                name = kwargs.get("name")
+                return _FakeCommand(func, name=name if isinstance(name, str) else None)
 
             return decorator
 
         @staticmethod
-        def hybrid_group(**_kwargs: object) -> Any:
+        def hybrid_group(**kwargs: object) -> Any:
             def decorator(func: Any) -> _FakeCommand:
-                return _FakeCommand(func)
+                name = kwargs.get("name")
+                return _FakeCommand(func, name=name if isinstance(name, str) else None)
 
             return decorator
+
+        class MessageConverter:
+            async def convert(self, ctx: object, argument: str) -> object:
+                raise RuntimeError("MessageConverter stub has no configured result")
 
     def _make_stub_module(name: str, **attrs: object) -> types.ModuleType:
         module = types.ModuleType(name)

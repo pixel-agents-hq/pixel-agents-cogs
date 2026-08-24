@@ -34,6 +34,33 @@ class TestLLMToolSpec(unittest.TestCase):
         assert spec is not None
         self.assertIsNone(spec.required_group)
 
+    def test_all_decorator_metadata_can_be_inferred(self) -> None:
+        @llm_tool()
+        def command(self: object, ctx: object, value: str) -> None:
+            """Do a useful thing.
+
+            The full cleaned docstring becomes the tool description.
+            """
+
+        spec = llm_tool_spec(command)
+        assert spec is not None
+        self.assertIsNone(spec.name)
+        self.assertEqual(
+            spec.description,
+            "Do a useful thing.\n\nThe full cleaned docstring becomes the tool description.",
+        )
+        self.assertIsNone(spec.required_group)
+        self.assertEqual(
+            spec.parameters["properties"],
+            {"value": {"type": "string", "description": "value for value"}},
+        )
+
+    def test_inferred_description_requires_a_docstring(self) -> None:
+        with self.assertRaisesRegex(TypeError, "no description or docstring"):
+
+            @llm_tool()
+            def command(self: object, ctx: object) -> None: ...
+
     def test_decorator_returns_the_original_callable_still_working(self) -> None:
         @llm_tool(name="a_tool", description="Does a thing.")
         def command(self: object, ctx: object) -> str:
@@ -55,7 +82,10 @@ class TestLLMToolSpec(unittest.TestCase):
 
         spec = llm_tool_spec(command)
         assert spec is not None
-        self.assertEqual(spec.parameters["properties"], {"name": {"type": "string"}})
+        self.assertEqual(
+            spec.parameters["properties"],
+            {"name": {"type": "string", "description": "value for name"}},
+        )
         self.assertEqual(spec.parameters["required"], ["name"])
 
     def test_optional_str_or_none_parameter_is_not_required(self) -> None:
@@ -64,7 +94,10 @@ class TestLLMToolSpec(unittest.TestCase):
 
         spec = llm_tool_spec(command)
         assert spec is not None
-        self.assertEqual(spec.parameters["properties"], {"timezone": {"type": "string"}})
+        self.assertEqual(
+            spec.parameters["properties"],
+            {"timezone": {"type": "string", "description": "value for timezone"}},
+        )
         self.assertEqual(spec.parameters["required"], [])
 
     def test_int_float_bool_are_mapped(self) -> None:
@@ -76,9 +109,9 @@ class TestLLMToolSpec(unittest.TestCase):
         self.assertEqual(
             spec.parameters["properties"],
             {
-                "count": {"type": "integer"},
-                "ratio": {"type": "number"},
-                "flag": {"type": "boolean"},
+                "count": {"type": "integer", "description": "value for count"},
+                "ratio": {"type": "number", "description": "value for ratio"},
+                "flag": {"type": "boolean", "description": "value for flag"},
             },
         )
         self.assertEqual(spec.parameters["required"], ["count", "ratio", "flag"])
@@ -196,15 +229,21 @@ class TestAnnotatedToolDescriptions(unittest.TestCase):
 
         spec = llm_tool_spec(command)
         assert spec is not None
-        self.assertEqual(spec.parameters["properties"], {"timezone": {"type": "string"}})
+        self.assertEqual(
+            spec.parameters["properties"],
+            {"timezone": {"type": "string", "description": "value for timezone"}},
+        )
 
-    def test_a_parameter_without_annotated_has_no_description(self) -> None:
+    def test_a_parameter_without_annotated_gets_a_generic_description(self) -> None:
         @llm_tool(name="a_tool", description="Does a thing.")
         def command(self: object, ctx: object, name: str) -> None: ...
 
         spec = llm_tool_spec(command)
         assert spec is not None
-        self.assertEqual(spec.parameters["properties"], {"name": {"type": "string"}})
+        self.assertEqual(
+            spec.parameters["properties"],
+            {"name": {"type": "string", "description": "value for name"}},
+        )
 
     def test_annotated_unsupported_base_type_still_raises(self) -> None:
         with self.assertRaises(TypeError):

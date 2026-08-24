@@ -17,7 +17,7 @@ import inspect
 from collections.abc import Mapping
 from typing import Any
 
-from ..domain import RegisteredTool
+from ..domain import RegisteredTool, ToolAvailabilityCheck
 from ..domain.llm_tools import LLMToolSpec, llm_tool_spec
 
 
@@ -36,11 +36,13 @@ def collect_registered_tools(cog: object) -> list[RegisteredTool]:
         if spec is None or id(callback) in seen:
             continue
         seen.add(id(callback))
-        found.append(_build_registered_tool(cog, callback, spec))
+        found.append(_build_registered_tool(cog, attr, callback, spec))
     return found
 
 
-def _build_registered_tool(cog: object, callback: Any, spec: LLMToolSpec) -> RegisteredTool:
+def _build_registered_tool(
+    cog: object, command: object, callback: Any, spec: LLMToolSpec
+) -> RegisteredTool:
     # `callback(cog, ctx, **raw_args)` -- calling the plain callback
     # directly with an explicit `cog`, not `command(ctx, ...)`: real
     # discord.py's `Command.__call__` auto-binds `self.cog`, but the test
@@ -64,12 +66,38 @@ def _build_registered_tool(cog: object, callback: Any, spec: LLMToolSpec) -> Reg
             )
         return dict(result)
 
+    qualified_name = getattr(command, "qualified_name", None)
+    if spec.name is None:
+        if not isinstance(qualified_name, str) or not qualified_name.strip():
+            raise TypeError(
+                f"llm_tool: {callback.__qualname__} has no explicit name and its command "
+                "does not expose a qualified_name"
+            )
+        name = "_".join(qualified_name.split())
+    else:
+        name = spec.name
+
+    availability_check: ToolAvailabilityCheck | None = None
+    if spec.required_group is None:
+        can_run = getattr(command, "can_run", None)
+        if not callable(can_run):
+            raise TypeError(
+                f"llm_tool: {callback.__qualname__} has no explicit required_group and its "
+                "command does not expose can_run"
+            )
+
+        async def inferred_availability_check(ctx: object) -> bool:
+            return bool(await can_run(ctx, check_all_parents=True))
+
+        availability_check = inferred_availability_check
+
     return RegisteredTool(
-        name=spec.name,
+        name=name,
         description=spec.description,
         parameters=spec.parameters,
         handler=handler,
         required_group=spec.required_group,
+        availability_check=availability_check,
     )
 
 

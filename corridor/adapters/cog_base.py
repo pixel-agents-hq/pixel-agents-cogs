@@ -29,6 +29,7 @@ from ..domain import (
     RenderedReply,
     ReplyField,
     ReplyMode,
+    ToolVisibilityFilter,
 )
 from ..infrastructure import RedCorridorRepository
 from .api import BotIconResolver, BotOwnerRegistry, DiscordMemberRef, send_rendered_reply
@@ -238,6 +239,7 @@ class CogBase:
 
         self._event_bus.unsubscribe_owner(cog.qualified_name)
         self._tool_registry.unregister_owner(cog.qualified_name)
+        self._tool_registry.unregister_visibility_filter_owner(cog.qualified_name)
 
     # --- Cross-cog LLM tool registry -------------------------------------------
 
@@ -269,6 +271,36 @@ class CogBase:
         cog."""
 
         self._tool_registry.unregister_owner(owner)
+
+    def unregister_tool(self, name: str) -> None:
+        """Remove one tool by name, regardless of owner -- for a registrant
+        managing several tools under one owner that needs to drop a single
+        one (see ToolRegistryService.unregister). A no-op if `name` isn't
+        registered."""
+
+        self._tool_registry.unregister(name)
+
+    def register_tool_visibility_filter(
+        self, predicate: ToolVisibilityFilter, *, owner: str
+    ) -> None:
+        """Install `predicate` as an additional gate `list_tools_for`
+        evaluates for every tool, alongside `required_group`/
+        `availability_check` -- called from the installing cog's own
+        `cog_load`, same `owner` convention as `register_tool`. Intended
+        for exactly one installer today (toolbox's enable/disable +
+        per-guild-override state, see
+        docs/toolbox-command-tool-toggle-design.md) but supports several;
+        a tool must pass every installed filter to remain visible. No
+        filter installed at all means no behavior change -- every tool
+        that already passes the existing checks stays visible."""
+
+        self._tool_registry.register_visibility_filter(predicate, owner=owner)
+
+    def unregister_visibility_filter_owner(self, owner: str) -> None:
+        """Call from the installing cog's own `cog_unload` -- same
+        convention as `unregister_tool_owner`."""
+
+        self._tool_registry.unregister_visibility_filter_owner(owner)
 
     def list_tools(self) -> tuple[RegisteredTool, ...]:
         """Every registered tool, unfiltered by permission. Prefer
@@ -302,8 +334,24 @@ class CogBase:
                         exc_info=True,
                     )
                     continue
+            if not await self._passes_visibility_filters(ctx, tool):
+                continue
             allowed.append(tool)
         return tuple(allowed)
+
+    async def _passes_visibility_filters(self, ctx: commands.Context, tool: RegisteredTool) -> bool:
+        for predicate in self._tool_registry.list_visibility_filters():
+            try:
+                if not await predicate(ctx, tool):
+                    return False
+            except Exception:
+                log.warning(
+                    "corridor: visibility filter failed for LLM tool %r; omitting it",
+                    tool.name,
+                    exc_info=True,
+                )
+                return False
+        return True
 
     # --- settings mutation, used by settings_ui.py and [p]corridor commands ---
 

@@ -34,12 +34,40 @@ class FakeCorridor:
     def __init__(self) -> None:
         self.replies: list[dict[str, Any]] = []
         self.registered_dependents: set[str] = set()
+        self._tools: dict[str, tuple[str, Any]] = {}
+        self.visibility_filters: dict[str, Any] = {}
 
     def register_dependent(self, extension_name: str) -> None:
         self.registered_dependents.add(extension_name)
 
     def unregister_dependent(self, extension_name: str) -> None:
         self.registered_dependents.discard(extension_name)
+
+    def register_tool(self, tool: Any, *, owner: str) -> None:
+        """Mirrors corridor's real ToolRegistryService.register just
+        enough for toolbox's own tests: idempotent re-registration under
+        the same owner, ValueError on a cross-owner name collision (the
+        one behavior toolbox's resync path reacts to)."""
+
+        existing = self._tools.get(tool.name)
+        if existing is not None and existing[0] != owner:
+            raise ValueError(
+                f"tool {tool.name!r} is already registered by {existing[0]!r}, "
+                f"cannot re-register it for {owner!r}"
+            )
+        self._tools[tool.name] = (owner, tool)
+
+    def unregister_tool(self, name: str) -> None:
+        self._tools.pop(name, None)
+
+    def list_tools(self) -> tuple[Any, ...]:
+        return tuple(tool for _, tool in self._tools.values())
+
+    def register_tool_visibility_filter(self, predicate: Any, *, owner: str) -> None:
+        self.visibility_filters[owner] = predicate
+
+    def unregister_visibility_filter_owner(self, owner: str) -> None:
+        self.visibility_filters.pop(owner, None)
 
     async def send_reply(
         self,
@@ -78,6 +106,7 @@ class FakeBot:
         corridor: FakeCorridor | None = None,
         preloaded: bool = True,
         corridor_installable: bool = True,
+        cogs: dict[str, Any] | None = None,
     ) -> None:
         self._pending_corridor = corridor or FakeCorridor()
         self.corridor: FakeCorridor | None = self._pending_corridor if preloaded else None
@@ -86,10 +115,25 @@ class FakeBot:
         self.load_extension_calls: list[str] = []
         self.loaded_packages: list[str] = []
         self.add_cog_calls: list[Any] = []
+        # Mirrors discord.py's own Bot.cogs -- already-loaded cogs at the
+        # moment toolbox's own cog_load runs, which its startup catch-up
+        # loop iterates (real on_cog_add never fires retroactively for
+        # these). Empty by default so existing tests, which never populate
+        # it, see no behavior change.
+        self.cogs: dict[str, Any] = cogs or {}
+        # Mirrors discord.py's own Bot.walk_commands() -- a flat stand-in
+        # since nothing here needs the real recursive subcommand walk, just
+        # something toolbox's tool_panel._refresh() can iterate over.
+        self.walk_commands_result: list[Any] = []
+
+    def walk_commands(self) -> Any:
+        yield from self.walk_commands_result
 
     def get_cog(self, name: str) -> Any:
         if name == "Corridor":
             return self.corridor
+        if name == "Toolbox":
+            return self.cogs.get("Toolbox")
         return None
 
     async def load_extension(self, spec: FakeModuleSpec) -> None:

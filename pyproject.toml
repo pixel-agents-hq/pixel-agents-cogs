@@ -119,6 +119,12 @@ module = ["toolbox.adapters.commands"]
 disable_error_code = ["untyped-decorator"]
 
 [[tool.mypy.overrides]]
+# Same gap as corridor.adapters.cog_base above: @commands.Cog.listener()
+# (on_cog_add) is dynamically typed without Red's real stubs installed.
+module = ["toolbox.adapters.cog_base"]
+disable_error_code = ["untyped-decorator"]
+
+[[tool.mypy.overrides]]
 # Same as pixelagents.pixelagents / corridor.corridor above: `commands.Cog`
 # resolves to Any without Red's real Cog metaclass installed.
 module = ["toolbox.toolbox"]

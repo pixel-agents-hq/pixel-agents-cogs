@@ -268,6 +268,20 @@ unfiltered `list_tools()`. Corridor evaluates explicit groups against
 unauthorized tools from the LLM's vocabulary entirely. A check that raises
 is logged and fails closed for that tool without dropping other tools.
 
+### Externally-installed visibility filters
+
+`register_tool_visibility_filter(predicate, owner=...)` installs one more
+gate `list_tools_for` evaluates for every tool, after `required_group` and
+`availability_check`, following the same owner/cleanup convention as
+`register_tool` (including defensive removal from `on_cog_remove`). A
+predicate that returns `False` or raises omits only that tool; several
+installed filters all apply (a tool must pass every one). No filter
+installed changes nothing -- this is purely an extension point, unused by
+the registry itself. Toolbox is the intended (and, as of this writing,
+only) installer, layering owner-configured enable/disable and per-guild
+overrides on top of the registry without corridor persisting any of that
+state itself -- see `docs/toolbox-command-tool-toggle-design.md`.
+
 ## Pico adaptation and invocation flow
 
 Pico adapts every allowed `RegisteredTool` into `CrossCogTool`:

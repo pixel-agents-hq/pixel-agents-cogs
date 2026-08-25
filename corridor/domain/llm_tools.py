@@ -150,16 +150,55 @@ def llm_tool(
                 f"llm_tool: {func.__qualname__} has no description or docstring -- "
                 "supply description=... or add a callback docstring"
             )
-        hints = typing.get_type_hints(func, include_extras=True)
-        params = list(inspect.signature(func).parameters.values())[_LEADING_PARAMS_TO_SKIP:]
+        parameters = infer_parameters(func, strict=True)
 
-        properties: dict[str, object] = {}
-        required: list[str] = []
-        for param in params:
-            annotation = hints.get(param.name, str)
-            bare_type, tool_description = _strip_annotated(func, param.name, annotation)
-            parameter_type = _parameter_type_for(func, param.name, bare_type)
+        spec = LLMToolSpec(
+            name=name,
+            description=resolved_description,
+            parameters=parameters,
+            required_group=required_group,
+        )
+        setattr(func, _MARKER_ATTR, spec)
+        return func
+
+    return decorator
+
+
+def infer_parameters(func: Callable[..., object], *, strict: bool) -> dict[str, object]:
+    """Build the `{"type": "object", "properties": ..., "required": ...}`
+    JSON Schema `@llm_tool` always infers from a callback's own signature,
+    skipping the leading `self`/`ctx` parameters every Red command has.
+
+    `strict=True` -- what `@llm_tool` itself uses -- raises `TypeError` at
+    call time for any parameter whose annotation isn't one of
+    `str`/`int`/`float`/`bool` (optionally `| None`, optionally wrapped in
+    `Annotated[..., ToolDescription(...)]`): an authoring error the cog's
+    own author is right there to fix.
+
+    `strict=False` has no author to hand that error to -- it's for wrapping
+    a Discord command nobody wrote `@llm_tool` for. An unsupported
+    parameter still gets a schema entry; it just falls back to a generic
+    string description (`raw value for <name>, as you would type it in
+    Discord`) instead of raising, and its `__annotations__` entry (if any)
+    is left untouched since there is no bare type to replace it with.
+    """
+
+    hints = typing.get_type_hints(func, include_extras=True)
+    params = list(inspect.signature(func).parameters.values())[_LEADING_PARAMS_TO_SKIP:]
+
+    properties: dict[str, object] = {}
+    required: list[str] = []
+    for param in params:
+        annotation = hints.get(param.name, str)
+        bare_type, tool_description = _strip_annotated(func, param.name, annotation)
+        parameter_type = _parameter_type_for(func, param.name, bare_type, strict=strict)
+        if parameter_type is None:
             prop: dict[str, object] = {
+                "type": "string",
+                "description": f"raw value for {param.name}, as you would type it in Discord",
+            }
+        else:
+            prop = {
                 "type": _JSON_TYPES[parameter_type],
                 "description": f"value for {param.name}",
             }
@@ -167,28 +206,19 @@ def llm_tool(
                 prop.update(
                     _tool_description_schema(func, param.name, parameter_type, tool_description)
                 )
-            properties[param.name] = prop
-            if param.default is inspect.Parameter.empty:
-                required.append(param.name)
-            if bare_type is not annotation:
-                # The whole point: every later re-derivation of this
-                # callback's signature discord.py ever does -- including
-                # ones this decorator has no visibility into, deep inside
-                # Cog/HybridCommand construction -- reads this same
-                # __annotations__ dict, so it never has a chance to
-                # misinterpret `Annotated`'s second argument again.
-                func.__annotations__[param.name] = bare_type
+        properties[param.name] = prop
+        if param.default is inspect.Parameter.empty:
+            required.append(param.name)
+        if parameter_type is not None and bare_type is not annotation:
+            # The whole point: every later re-derivation of this
+            # callback's signature discord.py ever does -- including
+            # ones this decorator has no visibility into, deep inside
+            # Cog/HybridCommand construction -- reads this same
+            # __annotations__ dict, so it never has a chance to
+            # misinterpret `Annotated`'s second argument again.
+            func.__annotations__[param.name] = bare_type
 
-        spec = LLMToolSpec(
-            name=name,
-            description=resolved_description,
-            parameters={"type": "object", "properties": properties, "required": required},
-            required_group=required_group,
-        )
-        setattr(func, _MARKER_ATTR, spec)
-        return func
-
-    return decorator
+    return {"type": "object", "properties": properties, "required": required}
 
 
 def llm_tool_spec(func: Callable[..., object]) -> LLMToolSpec | None:
@@ -224,12 +254,22 @@ def _strip_annotated(
     return annotation, None
 
 
-def _parameter_type_for(func: Callable[..., object], param_name: str, annotation: object) -> type:
+def _parameter_type_for(
+    func: Callable[..., object], param_name: str, annotation: object, *, strict: bool
+) -> type | None:
+    """Resolve `annotation` to one of the four supported JSON types.
+
+    In strict mode an unsupported annotation raises `TypeError`, as before.
+    In lenient mode it returns `None`, signalling the caller to fall back to
+    a generic string property instead."""
+
     if typing.get_origin(annotation) is types.UnionType:
         args = [arg for arg in typing.get_args(annotation) if arg is not type(None)]
         if len(args) == 1:
-            return _parameter_type_for(func, param_name, args[0])
+            return _parameter_type_for(func, param_name, args[0], strict=strict)
     if not isinstance(annotation, type) or annotation not in _JSON_TYPES:
+        if not strict:
+            return None
         raise TypeError(
             f"llm_tool: {func.__qualname__}'s parameter {param_name!r} has an unsupported "
             f"type {annotation!r} -- only str/int/float/bool (optionally `| None`, optionally "
@@ -302,4 +342,4 @@ def _enum_value_matches(value: object, parameter_type: type) -> bool:
     return type(value) is parameter_type
 
 
-__all__ = ["LLMToolSpec", "ToolDescription", "llm_tool", "llm_tool_spec"]
+__all__ = ["LLMToolSpec", "ToolDescription", "infer_parameters", "llm_tool", "llm_tool_spec"]

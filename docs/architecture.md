@@ -31,7 +31,7 @@ flowchart BT
     pico["pico<br/><small>LLM-backed presence</small>"]
     pixelagents["pixelagents<br/><small>vendors + builds the webview</small>"]
     testbench["testbench<br/><small>owner-only: manually publishes<br/>corridor bus events</small>"]
-    toolbox["toolbox<br/><small>Node.js/npm on the host</small>"]
+    toolbox["toolbox<br/><small>Node.js/npm on the host<br/>+ LLM tool toggle panel</small>"]
 
     deskutils -->|required_cogs| corridor
     floorplan -->|required_cogs| corridor
@@ -83,7 +83,7 @@ flowchart TB
     end
 
     subgraph host["Host tooling (bot-owner only)"]
-        toolbox["toolbox<br/><small>downloads Node.js/npm releases onto<br/>the bot host, puts them on PATH</small>"]
+        toolbox["toolbox<br/><small>downloads Node.js/npm releases onto<br/>the bot host, puts them on PATH.<br/>Also a Components v2 panel letting the<br/>owner turn any [p]help command into an<br/>LLM tool corridor's registry offers to pico</small>"]
         testbench["testbench<br/><small>publishes any corridor bus event<br/>through a Discord UI, for testing</small>"]
     end
 
@@ -105,7 +105,7 @@ flowchart TB
     corridor -->|"send_reply / render_reply<br/>require_permission / capabilities_satisfy<br/>publish_event / subscribe_event"| floorplan
     corridor -->|"send_reply<br/>publish_event"| pico
     corridor --> pixelagents
-    corridor --> toolbox
+    corridor -->|"send_reply<br/>register_tool / unregister_tool<br/>register_tool_visibility_filter"| toolbox
     corridor -->|publish_event| testbench
     corridor -->|send_reply| deskutils
 ```
@@ -257,11 +257,15 @@ whole cog is `ReplyTool.handler`, which is why pico stays compliant with
 `contracts/discord_replies/lint_reply_channel.py`'s "always through
 corridor" rule without needing any pico-specific exception. `pico` ships
 one native tool (`send_reply`), plus whatever any other cog has registered
-into corridor's cross-cog tool registry (`deskutils`' `time` today) —
-`ToolLoopService` itself doesn't distinguish between the two; the tool-loop
-shape supports both without changing this diagram. See
+into corridor's cross-cog tool registry — `deskutils`' `time` today,
+plus anything the bot owner has opted in through toolbox's tool-toggle
+panel (`[p]toolbox tools`) — `ToolLoopService` itself doesn't distinguish
+between any of these; the tool-loop shape supports all of them without
+changing this diagram. See
 [`docs/corridor-tool-registry-design.md`](corridor-tool-registry-design.md)
-for how a cog registers one and how pico adapts it.
+for how a cog registers one and how pico adapts it, and
+[`docs/toolbox-command-tool-toggle-design.md`](toolbox-command-tool-toggle-design.md)
+for how toolbox turns an undecorated command into one at runtime.
 
 `ReplyTool.handler` also publishes `AgentReplied` onto corridor's bus
 right after a successful send (§3a) — floorplan's own subscriber renders

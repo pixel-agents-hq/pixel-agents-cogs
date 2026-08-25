@@ -8,7 +8,7 @@ design rationale.
 
 from __future__ import annotations
 
-from ..domain.models import RegisteredTool
+from ..domain.models import RegisteredTool, ToolVisibilityFilter
 
 
 class ToolRegistryService:
@@ -18,6 +18,7 @@ class ToolRegistryService:
 
     def __init__(self) -> None:
         self._tools: dict[str, tuple[str, RegisteredTool]] = {}
+        self._visibility_filters: dict[str, ToolVisibilityFilter] = {}
 
     def register(self, tool: RegisteredTool, *, owner: str) -> None:
         """Register `tool` under `owner` (the registering cog's class name,
@@ -45,5 +46,34 @@ class ToolRegistryService:
         for name in [n for n, (o, _) in self._tools.items() if o == owner]:
             del self._tools[name]
 
+    def unregister(self, name: str) -> None:
+        """Remove one tool by name, regardless of owner -- for a registrant
+        that manages several tools under one owner and needs to drop just
+        one of them (toolbox deselecting a single dynamically-wrapped
+        command; see docs/toolbox-command-tool-toggle-design.md) without
+        `unregister_owner`'s all-or-nothing cascade. A no-op if `name` isn't
+        registered."""
+
+        self._tools.pop(name, None)
+
     def list_tools(self) -> tuple[RegisteredTool, ...]:
         return tuple(tool for _, tool in self._tools.values())
+
+    def register_visibility_filter(self, predicate: ToolVisibilityFilter, *, owner: str) -> None:
+        """Install an additional visibility gate `list_tools_for` evaluates
+        for every tool, alongside `required_group`/`availability_check`.
+        Re-registering under the same `owner` replaces its filter --
+        idempotent across repeat `cog_load` calls, same convention as
+        `register`. At most one filter per `owner`; multiple owners each
+        installing one all apply (a tool must pass every filter)."""
+
+        self._visibility_filters[owner] = predicate
+
+    def unregister_visibility_filter_owner(self, owner: str) -> None:
+        """The installing cog's own responsibility, called from its own
+        cog_unload -- same convention as `unregister_owner`."""
+
+        self._visibility_filters.pop(owner, None)
+
+    def list_visibility_filters(self) -> tuple[ToolVisibilityFilter, ...]:
+        return tuple(self._visibility_filters.values())

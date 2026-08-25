@@ -1,4 +1,4 @@
-from .llm_tools import LLMToolSpec, ToolDescription, llm_tool, llm_tool_spec
+from .llm_tools import LLMToolSpec, ToolDescription, infer_parameters, llm_tool, llm_tool_spec
 from .models import (
     EMPLOYEE_KEY,
     OWNER_KEY,
@@ -25,6 +25,7 @@ from .models import (
     ReplyPreferences,
     ToolAvailabilityCheck,
     ToolHandler,
+    ToolVisibilityFilter,
 )
 
 __all__ = [
@@ -54,7 +55,9 @@ __all__ = [
     "ReplyPreferences",
     "ToolHandler",
     "ToolAvailabilityCheck",
+    "ToolVisibilityFilter",
     "ToolDescription",
+    "infer_parameters",
     "llm_tool",
     "llm_tool_spec",
 ]

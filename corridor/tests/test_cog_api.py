@@ -215,6 +215,21 @@ class TestCorridorApi(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual({tool.name for tool in self.corridor.list_tools()}, {"b"})
 
+    async def test_unregister_tool_removes_only_that_tool(self) -> None:
+        self.corridor.register_tool(_tool("a"), owner="A")
+        self.corridor.register_tool(_tool("b"), owner="A")
+
+        self.corridor.unregister_tool("a")
+
+        self.assertEqual({tool.name for tool in self.corridor.list_tools()}, {"b"})
+
+    async def test_unregister_tool_on_an_unregistered_name_is_a_noop(self) -> None:
+        self.corridor.register_tool(_tool("a"), owner="A")
+
+        self.corridor.unregister_tool("never registered")
+
+        self.assertEqual({tool.name for tool in self.corridor.list_tools()}, {"a"})
+
     async def test_list_tools_for_includes_an_ungated_tool_for_any_member(self) -> None:
         self.corridor.register_tool(_tool("a"), owner="A")
         member = FakeMember(2, self.guild)
@@ -281,6 +296,122 @@ class TestCorridorApi(unittest.IsolatedAsyncioTestCase):
         allowed = await self.corridor.list_tools_for(FakeContext(author=member, guild=self.guild))
 
         self.assertEqual(allowed, ())
+
+    async def test_list_tools_for_is_unaffected_when_no_visibility_filter_is_installed(
+        self,
+    ) -> None:
+        self.corridor.register_tool(_tool("a"), owner="A")
+        member = FakeMember(2, self.guild)
+
+        allowed = await self.corridor.list_tools_for(FakeContext(author=member, guild=self.guild))
+
+        self.assertEqual({tool.name for tool in allowed}, {"a"})
+
+    async def test_visibility_filter_can_omit_a_tool_that_passes_every_other_check(self) -> None:
+        async def hide_it(ctx: object, tool: RegisteredTool) -> bool:
+            return tool.name != "a"
+
+        self.corridor.register_tool(_tool("a"), owner="A")
+        self.corridor.register_tool(_tool("b"), owner="A")
+        self.corridor.register_tool_visibility_filter(hide_it, owner="Toolbox")
+        member = FakeMember(2, self.guild)
+
+        allowed = await self.corridor.list_tools_for(FakeContext(author=member, guild=self.guild))
+
+        self.assertEqual({tool.name for tool in allowed}, {"b"})
+
+    async def test_visibility_filter_receives_the_full_context_and_the_tool(self) -> None:
+        received: list[object] = []
+
+        async def record(ctx: object, tool: RegisteredTool) -> bool:
+            received.append((ctx, tool.name))
+            return True
+
+        self.corridor.register_tool(_tool("a"), owner="A")
+        self.corridor.register_tool_visibility_filter(record, owner="Toolbox")
+        member = FakeMember(2, self.guild)
+        ctx = FakeContext(author=member, guild=self.guild)
+
+        allowed = await self.corridor.list_tools_for(ctx)
+
+        self.assertEqual({tool.name for tool in allowed}, {"a"})
+        self.assertEqual(received, [(ctx, "a")])
+
+    async def test_a_broken_visibility_filter_omits_only_that_tool(self) -> None:
+        async def broken(ctx: object, tool: RegisteredTool) -> bool:
+            raise RuntimeError("broken filter")
+
+        self.corridor.register_tool(_tool("a"), owner="A")
+        self.corridor.register_tool_visibility_filter(broken, owner="Toolbox")
+        member = FakeMember(2, self.guild)
+
+        allowed = await self.corridor.list_tools_for(FakeContext(author=member, guild=self.guild))
+
+        self.assertEqual(allowed, ())
+
+    async def test_a_tool_must_pass_every_installed_visibility_filter(self) -> None:
+        async def allow_a(ctx: object, tool: RegisteredTool) -> bool:
+            return tool.name == "a"
+
+        async def allow_b(ctx: object, tool: RegisteredTool) -> bool:
+            return tool.name == "b"
+
+        self.corridor.register_tool(_tool("a"), owner="A")
+        self.corridor.register_tool(_tool("b"), owner="A")
+        self.corridor.register_tool_visibility_filter(allow_a, owner="FilterOne")
+        self.corridor.register_tool_visibility_filter(allow_b, owner="FilterTwo")
+        member = FakeMember(2, self.guild)
+
+        allowed = await self.corridor.list_tools_for(FakeContext(author=member, guild=self.guild))
+
+        self.assertEqual(allowed, ())
+
+    async def test_re_registering_a_visibility_filter_under_the_same_owner_replaces_it(
+        self,
+    ) -> None:
+        async def hide_everything(ctx: object, tool: RegisteredTool) -> bool:
+            return False
+
+        async def allow_everything(ctx: object, tool: RegisteredTool) -> bool:
+            return True
+
+        self.corridor.register_tool(_tool("a"), owner="A")
+        self.corridor.register_tool_visibility_filter(hide_everything, owner="Toolbox")
+        self.corridor.register_tool_visibility_filter(allow_everything, owner="Toolbox")
+        member = FakeMember(2, self.guild)
+
+        allowed = await self.corridor.list_tools_for(FakeContext(author=member, guild=self.guild))
+
+        self.assertEqual({tool.name for tool in allowed}, {"a"})
+
+    async def test_unregister_visibility_filter_owner_removes_only_that_owners_filter(
+        self,
+    ) -> None:
+        async def hide_a(ctx: object, tool: RegisteredTool) -> bool:
+            return tool.name != "a"
+
+        self.corridor.register_tool(_tool("a"), owner="A")
+        self.corridor.register_tool_visibility_filter(hide_a, owner="Toolbox")
+
+        self.corridor.unregister_visibility_filter_owner("Toolbox")
+
+        member = FakeMember(2, self.guild)
+        allowed = await self.corridor.list_tools_for(FakeContext(author=member, guild=self.guild))
+        self.assertEqual({tool.name for tool in allowed}, {"a"})
+
+    async def test_on_cog_remove_cleans_up_that_cogs_visibility_filter(self) -> None:
+        async def hide_a(ctx: object, tool: RegisteredTool) -> bool:
+            return tool.name != "a"
+
+        self.corridor.register_tool(_tool("a"), owner="A")
+        self.corridor.register_tool_visibility_filter(hide_a, owner="Toolbox")
+
+        fake_cog = type("FakeCog", (), {"qualified_name": "Toolbox"})()
+        await self.corridor.on_cog_remove(fake_cog)  # type: ignore[arg-type]
+
+        member = FakeMember(2, self.guild)
+        allowed = await self.corridor.list_tools_for(FakeContext(author=member, guild=self.guild))
+        self.assertEqual({tool.name for tool in allowed}, {"a"})
 
     async def test_register_llm_tools_scans_a_cog_and_registers_its_decorated_commands(
         self,

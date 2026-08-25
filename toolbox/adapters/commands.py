@@ -16,16 +16,21 @@ from typing import Any
 
 from redbot.core import commands
 
-from ..application import NodeService
+from ..application import NodeService, ToolSelectionService, ToolVisibilityService
 from ..infrastructure import NodeInstallError
+from .tool_candidates import list_candidate_commands
+from .tool_panel import ToolGuildOverrideView, ToolSelectionView
 
 
 class CommandsMixin:
-    """Requires `self._service: NodeService` and `self._corridor`
-    (both provided by CogBase)."""
+    """Requires `self._service: NodeService`, `self._corridor`,
+    `self._tool_selection_service`, and `self._tool_visibility_service`
+    (all provided by CogBase)."""
 
     _service: NodeService
     _corridor: Any
+    _tool_selection_service: ToolSelectionService
+    _tool_visibility_service: ToolVisibilityService
 
     @commands.hybrid_group(name="toolbox")
     @commands.guild_only()
@@ -101,4 +106,45 @@ class CommandsMixin:
             ctx,
             title="toolbox",
             description=f"Node.js {status.version} (`{status.install_dir}`)",
+        )
+
+    @toolbox_group.group(name="tools", invoke_without_command=True)
+    @commands.guild_only()
+    @commands.is_owner()
+    async def tools_group(self, ctx: commands.Context) -> None:
+        """Choose which Discord commands are exposed to the LLM as tools.
+
+        Every command listed in `[p]help` you can run is a candidate --
+        select one to turn it into an LLM tool, or toggle whether an
+        already-tool-eligible command is enabled by default. Use
+        `[p]toolbox tools guild` to override visibility for this server
+        only.
+        """
+
+        if ctx.invoked_subcommand is not None:
+            return
+        selected = await self._tool_selection_service.list_selected()
+        candidates = await list_candidate_commands(ctx.bot.walk_commands(), ctx, selected)
+        enabled_defaults = await self._tool_visibility_service.all_defaults()
+        await ctx.send(view=ToolSelectionView(candidates, 0, ctx.author.id, enabled_defaults))
+
+    @tools_group.command(name="guild")
+    @commands.guild_only()
+    @commands.admin_or_permissions(manage_guild=True)
+    async def tools_guild(self, ctx: commands.Context) -> None:
+        """Override LLM tool visibility for this server only.
+
+        Lists every currently registered tool -- from any cog, not just
+        ones selected here -- and lets you enable/disable each one for
+        this guild specifically, on top of the bot owner's global default.
+        """
+
+        assert ctx.guild is not None
+        tool_names = sorted(tool.name for tool in self._corridor.list_tools())
+        defaults = await self._tool_visibility_service.all_defaults()
+        overrides = await self._tool_visibility_service.all_overrides(ctx.guild.id)
+        await ctx.send(
+            view=ToolGuildOverrideView(
+                tool_names, 0, ctx.guild.id, ctx.author.id, defaults, overrides
+            )
         )

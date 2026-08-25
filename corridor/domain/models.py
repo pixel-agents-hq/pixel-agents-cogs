@@ -281,6 +281,13 @@ class AgentPresenceChanged:
 ToolHandler = Callable[[object, Mapping[str, object]], Awaitable[Mapping[str, object]]]
 ToolAvailabilityCheck = Callable[[object], Awaitable[bool]]
 
+# An additional, externally-installed gate `list_tools_for` evaluates for
+# every tool alongside `required_group`/`availability_check` -- see
+# CogBase.register_tool_visibility_filter and
+# docs/toolbox-command-tool-toggle-design.md. `None`/an installed filter
+# raising is treated as "omit this tool", never as "allow it".
+ToolVisibilityFilter = Callable[[object, "RegisteredTool"], Awaitable[bool]]
+
 
 @dataclass(frozen=True, slots=True)
 class RegisteredTool:

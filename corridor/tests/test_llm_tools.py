@@ -7,7 +7,7 @@ from __future__ import annotations
 import unittest
 from typing import Annotated
 
-from ..domain import ToolDescription, llm_tool, llm_tool_spec
+from ..domain import ToolDescription, infer_parameters, llm_tool, llm_tool_spec
 
 
 class TestLLMToolSpec(unittest.TestCase):
@@ -422,6 +422,65 @@ class TestAnnotationsArePatchedInPlace(unittest.TestCase):
 
         self.assertEqual(command.__annotations__["self"], "object")
         self.assertEqual(command.__annotations__["ctx"], "object")
+
+
+class TestInferParametersLenientMode(unittest.TestCase):
+    """`strict=False` is what toolbox's dynamic command-wrapping will use
+    (docs/toolbox-command-tool-toggle-design.md) for a command nobody wrote
+    `@llm_tool` for -- there's no author standing by to fix a TypeError, so
+    an unsupported parameter degrades to a generic string property instead
+    of raising."""
+
+    def test_supported_types_match_strict_mode_exactly(self) -> None:
+        def command(self: object, ctx: object, count: int, name: str = "x") -> None: ...
+
+        strict = infer_parameters(command, strict=True)
+        lenient = infer_parameters(command, strict=False)
+        self.assertEqual(strict, lenient)
+
+    def test_unsupported_type_falls_back_to_a_generic_string_property(self) -> None:
+        def command(self: object, ctx: object, members: list[str]) -> None: ...
+
+        parameters = infer_parameters(command, strict=False)
+        self.assertEqual(
+            parameters["properties"],
+            {
+                "members": {
+                    "type": "string",
+                    "description": "raw value for members, as you would type it in Discord",
+                }
+            },
+        )
+        self.assertEqual(parameters["required"], ["members"])
+
+    def test_unsupported_type_does_not_raise(self) -> None:
+        def command(self: object, ctx: object, target: object) -> None: ...
+
+        # Would raise under strict=True (see
+        # test_unsupported_parameter_type_raises_at_decoration_time above).
+        infer_parameters(command, strict=False)
+
+    def test_unsupported_type_leaves_its_annotation_untouched(self) -> None:
+        def command(self: object, ctx: object, members: list[str]) -> None: ...
+
+        infer_parameters(command, strict=False)
+        self.assertEqual(command.__annotations__["members"], "list[str]")
+
+    def test_annotated_tool_description_on_an_unsupported_type_is_ignored(self) -> None:
+        def command(
+            self: object,
+            ctx: object,
+            members: Annotated[list[str], ToolDescription("Members to notify.")],
+        ) -> None: ...
+
+        parameters = infer_parameters(command, strict=False)
+        self.assertEqual(
+            parameters["properties"]["members"],
+            {
+                "type": "string",
+                "description": "raw value for members, as you would type it in Discord",
+            },
+        )
 
 
 if __name__ == "__main__":

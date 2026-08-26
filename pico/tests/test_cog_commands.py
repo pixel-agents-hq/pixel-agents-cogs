@@ -18,29 +18,21 @@ from redbot.core.errors import CogLoadError
 from .. import setup
 from ..infrastructure.settings_repository import DEFAULT_SYSTEM_PROMPT
 from ..pico import Pico
-from .conftest import FakeBot, FakeContext, FakeCorridor
+from .conftest import FakeBot, FakeContext, FakeCorridor, FakeLLMSettings
 
 
 def _descriptions(corridor: FakeCorridor) -> list[str | None]:
     return [reply["description"] for reply in corridor.replies]
 
 
-class TestLLMSettingsAreOwnerGated(unittest.TestCase):
-    """LLM connection settings are bot-owner scope -- only the connection
-    itself, not turning Pico on for a given server (see `enabled` below,
+class TestBudgetAndPromptSettingsAreOwnerGated(unittest.TestCase):
+    """Turn-budget/prompt settings are bot-owner scope -- only the
+    connection itself, now `[p]corridor llm ...` (see corridor's own test
+    suite), not turning Pico on for a given server (see `enabled` below,
     which is admin-gated instead). Mirrors floorplan's convention."""
 
     def setUp(self) -> None:
         self.cog = Pico(bot=FakeBot())
-
-    def test_llm_endpoint_is_owner_gated(self) -> None:
-        self.assertTrue(getattr(self.cog.llm_endpoint.callback, "__is_owner__", False))
-
-    def test_llm_key_is_owner_gated(self) -> None:
-        self.assertTrue(getattr(self.cog.llm_key.callback, "__is_owner__", False))
-
-    def test_llm_model_is_owner_gated(self) -> None:
-        self.assertTrue(getattr(self.cog.llm_model.callback, "__is_owner__", False))
 
     def test_maxtoolcalls_is_owner_gated(self) -> None:
         self.assertTrue(getattr(self.cog.maxtoolcalls.callback, "__is_owner__", False))
@@ -53,6 +45,9 @@ class TestLLMSettingsAreOwnerGated(unittest.TestCase):
 
     def test_prompt_show_is_owner_gated(self) -> None:
         self.assertTrue(getattr(self.cog.prompt_show.callback, "__is_owner__", False))
+
+    def test_architect_url_is_owner_gated(self) -> None:
+        self.assertTrue(getattr(self.cog.architect_url.callback, "__is_owner__", False))
 
 
 class TestEnabledIsAdminGated(unittest.TestCase):
@@ -72,37 +67,12 @@ class TestEnabledIsAdminGated(unittest.TestCase):
         self.assertIsNone(getattr(self.cog.status.callback, "__admin_or_permissions__", None))
 
 
-class TestLLMCommands(unittest.IsolatedAsyncioTestCase):
+class TestBudgetAndPromptCommands(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         self.bot = FakeBot()
         self.cog = Pico(bot=self.bot)
         await self.cog.cog_load()
         self.ctx = FakeContext()
-
-    async def test_llm_endpoint_updates_and_replies(self) -> None:
-        await self.cog.llm_endpoint.callback(self.cog, self.ctx, "https://example.test/")
-
-        settings = await self.cog._repository.global_settings()
-        self.assertEqual(settings.llm_base_url, "https://example.test/")
-        self.assertEqual(
-            _descriptions(self.bot.corridor)[-1], "LLM endpoint set to `https://example.test/`."
-        )
-
-    async def test_llm_key_updates_and_deletes_the_invoking_message(self) -> None:
-        await self.cog.llm_key.callback(self.cog, self.ctx, "sk-secret")
-
-        settings = await self.cog._repository.global_settings()
-        self.assertEqual(settings.llm_api_key, "sk-secret")
-        self.assertTrue(self.ctx.message.deleted)
-        self.assertEqual(_descriptions(self.bot.corridor)[-1], "LLM virtual key updated.")
-        sent_text = "".join(d or "" for d in _descriptions(self.bot.corridor))
-        self.assertNotIn("sk-secret", sent_text)
-
-    async def test_llm_model_updates_and_replies(self) -> None:
-        await self.cog.llm_model.callback(self.cog, self.ctx, "gpt-test")
-
-        settings = await self.cog._repository.global_settings()
-        self.assertEqual(settings.llm_model, "gpt-test")
 
     async def test_maxtoolcalls_updates(self) -> None:
         await self.cog.maxtoolcalls.callback(self.cog, self.ctx, 3)
@@ -131,6 +101,16 @@ class TestLLMCommands(unittest.IsolatedAsyncioTestCase):
 
         settings = await self.cog._repository.global_settings()
         self.assertEqual(settings.system_prompt, DEFAULT_SYSTEM_PROMPT)
+
+    async def test_architect_url_updates_and_replies(self) -> None:
+        await self.cog.architect_url.callback(self.cog, self.ctx, "http://localhost:8931/")
+
+        settings = await self.cog._repository.global_settings()
+        self.assertEqual(settings.architect_url, "http://localhost:8931/")
+        self.assertEqual(
+            _descriptions(self.bot.corridor)[-1],
+            "Architect URL set to `http://localhost:8931/`.",
+        )
 
 
 class TestEnabledCommand(unittest.IsolatedAsyncioTestCase):
@@ -171,7 +151,7 @@ class TestStatusCommand(unittest.IsolatedAsyncioTestCase):
         self.ctx = FakeContext()
 
     async def test_status_masks_the_key_when_set(self) -> None:
-        await self.cog.llm_key.callback(self.cog, self.ctx, "sk-super-secret")
+        self.bot.corridor._llm_settings = FakeLLMSettings(llm_api_key="sk-super-secret")
 
         await self.cog.status.callback(self.cog, self.ctx)
 
@@ -181,6 +161,8 @@ class TestStatusCommand(unittest.IsolatedAsyncioTestCase):
         self.assertNotEqual(key_field.value, "sk-super-secret")
 
     async def test_status_shows_unset_placeholder_when_no_key(self) -> None:
+        self.bot.corridor._llm_settings = FakeLLMSettings(llm_api_key=None)
+
         await self.cog.status.callback(self.cog, self.ctx)
 
         fields = self.bot.corridor.replies[-1]["fields"]
@@ -195,6 +177,22 @@ class TestStatusCommand(unittest.IsolatedAsyncioTestCase):
         fields = self.bot.corridor.replies[-1]["fields"]
         enabled_field = next(f for f in fields if f.name == "Enabled (this server)")
         self.assertEqual(enabled_field.value, "True")
+
+    async def test_status_shows_unset_architect_url_placeholder(self) -> None:
+        await self.cog.status.callback(self.cog, self.ctx)
+
+        fields = self.bot.corridor.replies[-1]["fields"]
+        url_field = next(f for f in fields if f.name == "Architect URL")
+        self.assertEqual(url_field.value, "*(not set)*")
+
+    async def test_status_shows_the_architect_url_once_set(self) -> None:
+        await self.cog.architect_url.callback(self.cog, self.ctx, "http://localhost:8931/")
+
+        await self.cog.status.callback(self.cog, self.ctx)
+
+        fields = self.bot.corridor.replies[-1]["fields"]
+        url_field = next(f for f in fields if f.name == "Architect URL")
+        self.assertEqual(url_field.value, "http://localhost:8931/")
 
 
 class TestCogLoadAutoLoadsCorridor(unittest.IsolatedAsyncioTestCase):

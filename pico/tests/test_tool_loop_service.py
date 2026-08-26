@@ -10,9 +10,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from ..application.tool_loop_service import ToolLoopService
-from ..domain import ConversationContext, MessageSnapshot
-from ..infrastructure.llm_client import (
+from corridor.infrastructure.llm_client import (
     ChatCompletionChoice,
     ChatCompletionResponse,
     ChatCompletionResponseMessage,
@@ -20,6 +18,9 @@ from ..infrastructure.llm_client import (
     ToolCall,
     ToolCallFunction,
 )
+
+from ..application.tool_loop_service import ToolLoopService
+from ..domain import ConversationContext, MessageSnapshot
 
 
 def _snapshot(content: str = "hi") -> MessageSnapshot:

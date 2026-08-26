@@ -24,6 +24,7 @@ from ..application import (
 from ..domain import (
     GuildSettings,
     IconPreference,
+    LLMSettings,
     PermissionGroupDef,
     RegisteredTool,
     RenderedReply,
@@ -31,7 +32,7 @@ from ..domain import (
     ReplyMode,
     ToolVisibilityFilter,
 )
-from ..infrastructure import RedCorridorRepository
+from ..infrastructure import LiteLLMClient, RedCorridorRepository
 from .api import BotIconResolver, BotOwnerRegistry, DiscordMemberRef, send_rendered_reply
 from .llm_tool_registration import collect_registered_tools
 
@@ -54,6 +55,10 @@ class CogBase:
         self._reply_service = ReplyService(BotIconResolver(bot))
         self._event_bus = EventBusService()
         self._tool_registry = ToolRegistryService()
+        # No eager start() here -- most cog_load sequences never touch the
+        # LLM at all, so the session opens lazily on first actual use
+        # (matches pico's original lifecycle before this moved here).
+        self._llm_client = LiteLLMClient(logger=log)
         self._dependents: set[str] = set()
 
     async def cog_load(self) -> None:
@@ -64,6 +69,7 @@ class CogBase:
         corridor -- otherwise they'd keep running with a stale/missing
         corridor reference instead of failing loudly."""
 
+        await self._llm_client.close()
         dependents, self._dependents = self._dependents, set()
         for extension_name in dependents:
             try:
@@ -86,6 +92,20 @@ class CogBase:
 
     async def guild_settings(self, guild_id: int) -> GuildSettings:
         return await self._repository.guild_settings(guild_id)
+
+    # --- Shared LLM connection, used by pico and architect ---------------------
+
+    async def llm_settings(self) -> LLMSettings:
+        """The one shared LLM connection every LLM-backed dependent reads --
+        see docs/architect-design.md's LLM provider migration section."""
+
+        return await self._repository.llm_settings()
+
+    def llm_client(self) -> LiteLLMClient:
+        """One shared client for corridor's own Cog lifetime, started
+        lazily on first use and closed in `cog_unload`."""
+
+        return self._llm_client
 
     async def capabilities_satisfy(self, member: discord.Member, group_key: str) -> bool:
         settings = await self._repository.guild_settings(member.guild.id)
@@ -354,6 +374,15 @@ class CogBase:
         return True
 
     # --- settings mutation, used by settings_ui.py and [p]corridor commands ---
+
+    async def set_llm_base_url(self, value: str) -> None:
+        await self._repository.set_llm_base_url(value)
+
+    async def set_llm_api_key(self, value: str) -> None:
+        await self._repository.set_llm_api_key(value)
+
+    async def set_llm_model(self, value: str) -> None:
+        await self._repository.set_llm_model(value)
 
     async def set_reply_mode(self, guild_id: int, mode: ReplyMode) -> None:
         await self._repository.set_reply_mode(guild_id, mode)

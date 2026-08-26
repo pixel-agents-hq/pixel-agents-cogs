@@ -1,0 +1,497 @@
+"""OfficeLayoutService: the one mutation surface Discord commands and LLM
+tools both call. Framework-neutral -- depends only on `OfficeLayoutRepository`
+and `FurnitureStyleLoader`, no discord.py, no pydantic.
+
+Every mutation follows the same shape (docs/architect-semantic-ir-design.md
+section 8): load the current `Office`, apply the change to a *new* value
+(the IR dataclasses are frozen -- `dataclasses.replace`/`Grid.replacing`,
+never in-place edits), validate the whole resulting `Office` before ever
+encoding it, and only then persist + broadcast. A validation failure leaves
+the stored layout untouched, since nothing was written until validation
+passed.
+
+There is no room concept anywhere in this service -- `Zone` is the only
+spatial-grouping concept exposed to the LLM, matching Pixel Agents' own
+model (it has no room concept either). `place_furniture` always requires
+an explicit `position`; the LLM calls `describe_tiles` to find one instead
+of relying on a room to auto-place within.
+"""
+
+from __future__ import annotations
+
+import uuid
+from collections.abc import Awaitable, Callable
+from dataclasses import replace
+from typing import Any
+
+from ..domain.office_ir import (
+    Direction,
+    FurnitureItem,
+    FurnitureKind,
+    Grid,
+    GridPosition,
+    GridRect,
+    Office,
+    Seat,
+    TileCell,
+    TileKind,
+    Zone,
+)
+from ..infrastructure.color_names import known_names
+from ..infrastructure.furniture_styles import (
+    FurnitureStyle,
+    FurnitureStyleLoader,
+    FurnitureStyleManifest,
+)
+from ..infrastructure.office_layout_repository import OfficeLayoutRepository
+
+BroadcastCallback = Callable[[dict[str, Any]], Awaitable[None]]
+
+_MAX_DESCRIBE_TILES_AREA = 400
+
+
+class OfficeValidationError(Exception):
+    """Raised for any of section 8's whole-`Office` validation rules.
+    `reason` is LLM-readable -- tool `Output`s surface it verbatim as
+    their `message` field."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+class OfficeLayoutService:
+    def __init__(
+        self,
+        repository: OfficeLayoutRepository,
+        style_loader: FurnitureStyleLoader,
+        broadcast: BroadcastCallback | None = None,
+    ) -> None:
+        self._repository = repository
+        self._style_loader = style_loader
+        self._broadcast = broadcast
+
+    # -- queries -----------------------------------------------------
+
+    async def describe(self) -> Office:
+        office, _ = await self._load()
+        return office
+
+    async def find_furniture(self, *, kind: FurnitureKind | None = None) -> list[FurnitureItem]:
+        office, _ = await self._load()
+        items = office.furniture
+        if kind is not None:
+            items = [item for item in items if item.kind is kind]
+        return items
+
+    async def describe_tiles(self, *, area: GridRect) -> list[TileCell]:
+        office, _ = await self._load()
+        if area.width * area.height > _MAX_DESCRIBE_TILES_AREA:
+            raise OfficeValidationError(
+                f"describe_tiles area is too large ({area.width * area.height} tiles, "
+                f"max {_MAX_DESCRIBE_TILES_AREA})"
+            )
+        if not _rect_in_bounds(area, office):
+            raise OfficeValidationError(
+                f"area extends outside the {office.width}x{office.height} grid"
+            )
+        return [office.grid.at(position) for position in area.positions()]
+
+    # -- mutations -----------------------------------------------------
+
+    async def paint_tiles(
+        self,
+        *,
+        area: GridRect,
+        kind: TileKind,
+        material: int | None = None,
+        color: str | None = None,
+    ) -> None:
+        office, styles = await self._load()
+        if not _rect_in_bounds(area, office):
+            raise OfficeValidationError(
+                f"area extends outside the {office.width}x{office.height} grid"
+            )
+        if kind is TileKind.FLOOR:
+            if material is None or not (1 <= material <= 9):
+                raise OfficeValidationError("material must be an integer from 1 through 9")
+            if color is not None and color not in known_names():
+                raise OfficeValidationError(f"unknown color {color!r}")
+        elif kind is TileKind.WALL:
+            occupied = _occupied_cells_by_others(office, styles)
+            for position in area.positions():
+                blocker = occupied.get(position)
+                if blocker is not None:
+                    raise OfficeValidationError(
+                        f"cannot paint a wall at ({position.col}, {position.row}): "
+                        f"furniture {blocker.id!r} occupies it -- remove it first"
+                    )
+        else:
+            raise OfficeValidationError(f"paint_tiles does not support kind={kind.value!r}")
+
+        updates: dict[GridPosition, TileCell] = {}
+        for position in area.positions():
+            cell = office.grid.at(position)
+            if kind is TileKind.WALL:
+                updates[position] = TileCell.wall(zone_label=cell.zone_label)
+            else:
+                assert material is not None
+                updates[position] = TileCell.floor(
+                    material,
+                    color if color is not None else cell.color,
+                    zone_label=cell.zone_label,
+                )
+        new_grid = office.grid.replacing(updates)
+        new_office = replace(office, grid=new_grid)
+        self._validate(new_office, styles)
+        await self._persist(new_office, styles)
+
+    async def place_furniture(
+        self,
+        *,
+        kind: FurnitureKind,
+        style: str,
+        position: GridPosition,
+        facing: Direction | None = None,
+        label: str | None = None,
+    ) -> FurnitureItem:
+        office, styles = await self._load()
+        style_def = styles.by_style_id(style)
+        if style_def is None:
+            raise OfficeValidationError(f"style {style!r} does not exist")
+        if style_def.kind is not kind:
+            raise OfficeValidationError(
+                f"style {style!r} is kind {style_def.kind.value!r}, not {kind.value!r}"
+            )
+        resolved_facing = facing if facing is not None else style_def.default_facing
+        occupied = _occupied_cells_by_others(office, styles)
+        error = _furniture_placement_error(
+            office, styles, style_def, resolved_facing, position, occupied
+        )
+        if error is not None:
+            raise OfficeValidationError(error)
+
+        item = FurnitureItem(
+            id=str(uuid.uuid4()),
+            kind=kind,
+            style=style,
+            position=position,
+            facing=resolved_facing,
+            label=label,
+        )
+        new_office = replace(
+            office,
+            furniture=[*office.furniture, item],
+            # Seed id_uid_map so encode() reuses `item.id` itself as the
+            # persisted Pixel Agents uid, rather than generating an
+            # unrelated one -- otherwise the very next load() would decode
+            # this item under a *different* id than the one just returned
+            # to the caller (docs/architect-semantic-ir-design.md section
+            # 6.2's uid-preservation only covers items a previous decode
+            # already knew about).
+            passthrough={
+                **office.passthrough,
+                "id_uid_map": {**_id_uid_map(office), item.id: item.id},
+            },
+        )
+        self._validate(new_office, styles)
+        await self._persist(new_office, styles)
+        return item
+
+    async def move_furniture(
+        self, *, furniture_id: str, position: GridPosition, facing: Direction | None = None
+    ) -> FurnitureItem:
+        office, styles = await self._load()
+        item = self._find_furniture(office, furniture_id)
+        style_def = styles.by_style_id(item.style)
+        if style_def is None:
+            raise OfficeValidationError(
+                f"furniture {furniture_id!r} has unknown style {item.style!r}"
+            )
+        resolved_facing = facing if facing is not None else item.facing
+        occupied = _occupied_cells_by_others(office, styles, exclude_id=furniture_id)
+        error = _furniture_placement_error(
+            office, styles, style_def, resolved_facing, position, occupied
+        )
+        if error is not None:
+            raise OfficeValidationError(error)
+
+        updated = replace(item, position=position, facing=resolved_facing)
+        new_furniture = [updated if f.id == furniture_id else f for f in office.furniture]
+        new_office = replace(office, furniture=new_furniture)
+        self._validate(new_office, styles)
+        await self._persist(new_office, styles)
+        return updated
+
+    async def remove_furniture(self, *, furniture_id: str) -> None:
+        office, styles = await self._load()
+        self._find_furniture(office, furniture_id)
+        new_furniture = [f for f in office.furniture if f.id != furniture_id]
+        new_seats = [s for s in office.seats if s.occupies_furniture_id != furniture_id]
+        new_office = replace(office, furniture=new_furniture, seats=new_seats)
+        self._validate(new_office, styles)
+        await self._persist(new_office, styles)
+
+    async def create_zone(self, *, label: str, color: str, tiles: GridRect) -> Zone:
+        office, styles = await self._load()
+        if color not in known_names():
+            raise OfficeValidationError(f"unknown color {color!r}")
+        if any(zone.label == label for zone in office.zones):
+            raise OfficeValidationError(f"a zone labeled {label!r} already exists")
+        if not _rect_in_bounds(tiles, office):
+            raise OfficeValidationError(
+                f"zone extends outside the {office.width}x{office.height} grid"
+            )
+
+        # Matches `_decode_zones`'s own id scheme so a zone created here
+        # round-trips to the same id after the next persist + reload.
+        zone = Zone(id=f"zone:{label}", label=label, color=color, tiles=tiles)
+        new_grid = _tag_zone_label(office.grid, tiles.positions(), label)
+        new_office = replace(office, zones=[*office.zones, zone], grid=new_grid)
+        self._validate(new_office, styles)
+        await self._persist(new_office, styles)
+        return zone
+
+    async def resize_zone(self, *, zone_id: str, tiles: GridRect) -> Zone:
+        office, styles = await self._load()
+        zone = self._find_zone(office, zone_id)
+        if not _rect_in_bounds(tiles, office):
+            raise OfficeValidationError(
+                f"zone extends outside the {office.width}x{office.height} grid"
+            )
+        new_grid = _clear_zone_label(office.grid, zone.label)
+        new_grid = _tag_zone_label(new_grid, tiles.positions(), zone.label)
+        updated = replace(zone, tiles=tiles)
+        new_zones = [updated if z.id == zone_id else z for z in office.zones]
+        new_office = replace(office, zones=new_zones, grid=new_grid)
+        self._validate(new_office, styles)
+        await self._persist(new_office, styles)
+        return updated
+
+    async def remove_zone(self, *, zone_id: str) -> None:
+        office, styles = await self._load()
+        zone = self._find_zone(office, zone_id)
+        new_grid = _clear_zone_label(office.grid, zone.label)
+        new_zones = [z for z in office.zones if z.id != zone_id]
+        new_office = replace(office, zones=new_zones, grid=new_grid)
+        self._validate(new_office, styles)
+        await self._persist(new_office, styles)
+
+    async def seat_occupant(self, *, seat_id: str, occupant_id: str) -> Seat:
+        office, styles = await self._load()
+        seat = self._find_seat(office, seat_id)
+        if not any(occupant.id == occupant_id for occupant in office.occupants):
+            raise OfficeValidationError(f"occupant {occupant_id!r} does not exist")
+        updated = replace(seat, occupant_id=occupant_id)
+        new_seats = [updated if s.id == seat_id else s for s in office.seats]
+        new_office = replace(office, seats=new_seats)
+        self._validate(new_office, styles)
+        await self._persist(new_office, styles)
+        return updated
+
+    async def vacate_seat(self, *, seat_id: str) -> Seat:
+        office, styles = await self._load()
+        seat = self._find_seat(office, seat_id)
+        updated = replace(seat, occupant_id=None)
+        new_seats = [updated if s.id == seat_id else s for s in office.seats]
+        new_office = replace(office, seats=new_seats)
+        self._validate(new_office, styles)
+        await self._persist(new_office, styles)
+        return updated
+
+    # -- internals -----------------------------------------------------
+
+    async def _load(self) -> tuple[Office, FurnitureStyleManifest]:
+        styles = self._style_loader.styles()
+        office = await self._repository.load(styles)
+        return office, styles
+
+    async def _persist(self, office: Office, styles: FurnitureStyleManifest) -> None:
+        raw = await self._repository.save(office, styles)
+        if self._broadcast is not None:
+            await self._broadcast(raw)
+
+    @staticmethod
+    def _find_zone(office: Office, zone_id: str) -> Zone:
+        for zone in office.zones:
+            if zone.id == zone_id:
+                return zone
+        raise OfficeValidationError(f"zone {zone_id!r} does not exist")
+
+    @staticmethod
+    def _find_furniture(office: Office, furniture_id: str) -> FurnitureItem:
+        for item in office.furniture:
+            if item.id == furniture_id:
+                return item
+        raise OfficeValidationError(f"furniture {furniture_id!r} does not exist")
+
+    @staticmethod
+    def _find_seat(office: Office, seat_id: str) -> Seat:
+        for seat in office.seats:
+            if seat.id == seat_id:
+                return seat
+        raise OfficeValidationError(f"seat {seat_id!r} does not exist")
+
+    def _validate(self, office: Office, styles: FurnitureStyleManifest) -> None:
+        _validate_zones_in_bounds(office)
+        _validate_furniture(office, styles)
+        _validate_seats(office)
+
+
+def _id_uid_map(office: Office) -> dict[str, str]:
+    raw = office.passthrough.get("id_uid_map", {})
+    return raw if isinstance(raw, dict) else {}
+
+
+def _rect_in_bounds(rect: GridRect, office: Office) -> bool:
+    return (
+        rect.top_left.col >= 0
+        and rect.top_left.row >= 0
+        and rect.top_left.col + rect.width <= office.width
+        and rect.top_left.row + rect.height <= office.height
+    )
+
+
+def _all_positions(grid: Grid) -> list[GridPosition]:
+    return [GridPosition(col, row) for row in range(grid.height) for col in range(grid.width)]
+
+
+def _tag_zone_label(grid: Grid, positions: list[GridPosition], label: str) -> Grid:
+    updates: dict[GridPosition, TileCell] = {}
+    for position in positions:
+        if grid.in_bounds(position):
+            updates[position] = replace(grid.at(position), zone_label=label)
+    return grid.replacing(updates) if updates else grid
+
+
+def _clear_zone_label(grid: Grid, label: str) -> Grid:
+    updates: dict[GridPosition, TileCell] = {}
+    for position in _all_positions(grid):
+        cell = grid.at(position)
+        if cell.zone_label == label:
+            updates[position] = replace(cell, zone_label=None)
+    return grid.replacing(updates) if updates else grid
+
+
+def _occupied_cells_by_others(
+    office: Office, styles: FurnitureStyleManifest, *, exclude_id: str | None = None
+) -> dict[GridPosition, FurnitureItem]:
+    occupied: dict[GridPosition, FurnitureItem] = {}
+    for item in office.furniture:
+        if item.id == exclude_id:
+            continue
+        for cell in styles.occupied_cells(item.style, item.facing, item.position):
+            occupied[cell] = item
+    return occupied
+
+
+def _furniture_placement_error(
+    office: Office,
+    styles: FurnitureStyleManifest,
+    style_def: FurnitureStyle,
+    facing: Direction | None,
+    position: GridPosition,
+    occupied: dict[GridPosition, FurnitureItem],
+) -> str | None:
+    """Every rule in section 8 for one candidate `(style_def, facing,
+    position)`, given `occupied` (every *other* item's real footprint
+    cells). `None` means the placement is valid."""
+
+    record = style_def.facing_record(facing)
+    if record is None:
+        return f"style {style_def.style!r} has no facing {facing.value if facing else None!r}"
+    if not office.grid.in_bounds(position):
+        return f"position ({position.col}, {position.row}) is outside the grid"
+
+    if style_def.can_place_on_walls:
+        # Real Pixel Agents rule (webview-ui's canPlaceFurniture in
+        # editorActions.ts): only the *bottom* row of a wall item's
+        # footprint has to sit on a WALL tile -- every row above it
+        # (including any background rows) can be void/floor/anything,
+        # since a wall fixture's sprite extends upward from the tile it's
+        # actually mounted on. `position` is the footprint's top-left, not
+        # its wall row -- checking `position` itself against WALL directly
+        # rejected every real multi-row wall fixture (e.g. HANGING_PLANT,
+        # footprint_height=2), since its anchor sits one row above the
+        # wall tile it's actually mounted on. Doesn't attempt to support a
+        # wall item's footprint extending above row 0 (upstream allows a
+        # negative row there); `Grid` has no concept of an out-of-bounds
+        # row, so that placement style isn't representable here.
+        bottom_row = position.row + record.footprint_height - 1
+        for dc in range(record.footprint_width):
+            wall_cell = GridPosition(position.col + dc, bottom_row)
+            if not office.grid.in_bounds(wall_cell):
+                return f"footprint extends outside the grid at ({wall_cell.col}, {wall_cell.row})"
+            if office.grid.at(wall_cell).kind is not TileKind.WALL:
+                return (
+                    f"style {style_def.style!r} must have the bottom row of its footprint "
+                    "anchored on a wall tile"
+                )
+    else:
+        for cell in styles.occupied_cells(style_def.style, facing, position):
+            if not office.grid.in_bounds(cell):
+                return f"footprint extends outside the grid at ({cell.col}, {cell.row})"
+            if office.grid.at(cell).kind is not TileKind.FLOOR:
+                return f"style {style_def.style!r} must be anchored on a floor tile"
+
+    for cell in styles.occupied_cells(style_def.style, facing, position):
+        if not office.grid.in_bounds(cell):
+            return f"footprint extends outside the grid at ({cell.col}, {cell.row})"
+        existing = occupied.get(cell)
+        if existing is None:
+            continue
+        existing_style = styles.by_style_id(existing.style)
+        stacking_allowed = (
+            style_def.can_place_on_surfaces and existing.kind is FurnitureKind.DESK
+        ) or (
+            existing_style is not None
+            and existing_style.can_place_on_surfaces
+            and style_def.kind is FurnitureKind.DESK
+        )
+        if not stacking_allowed:
+            return f"overlaps furniture {existing.id!r}"
+    return None
+
+
+def _validate_zones_in_bounds(office: Office) -> None:
+    for zone in office.zones:
+        if not _rect_in_bounds(zone.tiles, office):
+            raise OfficeValidationError(f"zone {zone.id!r} extends outside the grid")
+
+
+def _validate_furniture(office: Office, styles: FurnitureStyleManifest) -> None:
+    occupied: dict[GridPosition, FurnitureItem] = {}
+    for item in office.furniture:
+        style_def = styles.by_style_id(item.style)
+        if style_def is None:
+            raise OfficeValidationError(f"furniture {item.id!r} has unknown style {item.style!r}")
+        error = _furniture_placement_error(
+            office, styles, style_def, item.facing, item.position, occupied
+        )
+        if error is not None:
+            raise OfficeValidationError(f"furniture {item.id!r}: {error}")
+        for cell in styles.occupied_cells(item.style, item.facing, item.position):
+            occupied[cell] = item
+
+
+def _validate_seats(office: Office) -> None:
+    furniture_by_id = {item.id: item for item in office.furniture}
+    occupant_ids = {occupant.id for occupant in office.occupants}
+    seated_occupants: set[str] = set()
+    for seat in office.seats:
+        target = furniture_by_id.get(seat.occupies_furniture_id)
+        if target is None or target.kind is not FurnitureKind.SEATING:
+            raise OfficeValidationError(f"seat {seat.id!r} does not sit on a seating item")
+        if seat.occupant_id is not None:
+            if seat.occupant_id not in occupant_ids:
+                raise OfficeValidationError(
+                    f"seat {seat.id!r} references unknown occupant {seat.occupant_id!r}"
+                )
+            if seat.occupant_id in seated_occupants:
+                raise OfficeValidationError(
+                    f"occupant {seat.occupant_id!r} already holds another seat"
+                )
+            seated_occupants.add(seat.occupant_id)
+
+
+__all__ = ["BroadcastCallback", "OfficeLayoutService", "OfficeValidationError"]

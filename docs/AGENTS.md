@@ -9,11 +9,12 @@ together in one place.
 
 | Package | Owns | README |
 |---|---|---|
-| [`corridor`](../corridor) | Shared per-guild permissions and reply-style formatting. Every other cog depends on it instead of reinventing either. | [corridor/README.md](../corridor/README.md) |
+| [`corridor`](../corridor) | Shared per-guild permissions, reply-style formatting, and the one LLM connection pico and architect both read (`[p]corridor llm ...`). Every other cog depends on it instead of reinventing any of that. | [corridor/README.md](../corridor/README.md) |
 | [`pixelagents`](../pixelagents) | Vendors and builds the Pixel Agents webview (clone + `npm`/`vite`) for other cogs to serve. No runtime/Discord surface of its own. | [pixelagents/README.md](../pixelagents/README.md) |
 | [`floorplan`](../floorplan) | Serves the built webview as a Red Dashboard page, mirrors Discord presence into it, and browses the Pixel Index layout catalogue. | [floorplan/README.md](../floorplan/README.md) |
 | [`toolbox`](../toolbox) | Bot-owner Node.js/npm installation on the host, plus a Components v2 panel (`[p]toolbox tools`) for turning any `[p]help`-listed command into an LLM tool corridor's registry offers to pico. | [toolbox/README.md](../toolbox/README.md) |
-| [`pico`](../pico) | An LLM-backed Discord presence: decides whether to react to a message, then acts only via a bounded tool-calling loop (never a raw LLM text send). | [pico/README.md](../pico/README.md) |
+| [`pico`](../pico) | An LLM-backed Discord presence: decides whether to react to a message, then acts only via a bounded tool-calling loop (never a raw LLM text send). Can delegate a sub-task to `architect` over A2A via its `consult_architect` tool. | [pico/README.md](../pico/README.md) |
+| [`architect`](../architect) | A second, independent LLM agent -- never Discord-user-facing -- reachable only over the [A2A protocol](https://a2a-protocol.org/) on its own dedicated listener. Shares corridor's LLM connection with pico. Serves pixelagents' built webview bundle under its own Dashboard route (`/third-party/architect`), and edits that layout through a Semantic IR (`docs/architect-semantic-ir-design.md`) via LLM tools and `[p]architect office ...` commands. | [architect/README.md](../architect/README.md) |
 | [`testbench`](../testbench) | Bot-owner-only: publishes any corridor Pub/Sub event through a Discord UI generated from corridor's own event catalog, for exercising floorplan's canvas rendering without a real Discord presence change or message. | [testbench/README.md](../testbench/README.md) |
 | [`deskutils`](../deskutils) | Small Discord utilities with no state of their own; today just `[p]deskutils time`, showing the current time via Discord's native per-viewer timestamp markup plus explicit UTC/named-zone formatting. | [deskutils/README.md](../deskutils/README.md) |
 | [`contracts`](../contracts) | **Not a cog** — `"type": "SHARED_LIBRARY"` in its `info.json`, so Red's Downloader skips it. CI-only: consumer-driven contract tests against Pixel Index and Pixel Agents, plus the reply-channel lint. (It does have a no-op `setup()` — purely to stop dev-time hot reload tooling from reporting a spurious failure; see `contracts/__init__.py`.) | [contracts/README.md](../contracts/README.md) |
@@ -90,15 +91,21 @@ python -m pytest -q floorplan/tests
 python -m pytest -q pixelagents/tests
 python -m pytest -q toolbox/
 python -m pytest -q pico/
+python -m pytest -q architect/
 python -m pytest -q testbench/
 python -m pytest -q deskutils/
 
-python -m ruff format --check corridor floorplan pixelagents toolbox pico testbench deskutils
-python -m ruff check corridor floorplan pixelagents toolbox pico testbench deskutils
-python -m mypy corridor floorplan pixelagents toolbox pico testbench deskutils
+python -m ruff format --check corridor floorplan pixelagents toolbox pico architect testbench deskutils
+python -m ruff check corridor floorplan pixelagents toolbox pico architect testbench deskutils
+python -m mypy corridor floorplan pixelagents toolbox pico architect testbench deskutils
 python -m unittest discover -s contracts/tests
 python -m contracts.discord_replies.lint_reply_channel
 ```
+
+`architect`'s suite binds a real loopback A2A listener during its own
+tests (and pico's `test_architect_client.py` does the same to exercise a
+live pico→architect round trip) -- these aren't network-mocked, so a
+sandboxed environment needs loopback binding allowed for `127.0.0.1`.
 
 `floorplan`'s suite additionally needs `pixel_index` contract dependencies
 (`pip install -r contracts/pixel_index/requirements.txt`) for the Pixel
@@ -117,3 +124,7 @@ Index lint/verify steps — see [`contracts/README.md`](../contracts/README.md).
 - [`docs/red-downloader-submodules.md`](red-downloader-submodules.md) — what
   Red's Downloader does and doesn't do with git submodules, and why that
   ruled out a submodule-based vendoring approach.
+- [`docs/architect-semantic-ir-design.md`](architect-semantic-ir-design.md) —
+  the Semantic IR between `architect`'s LLM tools/Discord commands and
+  Pixel Agents' raw layout JSON, the generated furniture-style manifest,
+  and the mutation/validation service both callers share.

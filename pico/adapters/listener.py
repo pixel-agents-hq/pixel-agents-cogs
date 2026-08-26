@@ -20,7 +20,8 @@ from redbot.core.bot import Red
 
 from ..application import GateService, ToolLoopService
 from ..domain import ConversationContext, GateDecision, HistoryEntry, MessageSnapshot
-from ..infrastructure import RedPicoRepository
+from ..infrastructure import ArchitectClient, RedPicoRepository
+from ..tools.architect_tool import ArchitectTool
 from ..tools.base import ToolSpec
 from ..tools.cross_cog import CrossCogTool
 from ..tools.reply_tool import ReplyTool
@@ -32,14 +33,15 @@ HISTORY_LIMIT = 10
 
 class ListenerMixin:
     """Requires `self.bot`, `self._corridor`, `self._repository`,
-    `self._gate_service`, `self._tool_loop_service` (all provided by
-    CogBase)."""
+    `self._gate_service`, `self._tool_loop_service`, `self._architect_client`
+    (all provided by CogBase)."""
 
     bot: Red
     _corridor: Any
     _repository: RedPicoRepository
     _gate_service: GateService
     _tool_loop_service: ToolLoopService
+    _architect_client: ArchitectClient
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message) -> None:
@@ -51,10 +53,11 @@ class ListenerMixin:
         if not await self._repository.guild_enabled(guild.id):
             return
 
-        settings = await self._repository.global_settings()
-        if not settings.ready:
+        llm_settings = await self._corridor.llm_settings()
+        if not llm_settings.ready:
             log.debug("pico: LLM not configured (missing key/model), ignoring message")
             return
+        settings = await self._repository.global_settings()
 
         snapshot = _message_snapshot(message, bot_user_id=_bot_user_id(self.bot))
         if snapshot is None:
@@ -64,9 +67,9 @@ class ListenerMixin:
 
         decision = await self._gate_service.decide(
             context,
-            base_url=settings.llm_base_url,
-            api_key=settings.llm_api_key or "",
-            model=settings.llm_model or "",
+            base_url=llm_settings.llm_base_url,
+            api_key=llm_settings.llm_api_key or "",
+            model=llm_settings.llm_model or "",
         )
         if decision is not GateDecision.RESPOND:
             return
@@ -75,11 +78,13 @@ class ListenerMixin:
         tools: list[ToolSpec] = [
             ReplyTool(self._corridor, ctx, guild_id=guild.id, bot_user_id=_bot_user_id(self.bot))
         ]
+        if settings.architect_url:
+            tools.append(ArchitectTool(self._architect_client, base_url=settings.architect_url))
         tools.extend(await _cross_cog_tools(self._corridor, ctx))
         result = await self._tool_loop_service.run(
-            base_url=settings.llm_base_url,
-            api_key=settings.llm_api_key or "",
-            model=settings.llm_model or "",
+            base_url=llm_settings.llm_base_url,
+            api_key=llm_settings.llm_api_key or "",
+            model=llm_settings.llm_model or "",
             system_prompt=settings.system_prompt,
             context=context,
             tools=tools,

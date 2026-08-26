@@ -9,6 +9,7 @@ from collections.abc import Awaitable, Callable
 
 from ..corridor import Corridor
 from ..domain import RegisteredTool, ReplyField, ReplyMode, llm_tool
+from ..infrastructure import LiteLLMClient
 from .conftest import FakeBot, FakeContext, FakeGuild, FakeMember
 
 
@@ -177,6 +178,37 @@ class TestCorridorApi(unittest.IsolatedAsyncioTestCase):
         allowed = await self.corridor.require_permission(ctx, "keyholder")
 
         self.assertTrue(allowed)
+
+    async def test_llm_settings_defaults_to_unconfigured_key(self) -> None:
+        settings = await self.corridor.llm_settings()
+
+        self.assertIsNone(settings.llm_api_key)
+        self.assertFalse(settings.ready)
+
+    async def test_set_llm_settings_persist_and_become_ready(self) -> None:
+        await self.corridor.set_llm_base_url("https://example.test/")
+        await self.corridor.set_llm_api_key("sk-secret")
+        await self.corridor.set_llm_model("gpt-test")
+
+        settings = await self.corridor.llm_settings()
+
+        self.assertEqual(settings.llm_base_url, "https://example.test/")
+        self.assertEqual(settings.llm_api_key, "sk-secret")
+        self.assertEqual(settings.llm_model, "gpt-test")
+        self.assertTrue(settings.ready)
+
+    async def test_llm_client_returns_the_same_shared_instance(self) -> None:
+        client = self.corridor.llm_client()
+
+        self.assertIsInstance(client, LiteLLMClient)
+        self.assertIs(self.corridor.llm_client(), client)
+
+    async def test_cog_unload_closes_the_shared_llm_client(self) -> None:
+        client = self.corridor.llm_client()
+
+        await self.corridor.cog_unload()  # must not raise even though never started
+
+        self.assertFalse(client.running)
 
     async def test_guild_administrator_bypasses_permission_checks(self) -> None:
         admin = FakeMember(2, self.guild, is_administrator=True)

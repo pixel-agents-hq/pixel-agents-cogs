@@ -6,15 +6,16 @@ from __future__ import annotations
 import unittest
 from collections.abc import Sequence
 
-from ..application.gate_service import GateService
-from ..domain import ConversationContext, GateDecision, HistoryEntry, MessageSnapshot
-from ..infrastructure.llm_client import (
+from corridor.infrastructure.llm_client import (
     ChatCompletionChoice,
     ChatCompletionResponse,
     ChatCompletionResponseMessage,
     ChatMessage,
     LLMRequestError,
 )
+
+from ..application.gate_service import GateService
+from ..domain import ConversationContext, GateDecision, HistoryEntry, MessageSnapshot
 
 
 def _snapshot(**overrides: object) -> MessageSnapshot:

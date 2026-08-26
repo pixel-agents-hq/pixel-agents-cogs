@@ -11,6 +11,7 @@ repo can afford a slow, network-dependent test.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import unittest
@@ -22,6 +23,12 @@ from pixelagents.infrastructure import webview_build
 from pixelagents.tests.conftest import write_fake_vite_build
 
 _LOG = logging.getLogger("test.webview_build")
+
+
+def _write_up_to_date_markers(dist: Path, commit: str) -> None:
+    (dist / ".built_commit").write_text(commit + "\n")
+    (dist / ".built_base_path").write_text(webview_build.RELATIVE_BASE_PATH + "\n")
+    (dist / ".built_manifest_version").write_text(f"{webview_build.MANIFEST_SCHEMA_VERSION}\n")
 
 
 class TestPinnedCommit(unittest.TestCase):
@@ -69,13 +76,73 @@ class TestIsUpToDate(unittest.TestCase):
                 webview_build.is_up_to_date(dist, "abc", webview_build.RELATIVE_BASE_PATH)
             )
 
-    def test_true_when_both_markers_match(self) -> None:
+    def test_true_when_both_markers_match_and_furniture_styles_exists(self) -> None:
+        with TemporaryDirectory() as tmp:
+            dist = Path(tmp)
+            (dist / "index.html").write_text("x")
+            _write_up_to_date_markers(dist, "abc")
+            (dist / "assets").mkdir()
+            (dist / "assets" / "furniture-styles.json").write_text("{}")
+            self.assertTrue(
+                webview_build.is_up_to_date(dist, "abc", webview_build.RELATIVE_BASE_PATH)
+            )
+
+    def test_false_when_furniture_styles_json_is_missing(self) -> None:
+        """Regression test: a host whose webview_dist/ predates
+        _build_furniture_styles must self-heal on its next cog_load(),
+        even though its commit/base_path markers still match -- otherwise
+        every real furniture asset id is silently unrecognized by
+        architect's style manifest lookup forever. See is_up_to_date's own
+        docstring for the real incident this guards against."""
+
+        with TemporaryDirectory() as tmp:
+            dist = Path(tmp)
+            (dist / "index.html").write_text("x")
+            _write_up_to_date_markers(dist, "abc")
+            # No assets/furniture-styles.json written -- pre-upgrade state.
+            self.assertFalse(
+                webview_build.is_up_to_date(dist, "abc", webview_build.RELATIVE_BASE_PATH)
+            )
+
+    def test_false_when_manifest_version_marker_is_stale(self) -> None:
+        """Regression test: a host whose webview_dist/ was built before a
+        furniture-styles.json *schema* change (a field added/removed/
+        renamed on styles or facings) must self-heal even though its
+        commit/base_path markers still match and the file itself still
+        exists -- otherwise every consumer parsing the old-shaped JSON
+        against the new schema crashes outright. This is the exact
+        incident that made MANIFEST_SCHEMA_VERSION exist: the flat
+        `{"south": "DESK_FRONT"}` facing shape becoming nested
+        `{"south": {"catalog_id": ..., "footprint_width": ...}}` crashed
+        FurnitureStyleManifest.from_raw() on any host whose vendored
+        commit hadn't also changed."""
+
         with TemporaryDirectory() as tmp:
             dist = Path(tmp)
             (dist / "index.html").write_text("x")
             (dist / ".built_commit").write_text("abc\n")
             (dist / ".built_base_path").write_text(webview_build.RELATIVE_BASE_PATH + "\n")
-            self.assertTrue(
+            (dist / ".built_manifest_version").write_text("1\n")  # stale, current is 2+
+            (dist / "assets").mkdir()
+            (dist / "assets" / "furniture-styles.json").write_text("{}")
+            self.assertFalse(
+                webview_build.is_up_to_date(dist, "abc", webview_build.RELATIVE_BASE_PATH)
+            )
+
+    def test_false_when_manifest_version_marker_is_missing(self) -> None:
+        """Same incident as above, for a host built before this marker
+        existed at all (no `.built_manifest_version` file, not merely a
+        stale one)."""
+
+        with TemporaryDirectory() as tmp:
+            dist = Path(tmp)
+            (dist / "index.html").write_text("x")
+            (dist / ".built_commit").write_text("abc\n")
+            (dist / ".built_base_path").write_text(webview_build.RELATIVE_BASE_PATH + "\n")
+            # No .built_manifest_version written -- pre-marker state.
+            (dist / "assets").mkdir()
+            (dist / "assets" / "furniture-styles.json").write_text("{}")
+            self.assertFalse(
                 webview_build.is_up_to_date(dist, "abc", webview_build.RELATIVE_BASE_PATH)
             )
 
@@ -85,11 +152,11 @@ class TestEnsureWebviewBuilt(unittest.TestCase):
         with TemporaryDirectory() as tmp:
             cog_data_dir = Path(tmp)
             dist = cog_data_dir / "webview_dist"
-            dist.mkdir(parents=True)
+            (dist / "assets").mkdir(parents=True)
             (dist / "index.html").write_text("x")
+            (dist / "assets" / "furniture-styles.json").write_text("{}")
             commit = webview_build.pinned_commit()
-            (dist / ".built_commit").write_text(commit + "\n")
-            (dist / ".built_base_path").write_text(webview_build.RELATIVE_BASE_PATH + "\n")
+            _write_up_to_date_markers(dist, commit)
 
             with patch.object(webview_build, "_checkout") as checkout:
                 result = webview_build.ensure_webview_built(cog_data_dir, logger=_LOG)
@@ -176,6 +243,33 @@ class TestEnsureWebviewBuilt(unittest.TestCase):
                 (dist / ".built_base_path").read_text(encoding="utf-8").strip(),
                 result.base_path,
             )
+
+    def test_sync_generates_furniture_styles_json_from_the_catalog(self) -> None:
+        """docs/architect-semantic-ir-design.md §6.4: furniture-styles.json
+        is a generated artifact, produced fresh on every build from
+        whatever furniture-catalog.json the vendored commit produced."""
+
+        with TemporaryDirectory() as tmp:
+            cog_data_dir = Path(tmp)
+            build_out_dir = cog_data_dir / "vendor" / "pixel-agents" / "dist" / "webview"
+
+            def fake_build(vendor_dir, log):
+                write_fake_vite_build(build_out_dir)
+                return build_out_dir
+
+            with (
+                patch.object(webview_build, "missing_tools", return_value=()),
+                patch.object(webview_build, "_checkout"),
+                patch.object(webview_build, "_install_dependencies"),
+                patch.object(webview_build, "_build_bundle", side_effect=fake_build),
+                patch.object(webview_build, "_emit_decoded_assets"),
+            ):
+                webview_build.ensure_webview_built(cog_data_dir, logger=_LOG)
+
+            styles_path = cog_data_dir / "webview_dist" / "assets" / "furniture-styles.json"
+            self.assertTrue(styles_path.is_file())
+            manifest = json.loads(styles_path.read_text(encoding="utf-8"))
+            self.assertIn("styles", manifest)
 
 
 class TestEnsureWebviewBuiltConcurrency(unittest.TestCase):
@@ -335,11 +429,11 @@ class TestBuildWebview(unittest.TestCase):
         with TemporaryDirectory() as tmp:
             cog_data_dir = Path(tmp)
             dist = cog_data_dir / "webview_dist"
-            dist.mkdir(parents=True)
+            (dist / "assets").mkdir(parents=True)
             (dist / "index.html").write_text("x")
+            (dist / "assets" / "furniture-styles.json").write_text("{}")
             commit = webview_build.pinned_commit()
-            (dist / ".built_commit").write_text(commit + "\n")
-            (dist / ".built_base_path").write_text(webview_build.RELATIVE_BASE_PATH + "\n")
+            _write_up_to_date_markers(dist, commit)
             outcome = webview_build.build_webview(cog_data_dir, logger=_LOG)
         self.assertTrue(outcome.ok)
         self.assertIn("up to date", outcome.status_line)
@@ -356,10 +450,10 @@ class TestBuildWebview(unittest.TestCase):
         with TemporaryDirectory() as tmp:
             cog_data_dir = Path(tmp)
             dist = cog_data_dir / "webview_dist"
-            dist.mkdir(parents=True)
+            (dist / "assets").mkdir(parents=True)
             (dist / "index.html").write_text("x")
-            (dist / ".built_commit").write_text(override + "\n")
-            (dist / ".built_base_path").write_text(webview_build.RELATIVE_BASE_PATH + "\n")
+            (dist / "assets" / "furniture-styles.json").write_text("{}")
+            _write_up_to_date_markers(dist, override)
             outcome = webview_build.build_webview(cog_data_dir, logger=_LOG, commit=override)
         self.assertTrue(outcome.ok)
         self.assertIn(override[:7], outcome.status_line)

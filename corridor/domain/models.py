@@ -12,6 +12,26 @@ EMPLOYEE_KEY = "employee"
 RESERVED_GROUP_KEYS = frozenset({OWNER_KEY, EMPLOYEE_KEY})
 
 
+@dataclass(frozen=True, slots=True)
+class LLMSettings:
+    """The one shared LLM connection every LLM-backed cog (pico, architect)
+    reads through corridor -- see docs/architect-design.md's LLM provider
+    migration section. Per-agent behavior (max tool calls, system prompt)
+    stays with each consuming cog; only the connection itself lives here."""
+
+    llm_base_url: str
+    llm_api_key: str | None
+    llm_model: str | None
+
+    @property
+    def ready(self) -> bool:
+        """False until an owner has set both a virtual key and a model --
+        neither has a default, so a consumer must stay silent/idle until
+        configured."""
+
+        return self.llm_api_key is not None and self.llm_model is not None
+
+
 class ReplyMode(StrEnum):
     TEXT = "text"
     EMBED = "embed"

@@ -79,6 +79,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 # cookiecutter template's `commands.py` already follows the compliant
 # pattern this check enforces).
 COG_PACKAGES = (
+    "architect",
     "corridor",
     "deskutils",
     "floorplan",
@@ -91,7 +92,16 @@ COG_PACKAGES = (
 _COMMAND_DECORATOR_ATTRS = {"command", "group", "hybrid_command", "hybrid_group"}
 _SEND_ATTRS = {"send", "send_message"}
 _SEND_ROOTS = {"ctx", "interaction"}
-_CORRIDOR_REPLY_CALLS = {"self._corridor.send_reply", "self._corridor.render_reply"}
+# `self.send_reply`/`self.render_reply` (no `_corridor` attribute lookup)
+# only ever resolve to a real definition inside corridor's own package --
+# corridor is the renderer, so its own commands call these directly on
+# `self` instead of through a `self._corridor` reference to itself.
+_CORRIDOR_REPLY_CALLS = {
+    "self._corridor.send_reply",
+    "self._corridor.render_reply",
+    "self.send_reply",
+    "self.render_reply",
+}
 
 
 def _is_command_handler(node: ast.AsyncFunctionDef | ast.FunctionDef) -> bool:

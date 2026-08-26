@@ -50,6 +50,7 @@ async def _settings() -> GlobalSettings:
         a2a_port=_PORT,
         ws_host="127.0.0.1",
         ws_port=_PORT + 1000,
+        debug_logging=False,
     )
 
 

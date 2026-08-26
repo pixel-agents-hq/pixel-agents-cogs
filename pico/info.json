@@ -10,7 +10,7 @@
     "requirements": [
         "aiohttp",
         "httpx",
-        "pydantic>=2.11.3,<2.14",
+        "pydantic>=2.11.3,<2.12",
         "a2a-sdk"
     ],
     "tags": [

@@ -473,7 +473,9 @@ class OfficeService:
 
         agent_id = self.genuine_agent_id(identity.agent_key)
         truncated = content if len(content) <= 40 else content[:40] + "…"
-        await self._send(agent_tool_start(agent_id, f"activity-{identity.agent_key}", "Message", truncated))
+        await self._send(
+            agent_tool_start(agent_id, f"activity-{identity.agent_key}", "Message", truncated)
+        )
         await self._send(agent_selected(agent_id))
 
     async def clear_genuine_agent_activity(self, identity: GenuineAgentKey) -> None:

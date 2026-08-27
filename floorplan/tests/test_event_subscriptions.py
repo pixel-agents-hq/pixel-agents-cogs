@@ -428,9 +428,7 @@ class TestGenuineAgentDispatch(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.cog = _make_cog()
         self.ws = _connect(self.cog)
-        self.ref = AgentRef(
-            discord_user_id=None, guild_id=None, is_bot=True, agent_key="architect"
-        )
+        self.ref = AgentRef(discord_user_id=None, guild_id=None, is_bot=True, agent_key="architect")
 
     async def test_presence_online_spawns_unconditionally(self):
         """No guild-enabled gate applies -- unlike a Discord presence
@@ -502,14 +500,14 @@ class TestGenuineAgentDispatch(unittest.IsolatedAsyncioTestCase):
         await self.cog._on_agent_tool_started(
             AgentToolStarted(agent=self.ref, tool_id="t1", status="thinking")
         )
-        await self.cog._on_agent_status_changed(
-            AgentStatusChanged(agent=self.ref, status="active")
-        )
+        await self.cog._on_agent_status_changed(AgentStatusChanged(agent=self.ref, status="active"))
 
         agent_id = self.cog._office_service.genuine_agent_id("architect")
         sent = [json.loads(s) for s in self.ws._sent]
         self.assertEqual([m["id"] for m in sent], [agent_id, agent_id, agent_id])
-        self.assertEqual([m["type"] for m in sent], ["agentSelected", "agentToolStart", "agentStatus"])
+        self.assertEqual(
+            [m["type"] for m in sent], ["agentSelected", "agentToolStart", "agentStatus"]
+        )
 
 
 if __name__ == "__main__":

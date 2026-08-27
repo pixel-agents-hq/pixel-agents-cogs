@@ -356,7 +356,9 @@ class TestPresencePublishing(unittest.IsolatedAsyncioTestCase):
 
         assert bot.corridor is not None
         presence_events = [
-            event for event in bot.corridor.published if type(event).__name__ == "AgentPresenceChanged"
+            event
+            for event in bot.corridor.published
+            if type(event).__name__ == "AgentPresenceChanged"
         ]
         self.assertEqual(len(presence_events), 1)
         event = presence_events[0]

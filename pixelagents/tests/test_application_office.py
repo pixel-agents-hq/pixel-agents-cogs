@@ -351,9 +351,7 @@ class TestGenuineAgents(unittest.IsolatedAsyncioTestCase):
 
         await self.service.reconcile_genuine_agent(self.identity, "architect", "idle")
 
-        self.assertEqual(
-            [m["type"] for m in self.sent[:2]], ["agentClosed", "agentCreated"]
-        )
+        self.assertEqual([m["type"] for m in self.sent[:2]], ["agentClosed", "agentCreated"])
 
     async def test_unchanged_status_and_name_sends_nothing(self) -> None:
         await self.service.reconcile_genuine_agent(self.identity, "architect", "online")

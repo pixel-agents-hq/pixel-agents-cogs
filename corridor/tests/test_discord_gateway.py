@@ -59,9 +59,7 @@ class TestMemberUpdateListener(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         self.cog = _make_cog()
         self.published: list[object] = []
-        self.cog.subscribe_event(
-            AgentPresenceChanged, _recorder(self.published), owner="test"
-        )
+        self.cog.subscribe_event(AgentPresenceChanged, _recorder(self.published), owner="test")
 
     async def test_name_change_publishes_presence_changed(self) -> None:
         before = _member(display_name="Old")
@@ -83,9 +81,7 @@ class TestPresenceUpdateListener(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         self.cog = _make_cog()
         self.published: list[object] = []
-        self.cog.subscribe_event(
-            AgentPresenceChanged, _recorder(self.published), owner="test"
-        )
+        self.cog.subscribe_event(AgentPresenceChanged, _recorder(self.published), owner="test")
 
     async def test_status_change_publishes_presence_changed(self) -> None:
         before = _member(status="online")
@@ -111,9 +107,7 @@ class TestMemberJoinListener(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         self.cog = _make_cog()
         self.published: list[object] = []
-        self.cog.subscribe_event(
-            AgentPresenceChanged, _recorder(self.published), owner="test"
-        )
+        self.cog.subscribe_event(AgentPresenceChanged, _recorder(self.published), owner="test")
 
     async def test_publishes_presence_changed(self) -> None:
         m = _member(status="online")
@@ -137,9 +131,7 @@ class TestMemberRemoveListener(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         self.cog = _make_cog()
         self.published: list[object] = []
-        self.cog.subscribe_event(
-            AgentPresenceChanged, _recorder(self.published), owner="test"
-        )
+        self.cog.subscribe_event(AgentPresenceChanged, _recorder(self.published), owner="test")
 
     async def test_remove_publishes_offline_presence_changed(self) -> None:
         m = _member(guild_id=100, user_id=42)

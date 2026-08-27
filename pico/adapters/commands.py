@@ -27,11 +27,12 @@ _MASKED_KEY = "•" * 8
 
 
 class CommandsMixin:
-    """Requires `self._repository: RedPicoRepository` and `self._corridor`
-    (both provided by CogBase)."""
+    """Requires `self._repository: RedPicoRepository`, `self._corridor`,
+    and `self._reply` (all provided by CogBase)."""
 
     _repository: RedPicoRepository
     _corridor: Any
+    _reply: Any
 
     @commands.hybrid_group(name="pico", invoke_without_command=True)
     async def pico_group(self, ctx: commands.Context) -> None:
@@ -48,11 +49,9 @@ class CommandsMixin:
         try:
             await self._repository.set_max_tool_calls(count)
         except ValueError as exc:
-            await self._corridor.send_reply(ctx, description=str(exc))
+            await self._reply.send_reply(ctx, description=str(exc))
             return
-        await self._corridor.send_reply(
-            ctx, description=f"Max tool calls per turn set to `{count}`."
-        )
+        await self._reply.send_reply(ctx, description=f"Max tool calls per turn set to `{count}`.")
 
     @pico_group.group(name="prompt", invoke_without_command=True)
     @commands.is_owner()
@@ -68,7 +67,7 @@ class CommandsMixin:
         """Set Pico's system prompt."""
 
         await self._repository.set_system_prompt(text)
-        await self._corridor.send_reply(ctx, description="System prompt updated.")
+        await self._reply.send_reply(ctx, description="System prompt updated.")
 
     @prompt_group.command(name="reset")
     @commands.is_owner()
@@ -76,7 +75,7 @@ class CommandsMixin:
         """Reset Pico's system prompt to the default."""
 
         await self._repository.reset_system_prompt()
-        await self._corridor.send_reply(ctx, description="System prompt reset to default.")
+        await self._reply.send_reply(ctx, description="System prompt reset to default.")
 
     @prompt_group.command(name="show")
     @commands.is_owner()
@@ -84,9 +83,7 @@ class CommandsMixin:
         """Show Pico's current system prompt."""
 
         settings = await self._repository.global_settings()
-        await self._corridor.send_reply(
-            ctx, title="System Prompt", description=settings.system_prompt
-        )
+        await self._reply.send_reply(ctx, title="System Prompt", description=settings.system_prompt)
 
     @pico_group.command(name="enabled")
     @commands.guild_only()
@@ -97,7 +94,7 @@ class CommandsMixin:
         guild = ctx.guild
         assert guild is not None, "guild_only() guarantees this"
         await self._repository.set_guild_enabled(guild.id, value)
-        await self._corridor.send_reply(
+        await self._reply.send_reply(
             ctx, description=f"Pico enabled set to `{value}` for this server."
         )
 
@@ -121,7 +118,7 @@ class CommandsMixin:
         if ctx.guild is not None:
             guild_settings = await self._repository.guild_settings(ctx.guild.id)
             fields.append(ReplyField("Enabled (this server)", str(guild_settings.enabled)))
-        await self._corridor.send_reply(ctx, title="Pico Status", fields=fields)
+        await self._reply.send_reply(ctx, title="Pico Status", fields=fields)
 
 
 __all__ = ["CommandsMixin"]

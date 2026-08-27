@@ -7,13 +7,21 @@ docs/agent-directory-design.md.
 
 The A2A exchange itself is posted to Discord deterministically, by this
 tool's own handler -- not left to the LLM's discretion. `ReplyTool` is no
-longer the *only* Discord-send in this cog: it remains the only way the
-LLM's own words reach Discord, but this tool additionally announces the
-outgoing question and the target agent's raw answer as its own two
-messages, independent of whatever pico's LLM later says in its own final
-reply (which still happens, via `ReplyTool`, exactly as before). This is a
-deliberate transparency feature: a Discord user watching the channel sees
-the real, unparaphrased A2A conversation, not just pico's summary of it.
+longer the *only* Discord-send in this cog: it remains the only place the
+LLM's own composed words reach Discord, but this tool additionally
+announces the outgoing question and the target agent's raw answer as its
+own two messages, independent of whatever pico's LLM later says in its
+own final reply (which still happens, via `ReplyTool`, exactly as
+before). This is a deliberate transparency feature: a Discord user
+watching the channel sees the real, unparaphrased A2A conversation, not
+just pico's summary of it.
+
+Both announcements carry pico's own bound author identity (via `reply`,
+a `ReplySender`) *and*, in the footer, the *consulted* agent's own
+identity when it published one (`footer_icon_url`, sourced from the real
+`a2a.types.AgentCard.icon_url` field corridor serves off its shared A2A
+listener -- see docs/reply-identity-design.md section 7) -- distinct
+identities, visible on the same message.
 
 If the target agent is unloaded or unreachable at call time, that's both
 reported back to the LLM as a tool error *and* announced in the channel --
@@ -29,7 +37,7 @@ from typing import Protocol
 
 from pydantic import BaseModel, Field
 
-from corridor.domain import ReplyField
+from corridor.domain import FooterOverride, ReplyField
 
 from ..infrastructure.architect_client import ArchitectRequestError
 
@@ -54,10 +62,11 @@ class ArchitectAsker(Protocol):
     async def ask(self, *, base_url: str, text: str) -> str: ...
 
 
-class CorridorReply(Protocol):
-    """The slice of corridor's cross-cog API this tool depends on to
-    announce the A2A exchange -- same Protocol shape `reply_tool.py`'s
-    `CorridorReply` uses."""
+class ReplySenderProtocol(Protocol):
+    """The slice of `corridor.adapters.reply_sender.ReplySender` this tool
+    depends on to announce the A2A exchange -- structurally satisfied by
+    the real `ReplySender` every cog now obtains from
+    `corridor.reply_sender(...)`."""
 
     async def send_reply(
         self,
@@ -67,6 +76,7 @@ class CorridorReply(Protocol):
         description: str | None = None,
         content: str | None = None,
         fields: Sequence[ReplyField] = (),
+        footer_override: FooterOverride | None = None,
     ) -> object: ...
 
 
@@ -78,28 +88,32 @@ class ConsultAgentTool:
     (`architect/infrastructure/a2a_server.py`'s `AGENT_DESCRIPTION`, or any
     future agent's own), not hardcoded here.
 
-    Closes over the triggering turn's `ctx` and the corridor reference,
-    both supplied fresh per turn by the listener -- same convention
-    `ReplyTool`/`CrossCogTool` already follow, since each depends on which
-    message/channel triggered this turn."""
+    Closes over the triggering turn's `ctx` and pico's own bound
+    `ReplySender`, both supplied fresh per turn by the listener -- same
+    convention `ReplyTool`/`CrossCogTool` already follow, since each
+    depends on which message/channel triggered this turn."""
 
     def __init__(
         self,
         client: ArchitectAsker,
-        corridor: CorridorReply,
+        reply: ReplySenderProtocol,
         ctx: object,
         *,
         agent_key: str,
         base_url: str,
         description: str,
+        footer_icon_url: str | None = None,
     ) -> None:
         self.name = f"consult_{agent_key}"
         self.description = description or f"Delegate a task to {agent_key}."
         self._client = client
-        self._corridor = corridor
+        self._reply = reply
         self._ctx = ctx
         self._agent_key = agent_key
         self._base_url = base_url
+        self._footer_override = (
+            FooterOverride(name=agent_key, icon_url=footer_icon_url) if footer_icon_url else None
+        )
 
     @property
     def Input(self) -> type[BaseModel]:
@@ -128,7 +142,9 @@ class ConsultAgentTool:
         already follows for its own secondary side effect."""
 
         try:
-            await self._corridor.send_reply(self._ctx, description=description)
+            await self._reply.send_reply(
+                self._ctx, description=description, footer_override=self._footer_override
+            )
         except Exception:
             log.warning("pico: %s could not announce an A2A exchange", self.name, exc_info=True)
 
@@ -138,5 +154,5 @@ __all__ = [
     "ConsultAgentInput",
     "ConsultAgentOutput",
     "ConsultAgentTool",
-    "CorridorReply",
+    "ReplySenderProtocol",
 ]

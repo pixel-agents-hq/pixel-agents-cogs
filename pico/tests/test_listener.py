@@ -93,9 +93,13 @@ def _ctx(author: object = None) -> SimpleNamespace:
     return SimpleNamespace(author=author if author is not None else SimpleNamespace())
 
 
-def _agent(agent_key: str, *, url: str = "http://localhost:8931/architect/") -> SimpleNamespace:
+def _agent(
+    agent_key: str, *, url: str = "http://localhost:8931/architect/", icon_url: str = ""
+) -> SimpleNamespace:
     card = SimpleNamespace(
-        description=f"{agent_key} agent.", supported_interfaces=[SimpleNamespace(url=url)]
+        description=f"{agent_key} agent.",
+        supported_interfaces=[SimpleNamespace(url=url)],
+        icon_url=icon_url,
     )
     return SimpleNamespace(agent_key=agent_key, card=card)
 
@@ -105,7 +109,9 @@ class TestAgentTools(unittest.TestCase):
         corridor = FakeCorridor()
         corridor.agents = [_agent("architect"), _agent("agent-n")]
 
-        tools = _agent_tools(corridor, ArchitectClient(), _ctx())
+        tools = _agent_tools(
+            corridor, corridor.reply_sender(owner="Pico"), ArchitectClient(), _ctx()
+        )
 
         self.assertEqual({tool.name for tool in tools}, {"consult_architect", "consult_agent-n"})
         self.assertTrue(all(isinstance(tool, ConsultAgentTool) for tool in tools))
@@ -113,7 +119,9 @@ class TestAgentTools(unittest.TestCase):
     def test_zero_registered_agents_yields_zero_tools(self) -> None:
         corridor = FakeCorridor()
 
-        tools = _agent_tools(corridor, ArchitectClient(), _ctx())
+        tools = _agent_tools(
+            corridor, corridor.reply_sender(owner="Pico"), ArchitectClient(), _ctx()
+        )
 
         self.assertEqual(tools, [])
 
@@ -122,7 +130,9 @@ class TestAgentTools(unittest.TestCase):
         broken = SimpleNamespace(agent_key="broken", card=None)  # .description access will raise
         corridor.agents = [broken, _agent("architect")]
 
-        tools = _agent_tools(corridor, ArchitectClient(), _ctx())
+        tools = _agent_tools(
+            corridor, corridor.reply_sender(owner="Pico"), ArchitectClient(), _ctx()
+        )
 
         self.assertEqual([tool.name for tool in tools], ["consult_architect"])
 

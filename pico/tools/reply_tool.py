@@ -54,8 +54,14 @@ class SentMessage(Protocol):
     id: int
 
 
-class CorridorReply(Protocol):
-    """The slice of corridor's cross-cog API this tool depends on."""
+class ReplySenderProtocol(Protocol):
+    """The slice of `corridor.adapters.reply_sender.ReplySender` this tool
+    depends on -- structurally satisfied by the real `ReplySender` every
+    cog now obtains from `corridor.reply_sender(...)`. Kept separate from
+    `CorridorEvents` below rather than one wider protocol: an identity-
+    bound sender and the plain corridor event bus are different
+    capabilities, and this tool is handed both explicitly by the listener
+    rather than one object trying to be both."""
 
     async def send_reply(
         self,
@@ -67,13 +73,19 @@ class CorridorReply(Protocol):
         fields: Sequence[ReplyField] = (),
     ) -> SentMessage: ...
 
+
+class CorridorEvents(Protocol):
+    """The slice of corridor's cross-cog API this tool depends on beyond
+    sending -- publishing `AgentReplied` onto the event bus."""
+
     async def publish_event(self, event: object) -> None: ...
 
 
 class ReplyTool:
-    """Handler closes over the triggering `ctx` and the corridor reference
-    -- both supplied fresh per turn by the listener, since each depends on
-    which message/channel triggered this turn."""
+    """Handler closes over the triggering `ctx`, pico's own bound
+    `ReplySender`, and the plain corridor reference (for `publish_event`
+    only) -- all supplied fresh per turn by the listener, since each
+    depends on which message/channel triggered this turn."""
 
     name = "send_reply"
     description = (
@@ -84,8 +96,15 @@ class ReplyTool:
     Output = ReplyOutput
 
     def __init__(
-        self, corridor: CorridorReply, ctx: object, *, guild_id: int, bot_user_id: int | None
+        self,
+        reply: ReplySenderProtocol,
+        corridor: CorridorEvents,
+        ctx: object,
+        *,
+        guild_id: int,
+        bot_user_id: int | None,
     ) -> None:
+        self._reply = reply
         self._corridor = corridor
         self._ctx = ctx
         self._guild_id = guild_id
@@ -95,7 +114,7 @@ class ReplyTool:
         assert isinstance(raw_input, ReplyInput)
         fields = [ReplyField(f.name, f.value, f.inline) for f in raw_input.fields]
         try:
-            message = await self._corridor.send_reply(
+            message = await self._reply.send_reply(
                 self._ctx,
                 title=raw_input.title,
                 description=raw_input.description,
@@ -131,4 +150,11 @@ class ReplyTool:
             log.warning("pico: failed to publish AgentReplied: %s", exc)
 
 
-__all__ = ["CorridorReply", "ReplyFieldInput", "ReplyInput", "ReplyOutput", "ReplyTool"]
+__all__ = [
+    "CorridorEvents",
+    "ReplyFieldInput",
+    "ReplyInput",
+    "ReplyOutput",
+    "ReplySenderProtocol",
+    "ReplyTool",
+]

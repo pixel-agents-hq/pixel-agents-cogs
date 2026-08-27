@@ -32,12 +32,13 @@ HISTORY_LIMIT = 10
 
 
 class ListenerMixin:
-    """Requires `self.bot`, `self._corridor`, `self._repository`,
-    `self._gate_service`, `self._tool_loop_service`, `self._architect_client`
-    (all provided by CogBase)."""
+    """Requires `self.bot`, `self._corridor`, `self._reply`,
+    `self._repository`, `self._gate_service`, `self._tool_loop_service`,
+    `self._architect_client` (all provided by CogBase)."""
 
     bot: Red
     _corridor: Any
+    _reply: Any
     _repository: RedPicoRepository
     _gate_service: GateService
     _tool_loop_service: ToolLoopService
@@ -76,9 +77,15 @@ class ListenerMixin:
 
         ctx = await self.bot.get_context(message)
         tools: list[ToolSpec] = [
-            ReplyTool(self._corridor, ctx, guild_id=guild.id, bot_user_id=_bot_user_id(self.bot))
+            ReplyTool(
+                self._reply,
+                self._corridor,
+                ctx,
+                guild_id=guild.id,
+                bot_user_id=_bot_user_id(self.bot),
+            )
         ]
-        tools.extend(_agent_tools(self._corridor, self._architect_client, ctx))
+        tools.extend(_agent_tools(self._corridor, self._reply, self._architect_client, ctx))
         tools.extend(await _cross_cog_tools(self._corridor, ctx))
         result = await self._tool_loop_service.run(
             base_url=llm_settings.llm_base_url,
@@ -96,15 +103,20 @@ class ListenerMixin:
         )
 
 
-def _agent_tools(corridor: Any, client: Any, ctx: commands.Context) -> list[ToolSpec]:
+def _agent_tools(corridor: Any, reply: Any, client: Any, ctx: commands.Context) -> list[ToolSpec]:
     """One `consult_<agent_key>` tool per agent currently registered in
     corridor's `AgentDirectoryService`, pulled fresh each turn -- see
     docs/agent-directory-design.md. Each tool closes over this turn's
-    `ctx` (same convention as `ReplyTool`/`CrossCogTool`), since it
-    announces the A2A exchange in this same channel as it happens. If
-    corridor has zero registered agents (no agent cog loaded, or every
-    one currently unregistered), this returns an empty list: no error,
-    no special-cased "not configured" branch, since there's no longer a
+    `ctx` and pico's own bound `reply` sender (same convention as
+    `ReplyTool`/`CrossCogTool`), since it announces the A2A exchange in
+    this same channel as it happens -- with the consulted agent's own
+    icon in the footer, read from `agent.card.icon_url` (a protobuf
+    string field, `""` not `None` when unset -- normalized here) and
+    served by corridor's shared A2A listener, see
+    docs/reply-identity-design.md section 7. If corridor has zero
+    registered agents (no agent cog loaded, or every one currently
+    unregistered), this returns an empty list: no error, no
+    special-cased "not configured" branch, since there's no longer a
     single hardcoded agent to be "not configured." One malformed entry's
     tool-building failure is logged and skipped rather than dropping
     every other agent's tool, same convention as `_cross_cog_tools`
@@ -116,11 +128,12 @@ def _agent_tools(corridor: Any, client: Any, ctx: commands.Context) -> list[Tool
             tools.append(
                 ConsultAgentTool(
                     client,
-                    corridor,
+                    reply,
                     ctx,
                     agent_key=agent.agent_key,
                     base_url=agent.card.supported_interfaces[0].url,
                     description=agent.card.description,
+                    footer_icon_url=agent.card.icon_url or None,
                 )
             )
         except Exception:

@@ -33,13 +33,26 @@ class FakeArchitectAsker:
 class FakeCorridor:
     def __init__(self) -> None:
         self.replies: list[str | None] = []
+        self.footer_overrides: list[Any] = []
 
-    async def send_reply(self, ctx: object, *, description: str | None = None, **_: Any) -> None:
+    async def send_reply(
+        self,
+        ctx: object,
+        *,
+        description: str | None = None,
+        footer_override: Any = None,
+        **_: Any,
+    ) -> None:
         self.replies.append(description)
+        self.footer_overrides.append(footer_override)
 
 
 def _tool(
-    client: FakeArchitectAsker, corridor: FakeCorridor, *, agent_key: str = "architect"
+    client: FakeArchitectAsker,
+    corridor: FakeCorridor,
+    *,
+    agent_key: str = "architect",
+    footer_icon_url: str | None = None,
 ) -> ConsultAgentTool:
     return ConsultAgentTool(
         client,
@@ -48,6 +61,7 @@ def _tool(
         agent_key=agent_key,
         base_url="http://localhost:8931/architect/",
         description="A test agent.",
+        footer_icon_url=footer_icon_url,
     )
 
 
@@ -132,6 +146,29 @@ class TestConsultAgentToolAnnouncements(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(corridor.replies), 2)
         self.assertIn("anything", corridor.replies[0] or "")
         self.assertIn("unreachable", corridor.replies[1] or "")
+
+    async def test_footer_override_carries_the_consulted_agents_icon(self) -> None:
+        corridor = FakeCorridor()
+        tool = _tool(
+            FakeArchitectAsker(answer="ok"),
+            corridor,
+            footer_icon_url="http://x/architect/avatar.png",
+        )
+
+        await tool.handler(ConsultAgentInput(prompt="hi"))
+
+        self.assertEqual(len(corridor.footer_overrides), 2)
+        for override in corridor.footer_overrides:
+            self.assertEqual(override.name, "architect")
+            self.assertEqual(override.icon_url, "http://x/architect/avatar.png")
+
+    async def test_no_footer_override_without_an_icon_url(self) -> None:
+        corridor = FakeCorridor()
+        tool = _tool(FakeArchitectAsker(answer="ok"), corridor)
+
+        await tool.handler(ConsultAgentInput(prompt="hi"))
+
+        self.assertEqual(corridor.footer_overrides, [None, None])
 
     async def test_a_broken_announcement_does_not_fail_the_tool_call(self) -> None:
         class BrokenCorridor(FakeCorridor):

@@ -53,6 +53,7 @@ class FakeCorridor:
         self._llm_settings = FakeLLMSettings()
         self.published: list[Any] = []
         self._subscribers: dict[type, list[tuple[str, Any]]] = {}
+        self._registered_agents: dict[str, Any] = {}
 
     async def llm_settings(self) -> FakeLLMSettings:
         return self._llm_settings
@@ -62,6 +63,20 @@ class FakeCorridor:
 
     def unregister_dependent(self, extension_name: str) -> None:
         self.registered_dependents.discard(extension_name)
+
+    async def register_agent(self, agent: Any, *, owner: str) -> None:
+        """Stands in for corridor.register_agent -- records the agent
+        without corridor's real URL-rewriting (that behavior belongs to
+        corridor's own test suite, not architect's)."""
+
+        self._registered_agents[agent.agent_key] = (owner, agent)
+
+    def unregister_agent_owner(self, owner: str) -> None:
+        for key in [k for k, (o, _) in self._registered_agents.items() if o == owner]:
+            del self._registered_agents[key]
+
+    def list_agents(self) -> tuple[Any, ...]:
+        return tuple(agent for _, agent in self._registered_agents.values())
 
     async def publish_event(self, event: object) -> None:
         """Mirrors corridor's real EventBusService.publish -- records every

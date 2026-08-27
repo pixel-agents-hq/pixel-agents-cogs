@@ -8,6 +8,18 @@ complete. Editing architect's own layout — once out of scope, see
 section 8's own note — is now implemented; see
 `docs/architect-semantic-ir-design.md` for that design.
 
+**Superseded in part by `docs/agent-directory-design.md`:** section 4's
+"Server side (architect)" subsection (architect binding its own A2A
+listener/port) and "Client side (pico)" subsection (pico's hardcoded
+`[p]pico architecturl` + single `ArchitectTool`) no longer describe what's
+actually running. Architect now registers its `AgentCard`/`AgentExecutor`
+with corridor's own shared A2A listener instead of binding a listener of
+its own, and pico discovers every registered agent dynamically instead of
+being pointed at one hardcoded URL — see `docs/agent-directory-design.md`
+for the current design. Section 4's description of architect's own
+`AgentExecutor`/tool-loop shape, and its "not a `required_cogs` edge"
+reasoning for `pico -> architect`, both remain accurate.
+
 ## 1. Overview
 
 Today `pico` is the only LLM-backed agent in this repo, and it is

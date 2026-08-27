@@ -12,6 +12,7 @@ exercised here, only which decorator each command carries.
 from __future__ import annotations
 
 import unittest
+from types import SimpleNamespace
 
 from redbot.core.errors import CogLoadError
 
@@ -45,9 +46,6 @@ class TestBudgetAndPromptSettingsAreOwnerGated(unittest.TestCase):
 
     def test_prompt_show_is_owner_gated(self) -> None:
         self.assertTrue(getattr(self.cog.prompt_show.callback, "__is_owner__", False))
-
-    def test_architect_url_is_owner_gated(self) -> None:
-        self.assertTrue(getattr(self.cog.architect_url.callback, "__is_owner__", False))
 
 
 class TestEnabledIsAdminGated(unittest.TestCase):
@@ -101,16 +99,6 @@ class TestBudgetAndPromptCommands(unittest.IsolatedAsyncioTestCase):
 
         settings = await self.cog._repository.global_settings()
         self.assertEqual(settings.system_prompt, DEFAULT_SYSTEM_PROMPT)
-
-    async def test_architect_url_updates_and_replies(self) -> None:
-        await self.cog.architect_url.callback(self.cog, self.ctx, "http://localhost:8931/")
-
-        settings = await self.cog._repository.global_settings()
-        self.assertEqual(settings.architect_url, "http://localhost:8931/")
-        self.assertEqual(
-            _descriptions(self.bot.corridor)[-1],
-            "Architect URL set to `http://localhost:8931/`.",
-        )
 
 
 class TestEnabledCommand(unittest.IsolatedAsyncioTestCase):
@@ -178,21 +166,21 @@ class TestStatusCommand(unittest.IsolatedAsyncioTestCase):
         enabled_field = next(f for f in fields if f.name == "Enabled (this server)")
         self.assertEqual(enabled_field.value, "True")
 
-    async def test_status_shows_unset_architect_url_placeholder(self) -> None:
+    async def test_status_shows_no_registered_agents_placeholder(self) -> None:
         await self.cog.status.callback(self.cog, self.ctx)
 
         fields = self.bot.corridor.replies[-1]["fields"]
-        url_field = next(f for f in fields if f.name == "Architect URL")
-        self.assertEqual(url_field.value, "*(not set)*")
+        agents_field = next(f for f in fields if f.name == "Registered Agents")
+        self.assertEqual(agents_field.value, "*(none)*")
 
-    async def test_status_shows_the_architect_url_once_set(self) -> None:
-        await self.cog.architect_url.callback(self.cog, self.ctx, "http://localhost:8931/")
+    async def test_status_shows_registered_agents_once_present(self) -> None:
+        self.bot.corridor.agents = [SimpleNamespace(agent_key="architect")]
 
         await self.cog.status.callback(self.cog, self.ctx)
 
         fields = self.bot.corridor.replies[-1]["fields"]
-        url_field = next(f for f in fields if f.name == "Architect URL")
-        self.assertEqual(url_field.value, "http://localhost:8931/")
+        agents_field = next(f for f in fields if f.name == "Registered Agents")
+        self.assertEqual(agents_field.value, "architect")
 
 
 class TestCogLoadAutoLoadsCorridor(unittest.IsolatedAsyncioTestCase):

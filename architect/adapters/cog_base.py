@@ -11,14 +11,13 @@ from typing import Any, Literal, cast
 from aiohttp import web
 from redbot.core.bot import Red
 
-from corridor.domain import AgentPresenceChanged, AgentRef, AgentReplied
+from corridor.domain import AgentPresenceChanged, AgentRef, AgentReplied, RegisteredAgent
 from pixelagents.application.office import OfficeService
 
 from ..application import ToolLoopService
 from ..application.office_layout_service import OfficeLayoutService
 from ..dependency_loader import ensure_corridor_loaded
 from ..infrastructure import (
-    A2AServer,
     ArchitectAgentExecutor,
     ClientHub,
     CorridorLLMClient,
@@ -26,6 +25,7 @@ from ..infrastructure import (
     RedArchitectRepository,
     WebSocketServer,
     WebviewAssetProvider,
+    build_agent_card,
 )
 from ..infrastructure.furniture_styles import FurnitureStyleLoader
 from ..infrastructure.office_layout_repository import OfficeLayoutRepository
@@ -103,7 +103,6 @@ class CogBase:
             llm_settings=lambda: self._corridor.llm_settings(),
             publish_activity=self._publish_activity,
         )
-        self._a2a_server = A2AServer(self._executor)
         self._pixelagents: Any = None
         # Root is a placeholder until _sync_webview_assets() resolves
         # pixelagents; base_href never changes, so it's set once here --
@@ -151,40 +150,29 @@ class CogBase:
         # leaving it running with a stale corridor reference.
         self._corridor.register_dependent("architect")
         await self._publish_presence("online")
+        await self._register_with_corridor()
         self._pixelagents = await ensure_loaded(self.bot, "pixelagents", "PixelAgents")
         await self._notify_owners_dashboard_missing_if_unloaded()
-        error = await self._start_a2a_server()
-        if error is not None:
-            await self._notify_owners_a2a_failed(error)
         if not await self._start_ws_server():
             await self._notify_owners_ws_failed()
 
-    async def _start_a2a_server(self) -> str | None:
-        """Returns None on success, or an error message on failure --
-        never raises (see A2AServer.start's own docstring for why an
-        uncaught failure here must not be allowed to crash cog_load, and
-        with it the whole bot)."""
+    async def _register_with_corridor(self) -> None:
+        """Hands corridor architect's AgentCard + AgentExecutor so it can
+        be mounted on corridor's own shared A2A listener -- architect no
+        longer binds a listener of its own, see
+        docs/agent-directory-design.md. Must never raise: corridor's own
+        `register_agent` already never raises for a bind failure (that
+        risk lives entirely in corridor now), but a stale/removed corridor
+        reference mid-reload shouldn't fail architect's own load either."""
 
-        settings = await self._repository.global_settings()
-        return await self._a2a_server.start(
-            host=settings.a2a_host, port=settings.a2a_port, tools=self._tools
-        )
-
-    async def _notify_owners_a2a_failed(self, error: str) -> None:
-        """Best-effort DM -- must never raise: a missing/unreachable owner
-        DM is not a reason to fail architect's own load (same convention
-        as floorplan's `_notify_owners_dashboard_missing_if_unloaded`)."""
-
-        message = (
-            f"⚠️ architect's A2A listener failed to start ({error}). "
-            "architect is still loaded and its Discord commands work, but "
-            "nothing can reach it over A2A until this is fixed -- try "
-            "[p]architect a2a host/port once the issue is resolved."
-        )
+        card = build_agent_card(tools=self._tools)
         try:
-            await self.bot.send_to_owners(message)
+            await self._corridor.register_agent(
+                RegisteredAgent(agent_key="architect", card=card, executor=self._executor),
+                owner="architect",
+            )
         except Exception:
-            log.exception("architect: could not notify owners about the A2A listener failure")
+            log.exception("architect: could not register with corridor's agent directory")
 
     async def _start_ws_server(self) -> bool:
         """Overridden by OfficeGatewayMixin -- kept as a no-op-failure stub
@@ -271,10 +259,10 @@ class CogBase:
         return self._webview_assets.build_status or "⚠️ missing"
 
     async def cog_unload(self) -> None:
-        await self._a2a_server.stop()
         await self._websocket_server.stop()
         if self._corridor is not None:
             await self._publish_presence("offline")
+            self._corridor.unregister_agent_owner("architect")
             self._corridor.unregister_dependent("architect")
 
     async def _publish_presence(self, status: Literal["online", "offline"]) -> None:

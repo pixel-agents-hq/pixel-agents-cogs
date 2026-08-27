@@ -15,6 +15,7 @@ from redbot.core import commands
 from redbot.core.bot import Red
 
 from ..application import (
+    AgentDirectoryService,
     EventBusService,
     PermissionService,
     ReplyContent,
@@ -22,17 +23,20 @@ from ..application import (
     ToolRegistryService,
 )
 from ..domain import (
+    A2ASettings,
     GuildSettings,
     IconPreference,
     LLMSettings,
     PermissionGroupDef,
+    RegisteredAgent,
     RegisteredTool,
     RenderedReply,
     ReplyField,
     ReplyMode,
     ToolVisibilityFilter,
+    card_with_url,
 )
-from ..infrastructure import LiteLLMClient, RedCorridorRepository
+from ..infrastructure import A2AServer, LiteLLMClient, RedCorridorRepository
 from .api import BotIconResolver, BotOwnerRegistry, DiscordMemberRef, send_rendered_reply
 from .llm_tool_registration import collect_registered_tools
 
@@ -55,6 +59,8 @@ class CogBase:
         self._reply_service = ReplyService(BotIconResolver(bot))
         self._event_bus = EventBusService()
         self._tool_registry = ToolRegistryService()
+        self._agent_directory = AgentDirectoryService()
+        self._a2a_server = A2AServer(logger=log)
         # No eager start() here -- most cog_load sequences never touch the
         # LLM at all, so the session opens lazily on first actual use
         # (matches pico's original lifecycle before this moved here).
@@ -62,13 +68,21 @@ class CogBase:
         self._dependents: set[str] = set()
 
     async def cog_load(self) -> None:
-        """Extension point for start-up work."""
+        """Starts corridor's one shared A2A listener -- see
+        docs/agent-directory-design.md. Independent of whether any agent
+        has registered yet, same "the capability exists with zero
+        consumers" shape the tool registry/event bus already have."""
+
+        error = await self._start_a2a_server()
+        if error is not None:
+            await self._notify_owners_a2a_failed(error)
 
     async def cog_unload(self) -> None:
         """Cascade-unload every cog that registered itself as depending on
         corridor -- otherwise they'd keep running with a stale/missing
         corridor reference instead of failing loudly."""
 
+        await self._a2a_server.stop()
         await self._llm_client.close()
         dependents, self._dependents = self._dependents, set()
         for extension_name in dependents:
@@ -76,6 +90,36 @@ class CogBase:
                 await self.bot.unload_extension(extension_name)
             except Exception:
                 log.exception("Failed to cascade-unload dependent cog %r", extension_name)
+
+    async def _start_a2a_server(self) -> str | None:
+        """Returns None on success, or an error message on failure --
+        never raises (see A2AServer.start's own docstring). Passes the
+        directory's current contents so a host/port change
+        (`[p]corridor a2a host/port`) re-mounts every already-registered
+        agent instead of losing them."""
+
+        settings = await self._repository.a2a_settings()
+        return await self._a2a_server.start(
+            host=settings.a2a_host,
+            port=settings.a2a_port,
+            agents=self._agent_directory.list_agents(),
+        )
+
+    async def _notify_owners_a2a_failed(self, error: str) -> None:
+        """Best-effort DM -- must never raise: a missing/unreachable owner
+        DM is not a reason to fail corridor's own load."""
+
+        message = (
+            f"⚠️ corridor's A2A listener failed to start ({error}). "
+            "corridor is still loaded and its Discord commands work, but no "
+            "registered agent (architect, or any other) is reachable over "
+            "A2A until this is fixed -- try [p]corridor a2a host/port once "
+            "the issue is resolved."
+        )
+        try:
+            await self.bot.send_to_owners(message)
+        except Exception:
+            log.exception("corridor: could not notify owners about the A2A listener failure")
 
     # --- dependent-cog registration, used by dependency_loader.py -------------
 
@@ -260,6 +304,8 @@ class CogBase:
         self._event_bus.unsubscribe_owner(cog.qualified_name)
         self._tool_registry.unregister_owner(cog.qualified_name)
         self._tool_registry.unregister_visibility_filter_owner(cog.qualified_name)
+        self._agent_directory.unregister_owner(cog.qualified_name)
+        self._a2a_server.rebuild_routes(self._agent_directory.list_agents())
 
     # --- Cross-cog LLM tool registry -------------------------------------------
 
@@ -373,7 +419,73 @@ class CogBase:
                 return False
         return True
 
+    # --- Cross-cog A2A agent directory, mounted on corridor's shared listener ---
+
+    async def register_agent(self, agent: RegisteredAgent, *, owner: str) -> None:
+        """Register `agent` for cross-cog A2A discovery -- called from the
+        registering cog's own `cog_load`, once its `AgentCard`/
+        `AgentExecutor` are built. `owner` should be that cog's class
+        name, matching `subscribe_event`'s convention.
+
+        Overwrites `agent.card`'s one `supported_interfaces[0].url` with
+        corridor's own configured host/port plus `/<agent_key>/` before
+        storing it -- the registering agent has no way to know what
+        host/port it will ultimately be reachable at, since it no longer
+        binds a listener of its own. Async (unlike `register_tool`)
+        because it needs corridor's own current A2A settings to build
+        that URL. Also rebuilds the live route table, so the new agent is
+        reachable immediately, not just on corridor's next `cog_load`."""
+
+        settings = await self._repository.a2a_settings()
+        url = f"http://{settings.a2a_host}:{settings.a2a_port}/{agent.agent_key}/"
+        rewritten = RegisteredAgent(
+            agent_key=agent.agent_key,
+            card=card_with_url(agent.card, url),
+            executor=agent.executor,
+        )
+        self._agent_directory.register(rewritten, owner=owner)
+        self._a2a_server.rebuild_routes(self._agent_directory.list_agents())
+
+    def unregister_agent_owner(self, owner: str) -> None:
+        """Call from the registering cog's own `cog_unload` -- corridor
+        does not track/cascade a registrant's lifecycle the way
+        `register_dependent` does the reverse direction for a dependent
+        cog."""
+
+        self._agent_directory.unregister_owner(owner)
+        self._a2a_server.rebuild_routes(self._agent_directory.list_agents())
+
+    def unregister_agent(self, agent_key: str) -> None:
+        """Remove one agent by key, regardless of owner. A no-op if
+        `agent_key` isn't registered."""
+
+        self._agent_directory.unregister(agent_key)
+        self._a2a_server.rebuild_routes(self._agent_directory.list_agents())
+
+    def list_agents(self) -> tuple[RegisteredAgent, ...]:
+        """Every currently registered agent -- pico calls this once per
+        turn to build one `consult_<agent_key>` tool per entry. See
+        docs/agent-directory-design.md."""
+
+        return self._agent_directory.list_agents()
+
     # --- settings mutation, used by settings_ui.py and [p]corridor commands ---
+
+    async def a2a_settings(self) -> A2ASettings:
+        return await self._repository.a2a_settings()
+
+    async def set_a2a_host(self, value: str) -> str | None:
+        """Sets the bind host and live-restarts corridor's shared A2A
+        listener, re-mounting every already-registered agent. Returns an
+        error string on a bind failure, None on success -- same
+        never-raise convention as `_start_a2a_server`."""
+
+        await self._repository.set_a2a_host(value)
+        return await self._start_a2a_server()
+
+    async def set_a2a_port(self, value: int) -> str | None:
+        await self._repository.set_a2a_port(value)
+        return await self._start_a2a_server()
 
     async def set_llm_base_url(self, value: str) -> None:
         await self._repository.set_llm_base_url(value)

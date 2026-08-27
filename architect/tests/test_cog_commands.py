@@ -15,10 +15,8 @@ import unittest
 from redbot.core.errors import CogLoadError
 
 from .. import setup
-from ..application.tool_loop_service import ToolLoopResult
 from ..architect import Architect
-from ..infrastructure.a2a_server import A2AServer, ArchitectAgentExecutor
-from ..infrastructure.settings_repository import DEFAULT_A2A_PORT, DEFAULT_SYSTEM_PROMPT
+from ..infrastructure.settings_repository import DEFAULT_SYSTEM_PROMPT
 from .conftest import FakeBot, FakeContext, FakeLLMSettings
 
 
@@ -30,15 +28,6 @@ def _descriptions(bot: FakeBot) -> list[str | None]:
 class TestCommandsAreOwnerGated(unittest.TestCase):
     def setUp(self) -> None:
         self.cog = Architect(bot=FakeBot())
-
-    def test_a2a_group_is_owner_gated(self) -> None:
-        self.assertTrue(getattr(self.cog.a2a_group.callback, "__is_owner__", False))
-
-    def test_a2a_host_is_owner_gated(self) -> None:
-        self.assertTrue(getattr(self.cog.a2a_host.callback, "__is_owner__", False))
-
-    def test_a2a_port_is_owner_gated(self) -> None:
-        self.assertTrue(getattr(self.cog.a2a_port.callback, "__is_owner__", False))
 
     def test_ws_group_is_owner_gated(self) -> None:
         self.assertTrue(getattr(self.cog.ws_group.callback, "__is_owner__", False))
@@ -70,28 +59,7 @@ class TestArchitectCommands(unittest.IsolatedAsyncioTestCase):
         self.ctx = FakeContext()
 
     async def asyncTearDown(self) -> None:
-        # cog_load() binds a real (loopback) A2A listener -- always stop it,
-        # since a2a_host/a2a_port commands below rebind it too.
         await self.cog.cog_unload()
-
-    async def test_a2a_host_updates_and_restarts_the_listener(self) -> None:
-        await self.cog.a2a_host.callback(self.cog, self.ctx, "0.0.0.0")
-
-        settings = await self.cog._repository.global_settings()
-        self.assertEqual(settings.a2a_host, "0.0.0.0")
-        self.assertEqual(_descriptions(self.bot)[-1], "A2A listener host set to `0.0.0.0`.")
-
-    async def test_a2a_port_updates_and_restarts_the_listener(self) -> None:
-        await self.cog.a2a_port.callback(self.cog, self.ctx, 9000)
-
-        settings = await self.cog._repository.global_settings()
-        self.assertEqual(settings.a2a_port, 9000)
-        self.assertEqual(_descriptions(self.bot)[-1], "A2A listener port set to `9000`.")
-
-    async def test_a2a_port_rejects_out_of_range_values(self) -> None:
-        await self.cog.a2a_port.callback(self.cog, self.ctx, 0)
-
-        self.assertIn("Port must be", _descriptions(self.bot)[-1] or "")
 
     async def test_ws_host_persists_and_tells_the_owner_to_reload(self) -> None:
         await self.cog.ws_host.callback(self.cog, self.ctx, "0.0.0.0")
@@ -143,6 +111,16 @@ class TestArchitectCommands(unittest.IsolatedAsyncioTestCase):
         fields = self.bot.corridor.replies[-1]["fields"]
         debug_field = next(f for f in fields if f.name == "Debug Logging")
         self.assertEqual(debug_field.value, "off")
+
+    async def test_status_shows_registered_with_corridor_after_cog_load(self) -> None:
+        # cog_load() (asyncSetUp) already registered architect with the
+        # FakeCorridor -- see docs/agent-directory-design.md.
+        await self.cog.status.callback(self.cog, self.ctx)
+
+        assert self.bot.corridor is not None
+        fields = self.bot.corridor.replies[-1]["fields"]
+        registration_field = next(f for f in fields if f.name == "A2A Registration")
+        self.assertIn("registered", registration_field.value)
 
     async def test_prompt_set_and_show(self) -> None:
         await self.cog.prompt_set.callback(self.cog, self.ctx, text="Be terse.")
@@ -208,44 +186,36 @@ class TestArchitectCommands(unittest.IsolatedAsyncioTestCase):
         self.assertIn("seeded", layout_field.value)
 
 
-class TestCogLoadSurvivesAnA2ABindFailure(unittest.IsolatedAsyncioTestCase):
-    """Regression test for a real production incident: architect's A2A
-    listener failed to bind (a broken resolver made even 127.0.0.1
-    unbindable), and that failure propagated out of cog_load() -- via
-    uvicorn's own sys.exit() on startup failure -- and crashed the entire
-    bot process, not just this cog's own load. cog_load() must always
-    succeed and the cog must stay fully usable even when its A2A listener
-    can't come up; the owner should be told, not left to guess."""
+class TestCogLoadSurvivesARegistrationFailure(unittest.IsolatedAsyncioTestCase):
+    """architect no longer binds its own A2A listener (see
+    docs/agent-directory-design.md) -- that bind-failure risk now lives
+    entirely in corridor's own test suite
+    (corridor/tests/test_a2a_server.py). What remains architect's own
+    concern is that a broken/raising corridor.register_agent call (a
+    stale reference, a corridor-side bug, ...) must never take down
+    architect's own cog_load or leave it unusable."""
 
-    async def asyncSetUp(self) -> None:
-        self.blocker = A2AServer(
-            ArchitectAgentExecutor(
-                tool_loop=_unused_tool_loop(),  # type: ignore[arg-type]
-                tools=[],
-                settings=lambda: _unused_async(),  # type: ignore[arg-type, return-value]
-                llm_settings=lambda: _unused_async(),  # type: ignore[arg-type, return-value]
-            )
-        )
-        error = await self.blocker.start(host="127.0.0.1", port=DEFAULT_A2A_PORT, tools=[])
-        assert error is None
-        self.addAsyncCleanup(self.blocker.stop)
-
-    async def test_cog_load_does_not_raise_and_notifies_owners(self) -> None:
+    async def test_cog_load_does_not_raise_when_registration_fails(self) -> None:
         bot = FakeBot()
+        assert bot.corridor is not None
+
+        async def _broken_register_agent(agent: object, *, owner: str) -> None:
+            raise RuntimeError("simulated corridor failure")
+
+        bot.corridor.register_agent = _broken_register_agent  # type: ignore[method-assign]
         cog = Architect(bot=bot)
 
         await cog.cog_load()  # must not raise
         self.addAsyncCleanup(cog.cog_unload)
 
-        # FakeBot has no "Dashboard" cog either, so a second, unrelated
-        # notification about that is also expected here -- this test only
-        # cares that the A2A failure specifically was reported.
-        self.assertTrue(
-            any("A2A listener failed to start" in message for message in bot.owner_notifications)
-        )
-
     async def test_the_cog_stays_usable_via_discord_commands(self) -> None:
         bot = FakeBot()
+        assert bot.corridor is not None
+
+        async def _broken_register_agent(agent: object, *, owner: str) -> None:
+            raise RuntimeError("simulated corridor failure")
+
+        bot.corridor.register_agent = _broken_register_agent  # type: ignore[method-assign]
         cog = Architect(bot=bot)
         await cog.cog_load()
         self.addAsyncCleanup(cog.cog_unload)
@@ -255,20 +225,8 @@ class TestCogLoadSurvivesAnA2ABindFailure(unittest.IsolatedAsyncioTestCase):
 
         assert bot.corridor is not None
         fields = bot.corridor.replies[-1]["fields"]
-        listener_field = next(f for f in fields if f.name == "A2A Listener")
-        self.assertIn("not running", listener_field.value)
-
-
-def _unused_tool_loop() -> object:
-    class _ToolLoop:
-        async def run(self, **kwargs: object) -> ToolLoopResult:
-            raise AssertionError("should never be called in a bind-failure test")
-
-    return _ToolLoop()
-
-
-async def _unused_async() -> object:
-    raise AssertionError("should never be called in a bind-failure test")
+        registration_field = next(f for f in fields if f.name == "A2A Registration")
+        self.assertIn("not registered", registration_field.value)
 
 
 class TestCogLoadAutoLoadsCorridor(unittest.IsolatedAsyncioTestCase):
@@ -340,6 +298,32 @@ class TestDependentRegistration(unittest.IsolatedAsyncioTestCase):
 
         assert bot.corridor is not None
         self.assertNotIn("architect", bot.corridor.registered_dependents)
+
+
+class TestAgentRegistration(unittest.IsolatedAsyncioTestCase):
+    """architect no longer binds its own A2A listener -- it registers its
+    AgentCard/AgentExecutor with corridor instead, see
+    docs/agent-directory-design.md."""
+
+    async def test_cog_load_registers_the_agent_with_corridor(self) -> None:
+        bot = FakeBot()
+        cog = Architect(bot=bot)
+
+        await cog.cog_load()
+        self.addAsyncCleanup(cog.cog_unload)
+
+        assert bot.corridor is not None
+        self.assertEqual([agent.agent_key for agent in bot.corridor.list_agents()], ["architect"])
+
+    async def test_cog_unload_unregisters_the_agent_from_corridor(self) -> None:
+        bot = FakeBot()
+        cog = Architect(bot=bot)
+        await cog.cog_load()
+
+        await cog.cog_unload()
+
+        assert bot.corridor is not None
+        self.assertEqual(bot.corridor.list_agents(), ())
 
 
 class TestPresencePublishing(unittest.IsolatedAsyncioTestCase):

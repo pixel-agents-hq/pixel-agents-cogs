@@ -32,7 +32,6 @@ DEFAULT_SYSTEM_PROMPT = (
 GLOBAL_DEFAULTS: dict[str, object] = {
     "max_tool_calls": DEFAULT_MAX_TOOL_CALLS,
     "system_prompt": DEFAULT_SYSTEM_PROMPT,
-    "architect_url": None,
 }
 GUILD_DEFAULTS: dict[str, object] = {
     "enabled": False,
@@ -62,7 +61,6 @@ class RedPicoRepository:
         return GlobalSettings(
             max_tool_calls=cast(int, await self._config.max_tool_calls()),
             system_prompt=cast(str, await self._config.system_prompt()),
-            architect_url=cast("str | None", await self._config.architect_url()),
         )
 
     async def guild_settings(self, guild_id: int) -> GuildSettings:
@@ -85,6 +83,3 @@ class RedPicoRepository:
 
     async def set_guild_enabled(self, guild_id: int, value: bool) -> None:
         await self._config.guild_from_id(guild_id).enabled.set(value)
-
-    async def set_architect_url(self, value: str) -> None:
-        await self._config.architect_url.set(value)

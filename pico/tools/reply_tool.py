@@ -1,10 +1,13 @@
 """The one iteration-1 tool: wraps `corridor.send_reply`.
 
-This is the only Discord-send in the whole cog. `ToolLoopService` never
-touches Discord directly -- the only path from an LLM tool call to a
-message actually appearing in the channel is this handler, which keeps the
-cog compliant with `contracts/discord_replies/lint_reply_channel.py`'s
-"always through corridor" rule.
+`ToolLoopService` never touches Discord directly -- every message that
+reaches a channel is sent by some tool's own handler calling
+`corridor.send_reply`, keeping the cog compliant with
+`contracts/discord_replies/lint_reply_channel.py`'s "always through
+corridor" rule. This is the only tool through which pico's own LLM
+*chooses its own words* to say something -- `ConsultAgentTool`
+(`tools/consult_agent_tool.py`) also sends, but deterministically
+announces the raw A2A exchange, not anything the LLM composed itself.
 """
 
 from __future__ import annotations

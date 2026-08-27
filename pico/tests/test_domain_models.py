@@ -64,11 +64,10 @@ def test_conversation_context_holds_history_in_order() -> None:
 
 
 def test_global_settings_holds_budget_and_prompt() -> None:
-    settings = GlobalSettings(max_tool_calls=5, system_prompt="p", architect_url=None)
+    settings = GlobalSettings(max_tool_calls=5, system_prompt="p")
 
     assert settings.max_tool_calls == 5
     assert settings.system_prompt == "p"
-    assert settings.architect_url is None
 
 
 def test_guild_settings_holds_its_fields() -> None:

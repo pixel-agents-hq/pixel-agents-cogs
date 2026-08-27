@@ -7,7 +7,10 @@ bot-owner scope; `enabled` is per-guild admin scope -- mirrors floorplan's
 convention that only the connection itself, not turning the feature on for
 a given server, is owner-gated (see `floorplan/adapters/admin_commands.py`'s
 `[p]floorplan enable`). The LLM *connection* itself (`llm ...`) moved to
-`[p]corridor llm ...` -- see docs/architect-design.md.
+`[p]corridor llm ...` -- see docs/architect-design.md. There is no
+`[p]pico architecturl ...` command anymore: pico discovers every A2A agent
+from corridor's `AgentDirectoryService` at each turn instead of being
+pointed at one hardcoded URL -- see docs/agent-directory-design.md.
 """
 
 from __future__ import annotations
@@ -85,14 +88,6 @@ class CommandsMixin:
             ctx, title="System Prompt", description=settings.system_prompt
         )
 
-    @pico_group.command(name="architecturl")
-    @commands.is_owner()
-    async def architect_url(self, ctx: commands.Context, url: str) -> None:
-        """Set architect's A2A base URL, enabling the consult_architect tool."""
-
-        await self._repository.set_architect_url(url)
-        await self._corridor.send_reply(ctx, description=f"Architect URL set to `{url}`.")
-
     @pico_group.command(name="enabled")
     @commands.guild_only()
     @commands.admin_or_permissions(administrator=True)
@@ -117,7 +112,11 @@ class CommandsMixin:
             ReplyField("LLM Model", llm_settings.llm_model or "*(not set)*"),
             ReplyField("LLM Key", _MASKED_KEY if llm_settings.llm_api_key else "*(not set)*"),
             ReplyField("Max Tool Calls", str(settings.max_tool_calls)),
-            ReplyField("Architect URL", settings.architect_url or "*(not set)*", False),
+            ReplyField(
+                "Registered Agents",
+                ", ".join(agent.agent_key for agent in self._corridor.list_agents()) or "*(none)*",
+                False,
+            ),
         ]
         if ctx.guild is not None:
             guild_settings = await self._repository.guild_settings(ctx.guild.id)

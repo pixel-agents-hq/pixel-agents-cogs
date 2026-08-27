@@ -60,13 +60,13 @@ class GlobalSettings:
     `corridor.domain.LLMSettings`; pico now reads it through
     `self._corridor.llm_settings()` instead of owning it here.
 
-    `architect_url` is `None` until an owner sets it (no default): the
-    A2A consult_architect tool is only offered to the LLM once it's
-    configured -- see `adapters/listener.py`."""
+    There is no `architect_url` field here anymore -- pico builds one
+    `consult_<agent_key>` tool per entry in
+    `self._corridor.list_agents()` each turn instead of one hardcoded
+    A2A target; see docs/agent-directory-design.md."""
 
     max_tool_calls: int
     system_prompt: str
-    architect_url: str | None
 
 
 @dataclass(frozen=True, slots=True)

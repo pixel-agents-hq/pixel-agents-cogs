@@ -32,6 +32,18 @@ class LLMSettings:
         return self.llm_api_key is not None and self.llm_model is not None
 
 
+@dataclass(frozen=True, slots=True)
+class A2ASettings:
+    """Corridor's one shared A2A listener's bind address -- see
+    docs/agent-directory-design.md. Moved here from architect's former
+    per-agent `a2a_host`/`a2a_port` GlobalSettings fields: there is now
+    exactly one A2A listener process-wide, owned by corridor, not one per
+    agent."""
+
+    a2a_host: str
+    a2a_port: int
+
+
 class ReplyMode(StrEnum):
     TEXT = "text"
     EMBED = "embed"

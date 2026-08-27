@@ -2,10 +2,13 @@
 
 Replies go through corridor (this cog's required_cogs dependency), never a
 raw ctx.send(), so this cog respects whatever reply style a guild has
-configured. `[p]architect a2a ...`/`ws ...`/`maxtoolcalls`/`prompt ...` are
-bot-owner scope -- architect's A2A listener, office WebSocket server, and
-webview are process-scoped, not per-guild, so unlike pico there is no
-`[p]architect enabled` toggle (see docs/architect-design.md section 6).
+configured. `[p]architect ws ...`/`maxtoolcalls`/`prompt ...` are bot-owner
+scope -- architect's office WebSocket server and webview are process-scoped,
+not per-guild, so unlike pico there is no `[p]architect enabled` toggle
+(see docs/architect-design.md section 6). architect's former `[p]architect
+a2a ...` group is gone -- its A2A listener now lives on corridor's own
+shared one, configured via `[p]corridor a2a ...`
+(see docs/agent-directory-design.md).
 """
 
 from __future__ import annotations
@@ -23,16 +26,15 @@ _MASKED_KEY = "•" * 8
 
 class CommandsMixin:
     """Requires `self._repository: RedArchitectRepository`, `self._corridor`,
-    `self._a2a_server`, `self._websocket_server`, and `self._start_a2a_server`
-    (all provided by CogBase). Unlike the A2A listener, the office
-    WebSocket server is not live-restarted on a host/port change -- same
-    "reload the cog to rebind" convention floorplan's own `[p]floorplan
-    wsport` already uses, since rebinding a socket server out from under
-    already-connected clients is riskier than an explicit reload."""
+    and `self._websocket_server` (all provided by CogBase). Unlike
+    corridor's shared A2A listener, the office WebSocket server is not
+    live-restarted on a host/port change -- same "reload the cog to
+    rebind" convention floorplan's own `[p]floorplan wsport` already
+    uses, since rebinding a socket server out from under already-connected
+    clients is riskier than an explicit reload."""
 
     _repository: RedArchitectRepository
     _corridor: Any
-    _a2a_server: Any
     _websocket_server: Any
 
     @commands.hybrid_group(name="architect", invoke_without_command=True)
@@ -41,48 +43,6 @@ class CommandsMixin:
 
         if ctx.invoked_subcommand is None:
             await ctx.send_help()
-
-    @architect_group.group(name="a2a", invoke_without_command=True)
-    @commands.is_owner()
-    async def a2a_group(self, ctx: commands.Context) -> None:
-        """Configure architect's A2A listener. Bot owner only."""
-
-        if ctx.invoked_subcommand is None:
-            await ctx.send_help()
-
-    @a2a_group.command(name="host")
-    @commands.is_owner()
-    async def a2a_host(self, ctx: commands.Context, host: str) -> None:
-        """Set the A2A listener's bind host and restart it."""
-
-        await self._repository.set_a2a_host(host)
-        error = await self._start_a2a_server()  # type: ignore[attr-defined]
-        if error is not None:
-            await self._corridor.send_reply(
-                ctx,
-                description=f"A2A listener host set to `{host}`, but it failed to start: {error}",
-            )
-            return
-        await self._corridor.send_reply(ctx, description=f"A2A listener host set to `{host}`.")
-
-    @a2a_group.command(name="port")
-    @commands.is_owner()
-    async def a2a_port(self, ctx: commands.Context, port: int) -> None:
-        """Set the A2A listener's bind port and restart it."""
-
-        try:
-            await self._repository.set_a2a_port(port)
-        except ValueError as exc:
-            await self._corridor.send_reply(ctx, description=str(exc))
-            return
-        error = await self._start_a2a_server()  # type: ignore[attr-defined]
-        if error is not None:
-            await self._corridor.send_reply(
-                ctx,
-                description=f"A2A listener port set to `{port}`, but it failed to start: {error}",
-            )
-            return
-        await self._corridor.send_reply(ctx, description=f"A2A listener port set to `{port}`.")
 
     @architect_group.group(name="ws", invoke_without_command=True)
     @commands.is_owner()
@@ -200,9 +160,10 @@ class CommandsMixin:
             ReplyField("Max Tool Calls", str(settings.max_tool_calls)),
             ReplyField("Debug Logging", "on" if settings.debug_logging else "off"),
             ReplyField(
-                "A2A Listener",
-                f"{settings.a2a_host}:{settings.a2a_port} "
-                f"({'running' if self._a2a_server.running else 'not running'})",
+                "A2A Registration",
+                "✅ registered with corridor's shared listener"
+                if "architect" in {agent.agent_key for agent in self._corridor.list_agents()}
+                else "⚠️ not registered",
                 False,
             ),
             ReplyField(

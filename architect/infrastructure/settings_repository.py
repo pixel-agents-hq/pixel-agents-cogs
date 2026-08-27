@@ -36,10 +36,9 @@ DEFAULT_SYSTEM_PROMPT = (
     "answer as plain text; that text is sent back directly, so make it "
     "complete and self-contained."
 )
-DEFAULT_A2A_HOST = "127.0.0.1"
-DEFAULT_A2A_PORT = 8931
-# Deliberately different from both a2a_port above and floorplan's own
-# ws_port default (3210) -- three independent listeners on one host.
+# Deliberately different from floorplan's own ws_port default (3210) and
+# corridor's shared a2a_port default (8931) -- independent listeners on
+# one host.
 DEFAULT_WS_HOST = "127.0.0.1"
 DEFAULT_WS_PORT = 8932
 # Off by default -- verbose per-tool-call logging (tool name, arguments,
@@ -54,8 +53,6 @@ DEFAULT_DEBUG_LOGGING = False
 GLOBAL_DEFAULTS: dict[str, object] = {
     "max_tool_calls": DEFAULT_MAX_TOOL_CALLS,
     "system_prompt": DEFAULT_SYSTEM_PROMPT,
-    "a2a_host": DEFAULT_A2A_HOST,
-    "a2a_port": DEFAULT_A2A_PORT,
     "ws_host": DEFAULT_WS_HOST,
     "ws_port": DEFAULT_WS_PORT,
     "debug_logging": DEFAULT_DEBUG_LOGGING,
@@ -92,8 +89,6 @@ class RedArchitectRepository:
         return GlobalSettings(
             max_tool_calls=cast(int, await self._config.max_tool_calls()),
             system_prompt=cast(str, await self._config.system_prompt()),
-            a2a_host=cast(str, await self._config.a2a_host()),
-            a2a_port=cast(int, await self._config.a2a_port()),
             ws_host=cast(str, await self._config.ws_host()),
             ws_port=cast(int, await self._config.ws_port()),
             debug_logging=cast(bool, await self._config.debug_logging()),
@@ -109,14 +104,6 @@ class RedArchitectRepository:
 
     async def reset_system_prompt(self) -> None:
         await self._config.system_prompt.set(DEFAULT_SYSTEM_PROMPT)
-
-    async def set_a2a_host(self, value: str) -> None:
-        await self._config.a2a_host.set(value)
-
-    async def set_a2a_port(self, value: int) -> None:
-        if isinstance(value, bool) or not 1 <= value <= 65535:
-            raise ValueError("Port must be an integer from 1 through 65535.")
-        await self._config.a2a_port.set(value)
 
     async def set_ws_host(self, value: str) -> None:
         await self._config.ws_host.set(value)

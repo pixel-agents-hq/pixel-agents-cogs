@@ -289,12 +289,14 @@ guessing its shape from one example.
 
 Separately, and explicitly **out of scope for this doc**: nothing here
 designs *discovery* of genuine agents (how pico or a human finds a second
-A2A agent's endpoint). Today that's a bot-owner manually pasting a URL
-into Red config (`[p]pico architecturl <url>`), and there's no existing
-agent-identity registry anywhere in this codebase to build on — a
-different problem from the one this doc solves (making a *known* genuine
-agent visible on the canvas), left for whenever a second agent's
-discovery story actually needs solving.
+A2A agent's endpoint) — that was, at the time this doc was written, a
+bot-owner manually pasting a URL into Red config (`[p]pico architecturl
+<url>`), with no existing agent-identity registry anywhere in this codebase
+to build on. That discovery story has since been solved: see
+`docs/agent-directory-design.md` for corridor's `AgentDirectoryService`,
+which pico now queries (`list_agents()`) instead of reading one
+owner-configured URL. A different problem from the one this doc solves
+(making a *known* genuine agent visible on the canvas) either way.
 
 ## Non-goals
 

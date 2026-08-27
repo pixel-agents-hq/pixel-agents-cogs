@@ -25,11 +25,11 @@ picture — see [`docs/dependency-loading.md`](dependency-loading.md) for
 
 ```mermaid
 flowchart BT
-    architect["architect<br/><small>second LLM agent, A2A-reachable<br/>+ own dedicated listener</small>"]
-    corridor["corridor<br/><small>permissions + reply style<br/>+ PubSub event bus<br/>+ cross-cog tool registry<br/>+ shared LLM connection</small><br/><small>hidden COG</small>"]
+    architect["architect<br/><small>second LLM agent, A2A-reachable<br/>via corridor's shared listener</small>"]
+    corridor["corridor<br/><small>permissions + reply style<br/>+ PubSub event bus<br/>+ cross-cog tool registry<br/>+ shared LLM connection<br/>+ shared A2A listener/directory</small><br/><small>hidden COG</small>"]
     deskutils["deskutils<br/><small>current-time utility command<br/>+ LLM tool registration</small>"]
     floorplan["floorplan<br/><small>serves the office + presence</small>"]
-    pico["pico<br/><small>LLM-backed presence</small>"]
+    pico["pico<br/><small>LLM-backed presence,<br/>sole A2A coordinator</small>"]
     pixelagents["pixelagents<br/><small>vendors + builds the webview</small>"]
     testbench["testbench<br/><small>owner-only: manually publishes<br/>corridor bus events</small>"]
     toolbox["toolbox<br/><small>Node.js/npm on the host<br/>+ LLM tool toggle panel</small>"]
@@ -43,7 +43,8 @@ flowchart BT
     toolbox -->|required_cogs| corridor
     floorplan -->|required_cogs| pixelagents
     architect -->|required_cogs| pixelagents
-    pico -.->|"A2A over HTTP<br/>(networked, not required_cogs)"| architect
+    architect -.->|"register_agent()<br/>(in-process, via corridor)"| corridor
+    pico -.->|"A2A over HTTP, one shared port<br/>(networked, not required_cogs)"| corridor
 ```
 
 Notes, all confirmed against each package's `info.json`:
@@ -52,7 +53,9 @@ Notes, all confirmed against each package's `info.json`:
   graph — every other cog depends on it, it depends on nothing here. It now
   also owns the one LLM connection pico and architect both read (moved
   from pico — see [`docs/architect-design.md`](architect-design.md)'s LLM
-  provider migration section).
+  provider migration section) and the one shared A2A listener every
+  registered agent is mounted on (moved from architect — see
+  [`docs/agent-directory-design.md`](agent-directory-design.md)).
 - **floorplan and architect are the only cogs with two `required_cogs`
   dependencies** — each declares both `corridor` and `pixelagents`.
   architect serves pixelagents' built webview bundle under its own
@@ -60,14 +63,21 @@ Notes, all confirmed against each package's `info.json`:
   consumer of the same build output floorplan already serves under
   `/third-party/floorplan` — see
   [`docs/architect-design.md`](architect-design.md) section 5.
-- **`pico -> architect` is deliberately not a `required_cogs` edge.** It's
-  a network call (A2A over HTTP) to an owner-configured URL, the same kind
-  of edge `toolbox -> pixelagents` already is below (there, "operational,
-  not coded"; here, "networked, not coded") — pico degrades to "the
-  `consult_architect` tool errors" if architect is unloaded or
-  unreachable, it does not fail to load. See
-  [`docs/architect-design.md`](architect-design.md) section 4 for the full
-  request/response flow.
+- **`pico -> corridor` (A2A) is deliberately not a `required_cogs` edge,
+  even though pico already depends on corridor for everything else.**
+  It's a *networked* HTTP call to corridor's shared A2A listener, the same
+  kind of edge `toolbox -> pixelagents` already is below (there,
+  "operational, not coded"; here, "networked, not coded") — pico degrades
+  to "the `consult_<agent_key>` tool errors" if the target agent is
+  unloaded/unreachable or corridor's A2A listener itself is down, it does
+  not fail to load. Architect no longer binds a listener of its own — it
+  registers an `AgentExecutor`/`AgentCard` with corridor in-process
+  instead, so `architect -> corridor` for that registration is already
+  covered by architect's existing `required_cogs: corridor` entry. See
+  [`docs/agent-directory-design.md`](agent-directory-design.md) for the
+  full design and [`docs/architect-design.md`](architect-design.md)
+  section 4 for architect's own A2A executor/tool-loop shape (still
+  accurate; only listener *ownership* moved).
 - **No cog depends on floorplan, pico, testbench, toolbox, deskutils, or
   architect.** They're leaves: things end here, nothing in this repo
   builds on top of them.
@@ -99,7 +109,7 @@ The dependency graph above says nothing about what each package actually
 ```mermaid
 flowchart TB
     subgraph shared["Shared infrastructure"]
-        corridor["corridor<br/><small>permission tiers (role- and Discord-permission-backed)<br/>+ the single reply-rendering chokepoint<br/>(send_reply / render_reply)<br/>+ Discord-vocabulary PubSub event bus<br/>(publish_event / subscribe_event)<br/>+ cross-cog LLM tool registry<br/>(register_tool / list_tools_for)<br/>+ shared LLM connection<br/>(llm_settings / llm_client)</small>"]
+        corridor["corridor<br/><small>permission tiers (role- and Discord-permission-backed)<br/>+ the single reply-rendering chokepoint<br/>(send_reply / render_reply)<br/>+ Discord-vocabulary PubSub event bus<br/>(publish_event / subscribe_event)<br/>+ cross-cog LLM tool registry<br/>(register_tool / list_tools_for)<br/>+ shared LLM connection<br/>(llm_settings / llm_client)<br/>+ shared A2A listener + agent directory<br/>(register_agent / list_agents)</small>"]
     end
 
     subgraph host["Host tooling (bot-owner only)"]
@@ -113,8 +123,8 @@ flowchart TB
 
     subgraph serve["Runtime surfaces"]
         floorplan["floorplan<br/><small>serves webview_dist/ as a Red Dashboard<br/>third-party page, runs the office<br/>WebSocket server, publishes+subscribes<br/>Discord presence/activity/messages<br/>through corridor's bus, browses/loads<br/>Pixel Index layouts</small>"]
-        pico["pico<br/><small>watches messages, gate decides<br/>react/ignore, acts only through a<br/>bounded LLM tool-calling loop, publishes<br/>AgentReplied onto corridor's bus, can<br/>delegate to architect over A2A</small>"]
-        architect["architect<br/><small>never Discord-facing; runs its own<br/>bounded tool-calling loop per inbound<br/>A2A message, on a dedicated listener<br/>separate from Discord and Dashboard.<br/>Also serves webview_dist/ as its own<br/>Red Dashboard third-party page, over<br/>its own office WebSocket server and<br/>its own independent stored layout --<br/>mutated through a Semantic IR (LLM<br/>tools and [p]architect office ... both<br/>call one OfficeLayoutService).</small>"]
+        pico["pico<br/><small>watches messages, gate decides<br/>react/ignore, acts only through a<br/>bounded LLM tool-calling loop, publishes<br/>AgentReplied onto corridor's bus, is the<br/>sole A2A coordinator -- delegates to<br/>whichever agents corridor currently lists</small>"]
+        architect["architect<br/><small>never Discord-facing; runs its own<br/>bounded tool-calling loop per inbound<br/>A2A message. Registers its AgentCard +<br/>AgentExecutor with corridor's shared A2A<br/>listener instead of binding one of its<br/>own. Also serves webview_dist/ as its own<br/>Red Dashboard third-party page, over<br/>its own office WebSocket server and<br/>its own independent stored layout --<br/>mutated through a Semantic IR (LLM<br/>tools and [p]architect office ... both<br/>call one OfficeLayoutService).</small>"]
     end
 
     subgraph utility["General utilities"]
@@ -125,9 +135,9 @@ flowchart TB
     pixelagents -->|"webview_bundle_status()<br/>via bot.get_cog('PixelAgents')"| floorplan
     pixelagents -->|"webview_bundle_status()<br/>furniture_style_manifest()<br/>via bot.get_cog('PixelAgents')"| architect
     corridor -->|"send_reply / render_reply<br/>require_permission / capabilities_satisfy<br/>publish_event / subscribe_event"| floorplan
-    corridor -->|"send_reply<br/>publish_event<br/>llm_settings / llm_client"| pico
-    corridor -->|"llm_settings / llm_client"| architect
-    pico -.->|"A2A message/send<br/>(networked, not corridor)"| architect
+    corridor -->|"send_reply<br/>publish_event<br/>llm_settings / llm_client<br/>list_agents"| pico
+    corridor -->|"llm_settings / llm_client<br/>register_agent / unregister_agent_owner"| architect
+    pico -.->|"A2A message/send, one shared port<br/>(networked, terminates at corridor)"| corridor
     corridor --> pixelagents
     corridor -->|"send_reply<br/>register_tool / unregister_tool<br/>register_tool_visibility_filter"| toolbox
     corridor -->|publish_event| testbench
@@ -330,51 +340,60 @@ See [`docs/corridor-pubsub-design.md`](corridor-pubsub-design.md) for the
 full mapping table and the `AgentStatusChanged` publish pico doesn't make
 yet.
 
-## 5. Runtime data flow: pico consults architect over A2A
+## 5. Runtime data flow: pico consults a registered agent over A2A
 
-Verified against `pico/tools/architect_tool.py`,
-`pico/infrastructure/architect_client.py`, and
-`architect/infrastructure/a2a_server.py` — including a live loopback round
-trip in `pico/tests/test_architect_client.py`, not just a description.
-Full detail (including the exact a2a-sdk API surface used and why an
-earlier assumption about it — plain pydantic wire types — turned out
-wrong) lives in [`docs/architect-design.md`](architect-design.md); this is
-the condensed cross-cog picture.
+Verified against `pico/tools/consult_agent_tool.py`,
+`pico/infrastructure/architect_client.py`,
+`architect/infrastructure/a2a_server.py`, and
+`corridor/infrastructure/a2a_server.py` — including a live loopback round
+trip through corridor's shared listener in
+`pico/tests/test_architect_client.py`, not just a description. Full detail
+(including the exact a2a-sdk API surface used, and why an earlier
+assumption about it — plain pydantic wire types — turned out wrong) lives
+in [`docs/architect-design.md`](architect-design.md) section 4 (architect's
+own executor/tool-loop shape, still accurate) and
+[`docs/agent-directory-design.md`](agent-directory-design.md) (corridor
+owning the listener + directory, which superseded architect's *former*
+per-agent listener); this is the condensed cross-cog picture.
 
 ```mermaid
 sequenceDiagram
     participant U as Discord user
     participant P as pico<br/>(ToolLoopService)
-    participant AC as pico<br/>ArchitectClient
-    participant A as architect<br/>(A2A listener)
-    participant C as corridor
+    participant CA as pico<br/>ConsultAgentTool
+    participant C as corridor<br/>(shared A2A listener)
+    participant A as architect<br/>(registered AgentExecutor)
 
     U->>P: message gates pico in
+    P->>C: list_agents() -- build one consult_&lt;agent_key&gt; tool per entry
     P->>P: LLM call, tools include consult_architect
-    P->>AC: consult_architect(prompt="...")
-    AC->>A: a2a-sdk client: message/send
+    P->>CA: consult_architect(prompt="...")
+    CA->>C: a2a-sdk client: message/send to corridor:PORT/architect/
+    C->>C: dispatches by mounted path to architect's executor
     A->>C: llm_client() / llm_settings()<br/>(same connection pico uses)
     A->>A: architect's own bounded tool loop<br/>(placeholder tools + corridor's LLM client)
-    A-->>AC: completed Task, final text
-    AC-->>P: tool result (status/answer)
+    A-->>CA: completed Task, final text
+    CA-->>P: tool result (status/answer)
     P->>P: continue its own loop with the result
     P->>U: corridor.send_reply(...) via pico's existing reply_tool
 ```
 
 Two things this diagram doesn't show, both by design:
 
-- **`consult_architect` is only offered to the LLM at all once a bot owner
-  sets `[p]pico architecturl`** (`adapters/listener.py`) — with no URL
-  configured, pico behaves exactly as if this tool didn't exist, the same
-  "absent provider, fewer tools" degradation
+- **`consult_<agent_key>` tools are rebuilt fresh every turn from
+  `corridor.list_agents()`** (`adapters/listener.py`'s `_agent_tools`) —
+  with zero agents registered, pico offers zero `consult_*` tools that
+  turn, the same "absent provider, fewer tools" degradation
   [`docs/corridor-tool-registry-design.md`](corridor-tool-registry-design.md)
-  already documents for corridor-registered tools.
-- **Architect's A2A listener is a separate network bind from Discord and
+  already documents for corridor-registered tools. There is no longer a
+  single hardcoded agent/URL to be "not configured" — see
+  [`docs/agent-directory-design.md`](agent-directory-design.md).
+- **Corridor's A2A listener is a separate network bind from Discord and
   from Red Dashboard** — it's a machine-to-machine JSON-RPC surface, not a
-  browser page, so `pico -> architect` never touches corridor's reply
+  browser page, so `pico -> corridor` (A2A) never touches corridor's reply
   chokepoint or Discord at all; pico's own "only `ReplyTool` sends to
-  Discord" invariant is unaffected, since `ArchitectTool.handler` is not
-  itself a Discord send.
+  Discord" invariant is unaffected, since `ConsultAgentTool.handler` is
+  not itself a Discord send.
 
 ## 6. CI-only relationships (not `required_cogs`)
 

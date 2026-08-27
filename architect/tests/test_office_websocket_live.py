@@ -1,0 +1,103 @@
+"""Live round trip against a real, loopback-bound architect office
+WebSocket server -- this is the actual bug this whole feature exists to
+fix: architect's webview must render *its own* stored layout over *its
+own* live connection, never floorplan's (see docs/architect-design.md's
+incident note on the vendored bundle's page-path-independent `/ws` URL).
+Not mocked, same testing convention as pico's live A2A round trip
+(pico/tests/test_architect_client.py) and architect's own A2A server
+tests."""
+
+from __future__ import annotations
+
+import json
+import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
+
+import aiohttp
+
+from ..architect import Architect
+from .conftest import FakeBot, FakePixelAgents
+
+_PORT = 8942
+
+
+def _write_bundle_with_default_layout(root: Path, *, tiles: list[int]) -> None:
+    (root / "index.html").write_text("<!doctype html>", encoding="utf-8")
+    (root / "assets").mkdir()
+    (root / "assets" / "asset-index.json").write_text(
+        json.dumps({"defaultLayout": "default-layout.json"}), encoding="utf-8"
+    )
+    (root / "assets" / "default-layout.json").write_text(
+        json.dumps({"tiles": tiles}), encoding="utf-8"
+    )
+
+
+class TestOfficeWebSocketLiveRoundTrip(unittest.IsolatedAsyncioTestCase):
+    async def test_webview_ready_returns_architects_own_seeded_layout(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_bundle_with_default_layout(root, tiles=[7, 8, 9])
+            bot = FakeBot(pixelagents=FakePixelAgents(dist_path=root))
+            cog = Architect(bot=bot)
+            await cog.cog_load()
+            self.addAsyncCleanup(cog.cog_unload)
+            await cog._sync_webview_assets()  # type: ignore[attr-defined]  # seeds the layout
+            # cog_load() already bound the default ws_port -- rebind onto
+            # this test's own port directly against the server instance
+            # (WebSocketServer.start() is a no-op once already running,
+            # matching floorplan's own "reload to rebind" convention; see
+            # adapters/commands.py's ws_host/ws_port docstrings).
+            await cog._websocket_server.stop()  # type: ignore[attr-defined]
+            await cog._websocket_server.start("127.0.0.1", _PORT)  # type: ignore[attr-defined]
+
+            async with (
+                aiohttp.ClientSession() as session,
+                session.ws_connect(f"http://127.0.0.1:{_PORT}/architect/ws") as socket,
+            ):
+                await socket.send_str(json.dumps({"type": "webviewReady"}))
+
+                layout_message = None
+                async for raw in socket:
+                    message = json.loads(raw.data)
+                    if message.get("type") == "layoutLoaded":
+                        layout_message = message
+                        break
+
+            assert layout_message is not None
+            self.assertEqual(layout_message["layout"], {"tiles": [7, 8, 9]})
+
+    async def test_two_connections_each_get_the_current_layout_independently(self) -> None:
+        """Regression shape for the actual reported bug: two separate
+        browser tabs (here, two separate socket connections) must each
+        see the same architect-owned layout -- and, implicitly, neither
+        this test nor the server code path involves floorplan at all."""
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_bundle_with_default_layout(root, tiles=[1])
+            bot = FakeBot(pixelagents=FakePixelAgents(dist_path=root))
+            cog = Architect(bot=bot)
+            await cog.cog_load()
+            self.addAsyncCleanup(cog.cog_unload)
+            await cog._sync_webview_assets()  # type: ignore[attr-defined]
+            await cog._websocket_server.stop()  # type: ignore[attr-defined]
+            await cog._websocket_server.start("127.0.0.1", _PORT + 1)  # type: ignore[attr-defined]
+
+            async def fetch_layout() -> object:
+                async with (
+                    aiohttp.ClientSession() as session,
+                    session.ws_connect(f"http://127.0.0.1:{_PORT + 1}/architect/ws") as socket,
+                ):
+                    await socket.send_str(json.dumps({"type": "webviewReady"}))
+                    async for raw in socket:
+                        message = json.loads(raw.data)
+                        if message.get("type") == "layoutLoaded":
+                            return message["layout"]
+                return None
+
+            first = await fetch_layout()
+            second = await fetch_layout()
+
+            self.assertEqual(first, {"tiles": [1]})
+            self.assertEqual(second, {"tiles": [1]})

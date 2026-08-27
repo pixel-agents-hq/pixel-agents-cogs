@@ -7,6 +7,7 @@ from ..domain import (
     OWNER_KEY,
     IconPreference,
     IconSource,
+    LLMSettings,
     MemberCapabilities,
     PermissionGroupDef,
 )
@@ -70,3 +71,15 @@ def test_permission_group_def_holds_both_roles_and_permissions() -> None:
 
     assert group.role_ids == frozenset({100})
     assert group.permission_names == frozenset({"kick_members", "ban_members"})
+
+
+def test_llm_settings_ready_requires_both_key_and_model() -> None:
+    neither = LLMSettings(llm_base_url="x", llm_api_key=None, llm_model=None)
+    only_key = LLMSettings(llm_base_url="x", llm_api_key="k", llm_model=None)
+    only_model = LLMSettings(llm_base_url="x", llm_api_key=None, llm_model="m")
+    both = LLMSettings(llm_base_url="x", llm_api_key="k", llm_model="m")
+
+    assert not neither.ready
+    assert not only_key.ready
+    assert not only_model.ready
+    assert both.ready

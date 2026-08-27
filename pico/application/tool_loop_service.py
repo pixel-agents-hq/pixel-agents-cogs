@@ -17,8 +17,7 @@ from typing import Protocol
 
 from pydantic import ValidationError
 
-from ..domain import ConversationContext
-from ..infrastructure.llm_client import (
+from corridor.infrastructure.llm_client import (
     ChatCompletionResponse,
     ChatMessage,
     LLMRequestError,
@@ -26,6 +25,8 @@ from ..infrastructure.llm_client import (
     ToolFunctionSpec,
     ToolSpecWire,
 )
+
+from ..domain import ConversationContext
 from ..tools.base import ToolSpec
 
 log = logging.getLogger("red.pico")

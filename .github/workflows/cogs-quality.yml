@@ -12,6 +12,7 @@ on:
       - "pico/**/*.py"
       - "testbench/**/*.py"
       - "deskutils/**/*.py"
+      - "architect/**/*.py"
       - "contracts/pixel_index/**"
       - "contracts/pixel_agents/**"
       - "contracts/corridor/**"
@@ -30,6 +31,7 @@ on:
       - "pico/**/*.py"
       - "testbench/**/*.py"
       - "deskutils/**/*.py"
+      - "architect/**/*.py"
       - "contracts/pixel_index/**"
       - "contracts/pixel_agents/**"
       - "contracts/corridor/**"
@@ -53,15 +55,22 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # corridor, toolbox, and testbench all only need discord.py's stub
-          # surface (none talk to aiohttp or the Pixel Index contracts) --
-          # their suites, lint scope, and type-check scope are otherwise
-          # identical.
+          # corridor now also owns the shared LLM connection (LiteLLMClient,
+          # moved from pico -- see docs/architect-design.md), so unlike
+          # toolbox/testbench below it needs aiohttp/pydantic too. The <2.12
+          # cap (here and on every other pydantic pin below, matching each
+          # cog's info.json) keeps us off pydantic 2.12+, which requires
+          # typing_extensions>=4.14.1 for its new Sentinel import -- Red-
+          # DiscordBot pins typing_extensions==4.13.2 in site-packages and
+          # appends the Downloader's cog-requirements lib dir *after*
+          # site-packages on sys.path (redbot/__main__.py), so a newer
+          # typing_extensions installed there is shadowed by Red's older
+          # pinned one and Sentinel fails to import at runtime.
           - cog: corridor
             test_target: "corridor/"
             lint_target: "corridor"
             mypy_target: "corridor"
-            extra_deps: "'pyyaml>=6.0'"
+            extra_deps: "aiohttp 'pydantic>=2.11.3,<2.12' 'pyyaml>=6.0'"
             pixel_index_contracts: false
           - cog: toolbox
             test_target: "toolbox/"
@@ -98,22 +107,39 @@ jobs:
             extra_deps: "aiohttp"
             pixel_index_contracts: true
           # pico talks to aiohttp (LiteLLM proxy) and pydantic (wire/tool
-          # models) like floorplan, but has no Pixel Index integration of
-          # its own -- install pydantic directly rather than pulling in the
-          # unrelated Pixel Index contract dependencies for it.
+          # models) like floorplan, plus httpx and a2a-sdk for its
+          # consult_architect A2A client tool (pico/infrastructure/
+          # architect_client.py). pico/tests/test_architect_client.py also
+          # spins up a real, live loopback architect.infrastructure.
+          # a2a_server.A2AServer (see that test module's docstring), so it
+          # needs architect's http-server extra and uvicorn too -- no Pixel
+          # Index integration of its own.
           - cog: pico
             test_target: "pico/"
             lint_target: "pico"
             mypy_target: "pico"
-            extra_deps: "aiohttp 'pydantic>=2.6,<2.11'"
+            extra_deps: "aiohttp 'pydantic>=2.11.3,<2.12' httpx 'a2a-sdk[http-server]' uvicorn"
             pixel_index_contracts: false
-          # deskutils only reads the system clock and stdlib zoneinfo, same
-          # discord.py-stub-only shape as corridor/toolbox/testbench above.
+          # deskutils only reads the system clock and stdlib zoneinfo itself,
+          # but its LLM tool metadata tests import corridor.adapters.
+          # llm_tool_registration, which pulls in corridor's LLM client --
+          # needs pydantic like corridor's own leg above (aiohttp already
+          # comes in via discord.py).
           - cog: deskutils
             test_target: "deskutils/"
             lint_target: "deskutils"
             mypy_target: "deskutils"
-            extra_deps: ""
+            extra_deps: "'pydantic>=2.11.3,<2.12'"
+            pixel_index_contracts: false
+          # architect talks to aiohttp/pydantic like pico (the shared
+          # corridor-owned LLM connection), plus a2a-sdk (its A2A server --
+          # http-server extra pulls in starlette/sse-starlette) and uvicorn
+          # to run its dedicated listener. No Pixel Index integration.
+          - cog: architect
+            test_target: "architect/"
+            lint_target: "architect"
+            mypy_target: "architect"
+            extra_deps: "aiohttp 'pydantic>=2.11.3,<2.12' 'a2a-sdk[http-server]' uvicorn"
             pixel_index_contracts: false
 
     steps:

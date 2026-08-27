@@ -63,24 +63,12 @@ def test_conversation_context_holds_history_in_order() -> None:
     assert context.history == history
 
 
-def test_global_settings_ready_requires_both_key_and_model() -> None:
-    neither = GlobalSettings(
-        llm_base_url="x", llm_api_key=None, llm_model=None, max_tool_calls=5, system_prompt="p"
-    )
-    only_key = GlobalSettings(
-        llm_base_url="x", llm_api_key="k", llm_model=None, max_tool_calls=5, system_prompt="p"
-    )
-    only_model = GlobalSettings(
-        llm_base_url="x", llm_api_key=None, llm_model="m", max_tool_calls=5, system_prompt="p"
-    )
-    both = GlobalSettings(
-        llm_base_url="x", llm_api_key="k", llm_model="m", max_tool_calls=5, system_prompt="p"
-    )
+def test_global_settings_holds_budget_and_prompt() -> None:
+    settings = GlobalSettings(max_tool_calls=5, system_prompt="p", architect_url=None)
 
-    assert not neither.ready
-    assert not only_key.ready
-    assert not only_model.ready
-    assert both.ready
+    assert settings.max_tool_calls == 5
+    assert settings.system_prompt == "p"
+    assert settings.architect_url is None
 
 
 def test_guild_settings_holds_its_fields() -> None:

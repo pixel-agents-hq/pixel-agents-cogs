@@ -4,6 +4,11 @@ SDK, no `litellm` pip package -- matches floorplan's existing aiohttp
 precedent (`floorplan/infrastructure/pixel_index.py`) instead of adding a
 new client dependency.
 
+Lives in corridor, not pico, because both pico and architect share one LLM
+connection -- see docs/architect-design.md's LLM provider migration
+section. Originally written for pico alone; the shape is unchanged by the
+move.
+
 Always requests `stream=True` and reassembles the SSE chunks into a single
 response dict before validating it through the same wire models a
 non-streaming call would produce. This works around a LiteLLM bug in its
@@ -114,7 +119,7 @@ class LiteLLMClient:
         logger: logging.Logger | None = None,
     ) -> None:
         self._session_factory = session_factory
-        self._log = logger or logging.getLogger("red.pico")
+        self._log = logger or logging.getLogger("red.corridor")
         self._session: aiohttp.ClientSession | None = None
         self._timeout = aiohttp.ClientTimeout(
             total=REQUEST_TIMEOUT_SECONDS,

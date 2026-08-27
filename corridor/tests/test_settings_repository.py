@@ -9,7 +9,7 @@ import unittest
 import pytest
 
 from ..domain import IconPreference, IconSource, ReplyMode
-from ..infrastructure import RedCorridorRepository
+from ..infrastructure import DEFAULT_LLM_BASE_URL, RedCorridorRepository
 
 
 class TestRedCorridorRepository(unittest.IsolatedAsyncioTestCase):
@@ -147,3 +147,39 @@ class TestRedCorridorRepository(unittest.IsolatedAsyncioTestCase):
         building_manager = other_guild.permissions.group("building_manager")
         assert building_manager is not None
         self.assertEqual(building_manager.role_ids, frozenset())
+
+
+class TestLLMSettingsRepository(unittest.IsolatedAsyncioTestCase):
+    """The shared LLM connection -- global (bot-wide), not per-guild --
+    moved here from pico, see docs/architect-design.md."""
+
+    def setUp(self) -> None:
+        self.repository = RedCorridorRepository.create(cog=object())
+
+    async def test_defaults(self) -> None:
+        settings = await self.repository.llm_settings()
+
+        self.assertEqual(settings.llm_base_url, DEFAULT_LLM_BASE_URL)
+        self.assertIsNone(settings.llm_api_key)
+        self.assertIsNotNone(settings.llm_model)
+
+    async def test_set_llm_base_url_persists(self) -> None:
+        await self.repository.set_llm_base_url("https://example.test/")
+
+        settings = await self.repository.llm_settings()
+
+        self.assertEqual(settings.llm_base_url, "https://example.test/")
+
+    async def test_set_llm_api_key_persists(self) -> None:
+        await self.repository.set_llm_api_key("sk-secret")
+
+        settings = await self.repository.llm_settings()
+
+        self.assertEqual(settings.llm_api_key, "sk-secret")
+
+    async def test_set_llm_model_persists(self) -> None:
+        await self.repository.set_llm_model("gpt-test")
+
+        settings = await self.repository.llm_settings()
+
+        self.assertEqual(settings.llm_model, "gpt-test")

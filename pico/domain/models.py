@@ -54,20 +54,19 @@ class ConversationContext:
 
 @dataclass(frozen=True, slots=True)
 class GlobalSettings:
-    """Owner (bot-wide) LLM connection and turn-budget settings."""
+    """Owner (bot-wide) turn-budget/prompt settings. The LLM *connection*
+    (endpoint/key/model) moved to corridor -- see
+    docs/architect-design.md's LLM provider migration section and
+    `corridor.domain.LLMSettings`; pico now reads it through
+    `self._corridor.llm_settings()` instead of owning it here.
 
-    llm_base_url: str
-    llm_api_key: str | None
-    llm_model: str | None
+    `architect_url` is `None` until an owner sets it (no default): the
+    A2A consult_architect tool is only offered to the LLM once it's
+    configured -- see `adapters/listener.py`."""
+
     max_tool_calls: int
     system_prompt: str
-
-    @property
-    def ready(self) -> bool:
-        """False until an owner has set both a virtual key and a model --
-        neither has a default, so Pico must stay silent until configured."""
-
-        return self.llm_api_key is not None and self.llm_model is not None
+    architect_url: str | None
 
 
 @dataclass(frozen=True, slots=True)

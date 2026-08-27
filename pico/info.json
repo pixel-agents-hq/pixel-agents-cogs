@@ -2,14 +2,16 @@
     "$schema": "https://raw.githubusercontent.com/Cog-Creators/Red-DiscordBot/V3/develop/schema/red_cog.schema.json",
     "name": "pico",
     "short": "An LLM-backed Discord presence that decides whether to react, then acts only via tools",
-    "description": "Pico watches messages in servers where it's enabled, decides whether a message deserves a reaction, and if so, acts exclusively through a bounded tool-calling loop -- never a raw LLM text send. Iteration 1 ships one tool: replying through corridor.",
-    "end_user_data_statement": "This cog reads recent Discord message content in servers where it is enabled, and sends that content (plus channel history used as context) to the configured LLM endpoint. It stores per-server enabled state and bot-owner LLM connection settings (including the virtual key) in Red's Config store.",
-    "install_msg": "Requires corridor (auto-loaded). Configure the LLM connection with [p]pico llm endpoint/key/model (bot owner), then enable a guild with [p]pico enabled true.",
+    "description": "Pico watches messages in servers where it's enabled, decides whether a message deserves a reaction, and if so, acts exclusively through a bounded tool-calling loop -- never a raw LLM text send. Ships a reply tool, whatever any other cog has registered into corridor's cross-cog tool registry, and (once [p]pico architecturl is set) an A2A client tool to delegate sub-tasks to the architect cog.",
+    "end_user_data_statement": "This cog reads recent Discord message content in servers where it is enabled, and sends that content (plus channel history used as context) to corridor's configured LLM endpoint, and -- if the consult_architect tool is used -- forwards the LLM-generated prompt text to architect's configured A2A endpoint. It stores per-server enabled state and bot-owner turn-budget/prompt/architect-URL settings in Red's Config store; the LLM connection itself (including the virtual key) is stored by corridor.",
+    "install_msg": "Requires corridor (auto-loaded). Configure the shared LLM connection with [p]corridor llm endpoint/key/model (bot owner), then enable a guild with [p]pico enabled true.",
     "author": ["Pixel Agents HQ Contributors"],
     "required_cogs": {"corridor": "https://github.com/pixel-agents-hq/pixel-agents-cogs"},
     "requirements": [
         "aiohttp",
-        "pydantic>=2.6,<2.11"
+        "httpx",
+        "pydantic>=2.11.3,<2.12",
+        "a2a-sdk"
     ],
     "tags": [
         "pico",

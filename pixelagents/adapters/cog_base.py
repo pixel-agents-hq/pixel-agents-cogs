@@ -9,10 +9,11 @@ Agents webview (see Architecture.md). floorplan consumes the result through
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from redbot.core import commands, data_manager
 from redbot.core.bot import Red
@@ -112,6 +113,21 @@ class PixelAgentsBase:
             built_commit=built_commit(dist_path) if ready else None,
             built_base_path=built_base_path(dist_path) if ready else None,
         )
+
+    def furniture_style_manifest(self) -> dict[str, Any] | None:
+        """Public, read-only cross-cog surface: the generated
+        `{"styles": [...]}` manifest (`infrastructure/furniture_style_builder.py`,
+        docs/architect-semantic-ir-design.md section 6.4), or `None` if the
+        webview hasn't been built yet. Mirrors `webview_bundle_status()`'s
+        shape -- same "read whatever's on disk, no rebuild trigger here"
+        contract.
+        """
+
+        path = self._webview_dist_path() / "assets" / "furniture-styles.json"
+        try:
+            return cast("dict[str, Any]", json.loads(path.read_text("utf-8")))
+        except (OSError, ValueError):
+            return None
 
     async def _notify_owners_webview_build_failed(self) -> None:
         outcome = self._webview_build_outcome

@@ -1,0 +1,267 @@
+"""ToolLoopService: a fake LiteLLMClient double returns scripted tool_calls
+sequences. Unlike pico's loop (which never returns raw text), architect's
+loop treats the model's final no-tool-calls turn as the answer -- see
+`application/tool_loop_service.py`'s module docstring."""
+
+from __future__ import annotations
+
+import unittest
+from typing import Any
+
+from pydantic import BaseModel
+
+from corridor.infrastructure.llm_client import (
+    ChatCompletionChoice,
+    ChatCompletionResponse,
+    ChatCompletionResponseMessage,
+    LLMRequestError,
+    ToolCall,
+    ToolCallFunction,
+)
+
+from ..application.tool_loop_service import ToolLoopService
+
+
+class EchoInput(BaseModel):
+    text: str
+
+
+class EchoOutput(BaseModel):
+    heard: str
+
+
+class EchoTool:
+    name = "echo"
+    description = "Echoes text back."
+    Input = EchoInput
+    Output = EchoOutput
+
+    def __init__(self) -> None:
+        self.calls: list[EchoInput] = []
+
+    async def handler(self, raw_input: BaseModel) -> BaseModel:
+        assert isinstance(raw_input, EchoInput)
+        self.calls.append(raw_input)
+        return EchoOutput(heard=raw_input.text)
+
+
+def _tool_call(call_id: str, *, name: str = "echo", arguments: str = '{"text": "hi"}') -> ToolCall:
+    return ToolCall(id=call_id, function=ToolCallFunction(name=name, arguments=arguments))
+
+
+def _response(
+    *, content: str | None = None, tool_calls: list[ToolCall] | None = None
+) -> ChatCompletionResponse:
+    return ChatCompletionResponse(
+        choices=[
+            ChatCompletionChoice(
+                message=ChatCompletionResponseMessage(
+                    role="assistant", content=content, tool_calls=tool_calls
+                )
+            )
+        ]
+    )
+
+
+class ScriptedLLM:
+    def __init__(self, responses: list[ChatCompletionResponse | Exception]) -> None:
+        self.responses = list(responses)
+        self.calls: list[dict[str, Any]] = []
+
+    async def complete(self, **kwargs: Any) -> ChatCompletionResponse:
+        self.calls.append(kwargs)
+        response = self.responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return response
+
+
+class TestToolLoopService(unittest.IsolatedAsyncioTestCase):
+    async def test_no_tool_calls_returns_the_final_text(self) -> None:
+        llm = ScriptedLLM([_response(content="the answer is 42")])
+        service = ToolLoopService(llm)
+
+        result = await service.run(
+            base_url="https://x",
+            api_key="k",
+            model="m",
+            system_prompt="sys",
+            user_input="what is the answer?",
+            tools=[EchoTool()],
+            max_tool_calls=5,
+        )
+
+        self.assertEqual(result.stopped_reason, "final_text")
+        self.assertEqual(result.text, "the answer is 42")
+        self.assertEqual(result.tool_calls_made, 0)
+
+    async def test_executes_a_tool_call_and_returns_the_eventual_final_text(self) -> None:
+        llm = ScriptedLLM(
+            [_response(tool_calls=[_tool_call("call-1")]), _response(content="done: hi")]
+        )
+        tool = EchoTool()
+        service = ToolLoopService(llm)
+
+        result = await service.run(
+            base_url="https://x",
+            api_key="k",
+            model="m",
+            system_prompt="sys",
+            user_input="echo hi",
+            tools=[tool],
+            max_tool_calls=5,
+        )
+
+        self.assertEqual(result.stopped_reason, "final_text")
+        self.assertEqual(result.text, "done: hi")
+        self.assertEqual(result.tool_calls_made, 1)
+        self.assertEqual(tool.calls[0].text, "hi")
+
+    async def test_stops_at_max_tool_calls_with_no_text(self) -> None:
+        llm = ScriptedLLM(
+            [
+                _response(tool_calls=[_tool_call("call-1")]),
+                _response(tool_calls=[_tool_call("call-2")]),
+            ]
+        )
+        tool = EchoTool()
+        service = ToolLoopService(llm)
+
+        result = await service.run(
+            base_url="https://x",
+            api_key="k",
+            model="m",
+            system_prompt="sys",
+            user_input="echo hi",
+            tools=[tool],
+            max_tool_calls=2,
+        )
+
+        self.assertEqual(result.stopped_reason, "max_tool_calls")
+        self.assertIsNone(result.text)
+        self.assertEqual(result.tool_calls_made, 2)
+        self.assertEqual(len(llm.calls), 2)
+
+    async def test_llm_failure_stops_the_loop(self) -> None:
+        llm = ScriptedLLM([LLMRequestError("boom")])
+        service = ToolLoopService(llm)
+
+        result = await service.run(
+            base_url="https://x",
+            api_key="k",
+            model="m",
+            system_prompt="sys",
+            user_input="echo hi",
+            tools=[EchoTool()],
+            max_tool_calls=5,
+        )
+
+        self.assertEqual(result.stopped_reason, "llm_error")
+        self.assertIsNone(result.text)
+        self.assertEqual(result.tool_calls_made, 0)
+
+    async def test_unknown_tool_name_reports_an_error_without_crashing_the_loop(self) -> None:
+        llm = ScriptedLLM(
+            [_response(tool_calls=[_tool_call("call-1", name="nope")]), _response(content="ok")]
+        )
+        tool = EchoTool()
+        service = ToolLoopService(llm)
+
+        result = await service.run(
+            base_url="https://x",
+            api_key="k",
+            model="m",
+            system_prompt="sys",
+            user_input="echo hi",
+            tools=[tool],
+            max_tool_calls=5,
+        )
+
+        self.assertEqual(result.tool_calls_made, 1)
+        self.assertEqual(tool.calls, [])
+        tool_messages = [m for m in llm.calls[1]["messages"] if m.role == "tool"]
+        self.assertIn("unknown tool", tool_messages[0].content)
+
+    async def test_invalid_arguments_report_an_error_without_crashing_the_loop(self) -> None:
+        llm = ScriptedLLM(
+            [
+                _response(tool_calls=[_tool_call("call-1", arguments="not json")]),
+                _response(content="ok"),
+            ]
+        )
+        tool = EchoTool()
+        service = ToolLoopService(llm)
+
+        result = await service.run(
+            base_url="https://x",
+            api_key="k",
+            model="m",
+            system_prompt="sys",
+            user_input="echo hi",
+            tools=[tool],
+            max_tool_calls=5,
+        )
+
+        self.assertEqual(result.tool_calls_made, 1)
+        self.assertEqual(tool.calls, [])
+        tool_messages = [m for m in llm.calls[1]["messages"] if m.role == "tool"]
+        self.assertIn("invalid arguments", tool_messages[0].content)
+
+    async def test_debug_off_emits_no_logs(self) -> None:
+        llm = ScriptedLLM(
+            [_response(tool_calls=[_tool_call("call-1")]), _response(content="done: hi")]
+        )
+        service = ToolLoopService(llm)
+
+        with self.assertNoLogs("red.architect"):
+            await service.run(
+                base_url="https://x",
+                api_key="k",
+                model="m",
+                system_prompt="sys",
+                user_input="echo hi",
+                tools=[EchoTool()],
+                max_tool_calls=5,
+                debug=False,
+            )
+
+    async def test_debug_on_logs_the_tool_call_and_its_result(self) -> None:
+        llm = ScriptedLLM(
+            [_response(tool_calls=[_tool_call("call-1")]), _response(content="done: hi")]
+        )
+        service = ToolLoopService(llm)
+
+        with self.assertLogs("red.architect", level="INFO") as captured:
+            await service.run(
+                base_url="https://x",
+                api_key="k",
+                model="m",
+                system_prompt="sys",
+                user_input="echo hi",
+                tools=[EchoTool()],
+                max_tool_calls=5,
+                debug=True,
+            )
+
+        joined = "\n".join(captured.output)
+        self.assertIn("echo", joined)
+        self.assertIn('"text": "hi"', joined)
+        self.assertIn("heard", joined)
+
+    async def test_debug_on_logs_a_final_answer_with_no_tool_calls(self) -> None:
+        llm = ScriptedLLM([_response(content="the answer is 42")])
+        service = ToolLoopService(llm)
+
+        with self.assertLogs("red.architect", level="INFO") as captured:
+            await service.run(
+                base_url="https://x",
+                api_key="k",
+                model="m",
+                system_prompt="sys",
+                user_input="what is the answer?",
+                tools=[EchoTool()],
+                max_tool_calls=5,
+                debug=True,
+            )
+
+        self.assertIn("the answer is 42", "\n".join(captured.output))

@@ -14,8 +14,9 @@ import re
 from collections.abc import Sequence
 from typing import Protocol
 
+from corridor.infrastructure.llm_client import ChatCompletionResponse, ChatMessage, LLMRequestError
+
 from ..domain import ConversationContext, GateDecision
-from ..infrastructure.llm_client import ChatCompletionResponse, ChatMessage, LLMRequestError
 
 log = logging.getLogger("red.pico")
 

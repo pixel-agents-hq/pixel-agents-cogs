@@ -2,11 +2,12 @@
 
 Replies go through corridor (this cog's required_cogs dependency), never a
 raw ctx.send(), so this cog respects whatever reply style a guild has
-configured. LLM *connection* settings (`llm ...`, `maxtoolcalls`,
-`prompt ...`) are bot-owner scope; `enabled` is per-guild admin scope --
-mirrors floorplan's convention that only the connection itself, not turning
-the feature on for a given server, is owner-gated (see
-`floorplan/adapters/admin_commands.py`'s `[p]floorplan enable`).
+configured. `maxtoolcalls`/`prompt ...` (turn-budget/behavior settings) are
+bot-owner scope; `enabled` is per-guild admin scope -- mirrors floorplan's
+convention that only the connection itself, not turning the feature on for
+a given server, is owner-gated (see `floorplan/adapters/admin_commands.py`'s
+`[p]floorplan enable`). The LLM *connection* itself (`llm ...`) moved to
+`[p]corridor llm ...` -- see docs/architect-design.md.
 """
 
 from __future__ import annotations
@@ -35,42 +36,6 @@ class CommandsMixin:
 
         if ctx.invoked_subcommand is None:
             await ctx.send_help()
-
-    @pico_group.group(name="llm", invoke_without_command=True)
-    @commands.is_owner()
-    async def llm_group(self, ctx: commands.Context) -> None:
-        """Configure Pico's LLM connection. Bot owner only."""
-
-        if ctx.invoked_subcommand is None:
-            await ctx.send_help()
-
-    @llm_group.command(name="endpoint")
-    @commands.is_owner()
-    async def llm_endpoint(self, ctx: commands.Context, url: str) -> None:
-        """Set the LiteLLM proxy base URL."""
-
-        await self._repository.set_llm_base_url(url)
-        await self._corridor.send_reply(ctx, description=f"LLM endpoint set to `{url}`.")
-
-    @llm_group.command(name="key")
-    @commands.is_owner()
-    async def llm_key(self, ctx: commands.Context, key: str) -> None:
-        """Set the LiteLLM virtual key. Deletes your invoking message immediately."""
-
-        await self._repository.set_llm_api_key(key)
-        try:
-            await ctx.message.delete()
-        except Exception:  # best-effort: missing perms/already-deleted must not block the update
-            pass
-        await self._corridor.send_reply(ctx, description="LLM virtual key updated.")
-
-    @llm_group.command(name="model")
-    @commands.is_owner()
-    async def llm_model(self, ctx: commands.Context, model: str) -> None:
-        """Set the model name passed to the LLM endpoint."""
-
-        await self._repository.set_llm_model(model)
-        await self._corridor.send_reply(ctx, description=f"LLM model set to `{model}`.")
 
     @pico_group.command(name="maxtoolcalls")
     @commands.is_owner()
@@ -120,6 +85,14 @@ class CommandsMixin:
             ctx, title="System Prompt", description=settings.system_prompt
         )
 
+    @pico_group.command(name="architecturl")
+    @commands.is_owner()
+    async def architect_url(self, ctx: commands.Context, url: str) -> None:
+        """Set architect's A2A base URL, enabling the consult_architect tool."""
+
+        await self._repository.set_architect_url(url)
+        await self._corridor.send_reply(ctx, description=f"Architect URL set to `{url}`.")
+
     @pico_group.command(name="enabled")
     @commands.guild_only()
     @commands.admin_or_permissions(administrator=True)
@@ -138,11 +111,13 @@ class CommandsMixin:
         """Show Pico's current settings."""
 
         settings = await self._repository.global_settings()
+        llm_settings: Any = await self._corridor.llm_settings()
         fields = [
-            ReplyField("LLM Endpoint", settings.llm_base_url, False),
-            ReplyField("LLM Model", settings.llm_model or "*(not set)*"),
-            ReplyField("LLM Key", _MASKED_KEY if settings.llm_api_key else "*(not set)*"),
+            ReplyField("LLM Endpoint", llm_settings.llm_base_url, False),
+            ReplyField("LLM Model", llm_settings.llm_model or "*(not set)*"),
+            ReplyField("LLM Key", _MASKED_KEY if llm_settings.llm_api_key else "*(not set)*"),
             ReplyField("Max Tool Calls", str(settings.max_tool_calls)),
+            ReplyField("Architect URL", settings.architect_url or "*(not set)*", False),
         ]
         if ctx.guild is not None:
             guild_settings = await self._repository.guild_settings(ctx.guild.id)

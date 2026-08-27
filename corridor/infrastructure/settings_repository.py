@@ -15,6 +15,7 @@ from ..domain import (
     GuildSettings,
     IconPreference,
     IconSource,
+    LLMSettings,
     PermissionGroupDef,
     PermissionSettings,
     ReplyMode,
@@ -22,6 +23,18 @@ from ..domain import (
 )
 
 CONFIG_IDENTIFIER = 0x636F72726964  # "corrid" in hex
+
+# Moved here from pico (see docs/architect-design.md) -- both pico and
+# architect share one LLM connection, so it lives wherever every dependent
+# already reaches through required_cogs.
+DEFAULT_LLM_BASE_URL = "https://litellm.nntin.xyz/"
+DEFAULT_LLM_MODEL = "chatgpt/gpt-5.4"
+
+GLOBAL_DEFAULTS: dict[str, object] = {
+    "llm_base_url": DEFAULT_LLM_BASE_URL,
+    "llm_api_key": None,
+    "llm_model": DEFAULT_LLM_MODEL,
+}
 
 DEFAULT_PERMISSION_GROUPS: list[dict[str, object]] = [
     {
@@ -77,6 +90,7 @@ class RedCorridorRepository:
             force_registration=True,
         )
         config.register_guild(**GUILD_DEFAULTS)
+        config.register_global(**GLOBAL_DEFAULTS)
         return cls(config)
 
     @property
@@ -105,6 +119,22 @@ class RedCorridorRepository:
                 employee_label=cast(str, await guild.employee_label()),
             ),
         )
+
+    async def llm_settings(self) -> LLMSettings:
+        return LLMSettings(
+            llm_base_url=cast(str, await self._config.llm_base_url()),
+            llm_api_key=cast("str | None", await self._config.llm_api_key()),
+            llm_model=cast("str | None", await self._config.llm_model()),
+        )
+
+    async def set_llm_base_url(self, value: str) -> None:
+        await self._config.llm_base_url.set(value)
+
+    async def set_llm_api_key(self, value: str) -> None:
+        await self._config.llm_api_key.set(value)
+
+    async def set_llm_model(self, value: str) -> None:
+        await self._config.llm_model.set(value)
 
     async def set_reply_mode(self, guild_id: int, mode: ReplyMode) -> None:
         await self._config.guild_from_id(guild_id).reply_mode.set(mode.value)

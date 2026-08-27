@@ -62,7 +62,7 @@ class TestPublicPackageContract(unittest.IsolatedAsyncioTestCase):
 
         assert info["min_python_version"] == [3, 11, 0]
         assert info["min_bot_version"] == "3.5.24"
-        assert "pydantic>=2.6,<2.11" in info["requirements"]
+        assert "pydantic>=2.11.3,<2.12" in info["requirements"]
 
 
 class TestConfigContract(unittest.IsolatedAsyncioTestCase):

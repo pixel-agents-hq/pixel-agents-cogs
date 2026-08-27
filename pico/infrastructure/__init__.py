@@ -1,20 +1,11 @@
-from .llm_client import (
-    ChatCompletionResponse,
-    ChatMessage,
-    LiteLLMClient,
-    LLMRequestError,
-    ToolCall,
-    ToolSpecWire,
-)
+from .architect_client import ArchitectClient, ArchitectRequestError
+from .corridor_llm import CorridorLLMClient
 from .settings_repository import DEFAULT_SYSTEM_PROMPT, RedPicoRepository
 
 __all__ = [
     "DEFAULT_SYSTEM_PROMPT",
-    "ChatCompletionResponse",
-    "ChatMessage",
-    "LLMRequestError",
-    "LiteLLMClient",
+    "ArchitectClient",
+    "ArchitectRequestError",
+    "CorridorLLMClient",
     "RedPicoRepository",
-    "ToolCall",
-    "ToolSpecWire",
 ]

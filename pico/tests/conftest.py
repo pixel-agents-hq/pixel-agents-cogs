@@ -47,6 +47,21 @@ class FakeContext:
         self.sent.append("__help__")
 
 
+@dataclass(frozen=True)
+class FakeLLMSettings:
+    """Stands in for `corridor.domain.LLMSettings` -- pico only reads this
+    through `self._corridor.llm_settings()`, never constructs the real
+    corridor type directly."""
+
+    llm_base_url: str = "https://example.test/"
+    llm_api_key: str | None = "sk-test"
+    llm_model: str | None = "test-model"
+
+    @property
+    def ready(self) -> bool:
+        return self.llm_api_key is not None and self.llm_model is not None
+
+
 class FakeCorridor:
     """Stands in for `bot.get_cog("Corridor")`. Tests here verify this cog
     *asks* corridor to reply with the right arguments -- what corridor
@@ -59,6 +74,10 @@ class FakeCorridor:
         self._next_message_id = 1
         self.tools_for_member: list[Any] = []
         self.list_tools_for_calls: list[Any] = []
+        self._llm_settings = FakeLLMSettings()
+
+    async def llm_settings(self) -> FakeLLMSettings:
+        return self._llm_settings
 
     def register_dependent(self, extension_name: str) -> None:
         self.registered_dependents.add(extension_name)

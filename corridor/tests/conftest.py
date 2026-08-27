@@ -91,12 +91,21 @@ class FakeBot:
             raise RuntimeError(f"simulated failure unloading {name!r}")
 
 
+class FakeMessage:
+    def __init__(self) -> None:
+        self.deleted = False
+
+    async def delete(self) -> None:
+        self.deleted = True
+
+
 class FakeContext:
     def __init__(self, author: FakeMember, guild: FakeGuild, clean_prefix: str = ";") -> None:
         self.author = author
         self.guild = guild
         self.clean_prefix = clean_prefix
         self.sent: list[dict[str, Any]] = []
+        self.message = FakeMessage()
 
     async def send(
         self, content: str | None = None, *, embed: Any = None, **kwargs: object

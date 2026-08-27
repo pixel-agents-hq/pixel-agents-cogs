@@ -28,6 +28,8 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
+from .furniture_style_builder import MANIFEST_SCHEMA_VERSION, build_furniture_style_manifest
+
 REPO_URL = "https://github.com/pixel-agents-hq/pixel-agents.git"
 
 
@@ -44,6 +46,7 @@ _PIN_FILE = Path(__file__).with_name("webview_vendor.commit")
 _EMIT_SCRIPT = Path(__file__).parent / "webview_build_scripts" / "emit_decoded_assets.ts"
 _BUILT_COMMIT_MARKER = ".built_commit"
 _BUILT_BASE_PATH_MARKER = ".built_base_path"
+_BUILT_MANIFEST_VERSION_MARKER = ".built_manifest_version"
 
 # pixelagents builds ONE bundle that any number of cogs can serve -- it owns
 # the distribution, not any particular route it's served from. A Discord
@@ -123,19 +126,49 @@ def missing_tools() -> tuple[str, ...]:
 
 
 def is_up_to_date(webview_dist: Path, commit: str, base_path: str) -> bool:
-    """Whether `webview_dist` already matches both `commit` and `base_path`.
+    """Whether `webview_dist` already matches both `commit` and `base_path`,
+    and was built by a `_sync_dist` that knows about every artifact this
+    version of the pipeline is supposed to produce.
 
-    Both matter: a rebuild-worthy change isn't only a new commit -- Vite
-    bakes `base_path` into every asset URL at build time too, so a change to
-    the build convention itself (e.g. this codebase's original hardcoded
-    `/third-party/pixelagents/`, later `/third-party/floorplan/`, now
-    `RELATIVE_BASE_PATH`) has to invalidate the cache exactly the same way a
-    commit change does -- a host whose pinned commit hadn't also changed
-    would otherwise keep serving a build with the old convention baked in
-    indefinitely, 404ing against whatever route actually tried to serve it.
+    Both `commit` and `base_path` matter: a rebuild-worthy change isn't only
+    a new commit -- Vite bakes `base_path` into every asset URL at build
+    time too, so a change to the build convention itself (e.g. this
+    codebase's original hardcoded `/third-party/pixelagents/`, later
+    `/third-party/floorplan/`, now `RELATIVE_BASE_PATH`) has to invalidate
+    the cache exactly the same way a commit change does -- a host whose
+    pinned commit hadn't also changed would otherwise keep serving a build
+    with the old convention baked in indefinitely, 404ing against whatever
+    route actually tried to serve it.
+
+    The `furniture-styles.json` existence check exists for the identical
+    reason, but catching an *upgrade* rather than a config change: a host
+    that already has an up-to-date `webview_dist/` from before
+    `_build_furniture_styles` existed would otherwise never regenerate it
+    on its own -- `commit` and `base_path` genuinely haven't changed --
+    silently leaving every real furniture asset id unrecognized by
+    architect's style manifest lookup (decoded as a passthrough "foreign"
+    entry, reporting zero furniture and zero seats even in a layout that
+    has plenty of both) until an operator happened to run
+    `[p]pixelagents webview rebuild --force`. Real incident, not a
+    hypothetical -- see the git history on this check.
+
+    The `MANIFEST_SCHEMA_VERSION` check below is the same class of
+    incident one level deeper: `furniture-styles.json` can *exist* and
+    still be shaped for an older version of
+    `build_furniture_style_manifest`'s own output schema (a field
+    added/removed/renamed on styles or facings) if `commit`/`base_path`
+    haven't changed since a host last built. Left unchecked, every
+    consumer parsing that stale JSON against the current schema crashes
+    outright (`FurnitureStyleManifest.from_raw` indexing a `str` as a
+    `dict`, not a quiet degradation like the missing-file case above) --
+    also a real incident, the one that made this check exist.
     """
 
     if not (webview_dist / "index.html").is_file():
+        return False
+    if not (webview_dist / "assets" / "furniture-styles.json").is_file():
+        return False
+    if built_manifest_version(webview_dist) != MANIFEST_SCHEMA_VERSION:
         return False
     return built_commit(webview_dist) == commit and built_base_path(webview_dist) == base_path
 
@@ -161,6 +194,22 @@ def built_base_path(webview_dist: Path) -> str | None:
     """
 
     return _read_marker(webview_dist / _BUILT_BASE_PATH_MARKER)
+
+
+def built_manifest_version(webview_dist: Path) -> int | None:
+    """The `MANIFEST_SCHEMA_VERSION` `furniture-styles.json` in
+    `webview_dist` was actually generated against, if known -- `None` for
+    a bundle built before this marker existed (equally a mismatch,
+    handled by `is_up_to_date`'s `!=` comparison with no special-casing
+    needed)."""
+
+    raw = _read_marker(webview_dist / _BUILT_MANIFEST_VERSION_MARKER)
+    if raw is None:
+        return None
+    try:
+        return int(raw)
+    except ValueError:
+        return None
 
 
 def _read_marker(marker: Path) -> str | None:
@@ -410,6 +459,7 @@ def _sync_dist(
             shutil.copy2(src, webview_dist / "assets" / src.name)
     for name in ("furniture-catalog.json", "asset-index.json"):
         shutil.copy2(build_out_dir / "assets" / name, webview_dist / "assets" / name)
+    _build_furniture_styles(webview_dist / "assets" / "furniture-catalog.json", webview_dist)
     for src in (build_out_dir / "assets" / "decoded").glob("*.json"):
         shutil.copy2(src, webview_dist / "assets" / "decoded" / src.name)
     for src in (build_out_dir / "fonts").glob("*"):
@@ -425,8 +475,28 @@ def _sync_dist(
 
     (webview_dist / _BUILT_COMMIT_MARKER).write_text(commit + "\n", encoding="utf-8")
     (webview_dist / _BUILT_BASE_PATH_MARKER).write_text(base_path + "\n", encoding="utf-8")
+    (webview_dist / _BUILT_MANIFEST_VERSION_MARKER).write_text(
+        f"{MANIFEST_SCHEMA_VERSION}\n", encoding="utf-8"
+    )
     log.info(
         "pixelagents: webview built from pixel-agents-hq/pixel-agents@%s (base %s)",
         commit,
         base_path,
+    )
+
+
+def _build_furniture_styles(catalog_path: Path, webview_dist: Path) -> None:
+    """Derive `assets/furniture-styles.json` from the just-copied catalog.
+
+    A generated artifact, not a hand-maintained table -- see
+    `furniture_style_builder.build_furniture_style_manifest` and
+    `docs/architect-semantic-ir-design.md` section 6.4. Runs on every
+    build, right after `furniture-catalog.json` is synced in, so it always
+    matches whatever `pixel-agents` commit this instance actually vendors.
+    """
+
+    catalog = json.loads(catalog_path.read_text("utf-8"))
+    manifest = build_furniture_style_manifest(catalog)
+    (webview_dist / "assets" / "furniture-styles.json").write_text(
+        json.dumps(manifest), encoding="utf-8"
     )

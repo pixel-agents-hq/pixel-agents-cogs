@@ -157,7 +157,7 @@ jobs:
         # path. pyyaml/jsonschema are for contracts/pixel_agents/verify_outbound.py
         # and schema.py, which parse the cloned repo's core/asyncapi.yaml and
         # validate captured messages against it.
-        run: pip install aiohttp 'pydantic>=2.6,<2.11' 'pyyaml>=6.0' 'jsonschema>=4.20'
+        run: pip install aiohttp 'pydantic>=2.11.3,<2.14' 'pyyaml>=6.0' 'jsonschema>=4.20'
 
       - name: Run contract check
         run: |

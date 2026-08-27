@@ -66,28 +66,38 @@ jobs:
           # site-packages on sys.path (redbot/__main__.py), so a newer
           # typing_extensions installed there is shadowed by Red's older
           # pinned one and Sentinel fails to import at runtime.
+          # corridor.domain.agent_directory imports a2a's AgentExecutor/
+          # AgentCard/TransportProtocol types directly (see that module's
+          # docstring) -- needs plain a2a-sdk (no http-server extra; corridor
+          # itself never runs an A2A server, just models the directory).
           - cog: corridor
             test_target: "corridor/"
             lint_target: "corridor"
             mypy_target: "corridor"
-            extra_deps: "aiohttp 'pydantic>=2.11.3,<2.12' 'pyyaml>=6.0'"
+            extra_deps: "aiohttp 'pydantic>=2.11.3,<2.12' 'pyyaml>=6.0' a2a-sdk"
             pixel_index_contracts: false
+          # toolbox's tests import corridor.adapters (tool registration/
+          # panel wiring), which pulls in corridor.domain.agent_directory --
+          # needs a2a-sdk for the same reason as corridor's own leg above.
           - cog: toolbox
             test_target: "toolbox/"
             lint_target: "toolbox"
             mypy_target: "toolbox"
-            extra_deps: ""
+            extra_deps: "a2a-sdk"
             pixel_index_contracts: false
           # testbench's schema comes from corridor.event_catalog.build_contract()
           # in-process (no YAML parsing at runtime) -- no pyyaml needed here,
           # unlike corridor's own leg above (which needs it for the
           # contracts.corridor.generate_corridor_contract/lint_corridor_contract
           # steps below).
+          # testbench's tests import corridor.adapters/corridor.event_catalog,
+          # which pull in corridor.domain.agent_directory -- needs a2a-sdk
+          # for the same reason as corridor's own leg above.
           - cog: testbench
             test_target: "testbench/"
             lint_target: "testbench"
             mypy_target: "testbench"
-            extra_deps: ""
+            extra_deps: "a2a-sdk"
             pixel_index_contracts: false
           # pixelagents shrank to a vendor+build utility cog (like toolbox) --
           # no aiohttp/pydantic left, and no Pixel Index contracts of its own.
@@ -100,11 +110,14 @@ jobs:
           # floorplan inherited the runtime half of the old pixelagents Cog:
           # the dashboard, office WebSocket protocol, and Pixel Index
           # integration, so it inherits that half's dependencies too.
+          # floorplan's tests also import corridor.adapters, which pulls in
+          # corridor.domain.agent_directory -- needs a2a-sdk for the same
+          # reason as corridor's own leg above.
           - cog: floorplan
             test_target: "floorplan/tests"
             lint_target: "floorplan"
             mypy_target: "floorplan"
-            extra_deps: "aiohttp"
+            extra_deps: "aiohttp a2a-sdk"
             pixel_index_contracts: true
           # pico talks to aiohttp (LiteLLM proxy) and pydantic (wire/tool
           # models) like floorplan, plus httpx and a2a-sdk for its
@@ -124,12 +137,14 @@ jobs:
           # but its LLM tool metadata tests import corridor.adapters.
           # llm_tool_registration, which pulls in corridor's LLM client --
           # needs pydantic like corridor's own leg above (aiohttp already
-          # comes in via discord.py).
+          # comes in via discord.py), plus a2a-sdk since that same
+          # corridor.adapters chain now pulls in corridor.domain.
+          # agent_directory too.
           - cog: deskutils
             test_target: "deskutils/"
             lint_target: "deskutils"
             mypy_target: "deskutils"
-            extra_deps: "'pydantic>=2.11.3,<2.12'"
+            extra_deps: "'pydantic>=2.11.3,<2.12' a2a-sdk"
             pixel_index_contracts: false
           # architect talks to aiohttp/pydantic like pico (the shared
           # corridor-owned LLM connection), plus a2a-sdk (its A2A server --

@@ -373,12 +373,19 @@ sequenceDiagram
     A->>C: llm_client() / llm_settings()<br/>(same connection pico uses)
     A->>A: architect's own bounded tool loop<br/>(placeholder tools + corridor's LLM client)
     A-->>CA: completed Task, final text
+    CA->>U: corridor.send_reply(...): "📩 architect replied: ..."
     CA-->>P: tool result (status/answer)
     P->>P: continue its own loop with the result
     P->>U: corridor.send_reply(...) via pico's existing reply_tool
 ```
 
-Two things this diagram doesn't show, both by design:
+Not shown above, but happens right when `CA` receives the tool call
+(before `CA->>C`): `ConsultAgentTool` first sends its own "🔧 Asking
+**architect**: ..." message, so the outgoing question is visible in the
+channel before the A2A round trip even starts, not just the answer
+afterward.
+
+Three things worth calling out, all by design:
 
 - **`consult_<agent_key>` tools are rebuilt fresh every turn from
   `corridor.list_agents()`** (`adapters/listener.py`'s `_agent_tools`) —
@@ -390,10 +397,19 @@ Two things this diagram doesn't show, both by design:
   [`docs/agent-directory-design.md`](agent-directory-design.md).
 - **Corridor's A2A listener is a separate network bind from Discord and
   from Red Dashboard** — it's a machine-to-machine JSON-RPC surface, not a
-  browser page, so `pico -> corridor` (A2A) never touches corridor's reply
-  chokepoint or Discord at all; pico's own "only `ReplyTool` sends to
-  Discord" invariant is unaffected, since `ConsultAgentTool.handler` is
-  not itself a Discord send.
+  browser page; `pico -> corridor` (A2A) never touches corridor's reply
+  chokepoint from *architect's* side. It does from pico's side, though —
+  see the next point.
+- **`ReplyTool` is no longer the only Discord-send in pico.**
+  `ConsultAgentTool` also calls `corridor.send_reply` directly, twice per
+  invocation (the outgoing question, then the raw answer or a failure) —
+  a deliberate transparency feature so a Discord user sees the real,
+  unparaphrased A2A exchange, not just whatever pico's own LLM later
+  chooses to say about it via `ReplyTool`. `ReplyTool` remains the only
+  place the LLM's own composed words reach Discord; `ConsultAgentTool`'s
+  announcements are deterministic and independent of that choice. Both
+  message shapes always appear together for one consult call: pico's own
+  final paraphrase is additive, never a replacement.
 
 ## 6. CI-only relationships (not `required_cogs`)
 

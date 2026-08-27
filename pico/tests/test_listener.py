@@ -105,7 +105,7 @@ class TestAgentTools(unittest.TestCase):
         corridor = FakeCorridor()
         corridor.agents = [_agent("architect"), _agent("agent-n")]
 
-        tools = _agent_tools(corridor, ArchitectClient())
+        tools = _agent_tools(corridor, ArchitectClient(), _ctx())
 
         self.assertEqual({tool.name for tool in tools}, {"consult_architect", "consult_agent-n"})
         self.assertTrue(all(isinstance(tool, ConsultAgentTool) for tool in tools))
@@ -113,7 +113,7 @@ class TestAgentTools(unittest.TestCase):
     def test_zero_registered_agents_yields_zero_tools(self) -> None:
         corridor = FakeCorridor()
 
-        tools = _agent_tools(corridor, ArchitectClient())
+        tools = _agent_tools(corridor, ArchitectClient(), _ctx())
 
         self.assertEqual(tools, [])
 
@@ -122,7 +122,7 @@ class TestAgentTools(unittest.TestCase):
         broken = SimpleNamespace(agent_key="broken", card=None)  # .description access will raise
         corridor.agents = [broken, _agent("architect")]
 
-        tools = _agent_tools(corridor, ArchitectClient())
+        tools = _agent_tools(corridor, ArchitectClient(), _ctx())
 
         self.assertEqual([tool.name for tool in tools], ["consult_architect"])
 

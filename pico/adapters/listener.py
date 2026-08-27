@@ -78,7 +78,7 @@ class ListenerMixin:
         tools: list[ToolSpec] = [
             ReplyTool(self._corridor, ctx, guild_id=guild.id, bot_user_id=_bot_user_id(self.bot))
         ]
-        tools.extend(_agent_tools(self._corridor, self._architect_client))
+        tools.extend(_agent_tools(self._corridor, self._architect_client, ctx))
         tools.extend(await _cross_cog_tools(self._corridor, ctx))
         result = await self._tool_loop_service.run(
             base_url=llm_settings.llm_base_url,
@@ -96,16 +96,19 @@ class ListenerMixin:
         )
 
 
-def _agent_tools(corridor: Any, client: Any) -> list[ToolSpec]:
+def _agent_tools(corridor: Any, client: Any, ctx: commands.Context) -> list[ToolSpec]:
     """One `consult_<agent_key>` tool per agent currently registered in
     corridor's `AgentDirectoryService`, pulled fresh each turn -- see
-    docs/agent-directory-design.md. If corridor has zero registered
-    agents (no agent cog loaded, or every one currently unregistered),
-    this returns an empty list: no error, no special-cased "not
-    configured" branch, since there's no longer a single hardcoded agent
-    to be "not configured." One malformed entry's tool-building failure
-    is logged and skipped rather than dropping every other agent's tool,
-    same convention as `_cross_cog_tools` below."""
+    docs/agent-directory-design.md. Each tool closes over this turn's
+    `ctx` (same convention as `ReplyTool`/`CrossCogTool`), since it
+    announces the A2A exchange in this same channel as it happens. If
+    corridor has zero registered agents (no agent cog loaded, or every
+    one currently unregistered), this returns an empty list: no error,
+    no special-cased "not configured" branch, since there's no longer a
+    single hardcoded agent to be "not configured." One malformed entry's
+    tool-building failure is logged and skipped rather than dropping
+    every other agent's tool, same convention as `_cross_cog_tools`
+    below."""
 
     tools: list[ToolSpec] = []
     for agent in corridor.list_agents():
@@ -113,6 +116,8 @@ def _agent_tools(corridor: Any, client: Any) -> list[ToolSpec]:
             tools.append(
                 ConsultAgentTool(
                     client,
+                    corridor,
+                    ctx,
                     agent_key=agent.agent_key,
                     base_url=agent.card.supported_interfaces[0].url,
                     description=agent.card.description,

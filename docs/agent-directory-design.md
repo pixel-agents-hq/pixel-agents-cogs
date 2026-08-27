@@ -311,6 +311,25 @@ offers zero `consult_*` tools that turn — no error, no special-cased
 "architect not configured" branch to maintain, since there's no longer
 a single hardcoded agent to be "not configured."
 
+**Addendum (added after initial implementation, same design): the A2A
+exchange itself is now visible in Discord, not just pico's own final
+paraphrase.** `ConsultAgentTool` (`pico/tools/consult_agent_tool.py`)
+also takes `corridor`/`ctx` (same convention `ReplyTool`/`CrossCogTool`
+already use) and calls `corridor.send_reply` directly, twice per
+invocation: once immediately with the outgoing question ("🔧 Asking
+**architect**: ..."), once with the target agent's raw answer or a
+failure once the A2A call returns ("📩 **architect** replied: ..." /
+"⚠️ **architect** could not be reached: ..."). This makes `ReplyTool` no
+longer the *only* Discord-send in pico — it remains the only place the
+LLM's own composed words reach Discord; `ConsultAgentTool`'s
+announcements are deterministic, not left to the LLM's discretion, so
+they can't be skipped or silently paraphrased away. Pico's own
+subsequent "Architect says ..." reply (still via `ReplyTool`) is
+additive on top of this, not a replacement for it — a user sees three
+messages for one consult: the question, the raw answer, and pico's own
+summary. `_agent_tools` (`pico/adapters/listener.py`) passes `ctx`
+through to each `ConsultAgentTool` it builds for exactly this reason.
+
 ## 6. Updated dependency graph
 
 ```mermaid

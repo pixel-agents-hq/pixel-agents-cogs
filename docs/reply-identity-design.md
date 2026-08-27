@@ -1,9 +1,10 @@
 # Reply identity: per-cog author names/avatars and consulted-agent footer identity
 
-**Status: proposed.** This document describes what's being designed, not
-what's running today — no code from this document has been implemented
-yet (unlike `docs/agent-directory-design.md`, which reached this same
-"design-only" state before a follow-up implementation pass).
+**Status: implemented.** Sections 1-11 describe what's actually running
+today; §12's checklist is complete, including tests across every touched
+package (corridor, architect, pico, deskutils, toolbox, testbench,
+floorplan, pixelagents). No avatar image files exist yet anywhere in the
+repo (§10's rollout) — every author line currently shows name-only.
 
 ## 1. Problem
 

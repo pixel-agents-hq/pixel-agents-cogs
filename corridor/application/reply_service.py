@@ -7,7 +7,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
-from ..domain import IconSource, RenderedReply, ReplyField, ReplyMode, ReplyPreferences
+from ..domain import (
+    FooterOverride,
+    IconSource,
+    RenderedReply,
+    ReplyField,
+    ReplyIdentity,
+    ReplyMode,
+    ReplyPreferences,
+)
 
 
 class IconResolver(Protocol):
@@ -62,6 +70,8 @@ class ReplyService:
         content: ReplyContent,
         *,
         prefix: str,
+        identity: ReplyIdentity | None = None,
+        footer_override: FooterOverride | None = None,
     ) -> RenderedReply:
         title = _substitute_prefix(content.title, prefix)
         description = _substitute_prefix(content.description, prefix)
@@ -91,18 +101,29 @@ class ReplyService:
                 else f"**{field.name}:** {field.value}"
                 for field in fields
             )
+            text = "\n".join(lines)
+            # No embed exists in TEXT mode, so there is no author-icon or
+            # footer-icon equivalent -- both are silently dropped, not an
+            # error (see docs/reply-identity-design.md section 4).
+            # `footer_override` has no TEXT-mode rendering at all: a
+            # footer is strictly an embed concept, and the consulted
+            # agent's *name* is already visible in whatever prose the
+            # caller wrote, so only the icon is genuinely unavailable here.
+            if identity is not None and text:
+                text = f"**{identity.owner}:** {text}"
             return RenderedReply(
                 mode=ReplyMode.TEXT,
-                content="\n".join(lines),
+                content=text,
                 embed_title=None,
                 embed_description=None,
                 fields=(),
                 footer_text=None,
+                footer_icon_url=None,
                 show_timestamp=False,
-                icon_url=None,
+                author_name=None,
+                author_icon_attachment=None,
             )
 
-        icon_url = await self._resolve_icon(guild_id, preferences)
         embed_description = description or body
         if code_blocks:
             block_text = "\n".join(code_blocks)
@@ -113,15 +134,23 @@ class ReplyService:
             ReplyField(field.name, _fence(field.value), False, field.code) if field.code else field
             for field in fields
         )
+        if footer_override is not None:
+            footer_text: str | None = footer_override.name
+            footer_icon_url: str | None = footer_override.icon_url
+        else:
+            footer_text = preferences.footer_text
+            footer_icon_url = await self._resolve_icon(guild_id, preferences)
         return RenderedReply(
             mode=ReplyMode.EMBED,
             content=None,
             embed_title=title,
             embed_description=embed_description,
             fields=embed_fields,
-            footer_text=preferences.footer_text,
+            footer_text=footer_text,
+            footer_icon_url=footer_icon_url,
             show_timestamp=preferences.show_timestamp,
-            icon_url=icon_url,
+            author_name=identity.owner if identity is not None else None,
+            author_icon_attachment=identity.avatar_filename if identity is not None else None,
         )
 
     async def _resolve_icon(self, guild_id: int, preferences: ReplyPreferences) -> str | None:

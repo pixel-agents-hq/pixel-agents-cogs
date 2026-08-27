@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable, Sequence
+from pathlib import Path
 from typing import Any, TypeVar, cast
 
 import discord
@@ -24,6 +25,7 @@ from ..application import (
 )
 from ..domain import (
     A2ASettings,
+    FooterOverride,
     GuildSettings,
     IconPreference,
     LLMSettings,
@@ -32,6 +34,7 @@ from ..domain import (
     RegisteredTool,
     RenderedReply,
     ReplyField,
+    ReplyIdentity,
     ReplyMode,
     ToolVisibilityFilter,
     card_with_url,
@@ -39,6 +42,7 @@ from ..domain import (
 from ..infrastructure import A2AServer, LiteLLMClient, RedCorridorRepository
 from .api import BotIconResolver, BotOwnerRegistry, DiscordMemberRef, send_rendered_reply
 from .llm_tool_registration import collect_registered_tools
+from .reply_sender import ReplySender
 
 log = logging.getLogger("red.corridor")
 
@@ -172,6 +176,8 @@ class CogBase:
         content: str | None = None,
         fields: Sequence[ReplyField] = (),
         code: Sequence[str] = (),
+        identity: ReplyIdentity | None = None,
+        footer_override: FooterOverride | None = None,
     ) -> RenderedReply:
         """Render title/description/content -- plus any embed `fields`
         (name/value/inline, discord.Embed.add_field-shaped) -- against a
@@ -199,7 +205,13 @@ class CogBase:
         The single source of truth other cogs use when they need their own
         interaction-aware dispatch (ephemeral responses, hybrid-command
         followups, ...) instead of `send_reply`'s plain `ctx.send`. See
-        floorplan's (or pixelagents') `ReplyMixin` for that use."""
+        floorplan's (or pixelagents') `ReplyMixin` for that use.
+
+        `identity`/`footer_override` are almost never passed here directly
+        -- prefer `reply_sender()`'s bound object, which supplies
+        `identity` automatically. `footer_override` is `ConsultAgentTool`'s
+        one use case (the *consulted* agent's identity, not the caller's
+        own) -- see docs/reply-identity-design.md."""
 
         assert ctx.guild is not None, "render_reply needs a guild context"
         settings = await self._repository.guild_settings(ctx.guild.id)
@@ -214,6 +226,8 @@ class CogBase:
                 code=tuple(code),
             ),
             prefix=ctx.clean_prefix,
+            identity=identity,
+            footer_override=footer_override,
         )
 
     async def send_reply(
@@ -225,6 +239,8 @@ class CogBase:
         content: str | None = None,
         fields: Sequence[ReplyField] = (),
         code: Sequence[str] = (),
+        identity: ReplyIdentity | None = None,
+        footer_override: FooterOverride | None = None,
     ) -> discord.Message:
         rendered = await self.render_reply(
             ctx,
@@ -233,8 +249,26 @@ class CogBase:
             content=content,
             fields=fields,
             code=code,
+            identity=identity,
+            footer_override=footer_override,
         )
         return await send_rendered_reply(ctx, rendered)
+
+    def reply_sender(self, *, owner: str, avatar_path: Path | None = None) -> ReplySender:
+        """A per-cog bound sender, obtained once (typically in the calling
+        cog's own `cog_load`, alongside `register_dependent`/
+        `register_agent`) and reused at every one of that cog's own
+        `send_reply`/`render_reply` call sites -- so `owner`/`avatar_path`
+        never needs repeating as an argument at any of them. See
+        docs/reply-identity-design.md.
+
+        `avatar_path` should be the cog's *conventional* asset path
+        (`<cog_package>/assets/avatar.png`) regardless of whether that
+        file currently exists -- existence is checked fresh on every send
+        (`build_reply_payload`), so dropping a real image there later
+        needs no code change."""
+
+        return ReplySender(self, owner=owner, avatar_path=avatar_path)
 
     async def default_prefix(self) -> str:
         """The bot's global default command prefix -- what Red resolves DM

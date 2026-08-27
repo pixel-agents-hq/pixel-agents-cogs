@@ -140,6 +140,37 @@ class ReplyField:
 
 
 @dataclass(frozen=True, slots=True)
+class ReplyIdentity:
+    """Which cog is sending -- bound once per cog via `CogBase.reply_sender`,
+    not repeated at each of corridor.send_reply's 60+ call sites. See
+    docs/reply-identity-design.md.
+
+    `avatar_filename` is a bare filename (e.g. "avatar.png"), not a path --
+    this module has zero framework/filesystem-aware imports by design. The
+    adapter layer (`ReplySender`) resolves it against the cog's actual
+    bundled asset path and checks the file exists fresh on every send;
+    `None` here just means "no avatar filename was ever configured for
+    this identity," not "the file happens to be missing right now.\""""
+
+    owner: str
+    avatar_filename: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class FooterOverride:
+    """Overrides a guild's own configured footer for one message --
+    `ConsultAgentTool`'s only consumer today: the *consulted* agent's
+    name+avatar, distinct from the calling cog's own author identity and
+    from the guild's `footer_text`/icon preference. `icon_url` is a real
+    HTTP(S) URL (not `attachment://`) -- see corridor's shared A2A
+    listener serving `/<agent_key>/avatar.png`,
+    docs/reply-identity-design.md section 7."""
+
+    name: str
+    icon_url: str
+
+
+@dataclass(frozen=True, slots=True)
 class RenderedReply:
     """Framework-neutral description of what to send. The adapter layer turns
     this into a plain ctx.send() or a discord.Embed -- this module never
@@ -151,8 +182,10 @@ class RenderedReply:
     embed_description: str | None
     fields: tuple[ReplyField, ...]
     footer_text: str | None
+    footer_icon_url: str | None
     show_timestamp: bool
-    icon_url: str | None
+    author_name: str | None
+    author_icon_attachment: str | None
 
 
 @dataclass(frozen=True, slots=True)

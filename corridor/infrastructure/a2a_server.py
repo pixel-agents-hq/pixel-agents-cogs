@@ -26,11 +26,31 @@ from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.routes import create_agent_card_routes, create_jsonrpc_routes
 from a2a.server.tasks.inmemory_task_store import InMemoryTaskStore
 from starlette.applications import Starlette
-from starlette.routing import BaseRoute, Mount
+from starlette.requests import Request
+from starlette.responses import FileResponse, Response
+from starlette.routing import BaseRoute, Mount, Route
 
 from ..domain.agent_directory import RegisteredAgent
 
 log = logging.getLogger("red.corridor")
+
+
+def _avatar_route(agent: RegisteredAgent) -> Route:
+    """Serves `agent.avatar_path`'s bytes fresh on every request -- same
+    no-caching tradeoff `ReplySender`'s own attachment re-upload accepts
+    (docs/reply-identity-design.md section 2). 404 if the configured file
+    doesn't currently exist, never a 500 -- a missing avatar is an
+    absent-icon condition, not a server error."""
+
+    avatar_path = agent.avatar_path
+    assert avatar_path is not None
+
+    async def handler(request: Request) -> Response:
+        if not avatar_path.exists():
+            return Response(status_code=404)
+        return FileResponse(avatar_path)
+
+    return Route("/avatar.png", handler)
 
 
 def _build_routes(agents: Sequence[RegisteredAgent]) -> list[BaseRoute]:
@@ -38,7 +58,9 @@ def _build_routes(agents: Sequence[RegisteredAgent]) -> list[BaseRoute]:
     `InMemoryTaskStore` per agent (matching architect's former
     one-task-store-per-agent scope, not shared across agents) and a
     fresh `DefaultRequestHandler` built from that agent's own
-    `card`/`executor`."""
+    `card`/`executor`. An agent with `avatar_path` set additionally gets
+    a static `/avatar.png` route under the same mount -- see
+    docs/reply-identity-design.md section 7."""
 
     routes: list[BaseRoute] = []
     for agent in agents:
@@ -47,6 +69,8 @@ def _build_routes(agents: Sequence[RegisteredAgent]) -> list[BaseRoute]:
             *create_agent_card_routes(agent.card),
             *create_jsonrpc_routes(handler, "/"),
         ]
+        if agent.avatar_path is not None:
+            agent_routes.append(_avatar_route(agent))
         routes.append(Mount(f"/{agent.agent_key}", routes=agent_routes))
     return routes
 

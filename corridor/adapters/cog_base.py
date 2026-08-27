@@ -461,21 +461,25 @@ class CogBase:
         `AgentExecutor` are built. `owner` should be that cog's class
         name, matching `subscribe_event`'s convention.
 
-        Overwrites `agent.card`'s one `supported_interfaces[0].url` with
-        corridor's own configured host/port plus `/<agent_key>/` before
-        storing it -- the registering agent has no way to know what
-        host/port it will ultimately be reachable at, since it no longer
-        binds a listener of its own. Async (unlike `register_tool`)
-        because it needs corridor's own current A2A settings to build
-        that URL. Also rebuilds the live route table, so the new agent is
+        Overwrites `agent.card`'s one `supported_interfaces[0].url` (and
+        `icon_url`, when `agent.avatar_path` is set) with corridor's own
+        configured host/port plus `/<agent_key>/` before storing it --
+        the registering agent has no way to know what host/port it will
+        ultimately be reachable at, since it no longer binds a listener
+        of its own. Async (unlike `register_tool`) because it needs
+        corridor's own current A2A settings to build that URL. Also
+        rebuilds the live route table, so the new agent (and its avatar
+        route, if any -- see docs/reply-identity-design.md section 7) is
         reachable immediately, not just on corridor's next `cog_load`."""
 
         settings = await self._repository.a2a_settings()
-        url = f"http://{settings.a2a_host}:{settings.a2a_port}/{agent.agent_key}/"
+        base = f"http://{settings.a2a_host}:{settings.a2a_port}/{agent.agent_key}/"
+        icon_url = f"{base}avatar.png" if agent.avatar_path is not None else None
         rewritten = RegisteredAgent(
             agent_key=agent.agent_key,
-            card=card_with_url(agent.card, url),
+            card=card_with_url(agent.card, base, icon_url=icon_url),
             executor=agent.executor,
+            avatar_path=agent.avatar_path,
         )
         self._agent_directory.register(rewritten, owner=owner)
         self._a2a_server.rebuild_routes(self._agent_directory.list_agents())

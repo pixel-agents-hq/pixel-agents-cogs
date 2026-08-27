@@ -47,6 +47,20 @@ class TestCardWithUrl(unittest.TestCase):
 
         self.assertEqual(original.supported_interfaces[0].url, "http://placeholder/")
 
+    def test_sets_icon_url_when_given(self) -> None:
+        rewritten = card_with_url(
+            _card(),
+            "http://127.0.0.1:8931/architect/",
+            icon_url="http://127.0.0.1:8931/architect/avatar.png",
+        )
+
+        self.assertEqual(rewritten.icon_url, "http://127.0.0.1:8931/architect/avatar.png")
+
+    def test_icon_url_defaults_to_empty_when_not_given(self) -> None:
+        rewritten = card_with_url(_card(), "http://127.0.0.1:8931/architect/")
+
+        self.assertEqual(rewritten.icon_url, "")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -48,6 +48,13 @@ ARCHITECT_AGENT_REF = AgentRef(
 )
 ARCHITECT_DISPLAY_NAME = "architect"
 
+# Conventional path for architect's own bundled avatar image -- passed to
+# both corridor.reply_sender() and RegisteredAgent.avatar_path regardless
+# of whether a real file exists here yet; existence is checked fresh on
+# every send, so dropping a real image at this exact path later needs no
+# code change. See docs/reply-identity-design.md.
+AVATAR_PATH = Path(__file__).resolve().parent.parent / "assets" / "avatar.png"
+
 
 class _LazyPixelAgents:
     """Same lazy-lookup shape as `CorridorLLMClient` -- `FurnitureStyleLoader`
@@ -75,6 +82,7 @@ class CogBase:
         self._repository = RedArchitectRepository.create(self)
         self.config = self._repository.config
         self._corridor: Any = None
+        self._reply: Any = None
         # The shared LLM connection lives in corridor (see
         # docs/architect-design.md) -- this proxy defers the actual lookup
         # until each call, since corridor isn't resolved until cog_load().
@@ -149,6 +157,7 @@ class CogBase:
         # So unloading corridor cascades to unload this cog too, instead of
         # leaving it running with a stale corridor reference.
         self._corridor.register_dependent("architect")
+        self._reply = self._corridor.reply_sender(owner="Architect", avatar_path=AVATAR_PATH)
         await self._publish_presence("online")
         await self._register_with_corridor()
         self._pixelagents = await ensure_loaded(self.bot, "pixelagents", "PixelAgents")
@@ -168,7 +177,12 @@ class CogBase:
         card = build_agent_card(tools=self._tools)
         try:
             await self._corridor.register_agent(
-                RegisteredAgent(agent_key="architect", card=card, executor=self._executor),
+                RegisteredAgent(
+                    agent_key="architect",
+                    card=card,
+                    executor=self._executor,
+                    avatar_path=AVATAR_PATH,
+                ),
                 owner="architect",
             )
         except Exception:

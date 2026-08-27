@@ -35,6 +35,7 @@ class CommandsMixin:
 
     _repository: RedArchitectRepository
     _corridor: Any
+    _reply: Any
     _websocket_server: Any
 
     @commands.hybrid_group(name="architect", invoke_without_command=True)
@@ -58,7 +59,7 @@ class CommandsMixin:
         """Set the office WebSocket server's bind host. Reload the cog to rebind."""
 
         await self._repository.set_ws_host(host)
-        await self._corridor.send_reply(
+        await self._reply.send_reply(
             ctx,
             description=(
                 f"WebSocket host set to `{host}`. Reload the cog to rebind, and update your "
@@ -74,9 +75,9 @@ class CommandsMixin:
         try:
             await self._repository.set_ws_port(port)
         except ValueError as exc:
-            await self._corridor.send_reply(ctx, description=str(exc))
+            await self._reply.send_reply(ctx, description=str(exc))
             return
-        await self._corridor.send_reply(
+        await self._reply.send_reply(
             ctx,
             description=(
                 f"WebSocket port set to `{port}`. Reload the cog to rebind, and update your "
@@ -92,11 +93,9 @@ class CommandsMixin:
         try:
             await self._repository.set_max_tool_calls(count)
         except ValueError as exc:
-            await self._corridor.send_reply(ctx, description=str(exc))
+            await self._reply.send_reply(ctx, description=str(exc))
             return
-        await self._corridor.send_reply(
-            ctx, description=f"Max tool calls per turn set to `{count}`."
-        )
+        await self._reply.send_reply(ctx, description=f"Max tool calls per turn set to `{count}`.")
 
     @architect_group.command(name="debuglogging")
     @commands.is_owner()
@@ -107,7 +106,7 @@ class CommandsMixin:
         default -- turn on only while diagnosing a tool-calling issue."""
 
         await self._repository.set_debug_logging(enabled)
-        await self._corridor.send_reply(
+        await self._reply.send_reply(
             ctx, description=f"Debug logging {'enabled' if enabled else 'disabled'}."
         )
 
@@ -125,7 +124,7 @@ class CommandsMixin:
         """Set architect's system prompt."""
 
         await self._repository.set_system_prompt(text)
-        await self._corridor.send_reply(ctx, description="System prompt updated.")
+        await self._reply.send_reply(ctx, description="System prompt updated.")
 
     @prompt_group.command(name="reset")
     @commands.is_owner()
@@ -133,7 +132,7 @@ class CommandsMixin:
         """Reset architect's system prompt to the default."""
 
         await self._repository.reset_system_prompt()
-        await self._corridor.send_reply(ctx, description="System prompt reset to default.")
+        await self._reply.send_reply(ctx, description="System prompt reset to default.")
 
     @prompt_group.command(name="show")
     @commands.is_owner()
@@ -141,9 +140,7 @@ class CommandsMixin:
         """Show architect's current system prompt."""
 
         settings = await self._repository.global_settings()
-        await self._corridor.send_reply(
-            ctx, title="System Prompt", description=settings.system_prompt
-        )
+        await self._reply.send_reply(ctx, title="System Prompt", description=settings.system_prompt)
 
     @architect_group.command(name="status")
     async def status(self, ctx: commands.Context) -> None:
@@ -179,7 +176,7 @@ class CommandsMixin:
                 False,
             ),
         ]
-        await self._corridor.send_reply(ctx, title="Architect Status", fields=fields)
+        await self._reply.send_reply(ctx, title="Architect Status", fields=fields)
 
 
 __all__ = ["CommandsMixin"]

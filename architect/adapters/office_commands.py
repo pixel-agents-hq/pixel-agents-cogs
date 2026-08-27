@@ -25,6 +25,7 @@ class OfficeCommandsMixin:
 
     _office_layout_service: OfficeLayoutService
     _corridor: Any
+    _reply: Any
 
     @CommandsMixin.architect_group.group(name="office", invoke_without_command=True)
     @commands.is_owner()
@@ -44,7 +45,7 @@ class OfficeCommandsMixin:
             f"{office.width}x{office.height} grid -- {len(office.zones)} zone(s), "
             f"{len(office.furniture)} furniture item(s), {len(office.seats)} seat(s)."
         )
-        await self._corridor.send_reply(ctx, description=description)  # type: ignore[attr-defined]
+        await self._reply.send_reply(ctx, description=description)  # type: ignore[attr-defined]
 
     @office_group.command(name="painttiles")
     @commands.is_owner()
@@ -66,7 +67,7 @@ class OfficeCommandsMixin:
             resolved_kind = TileKind(kind)
         except ValueError:
             valid = ", ".join(k.value for k in (TileKind.FLOOR, TileKind.WALL))
-            await self._corridor.send_reply(  # type: ignore[attr-defined]
+            await self._reply.send_reply(  # type: ignore[attr-defined]
                 ctx, description=f"Unknown kind {kind!r}. Valid kinds: {valid}."
             )
             return
@@ -78,9 +79,9 @@ class OfficeCommandsMixin:
                 color=color,
             )
         except OfficeValidationError as exc:
-            await self._corridor.send_reply(ctx, description=str(exc))  # type: ignore[attr-defined]
+            await self._reply.send_reply(ctx, description=str(exc))  # type: ignore[attr-defined]
             return
-        await self._corridor.send_reply(  # type: ignore[attr-defined]
+        await self._reply.send_reply(  # type: ignore[attr-defined]
             ctx, description=f"Painted ({col}, {row}) {width}x{height} to {resolved_kind.value}."
         )
 
@@ -96,7 +97,7 @@ class OfficeCommandsMixin:
                 area=GridRect(GridPosition(col, row), width, height)
             )
         except OfficeValidationError as exc:
-            await self._corridor.send_reply(ctx, description=str(exc))  # type: ignore[attr-defined]
+            await self._reply.send_reply(ctx, description=str(exc))  # type: ignore[attr-defined]
             return
         lines = []
         for offset, tile in enumerate(tiles):
@@ -107,7 +108,7 @@ class OfficeCommandsMixin:
                 f"{f' color={tile.color}' if tile.color is not None else ''}"
                 f"{f' zone={tile.zone_label}' if tile.zone_label is not None else ''}"
             )
-        await self._corridor.send_reply(ctx, description="\n".join(lines))  # type: ignore[attr-defined]
+        await self._reply.send_reply(ctx, description="\n".join(lines))  # type: ignore[attr-defined]
 
     @office_group.command(name="place")
     @commands.is_owner()
@@ -120,7 +121,7 @@ class OfficeCommandsMixin:
             resolved_kind = FurnitureKind(kind)
         except ValueError:
             valid = ", ".join(k.value for k in FurnitureKind)
-            await self._corridor.send_reply(  # type: ignore[attr-defined]
+            await self._reply.send_reply(  # type: ignore[attr-defined]
                 ctx, description=f"Unknown kind {kind!r}. Valid kinds: {valid}."
             )
             return
@@ -129,9 +130,9 @@ class OfficeCommandsMixin:
                 kind=resolved_kind, style=style, position=GridPosition(col, row)
             )
         except OfficeValidationError as exc:
-            await self._corridor.send_reply(ctx, description=str(exc))  # type: ignore[attr-defined]
+            await self._reply.send_reply(ctx, description=str(exc))  # type: ignore[attr-defined]
             return
-        await self._corridor.send_reply(  # type: ignore[attr-defined]
+        await self._reply.send_reply(  # type: ignore[attr-defined]
             ctx,
             description=(
                 f"Placed `{item.id}` ({item.style}) at ({item.position.col}, {item.position.row})."
@@ -150,9 +151,9 @@ class OfficeCommandsMixin:
                 furniture_id=furniture_id, position=GridPosition(col, row)
             )
         except OfficeValidationError as exc:
-            await self._corridor.send_reply(ctx, description=str(exc))  # type: ignore[attr-defined]
+            await self._reply.send_reply(ctx, description=str(exc))  # type: ignore[attr-defined]
             return
-        await self._corridor.send_reply(  # type: ignore[attr-defined]
+        await self._reply.send_reply(  # type: ignore[attr-defined]
             ctx, description=f"Moved `{item.id}` to ({item.position.col}, {item.position.row})."
         )
 
@@ -164,9 +165,9 @@ class OfficeCommandsMixin:
         try:
             await self._office_layout_service.remove_furniture(furniture_id=furniture_id)
         except OfficeValidationError as exc:
-            await self._corridor.send_reply(ctx, description=str(exc))  # type: ignore[attr-defined]
+            await self._reply.send_reply(ctx, description=str(exc))  # type: ignore[attr-defined]
             return
-        await self._corridor.send_reply(ctx, description=f"Removed `{furniture_id}`.")  # type: ignore[attr-defined]
+        await self._reply.send_reply(ctx, description=f"Removed `{furniture_id}`.")  # type: ignore[attr-defined]
 
     @office_group.command(name="createzone")
     @commands.is_owner()
@@ -187,9 +188,9 @@ class OfficeCommandsMixin:
                 label=label, color=color, tiles=GridRect(GridPosition(col, row), width, height)
             )
         except OfficeValidationError as exc:
-            await self._corridor.send_reply(ctx, description=str(exc))  # type: ignore[attr-defined]
+            await self._reply.send_reply(ctx, description=str(exc))  # type: ignore[attr-defined]
             return
-        await self._corridor.send_reply(  # type: ignore[attr-defined]
+        await self._reply.send_reply(  # type: ignore[attr-defined]
             ctx, description=f"Created zone `{zone.id}` ({zone.label})."
         )
 
@@ -205,9 +206,9 @@ class OfficeCommandsMixin:
                 zone_id=zone_id, tiles=GridRect(GridPosition(col, row), width, height)
             )
         except OfficeValidationError as exc:
-            await self._corridor.send_reply(ctx, description=str(exc))  # type: ignore[attr-defined]
+            await self._reply.send_reply(ctx, description=str(exc))  # type: ignore[attr-defined]
             return
-        await self._corridor.send_reply(  # type: ignore[attr-defined]
+        await self._reply.send_reply(  # type: ignore[attr-defined]
             ctx, description=f"Resized zone `{zone.id}` ({zone.label})."
         )
 
@@ -219,9 +220,9 @@ class OfficeCommandsMixin:
         try:
             await self._office_layout_service.remove_zone(zone_id=zone_id)
         except OfficeValidationError as exc:
-            await self._corridor.send_reply(ctx, description=str(exc))  # type: ignore[attr-defined]
+            await self._reply.send_reply(ctx, description=str(exc))  # type: ignore[attr-defined]
             return
-        await self._corridor.send_reply(ctx, description=f"Removed zone `{zone_id}`.")  # type: ignore[attr-defined]
+        await self._reply.send_reply(ctx, description=f"Removed zone `{zone_id}`.")  # type: ignore[attr-defined]
 
 
 __all__ = ["OfficeCommandsMixin"]

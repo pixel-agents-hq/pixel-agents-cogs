@@ -16,7 +16,9 @@ from types import SimpleNamespace
 
 from corridor.domain import RegisteredTool
 
-from ..adapters.listener import _cross_cog_tools, _message_text
+from ..adapters.listener import _agent_tools, _cross_cog_tools, _message_text
+from ..infrastructure.architect_client import ArchitectClient
+from ..tools.consult_agent_tool import ConsultAgentTool
 from ..tools.cross_cog import CrossCogTool
 from .conftest import FakeCorridor
 
@@ -89,6 +91,40 @@ def _registered_tool(name: str = "a") -> RegisteredTool:
 
 def _ctx(author: object = None) -> SimpleNamespace:
     return SimpleNamespace(author=author if author is not None else SimpleNamespace())
+
+
+def _agent(agent_key: str, *, url: str = "http://localhost:8931/architect/") -> SimpleNamespace:
+    card = SimpleNamespace(
+        description=f"{agent_key} agent.", supported_interfaces=[SimpleNamespace(url=url)]
+    )
+    return SimpleNamespace(agent_key=agent_key, card=card)
+
+
+class TestAgentTools(unittest.TestCase):
+    def test_returns_one_consult_tool_per_registered_agent(self) -> None:
+        corridor = FakeCorridor()
+        corridor.agents = [_agent("architect"), _agent("agent-n")]
+
+        tools = _agent_tools(corridor, ArchitectClient())
+
+        self.assertEqual({tool.name for tool in tools}, {"consult_architect", "consult_agent-n"})
+        self.assertTrue(all(isinstance(tool, ConsultAgentTool) for tool in tools))
+
+    def test_zero_registered_agents_yields_zero_tools(self) -> None:
+        corridor = FakeCorridor()
+
+        tools = _agent_tools(corridor, ArchitectClient())
+
+        self.assertEqual(tools, [])
+
+    def test_a_malformed_agent_is_skipped_without_dropping_others(self) -> None:
+        corridor = FakeCorridor()
+        broken = SimpleNamespace(agent_key="broken", card=None)  # .description access will raise
+        corridor.agents = [broken, _agent("architect")]
+
+        tools = _agent_tools(corridor, ArchitectClient())
+
+        self.assertEqual([tool.name for tool in tools], ["consult_architect"])
 
 
 class TestCrossCogTools(unittest.IsolatedAsyncioTestCase):

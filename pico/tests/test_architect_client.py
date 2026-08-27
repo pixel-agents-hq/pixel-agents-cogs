@@ -1,10 +1,11 @@
-"""ArchitectClient against a real, live loopback architect A2A listener --
-this is the actual pico<->architect round trip
-docs/architect-design.md's sequence diagram describes, not a fake. Only
-this one test file imports `architect` directly (a test-only dependency,
-never a runtime one -- pico's own production code never imports architect,
-see docs/architect-design.md section 7 on why that edge is networked, not
-`required_cogs`)."""
+"""ArchitectClient against a real, live loopback A2A listener -- this is
+the actual pico<->architect round trip docs/architect-design.md's sequence
+diagram describes, not a fake, now mounted on corridor's shared A2A
+listener rather than architect's own (see docs/agent-directory-design.md).
+Only this one test file imports `architect` directly (a test-only
+dependency, never a runtime one -- pico's own production code never
+imports architect, see docs/architect-design.md section 7 on why that
+edge is networked, not `required_cogs`)."""
 
 from __future__ import annotations
 
@@ -15,13 +16,15 @@ import httpx
 
 from architect.application import ToolLoopResult
 from architect.domain import GlobalSettings
-from architect.infrastructure.a2a_server import A2AServer, ArchitectAgentExecutor
+from architect.infrastructure.a2a_server import ArchitectAgentExecutor, build_agent_card
+from corridor.domain import RegisteredAgent, card_with_url
+from corridor.infrastructure.a2a_server import A2AServer
 
 from ..infrastructure import architect_client as architect_client_module
 from ..infrastructure.architect_client import ArchitectClient, ArchitectRequestError
 
 _PORT = 8935
-_BASE_URL = f"http://127.0.0.1:{_PORT}/"
+_BASE_URL = f"http://127.0.0.1:{_PORT}/architect/"
 
 
 class _FakeArchitectLLMSettings:
@@ -46,8 +49,6 @@ async def _settings() -> GlobalSettings:
     return GlobalSettings(
         max_tool_calls=5,
         system_prompt="sys",
-        a2a_host="127.0.0.1",
-        a2a_port=_PORT,
         ws_host="127.0.0.1",
         ws_port=_PORT + 1000,
         debug_logging=False,
@@ -66,8 +67,15 @@ class TestArchitectClientLiveRoundTrip(unittest.IsolatedAsyncioTestCase):
             settings=_settings,
             llm_settings=_llm_settings,
         )
-        server = A2AServer(executor)
-        await server.start(host="127.0.0.1", port=_PORT, tools=[])
+        # Mirrors what corridor.register_agent does for real: overwrite the
+        # placeholder card URL with the URL this listener will actually be
+        # reachable at (see docs/agent-directory-design.md) -- a2a-sdk's
+        # client discovers the agent card first and then sends its real
+        # JSON-RPC calls to *that* URL, not the one `ask()` was given.
+        card = card_with_url(build_agent_card(tools=[]), _BASE_URL)
+        agent = RegisteredAgent(agent_key="architect", card=card, executor=executor)
+        server = A2AServer()
+        await server.start(host="127.0.0.1", port=_PORT, agents=[agent])
         self.addAsyncCleanup(server.stop)
         return server
 

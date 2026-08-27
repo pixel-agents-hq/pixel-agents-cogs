@@ -74,6 +74,7 @@ class FakeCorridor:
         self._next_message_id = 1
         self.tools_for_member: list[Any] = []
         self.list_tools_for_calls: list[Any] = []
+        self.agents: list[Any] = []
         self._llm_settings = FakeLLMSettings()
 
     async def llm_settings(self) -> FakeLLMSettings:
@@ -88,6 +89,12 @@ class FakeCorridor:
     async def list_tools_for(self, ctx: object) -> list[Any]:
         self.list_tools_for_calls.append(ctx)
         return self.tools_for_member
+
+    def list_agents(self) -> list[Any]:
+        """Stands in for corridor.AgentDirectoryService.list_agents --
+        see docs/agent-directory-design.md."""
+
+        return self.agents
 
     async def send_reply(
         self,

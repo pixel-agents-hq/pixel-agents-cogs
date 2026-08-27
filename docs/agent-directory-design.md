@@ -1,8 +1,11 @@
 # Agent directory: corridor as the A2A registry between pico and many agents
 
-**Status: design-only**, written before any implementation, so the
-locked decisions below don't get re-litigated mid-flight (same convention
-`docs/architect-design.md` set for the first pico↔architect pass).
+**Status: implemented.** Sections 1-8 describe what's actually running
+today; §8's checklist is complete, including tests (corridor's
+`AgentDirectoryService`/`A2AServer` unit and live-routing tests,
+architect's registration tests, pico's `_agent_tools`/`ConsultAgentTool`
+tests, and a real, unmocked pico→corridor→architect A2A round trip in
+`pico/tests/test_architect_client.py`).
 
 ## 1. Problem
 

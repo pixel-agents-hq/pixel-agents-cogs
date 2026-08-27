@@ -16,6 +16,7 @@ import itertools
 from corridor.domain import (
     AgentHighlighted,
     AgentPresenceChanged,
+    AgentRef,
     AgentReplied,
     AgentStatusChanged,
     AgentToolStarted,
@@ -26,7 +27,9 @@ from pixelagents.domain import (
     ActivitySnapshot,
     AgentKey,
     AgentSnapshot,
+    GenuineAgentKey,
     MessageSnapshot,
+    OfficeIdentity,
     PresenceStatus,
 )
 
@@ -42,10 +45,24 @@ from .cog_base import PixelAgentsBase
 _synthetic_message_ids = itertools.count(1)
 
 
-def _agent_snapshot(event: AgentPresenceChanged) -> AgentSnapshot:
+def _office_identity(agent: AgentRef) -> OfficeIdentity | None:
+    """A Discord-account identity when both snowflakes are present, a
+    genuine-agent identity when `agent_key` is (e.g. architect), or
+    `None` for a malformed `AgentRef` with neither. See AgentRef's
+    docstring, docs/corridor-pubsub-design.md, and
+    docs/office-agent-identity-design.md."""
+
+    if agent.guild_id is not None and agent.discord_user_id is not None:
+        return AgentKey(guild_id=agent.guild_id, user_id=agent.discord_user_id)
+    if agent.agent_key is not None:
+        return GenuineAgentKey(agent_key=agent.agent_key)
+    return None
+
+
+def _agent_snapshot(event: AgentPresenceChanged, key: AgentKey) -> AgentSnapshot:
     status = None if event.status == "offline" else PresenceStatus(event.status)
     return AgentSnapshot(
-        key=AgentKey(guild_id=event.agent.guild_id, user_id=event.agent.discord_user_id),
+        key=key,
         display_name=event.display_name,
         status=status,
         is_bot=event.agent.is_bot,
@@ -99,56 +116,87 @@ class EventSubscriptionsMixin(PixelAgentsBase):
         await super().cog_unload()
 
     async def _on_agent_presence_changed(self, event: AgentPresenceChanged) -> None:
-        guild_settings = await self._settings_repository.guild_settings(event.agent.guild_id)
+        identity = _office_identity(event.agent)
+        if identity is None:
+            return
+        if isinstance(identity, GenuineAgentKey):
+            # No guild scope applies -- a genuine agent renders on the one
+            # shared canvas unconditionally. See
+            # docs/office-agent-identity-design.md.
+            await self._office_service.reconcile_genuine_agent(
+                identity, event.display_name, event.status
+            )
+            return
+        guild_settings = await self._settings_repository.guild_settings(identity.guild_id)
         if not guild_settings.enabled:
             return
         await self._office_service.reconcile(
-            _agent_snapshot(event),
+            _agent_snapshot(event, identity),
             include_bots=guild_settings.include_bots,
             rich_presence_enabled=await self._settings_repository.broadcast_rich_presence(),
         )
 
     async def _on_agent_replied(self, event: AgentReplied) -> None:
-        key = AgentKey(guild_id=event.agent.guild_id, user_id=event.agent.discord_user_id)
-        if not self._office_service.is_tracked(key):
+        identity = _office_identity(event.agent)
+        if identity is None or not self._office_service.is_tracked(identity):
+            return
+        if isinstance(identity, GenuineAgentKey):
+            await self._office_service.send_genuine_agent_activity(identity, event.summary)
+            delay = await self._settings_repository.message_tool_clear_delay()
+            agent_id = self._office_service.genuine_agent_id(identity.agent_key)
+            self._task_supervisor.create(
+                self._clear_tool_after_delay(agent_id, delay),
+                name=f"floorplan-agent-replied-clear-{identity.agent_key}",
+            )
+            return
+        # corridor now publishes AgentReplied unconditionally (every guild,
+        # tracked or not) -- these two checks replace the guild-enabled/
+        # broadcast_messages gating that used to happen before floorplan's
+        # own on_message even published (see docs/corridor-pubsub-design.md).
+        if not (await self._settings_repository.guild_settings(identity.guild_id)).enabled:
+            return
+        if not await self._settings_repository.broadcast_messages():
             return
         snapshot = MessageSnapshot(
-            key=key, message_id=next(_synthetic_message_ids), content=event.summary
+            key=identity, message_id=next(_synthetic_message_ids), content=event.summary
         )
         await self._office_service.send_message_activity(snapshot)
         delay = await self._settings_repository.message_tool_clear_delay()
         self._task_supervisor.create(
             self._clear_tool_after_delay(
-                self._office_service.agent_id(key.user_id), delay, key.guild_id, key.user_id
+                self._office_service.agent_id(identity.user_id),
+                delay,
+                identity.guild_id,
+                identity.user_id,
             ),
-            name=f"floorplan-agent-replied-clear-{key.guild_id}-{key.user_id}",
+            name=f"floorplan-agent-replied-clear-{identity.guild_id}-{identity.user_id}",
         )
 
     async def _on_agent_highlighted(self, event: AgentHighlighted) -> None:
-        key = AgentKey(guild_id=event.agent.guild_id, user_id=event.agent.discord_user_id)
-        if not self._office_service.is_tracked(key):
+        identity = _office_identity(event.agent)
+        if identity is None or not self._office_service.is_tracked(identity):
             return
-        await self._office_service.highlight_agent(key)
+        await self._office_service.highlight_agent(identity)
 
     async def _on_agent_unhighlighted(self, event: AgentUnhighlighted) -> None:
-        key = AgentKey(guild_id=event.agent.guild_id, user_id=event.agent.discord_user_id)
-        if not self._office_service.is_tracked(key):
+        identity = _office_identity(event.agent)
+        if identity is None or not self._office_service.is_tracked(identity):
             return
-        await self._office_service.unhighlight_agent(key)
+        await self._office_service.unhighlight_agent(identity)
 
     async def _on_agent_tool_started(self, event: AgentToolStarted) -> None:
-        key = AgentKey(guild_id=event.agent.guild_id, user_id=event.agent.discord_user_id)
-        if not self._office_service.is_tracked(key):
+        identity = _office_identity(event.agent)
+        if identity is None or not self._office_service.is_tracked(identity):
             return
         await self._office_service.start_tool_activity(
-            key, event.tool_id, event.status, event.tool_name
+            identity, event.tool_id, event.status, event.tool_name
         )
 
     async def _on_agent_status_changed(self, event: AgentStatusChanged) -> None:
-        key = AgentKey(guild_id=event.agent.guild_id, user_id=event.agent.discord_user_id)
-        if not self._office_service.is_tracked(key):
+        identity = _office_identity(event.agent)
+        if identity is None or not self._office_service.is_tracked(identity):
             return
-        await self._office_service.set_status(key, event.status, event.awaiting_input)
+        await self._office_service.set_status(identity, event.status, event.awaiting_input)
 
     async def _clear_tool_after_delay(
         self, agent_id: int, delay: float, guild_id: int = 0, user_id: int = 0

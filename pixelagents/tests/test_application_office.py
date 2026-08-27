@@ -11,6 +11,7 @@ from pixelagents.domain import (
     ActivitySnapshot,
     AgentKey,
     AgentSnapshot,
+    GenuineAgentKey,
     MessageSnapshot,
     PresenceStatus,
 )
@@ -292,6 +293,109 @@ class TestOfficeService(unittest.IsolatedAsyncioTestCase):
         settings_loaded = next(m for m in messages if m["type"] == "settingsLoaded")
 
         self.assertTrue(settings_loaded["ghostHeadlessAgents"])
+
+
+class TestGenuineAgents(unittest.IsolatedAsyncioTestCase):
+    """A genuine agent (no Discord account, e.g. architect) -- see
+    docs/office-agent-identity-design.md. Uses the same OfficeService
+    instance and roster as Discord agents; no per-guild concept applies."""
+
+    async def asyncSetUp(self) -> None:
+        self.repository = MemorySeats()
+        self.sent: list[dict[str, object]] = []
+
+        async def send(message) -> None:
+            self.sent.append(dict(message))
+
+        self.service = OfficeService(
+            self.repository,
+            send,
+            choose=lambda choices: choices[0],
+            hue_shift=lambda low, high: low + high,
+        )
+        self.identity = GenuineAgentKey("architect")
+
+    async def test_reconcile_spawns_a_headless_external_agent(self) -> None:
+        await self.service.reconcile_genuine_agent(self.identity, "architect", "online")
+
+        self.assertTrue(self.service.is_tracked(self.identity))
+        created = next(m for m in self.sent if m["type"] == "agentCreated")
+        self.assertTrue(created["isHeadless"])
+        self.assertTrue(created["isExternal"])
+        team_info = next(m for m in self.sent if m["type"] == "agentTeamInfo")
+        self.assertEqual(team_info["agentName"], "architect")
+
+    async def test_agent_id_is_positive_and_disjoint_from_discord_ids(self) -> None:
+        agent_id = self.service.genuine_agent_id("architect")
+
+        self.assertGreater(agent_id, 0)
+        self.assertNotEqual(agent_id, self.service.agent_id(123))
+
+    async def test_offline_closes_a_spawned_agent(self) -> None:
+        await self.service.reconcile_genuine_agent(self.identity, "architect", "online")
+        self.sent.clear()
+
+        await self.service.reconcile_genuine_agent(self.identity, "architect", "offline")
+
+        self.assertFalse(self.service.is_tracked(self.identity))
+        self.assertEqual([m["type"] for m in self.sent], ["agentClosed", "existingAgents"])
+
+    async def test_offline_with_no_prior_spawn_is_a_noop(self) -> None:
+        await self.service.reconcile_genuine_agent(self.identity, "architect", "offline")
+
+        self.assertEqual(self.sent, [])
+
+    async def test_status_change_recreates_the_agent(self) -> None:
+        await self.service.reconcile_genuine_agent(self.identity, "architect", "online")
+        self.sent.clear()
+
+        await self.service.reconcile_genuine_agent(self.identity, "architect", "idle")
+
+        self.assertEqual(
+            [m["type"] for m in self.sent[:2]], ["agentClosed", "agentCreated"]
+        )
+
+    async def test_unchanged_status_and_name_sends_nothing(self) -> None:
+        await self.service.reconcile_genuine_agent(self.identity, "architect", "online")
+        self.sent.clear()
+
+        await self.service.reconcile_genuine_agent(self.identity, "architect", "online")
+
+        self.assertEqual(self.sent, [])
+
+    async def test_appears_in_existing_agents_message_alongside_discord_agents(self) -> None:
+        await self.service.reconcile(agent(), include_bots=True, rich_presence_enabled=True)
+        await self.service.reconcile_genuine_agent(self.identity, "architect", "online")
+
+        message = self.service.existing_agents_message({})
+        genuine_id = self.service.genuine_agent_id("architect")
+        discord_id = self.service.agent_id(2)
+
+        self.assertIn(genuine_id, message["agents"])
+        self.assertIn(discord_id, message["agents"])
+        self.assertTrue(message["headlessAgents"][str(genuine_id)])
+
+    async def test_highlight_and_tool_activity_use_the_genuine_agent_id(self) -> None:
+        await self.service.highlight_agent(self.identity)
+        await self.service.start_tool_activity(self.identity, "t1", "thinking")
+        await self.service.set_status(self.identity, "active")
+
+        agent_id = self.service.genuine_agent_id("architect")
+        self.assertEqual(
+            [m["id"] for m in self.sent],
+            [agent_id, agent_id, agent_id],
+        )
+
+    async def test_send_and_clear_genuine_agent_activity(self) -> None:
+        await self.service.send_genuine_agent_activity(self.identity, "using tool describe_office")
+        tool_start = next(m for m in self.sent if m["type"] == "agentToolStart")
+        self.assertEqual(tool_start["status"], "using tool describe_office")
+        self.assertIn("agentSelected", [m["type"] for m in self.sent])
+
+        self.sent.clear()
+        await self.service.clear_genuine_agent_activity(self.identity)
+
+        self.assertEqual([m["type"] for m in self.sent], ["agentToolsClear"])
 
 
 class TestMergeSeatPatch(unittest.TestCase):

@@ -47,11 +47,14 @@ events:
     kind: value-object
     fields:
       discord_user_id:
-        type: int
+        type: int | None
       guild_id:
-        type: int
+        type: int | None
       is_bot:
         type: bool
+      agent_key:
+        type: str | None
+        default: null
   AgentReplied:
     kind: event
     fields:

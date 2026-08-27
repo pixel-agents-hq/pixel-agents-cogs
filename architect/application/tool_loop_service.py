@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -70,7 +70,15 @@ class ToolLoopService:
         tools: Sequence[ToolSpec],
         max_tool_calls: int,
         debug: bool = False,
+        on_activity: Callable[[str], Awaitable[None]] | None = None,
     ) -> ToolLoopResult:
+        """`on_activity`, if given, is awaited once per "thinking" turn (the
+        model's own text alongside a tool-calling turn) and once per tool
+        call -- corridor's AgentReplied publish, in architect's case (see
+        docs/corridor-pubsub-design.md). Optional and defaults to a no-op
+        so tests/callers that don't care about activity reporting are
+        unaffected."""
+
         tools_by_name = {tool.name: tool for tool in tools}
         wire_tools = [_wire_spec(tool) for tool in tools]
         messages = [
@@ -112,6 +120,9 @@ class ToolLoopService:
                     )
                 return ToolLoopResult(calls_made, "final_text", text=choice_message.content)
 
+            if on_activity is not None and choice_message.content:
+                await on_activity(f"thinking: {choice_message.content}")
+
             messages.append(
                 ChatMessage(role="assistant", content=choice_message.content, tool_calls=tool_calls)
             )
@@ -121,6 +132,8 @@ class ToolLoopService:
                         "architect: tool loop hit max_tool_calls (%d), stopping", max_tool_calls
                     )
                     return ToolLoopResult(calls_made, "max_tool_calls", text=None)
+                if on_activity is not None:
+                    await on_activity(f"using tool {call.function.name}")
                 result_text = await _execute(tools_by_name, call, debug=debug)
                 messages.append(ChatMessage(role="tool", tool_call_id=call.id, content=result_text))
                 calls_made += 1

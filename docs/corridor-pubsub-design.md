@@ -1,386 +1,143 @@
 # Corridor event bus (PubSub): design
 
-> **Status: presence path and pico's reply path both shipped.**
-> corridor's `EventBusService` (`publish`/`subscribe`/`unsubscribe_owner`)
-> is implemented, with defensive subscription cleanup on top
-> (`CogBase.on_cog_remove`, see "Subscription lifecycle" below). floorplan
-> both **publishes** onto it (Discord presence updates as
-> `AgentPresenceChanged`, raw tracked-member messages as `AgentReplied`)
-> and **subscribes** to all six event types to drive the webview
-> translation. `AgentReplied` is no longer scoped to just "a cog's
-> `send_reply` call" — see the corrected docstring below. **pico now
-> publishes `AgentReplied` directly** from `ReplyTool`, right after a
-> successful `send_reply` — closing this doc's originally-motivating use
-> case. floorplan's own `on_message` excludes this bot's own account
-> specifically (never other bots) to avoid double-publishing the same
-> reply it just sent. pico's `AgentStatusChanged` publish (after
-> `GateService.decide`/the tool loop finishes) is **not** part of this PR
-> — still future work, same as `AgentToolStarted`. Headless/ghost
-> rendering (`isHeadless`/`headlessAgents`, driven by `AgentRef.is_bot`)
-> is also now implemented.
+> **Status: implemented.** This doc **replaces** the previous version of
+> `docs/corridor-pubsub-design.md`, which described the bus's original,
+> now-superseded topology (floorplan as both publisher and subscriber,
+> pico as a second publisher). Every row below is now real, not aspirational:
 >
-> A review pass against the real pixel-agents source found one confirmed
-> error (corrected) and surfaced two follow-up requests, posted as
-> [a review comment on pixel-agents-hq/pixel-agents#396](https://github.com/pixel-agents-hq/pixel-agents/pull/396#issuecomment-5385481972).
-> Both shipped upstream within the day: `agentDeselected` (a real
-> undo for `agentSelected`) and an explicit, protocol-level
-> `isHeadless` override (no longer purely client-runtime-detected). The
-> vendor pin (`pixelagents/infrastructure/webview_vendor.commit`) now
-> points at that commit. See "Design review" and "Now unblocked: three
-> new dataclasses" below for the domain model this adds.
+> | Cog | Role |
+> |---|---|
+> | floorplan | **subscribes only** — `floorplan/adapters/event_subscriptions.py` |
+> | corridor | **publishes** presence + reply-mirror events from its own Discord listeners — `corridor/adapters/discord_gateway.py` |
+> | pico | publishes `AgentReplied` — `pico/tools/reply_tool.py` |
+> | architect | publishes `AgentPresenceChanged` (load/unload) and `AgentReplied` (tool use/thinking) — `architect/adapters/cog_base.py` |
+> | testbench | manual dev/test publisher, any event — unchanged |
+>
+> See "Migration notes" near the end for what changed at each call site.
 
 ## Motivation
-
-Originally, the only cog that turned "something happened" into "something
-visible on the office canvas" was floorplan, and the only producer it
-knew about was Discord's own gateway: `floorplan/adapters/discord_gateway.py`
-listened to presence/activity/message events directly and projected them
-into `ServerMessage`s itself, with no corridor involvement at all (see
-[`docs/architecture.md` §3a](architecture.md#3a-presence-mirroring-via-corridors-pubsub-bus)
-for the real, current shape). That worked because there was only ever one
-producer.
-
-pico is about to become a second one. pico's tool-calling loop
-(`docs/architecture.md` §4) already does something worth visualizing —
-it decides to respond, then acts. Wiring that straight into floorplan
-would mean either:
-
-- floorplan grows pico-specific code (`if message came from pico, do X`),
-  which breaks the exact boundary [issue #21](https://github.com/pixel-agents-hq/pixel-agents-cogs/issues/21)
-  drew: floorplan owns *everything that consumes*, generically — not
-  one integration per producer; or
-- pico depends on floorplan directly (`required_cogs: floorplan`), which
-  breaks the property [`docs/architecture.md` diagram 1](architecture.md#1-runtime-dependency-graph)
-  documents today: **nothing in this repo depends on floorplan**. Adding
-  that edge would make floorplan load-bearing for pico, when today it's a
-  leaf.
 
 corridor already exists to decouple "a cog needs something cross-cutting"
 from "which specific cog provides it" — that's exactly what it does today
 for permissions (`require_permission`/`capabilities_satisfy`) and reply
-rendering (`send_reply`/`render_reply`), per
-[`docs/architecture.md` §2](architecture.md#2-ownership-map-who-does-what).
-A pub/sub event bus is the same shape of problem: a producer that
-shouldn't need to know who (if anyone) is listening, and a consumer that
-shouldn't need to know who (if anyone) produces. corridor is the natural
-place for a third chokepoint like this, not a new fourth shared cog.
+rendering (`send_reply`/`render_reply`). A pub/sub event bus is the same
+shape of problem: a producer that shouldn't need to know who (if anyone) is
+listening, and a consumer that shouldn't need to know who (if anyone)
+produces.
 
-## Roles across the stack, and what's implemented today
+The bus originally grew publishers organically, wherever a cog already had
+a reason to know "something happened" — floorplan already listened to
+Discord's gateway for its own webview-serving purposes, so it was the
+natural first publisher too. That was convenient but accidental: it made
+floorplan **both** the bus's reference publisher and its only subscriber,
+which blurred the boundary the bus exists to enforce. It also meant every
+future publisher (architect, now) had to either duplicate floorplan's
+Discord-listener code or depend on floorplan directly — the exact coupling
+corridor exists to prevent.
 
-| Package | Role |
-|---|---|
-| **pixelagents** | Owns the Pixel Agents webview **distribution bundle** — clones `pixel-agents-hq/pixel-agents` at a pinned commit and builds it into `webview_dist/`. Never talks to a browser or a Discord gateway itself. |
-| **floorplan** | Owns **serving** that bundle (the Red Dashboard route) *and* owns **the communication to it** — the entire WebSocket protocol implementation against pixel-agents' real wire contract, `core/asyncapi.yaml` (vendored transitively via pixelagents). floorplan is the only package in this repo that speaks that protocol, in either direction. |
-| **contracts** | CI-only. Runs consumer-driven contract tests against **pixelagents'** real build pipeline (`contracts/pixel_agents/verify.py`) and **floorplan's** real Pixel Index integration (`contracts/pixel_index/verify.py`) — both against live/pinned upstream targets. Also runs a consumer-driven contract for **corridor's** own `EventBusService` (`contracts/corridor/generate_corridor_contract.py --check`), introspecting `corridor/domain/models.py`'s real dataclasses the same way the other two check real code, plus a doc cross-reference lint (`contracts/corridor/lint_corridor_contract.py`) ensuring every declared event stays mentioned in this doc. Separately runs a static lint (`contracts/discord_replies/lint_reply_channel.py`) that AST-scans every cog's command handlers, corridor included, checking they route replies through corridor rather than a raw `ctx.send`. That lint is a boundary check on how cogs *use* corridor's existing reply chokepoint, not a consumer-driven contract against live corridor code the way the other three are. |
-| **corridor** | Three responsibilities, only two shipped today: |
+This design pulls publishing fully onto corridor, and away from any
+subscriber:
 
-1. **Reply rendering** (`send_reply`/`render_reply`) — **implemented**.
-   `corridor/application/reply_service.py`'s `ReplyService`, wired through
-   `corridor/adapters/cog_base.py`.
-2. **Permission tiers** (`require_permission`/`capabilities_satisfy`) —
-   **implemented**. `corridor/application/permission_service.py`'s
-   `PermissionService`, wired the same way.
-3. **PubSub, in Discord vocabulary** — **implemented for presence and
-   pico's replies**. `corridor/application/event_bus_service.py`'s
-   `EventBusService`, wired through `corridor/adapters/cog_base.py`'s
-   `publish_event`/`subscribe_event`/`unsubscribe_owner`, with a
-   defensive `on_cog_remove` listener dropping a subscriber's stale
-   registrations if it disappears without ever calling
-   `unsubscribe_owner` itself. floorplan publishes
-   (`floorplan/adapters/discord_gateway.py`) and subscribes to all six
-   event types (`floorplan/adapters/event_subscriptions.py`). pico
-   publishes `AgentReplied` directly from `pico/tools/reply_tool.py`.
-   pico's `AgentStatusChanged` publish is still future work — see the
-   status table below.
-
-### corridor's PubSub is independent of pixel-agents' WebSocket protocol — deliberately
-
-This is the single most important framing decision in this doc, and it's
-easy to get wrong by analogy to floorplan's existing WebSocket work:
-
-- corridor's bus does **not** own, wrap, or proxy pixel-agents' WebSocket
-  protocol (`core/asyncapi.yaml`). That protocol has exactly one owner in
-  this repo — floorplan — unchanged by anything in this doc.
-- corridor's bus is its **own, independent, in-process** communication
-  channel, speaking **Discord vocabulary** (`AgentRef`, `AgentReplied`,
-  `AgentStatusChanged`, ...) — never webview wire vocabulary
-  (`agentToolStart`, `ServerMessage`, `isExternal`, ...). See "Deliberately
-  not included" in the Domain model section above.
-- Because of that split, **corridor's `EventBusService` can be designed,
-  built, tested, and merged completely independently of floorplan or
-  pixelagents** — it needs nothing from either package, and neither needs
-  anything from it until a subscriber (floorplan) chooses to wire one up.
-  `PermissionService`/`ReplyService` are proof this pattern already works
-  in this exact codebase: both shipped and are used by every cog without
-  either service knowing anything about WebSockets, Red Dashboard, or the
-  webview. The bus is the same shape of addition — no new coupling to
-  floorplan's stack, just a new capability on corridor.
-- floorplan is still the one piece that bridges both channels — the only
-  package that both subscribes to corridor's bus *and* speaks the wire
-  protocol, so it (and only it) does the translation between the two.
-
-```mermaid
-flowchart LR
-    Canvas["Pixel Agents webview canvas<br/><small>upstream pixel-agents-hq/pixel-agents</small>"]
-    PA["pixelagents cog<br/><small>owns the distribution bundle</small>"]
-    FP["floorplan<br/><small>owns serving it, and owns the<br/>consumer contract: WebSocket<br/>communication to core/asyncapi.yaml</small>"]
-    C["corridor<br/><small>owns PubSub, in Discord vocabulary<br/>-- independent of core/asyncapi.yaml</small>"]
-    Pico["pico"]
-
-    Canvas -- "vendored by" --> PA
-    PA -- "served by" --> FP
-    FP -- "publisher and<br/>subscriber of" --> C
-    C -- "has publisher" --> Pico
-```
-
-Two channels, one bridge: the left half of this chain (`Canvas` through
-`floorplan`) is the existing, shipped webview-serving path — floorplan
-speaks pixel-agents' wire protocol there. The right half (`corridor`
-through `pico`) is corridor's Discord-vocabulary path — corridor speaks
-nothing but its own dataclasses there. floorplan is both the bus's first
-publisher (its own Discord gateway listeners) and its subscriber
-(translating events back into webview messages, all six types); pico is
-the bus's second publisher, for `AgentReplied` only so far —
-`AgentStatusChanged` stays future work.
-
-### Implementation status, verified line by line
-
-| Piece | Status | Evidence |
-|---|---|---|
-| Reply rendering | ✅ Implemented | `corridor/application/reply_service.py`, `corridor/adapters/cog_base.py::send_reply`/`render_reply` |
-| Permission tiers | ✅ Implemented | `corridor/application/permission_service.py`, `corridor/adapters/cog_base.py::require_permission`/`capabilities_satisfy` |
-| Webview bundle vendoring + build | ✅ Implemented | `pixelagents/infrastructure/webview_build.py` |
-| Webview serving + WebSocket protocol | ✅ Implemented | `floorplan/infrastructure/websocket.py`, `floorplan/contracts/websocket.py` |
-| Consumer-driven contract tests (pixelagents, pixel_index) | ✅ Implemented | `contracts/pixel_agents/verify.py`, `contracts/pixel_index/verify.py` |
-| Reply-channel static lint (all cogs, corridor included) | ✅ Implemented | `contracts/discord_replies/lint_reply_channel.py` |
-| corridor `EventBusService` (`publish`/`subscribe`) | ✅ Implemented | `corridor/application/event_bus_service.py`, `corridor/adapters/cog_base.py::publish_event`/`subscribe_event`/`unsubscribe_owner` |
-| corridor domain types (`AgentRef`, `AgentReplied`, `AgentPresenceChanged`, ...) | ✅ Implemented | `corridor/domain/models.py`, exported via `corridor/domain/__init__.py` |
-| floorplan publishing to the bus | ✅ Implemented | `floorplan/adapters/discord_gateway.py` publishes `AgentPresenceChanged`/`AgentReplied` |
-| floorplan subscribing to the bus | ✅ Implemented, all six event types | `floorplan/adapters/event_subscriptions.py::EventSubscriptionsMixin` — `AgentPresenceChanged`/`AgentReplied` (own publications) plus `AgentHighlighted`/`AgentUnhighlighted`/`AgentToolStarted`/`AgentStatusChanged` (published by `testbench` today) |
-| `testbench` manually publishing any event to the bus | ✅ Implemented | `testbench/adapters/views.py`, owner-only, UI generated from `corridor/event_catalog.py` |
-| pico publishing `AgentReplied` to the bus | ✅ Implemented | `pico/tools/reply_tool.py::ReplyTool._publish_agent_replied`, called right after a successful `send_reply` |
-| pico publishing `AgentStatusChanged` to the bus | ❌ Not implemented, out of scope for this PR | no such `publish_event` call site in `pico/` |
-| Defensive subscription cleanup | ✅ Implemented | `corridor/adapters/cog_base.py::on_cog_remove` — drops a subscriber's registrations if it disappears without calling `unsubscribe_owner` itself |
-| Headless/ghost rendering (`isHeadless`/`headlessAgents`) | ✅ Implemented | `pixelagents/application/office.py`'s `spawn`/`reconcile`/`existing_agents_message`, driven by `AgentRef.is_bot` |
-| Consumer-driven contract test for corridor's bus | ✅ Implemented | `contracts/corridor/generate_corridor_contract.py --check`, generated `corridor/corridor.yaml` |
-
-## Goals
-
-- A publishing cog can emit a typed event without knowing whether anything
-  is subscribed.
-- A subscribing cog can register interest in an event type without
-  knowing whether anything publishes it (yet, or ever).
-- corridor stays the only new edge either side gains. **No direct
-  `pico -> floorplan` dependency is ever introduced** — the dependency
-  graph in `docs/architecture.md` diagram 1 does not change shape, only
-  corridor's own responsibilities grow.
-- A broken or slow subscriber cannot break or block a publisher. Precedent
-  already exists for this in this codebase:
-  `floorplan/infrastructure/client_hub.py`'s `ClientHub` isolates
-  broadcast failures per socket so one dead connection doesn't stop
-  delivery to the others — the bus needs the same isolation, per
-  subscriber instead of per socket.
-
-## Non-goals (for this doc, and for the first implementation)
-
-- **No implementation in this PR.** Corridor's actual `EventBusService`,
-  floorplan's subscription, and pico's `publish` call are all follow-up
-  work.
-- **No cross-process or persistent bus.** In-process, single event loop,
-  scoped to one running bot — the same scope every other corridor service
-  already has. Nothing here needs to survive a restart.
-- **No free-form event shape.** A closed set of frozen dataclasses, one
-  per kind of agent activity — mirroring how `ReplyField`/`PermissionGroupDef`
-  are explicit domain types today, never a stringly-typed `type` tag plus
-  an untyped payload dict. See "Domain model" below.
-- **No guaranteed delivery, ordering, or replay.** If nothing is
-  subscribed when an event publishes, it's simply dropped — the same as
-  floorplan's WebSocket broadcast today drops messages when no client is
-  connected.
+- **floorplan becomes a pure subscriber.** It renders the office canvas
+  from whatever the bus delivers, and never decides for itself what counts
+  as "something happened."
+- **corridor becomes the one cog that watches Discord's gateway on this
+  bus's behalf**, the same way it's already the one cog that owns reply
+  rendering and permission tiers. A publisher shouldn't need
+  subscriber-specific knowledge (floorplan's `include_bots`/office-tracking
+  settings) to decide what to publish — corridor publishes everything, and
+  subscriber-side filtering (floorplan deciding what to render) replaces
+  publisher-side gating.
+- **architect joins as a second, LLM-agent-shaped publisher**, alongside
+  pico. Neither imports the other, and neither imports floorplan —
+  corridor stays the only edge either side gains.
 
 ## High-level architecture
 
 ```mermaid
 flowchart LR
+    classDef publisher fill:#2f6f4f,stroke:#1c4230,color:#fff
+    classDef subscriber fill:#3a5a9c,stroke:#22355c,color:#fff
+    classDef hub fill:#6b4fa0,stroke:#402f60,color:#fff
+
     subgraph Publishers["Publishers"]
-        pico["pico<br/><small>publishes: gate decided to<br/>respond, tool loop acted</small>"]
-        pub_future["(future publisher)"]
+        Corridor["corridor<br/><small>own Discord gateway listeners:<br/>presence + message mirroring</small>"]
+        Pico["pico<br/><small>AgentReplied, after send_reply</small>"]
+        Architect["architect<br/><small>AgentPresenceChanged on load/unload,<br/>AgentReplied on tool use/thinking</small>"]
+        Testbench["testbench<br/><small>manual, dev/test only</small>"]
+        PubFuture["(future publisher)<br/><small>any cog -- publish_event() with a<br/>real AgentRef, no bus change needed</small>"]
     end
 
-    subgraph corridor_bus["corridor — event bus"]
-        bus["EventBusService<br/><small>publish(event: AgentActivityEvent)<br/>subscribe(EventClass, handler)</small>"]
+    subgraph Bus["corridor — EventBusService"]
+        EB["publish(event: AgentActivityEvent)<br/>subscribe(EventClass, handler)"]
     end
 
     subgraph Subscribers["Subscribers"]
-        floorplan["floorplan<br/><small>renders office canvas bubbles<br/>via pixelagents.contracts.outbound</small>"]
-        sub_future["(future subscriber)"]
+        Floorplan["floorplan<br/><small>renders office canvas via<br/>pixelagents.contracts.outbound</small>"]
+        SubFuture["(future subscriber)<br/><small>any cog -- subscribe_event() at<br/>cog_load, no code change here</small>"]
     end
 
-    pico -->|publish| bus
-    pub_future -.->|publish, later| bus
-    bus -->|dispatch| floorplan
-    bus -.->|dispatch, later| sub_future
+    Corridor -->|publish| EB
+    Pico -->|publish| EB
+    Architect -->|publish| EB
+    Testbench -.->|publish, manual| EB
+    PubFuture -.->|publish, later| EB
+    EB -->|dispatch| Floorplan
+    EB -.->|dispatch, later| SubFuture
+
+    class Corridor,Pico,Architect,Testbench,PubFuture publisher
+    class Floorplan,SubFuture subscriber
+    class EB hub
 ```
 
-pico is the reference publisher and floorplan the reference subscriber
-for this design, because both already exist and both already have a
-reason to use the bus today. Nothing about the bus itself is pico- or
-floorplan-specific — `toolbox` or a future cog could publish or subscribe
-the same way, which is why the diagram leaves a "future" slot on each
-side.
-
-## Where this fits in corridor's existing layering
-
-Every cog in this repo follows the same `domain/` / `application/` /
-`infrastructure/` / `adapters/` split
-([`docs/AGENTS.md` "Internal layering"](AGENTS.md#internal-layering)).
-The bus slots into corridor's existing layers the same way
-`PermissionService`/`ReplyService` already do — no new layer, no new
-cross-cutting concern:
-
-```mermaid
-flowchart TB
-    subgraph domain["corridor/domain/"]
-        agent_ref["AgentRef<br/><small>discord_user_id, guild_id, is_bot</small>"]
-        activities["AgentReplied / AgentToolStarted /<br/>AgentStatusChanged / ...<br/><small>closed set of frozen dataclasses,<br/>each carries one AgentRef</small>"]
-    end
-    subgraph application["corridor/application/"]
-        perm["PermissionService<br/><small>existing</small>"]
-        reply["ReplyService<br/><small>existing</small>"]
-        bus_svc["EventBusService<br/><small>proposed</small>"]
-    end
-    subgraph adapters["corridor/adapters/cog_base.py"]
-        chokepoints["require_permission / capabilities_satisfy<br/>render_reply / send_reply<br/>publish_event / subscribe_event <small>(proposed)</small>"]
-    end
-
-    activities --> agent_ref
-    bus_svc --> activities
-    chokepoints --> perm
-    chokepoints --> reply
-    chokepoints --> bus_svc
-```
-
-`CogBase.__init__` would wire one `EventBusService` instance the same way
-it already wires `PermissionService`/`ReplyService` today
-(`corridor/adapters/cog_base.py`) — one bus per bot process, not per
-guild, with guild scoping carried on each event's `AgentRef` (see below).
+`EventBusService` itself lives inside corridor (`corridor/application/event_bus_service.py`),
+so "corridor publishes" means two distinct things that share one word: the
+bus **is** corridor's, *and* corridor (the cog) is now also **a**
+publisher onto its own bus — the same way it's already the chokepoint for
+reply rendering and permissions. That dual role is intentional, not
+confusing in practice: every other cog only ever calls
+`corridor.publish_event(...)`/`corridor.subscribe_event(...)`, whether
+corridor itself, pico, or architect is the one constructing the event.
 
 ## Domain model: a closed set of agent-activity dataclasses
 
-Settled direction (superseding an earlier draft of this doc that used a
-generic `Event(type: str, payload: Mapping)` envelope — rejected because
-it's stringly-typed, mypy-blind, and says nothing about *agents*, which is
-the whole point of this bus): every publishable event is its own frozen
-dataclass, all sharing one `AgentRef`. No generic envelope, no string
-tag, no untyped payload.
-
-### Verified against the real wire protocol first
-
-Before settling field names, every dataclass below was checked against
-`core/asyncapi.yaml` in `pixel-agents-hq/pixel-agents` **at the exact
-commit this repo currently pins**
-(`df517d19aa8a503ffa950315e51a3f200f2edf1f`, from
-`pixelagents/infrastructure/webview_vendor.commit` — fetched directly from
-that commit, not assumed from a newer or older checkout lying around
-locally). This is the second pass at this verification: the pin moved from
-`3537e14` to `df517d1` specifically because of the three commits this doc's
-own review comment prompted — see "Design review" below. The
-`asyncapi.yaml` channel is explicitly documented as bidirectional:
-`ServerMessage` (32 variants at this pin, up from 31 — `AgentDeselected` is
-new — server → client, the half a bus event ultimately has to become,
-since floorplan only ever *broadcasts* to browsers, never receives
-bus-originated data back from one) and `ClientMessage` (22 variants,
-unchanged, browser → server, editor-gated). Every field below is taken
-from the real, currently-pinned `ServerMessage` schema, not invented:
-
-- **`agentToolStart`** requires `id`, `toolId`, **and `status`** — a
-  required, human-readable label. `toolName` is *optional*, not required
-  — an earlier draft of this doc had that backwards.
-- **`agentToolDone`** (`id`, `toolId`) and **`agentToolsClear`** (`id`
-  only — clears *all* foreground tools for that agent) are both real, and
-  distinct. floorplan's own existing Discord-message handling
-  (`floorplan/adapters/discord_gateway.py::_clear_tool_after_delay`)
-  already uses `agentToolsClear` after `message_tool_clear_delay`, **not**
-  `agentToolDone` — a second correction to an earlier draft, which claimed
-  `agentToolStart → agentToolDone` for this exact path.
-- **`agentStatus`**'s `status` field is `AgentActivityStatus`, a real
-  two-value enum: `active` / `waiting` — matches this doc's
-  `Literal["active", "waiting"]` exactly. It also carries an optional
-  `awaitingInput: bool`, documented upstream as "only meaningful when
-  status is waiting... True when the agent went idle waiting on the user."
-  That's a CLI-coding-agent concept (blocked mid-task on a human) with no
-  clean pico analogue today — included below for shape-fidelity, expected
-  to stay unset until/unless something in pico actually blocks like that.
-- **`agentContextUsage`** (`contextTokens`, `maxContextTokens`) is real
-  and verified, and maps unusually well onto pico: pico already has a
-  bounded conversation window (`HISTORY_LIMIT = 10` in
-  `pico/adapters/listener.py`) and a bounded tool-call budget
-  (`max_tool_calls`, `docs/architecture.md` §4). **Not** added to the
-  closed set below yet — flagged as the strongest verified candidate for
-  the next one, once there's an actual token-accounting story in pico to
-  back it.
-- **`existingAgents.externalAgents`** and **`agentCreated.isExternal`**
-  are both real, and already exercised: `pixelagents/tests/test_contracts_outbound.py`
-  asserts `agent_created(..., is_external=True)` today for exactly this
-  kind of agent. Every Discord-derived agent (human or bot) is already
-  "external" in the wire protocol's sense — this is a **constant of where
-  the agent came from, not new per-event data any dataclass below needs
-  to carry**.
-- **Headless agents no longer require a purely client-detected heuristic.**
-  As of `df517d1`, `AgentCreated` carries an optional `isHeadless: bool`
-  and `ExistingAgents` a matching `headlessAgents: dict[str, bool]` — an
-  explicit, protocol-level override. The webview's `resolveHeadless(isExternal,
-  explicitHeadless, isBrowserRuntime)` (`webview-ui/src/office/engine/headlessAgent.ts`)
-  now reads `explicitHeadless ?? (isExternal === true && !isBrowserRuntime)`
-  — the override wins when a producer sends it; the old
-  `isBrowserRuntime`-gated heuristic (still architecturally inert for
-  floorplan's deployment, per the previous version of this bullet) is only
-  the fallback now. floorplan can set `isHeadless` explicitly per agent
-  going forward. See "Now unblocked" below for what floorplan should set
-  it to.
-- **`agentTeamInfo` is real but excluded**, per direction on this design:
-  its fields (`teamName`, `isTeamLead`, `leadAgentId`, `teamUsesTmux`)
-  describe CLI-agent-team concepts — a lead agent with teammates sharing a
-  tmux session — with no Discord analogue.
-- **`agentSelected` was wrongly excluded in an earlier draft of this doc**,
-  which claimed it was "VS Code only" and had no Discord analogue. That was
-  wrong, and upstream has since corrected the schema's own description to
-  match: office-cogs already sends it —
-  `pixelagents/application/office.py::send_message_activity` calls
-  `agent_selected(agent_id)` on every tracked Discord message, specifically
-  to force the label panel open. `agentSelected`'s description in
-  `core/asyncapi.yaml` now reads "not VS Code-only," naming "a Discord
-  bridge forcing its label panel open for an incoming message" explicitly.
-  It also now has a real counterpart, **`agentDeselected`** (`id` only) —
-  see "Design review" below for the full finding and "Now unblocked" for
-  the dataclasses this adds.
-
-### The dataclasses
+Every publishable event is its own frozen dataclass, all sharing one
+`AgentRef`. No generic envelope, no string tag, no untyped payload —
+`corridor/domain/models.py` is the schema source of truth every publisher
+and subscriber codes against.
 
 ```python
 @dataclass(frozen=True, slots=True)
 class AgentRef:
-    """A Discord member represented as a webview agent. Deliberately holds
-    the *raw* Discord user ID, not floorplan's derived, JS-safe negative
-    agent ID -- that derivation (`_discord_id_to_agent_id`) stays
-    floorplan's own concern, the only place that currently needs it."""
+    """A Discord member (or a non-Discord agent, like architect)
+    represented as a webview agent. `discord_user_id`/`guild_id` are
+    `None` for an agent with no real Discord account or guild scope --
+    architect is A2A-reachable, not a Discord bot login, and isn't scoped
+    to one guild. Deliberately Optional rather than a sentinel (`0`/`-1`):
+    a sentinel would type-lie (claim to be a real Discord snowflake) and
+    risks colliding with an actual ID; `None` states the domain honestly.
+    `is_bot` stays a plain, always-known `bool`."""
 
-    discord_user_id: int
-    guild_id: int
+    discord_user_id: int | None
+    guild_id: int | None
     is_bot: bool  # ties into floorplan's existing per-guild `include_bots` setting
 
 
 @dataclass(frozen=True, slots=True)
 class AgentReplied:
-    """Named for corridor's own verb (`send_reply`). Originally scoped to
-    "a publisher sends a reply through corridor, nothing broader" -- widened
-    once floorplan's own raw Discord message mirroring became a second
-    publisher alongside any cog's send_reply call. `summary` is always the
-    full, untruncated text -- wire truncation/wording is the subscriber's
-    job, never the publisher's."""
+    """Named for corridor's own verb (`send_reply`), but deliberately
+    broader than "a reply got sent": also covers an agent's tool-use or
+    "thinking" step (architect). `AgentToolStarted` below looks
+    purpose-built for tool-use reporting and stays unused for this by
+    design -- `AgentReplied` is the one event every subscriber already
+    renders as a labeled activity bubble, and a tool/thinking step is
+    exactly that: a short, human-readable label attached to an agent,
+    with no separate lifecycle to track. `summary` is always the full,
+    untruncated text -- wire truncation/wording is the subscriber's job,
+    never the publisher's."""
 
     agent: AgentRef
-    summary: str  # -> agentToolStart's required `status` label, floorplan's own wording/truncation
+    summary: str  # -> agentToolStart's required `status` label
 
 
 @dataclass(frozen=True, slots=True)
@@ -395,25 +152,21 @@ class AgentToolStarted:
 class AgentStatusChanged:
     agent: AgentRef
     status: Literal["active", "waiting"]   # matches AgentActivityStatus exactly
-    awaiting_input: bool | None = None     # matches AgentStatus.awaitingInput; see note above
+    awaiting_input: bool | None = None     # matches AgentStatus.awaitingInput
 
 
 @dataclass(frozen=True, slots=True)
 class AgentHighlighted:
-    """-> agentSelected(id). Named for what it does in Discord vocabulary
-    (draw attention to this member's activity), not for the CLI-editor
-    action (`agentSelected`'s own wire name) that happens to share the
-    mechanism."""
+    """-> agentSelected(id)."""
 
     agent: AgentRef
 
 
 @dataclass(frozen=True, slots=True)
 class AgentUnhighlighted:
-    """-> agentDeselected(id). Only takes effect if this agent is still
-    the highlighted one -- matches agentDeselected's own no-op-if-stale
-    semantics on the wire, so publishing this after a newer AgentHighlighted
-    already moved the highlight elsewhere is always safe."""
+    """-> agentDeselected(id). No-op unless this agent is still the
+    highlighted one -- safe to publish even after a newer AgentHighlighted
+    already moved the highlight elsewhere."""
 
     agent: AgentRef
 
@@ -428,10 +181,7 @@ AgentActivityEvent = (
 class AgentActivity:
     """One Discord rich-presence activity, mirroring
     pixelagents.domain.ActivitySnapshot's shape (corridor must not import
-    pixelagents types, so this is a parallel, hand-kept-in-sync copy).
-    Includes `name` -- PresenceService.label()'s fallback for every
-    non-LISTENING kind reads it; omitting it would silently break those
-    rich-presence bubbles."""
+    pixelagents types, so this is a parallel, hand-kept-in-sync copy)."""
 
     kind: str
     name: str | None = None
@@ -448,11 +198,9 @@ class AgentPresenceChanged:
     ones (join/leave/status/activity) -- every one of those needs the same
     full-snapshot reconstruction to call reconcile() anyway.
 
-    status="offline" covers both a real Discord offline/invisible status
-    AND a member actually leaving the guild -- on_member_remove publishes
-    this same shape with status="offline"; the subscriber maps that to
-    AgentSnapshot(status=None, ...), matching reconcile()'s own
-    `folder is None` branch."""
+    status="offline" covers a real Discord offline/invisible status, a
+    member leaving the guild, AND an agent cog unloading (architect) --
+    there's no separate "member left"/"agent went away" event."""
 
     agent: AgentRef
     display_name: str
@@ -460,164 +208,218 @@ class AgentPresenceChanged:
     activities: tuple[AgentActivity, ...] = ()
 ```
 
-Renamed from an earlier draft's `AgentActivity` (the publish/subscribe
-union) to **`AgentActivityEvent`**, once the presence work above needed
-`AgentActivity` for a second, unrelated concept: a single Discord
-rich-presence activity, embedded inside `AgentPresenceChanged`. The two
-never overlap — `AgentActivityEvent` is the closed set of types a cog
-`publish()`es/`subscribe()`s to; `AgentActivity` is a value object carried
-*inside* one specific member of that set.
-
-`is_bot` exists because both kinds of Discord member are meant to become
-agents, not just bots: floorplan's own presence mirroring already treats
-every guild member as an agent today, human or bot, gated only by its
-per-guild `include_bots` setting. For pico specifically, `AgentRef` names
-*pico's own Discord bot user* — pico is publishing "I, this bot account,
-did something," the same way floorplan's existing presence path already
-turns a human member's message into an `agentToolStart` bubble for that
-human. A future publisher representing a human-triggered activity (not
-just a bot's own) would set `is_bot=False` and reference that human's
-Discord user ID instead — the dataclasses don't change, only which member
-`AgentRef` points at. Every one of these events also assumes the
-underlying agent already exists on the canvas (an `agentCreated` for that
-`AgentRef`'s derived ID) — for pico that's already true today, since
-pico's own bot account gets mirrored the same as any guild member via
-floorplan's existing presence path (subject to `include_bots`); this bus
-only ever adds activity on top of an agent, it never creates one itself.
+`AgentActivityEvent` is the closed set of types a cog `publish()`es/
+`subscribe()`s to; `AgentActivity` is a value object carried *inside* one
+specific member of that set (`AgentPresenceChanged.activities`) — the two
+never overlap.
 
 `EventBusService.subscribe` dispatches by concrete class
 (`subscribe(AgentReplied, handler, owner="Floorplan")`), not by a string
 key — a subscriber only ever registers for classes it actually knows how
-to handle, and mypy can check that a handler's signature matches the
-class it's registered against.
+to handle, and mypy can check that a handler's signature matches the class
+it's registered against.
 
 **Deliberately not included:** any of `pixelagents.contracts.outbound`'s
-wire-shaped fields (no `id` in the derived agent-ID namespace, no raw
-message construction). Translating an `AgentActivityEvent` into the exact
-canvas message stays entirely floorplan's job, the same way it alone owns
-translating a Discord presence update into one today — this bus only ever
-crosses the "something happened to this Discord member" boundary, never
-the "here's the exact webview message" one. See
-[floorplan's presence-mapping table](../floorplan/Architecture.md#presence-mapping)
-for the shape of translation floorplan already does for raw Discord
-signals; `floorplan/adapters/event_subscriptions.py`'s subscriber handlers
-do the equivalent for bus-originated events.
+wire-shaped fields (no derived agent-ID, no raw message construction).
+Translating an `AgentActivityEvent` into the exact canvas message stays
+entirely floorplan's job — this bus only ever crosses the "something
+happened to this agent" boundary, never the "here's the exact webview
+message" one.
 
-Candidate first mapping, now against verified fields and, for the
-presence path, actually shipped:
+### Verified against the real wire protocol
 
-| Dataclass | Published by | Wire translation |
+Every field above was checked against `core/asyncapi.yaml` in
+`pixel-agents-hq/pixel-agents`, at the commit this repo currently pins
+(`pixelagents/infrastructure/webview_vendor.commit`):
+
+- `agentToolStart` requires `id`, `toolId`, and `status` (a required,
+  human-readable label); `toolName` is optional.
+- `agentToolDone` (`id`, `toolId`) and `agentToolsClear` (`id` only —
+  clears *all* foreground tools for that agent) are distinct.
+  Message-mirroring's own clear path uses `agentToolsClear`, not
+  `agentToolDone`.
+- `agentStatus`'s `status` is `AgentActivityStatus`: `active`/`waiting`,
+  matching `Literal["active", "waiting"]` exactly, plus an optional
+  `awaitingInput: bool`.
+- `agentSelected`/`agentDeselected` are both real and independently
+  publishable — a publisher can highlight an agent without a full
+  `AgentReplied`.
+- `AgentCreated`/`ExistingAgents` carry an explicit `isHeadless`/
+  `headlessAgents` override, driven by `AgentRef.is_bot` — architect's own
+  presence, `is_bot=True`, renders headless the same way pico's bot
+  account already does.
+
+### Mapping table
+
+| Dataclass | Published by (target) | Wire translation |
 |---|---|---|
-| `AgentReplied` | **shipped, two producers**: floorplan's own `on_message` listener, for every tracked member's Discord message except this bot's own account (`floorplan/adapters/discord_gateway.py`); pico's `ReplyTool`, right after `corridor.send_reply` succeeds (`pico/tools/reply_tool.py`) — floorplan's `on_message` guard is exactly what stops pico's own reply from being double-published by both producers for the same message | `agentToolStart` (`status=summary`) then `agentSelected`, via the existing, unchanged `OfficeService.send_message_activity` (matches its pre-existing parity for a raw Discord message). After `message_tool_clear_delay`, `OfficeService.clear_message_activity` sends `agentToolsClear` only — **not** `agentToolDone`, and **not** `agentDeselected` either: `agentSelected`'s own no-expiry semantics mean nothing needs to actively deselect, and re-pinging a deselect at clear time was rejected as a re-ping with no visible effect (see `test_message_clear_does_not_reping`) |
-| `AgentPresenceChanged` | **shipped**: floorplan's own presence/member-join/member-remove listeners (`floorplan/adapters/discord_gateway.py`) | The existing, unchanged `OfficeService.reconcile()` — spawns/closes/renames the agent and forwards each `AgentActivity` into `ActivitySnapshot` for rich-presence bubbles, exactly as it did before this event existed |
-| `AgentStatusChanged` | **shipped as a subscriber, manual publisher only**: `testbench`'s owner-only UI can publish it on demand; pico's automatic publish (after `GateService.decide` returns `RESPOND` / after the tool loop finishes) is still future work | `agentStatus` (`status` ∈ `active`/`waiting`; `awaiting_input` expected unset) via `OfficeService.set_status`, gated on `is_tracked` |
-| `AgentToolStarted` | **shipped as a subscriber, manual publisher only**: `testbench`; reserved for when pico grows tools beyond `send_reply` (`docs/architecture.md` §4 notes the tool-loop shape already supports more) | `agentToolStart` via `OfficeService.start_tool_activity`, gated on `is_tracked`. Deliberately no paired clear event (settled, see below) — the bubble stays until something else sends `agentToolsClear`/a new `agentToolStart` for the same agent |
-| `AgentHighlighted` | **shipped as a subscriber, manual publisher only**: `testbench` | `agentSelected(id)` via `OfficeService.highlight_agent`, gated on `is_tracked` |
-| `AgentUnhighlighted` | **shipped as a subscriber, manual publisher only**: `testbench` | `agentDeselected(id)` via `OfficeService.unhighlight_agent`, gated on `is_tracked` — safe to send even if a newer highlight already moved on, since the wire message is itself a no-op unless it still matches |
+| `AgentReplied` | **corridor** (message mirroring, replacing floorplan's own `on_message`), **pico** (`ReplyTool`, after `send_reply` succeeds), **architect** (tool use/thinking steps, and see "architect" below) | `agentToolStart` (`status=summary`) then `agentSelected`, via `OfficeService.send_message_activity`. After `message_tool_clear_delay`, `OfficeService.clear_message_activity` sends `agentToolsClear` only |
+| `AgentPresenceChanged` | **corridor** (member update/presence update/join/remove listeners, replacing floorplan's own), **architect** (`cog_load` → online, `cog_unload` → offline) | `OfficeService.reconcile()` — spawns/closes/renames the agent, forwards each `AgentActivity` |
+| `AgentStatusChanged` | manual only (`testbench`) — no automated publisher yet | `agentStatus` via `OfficeService.set_status`, gated on `is_tracked` |
+| `AgentToolStarted` | manual only (`testbench`) — deliberately unused by architect's tool/thinking reporting, see the `AgentReplied` docstring above | `agentToolStart` via `OfficeService.start_tool_activity`, gated on `is_tracked` |
+| `AgentHighlighted` | manual only (`testbench`) | `agentSelected(id)` via `OfficeService.highlight_agent`, gated on `is_tracked` |
+| `AgentUnhighlighted` | manual only (`testbench`) | `agentDeselected(id)` via `OfficeService.unhighlight_agent`, gated on `is_tracked` |
 
-**Resolved: `AgentToolStarted` does not get a paired clear dataclass.**
-`AgentReplied`'s clear mechanism (reuse `message_tool_clear_delay` →
-`agentToolsClear`) is shipped for both a raw Discord message and pico's
-own reply. The generic `AgentToolStarted`, reserved for a future,
-possibly-longer-running pico tool, deliberately doesn't get an equivalent
-— a fixed delay is a bad fit for a tool whose duration isn't known in
-advance, and a dedicated `AgentToolFinished`/`AgentToolCleared` dataclass
-isn't worth adding to corridor's domain model for a producer that doesn't
-exist yet. An `AgentToolStarted` bubble persists until something else
-clears it (a fresh `agentToolStart`/`agentToolsClear` for the same agent)
-— accepted as fine for now; revisit only once a real producer other than
-`testbench`'s manual UI needs it.
+## Publishers
 
-## Design review: two gaps found, both resolved upstream within the day
+The publisher set is **dynamic too, not a hardcoded list.** Any cog can
+publish by calling `corridor.publish_event(event)` with a real
+`AgentRef` for whatever it represents — corridor, pico, architect, and
+testbench are just the publishers that exist today, the same way
+floorplan is just the only subscriber that exists today. Publishing
+requires no registration/lifecycle call at all (unlike subscribing) —
+there's nothing to add or remove on cog load/unload, since a publisher
+that stops running simply stops calling `publish_event`.
 
-A review pass against `~/pixel-index/vendor/pixel-agents` (the read-only
-vendored source) found one confirmed error in this doc and one genuinely
-open design question. Both were posted as
-[a review comment on pixel-agents-hq/pixel-agents#396](https://github.com/pixel-agents-hq/pixel-agents/pull/396#issuecomment-5385481972),
-and both shipped upstream the same day, as three commits
-(`415856a`, `42e5140`, `df517d1` — the last is this repo's current vendor
-pin). "Now unblocked," further below, covers what that adds to this
-doc's domain model.
+### corridor
 
-### Confirmed error: `agentSelected` is not VS-Code-only, and this doc excluded it wrongly
+Corridor has its own `discord.py` listeners — `on_member_update`,
+`on_presence_update`, `on_member_join`, `on_member_remove`, `on_message`,
+in `corridor/adapters/discord_gateway.py` — that took over the bodies of
+floorplan's former `floorplan/adapters/discord_gateway.py` listeners,
+publishing `AgentPresenceChanged`/`AgentReplied`. Corridor's listeners
+publish unconditionally (no `include_bots`/office-tracking/
+`broadcast_messages` gating) — that filtering moved to the subscriber
+side (see "Migration notes").
 
-The claim that `agentSelected` "doesn't apply where there's no terminal to
-focus" was checked against `asyncapi.yaml`'s *description* field
-(`"An agent's terminal was focused (VS Code only)"`) rather than against
-how this repo actually uses it. It's wrong:
-`pixelagents/application/office.py::send_message_activity` already sends
-`agent_selected(agent_id)` on every tracked Discord message — not to focus
-a terminal, but to force the label panel open (bypassing the
-hover/`alwaysShowLabels` gate) so the message text is visible immediately.
-This has shipped in office-cogs for a while.
+### pico
 
-Tracing what that message actually *does* client-side surfaced something
-more consequential: **until today, it didn't do anything on the real
-office canvas.** `agentSelected`'s webview handler
-(`useExtensionMessages.ts`) only ever updated the React state feeding
-`<DebugView>` — the actual canvas (`<ToolOverlay>`) reads a *different*,
-engine-level field (`officeState.selectedAgentId`) that only direct canvas
-clicks ever set. So office-cogs' `send_message_activity` call has been a
-no-op on the visible office this entire time. This is being fixed live,
-in [pixel-agents#396](https://github.com/pixel-agents-hq/pixel-agents/pull/396)
-(opened the same day as this review), which makes the `agentSelected`
-handler also set `officeState.selectedAgentId` — closing exactly this gap.
+Unchanged. `pico/tools/reply_tool.py::ReplyTool._publish_agent_replied`
+publishes `AgentReplied` right after a successful `corridor.send_reply`,
+with `AgentRef` pointing at pico's own bot account
+(`discord_user_id=self._bot_user_id`, guild-scoped to the invoking guild,
+`is_bot=True`). Pico is the Discord-user-facing bot — it publishing its
+own replies directly, rather than corridor inferring them from
+`on_message`, stays correct and unchanged by this design.
 
-That fix surfaced a second, sharper finding while tracing
-`officeState.ts`: **`selectedAgentId` had no expiry and no deselect
-message.** It only cleared when the referenced agent was removed, or
-another selection/canvas click happened — no `agentToolsClear`-style timer,
-no deselect message at all. Flagged upstream as a real UX regression
-`send_message_activity`'s existing per-message call would have caused once
-#396 shipped (pinning the label panel open on whichever Discord user
-messaged most recently, with no release) — previously invisible only
-because of the bug #396 itself fixes.
+### architect
 
-**Resolved**, same day, in
-[`42e5140`](https://github.com/pixel-agents-hq/pixel-agents/commit/42e5140530086b04ad3f51a029d02414f9652514):
-a new `AgentDeselected` message (`id` only — a no-op if that id isn't the
-currently-selected one, so it can't race a newer selection), and
-`agentSelected`'s own schema description corrected to explicitly name
-"a Discord bridge forcing its label panel open for an incoming message" as
-an intended producer, not just VS Code.
+Architect is A2A-reachable, not Discord-user-facing, and has no Discord
+account or guild scope of its own — its events use a fixed identity,
+`ARCHITECT_AGENT_REF = AgentRef(discord_user_id=None, guild_id=None,
+is_bot=True)`, a module-level constant in `architect/adapters/cog_base.py`
+reused for every event it publishes.
 
-### Design question, now resolved: headless agents
+- **Presence, on cog lifecycle.** `CogBase.cog_load` (right after the
+  existing `self._corridor.register_dependent(...)` call) publishes
+  `AgentPresenceChanged(agent=ARCHITECT_AGENT_REF,
+  display_name="architect", status="online")` — the same shape floorplan's
+  former `on_member_join` published for a human joining. `cog_unload`
+  (right before the existing `unregister_dependent(...)` call) publishes
+  the same event with `status="offline"`, mirroring `on_member_remove`.
+- **Tool use / thinking, per step.** `ToolLoopService.run()`
+  (`architect/application/tool_loop_service.py`) takes an optional
+  `on_activity` callback, awaited once per tool call
+  (`"using tool <name>"`) and once per thinking turn (the model's own text
+  alongside a tool-calling turn, `"thinking: <content>"`).
+  `ArchitectAgentExecutor` threads it through from a `publish_activity`
+  constructor argument; `CogBase` wires `self._publish_activity` — which
+  publishes `AgentReplied(agent=ARCHITECT_AGENT_REF, summary=...)` through
+  corridor — into both `ArchitectAgentExecutor` and, transitively, every
+  call to `tool_loop.run()`.
 
-`isHeadlessAgent()`'s blanket exemption for the entire "standalone"
-runtime (`!isBrowserRuntime`, [pixel-agents#369](https://github.com/pixel-agents-hq/pixel-agents/pull/369))
-was reasoned about against the lightweight `webview-ui dev` browser-preview
-tool introduced in [pixel-agents#143](https://github.com/pixel-agents-hq/pixel-agents/pull/143)
-("every agent would qualify and the cue would distinguish nothing") — a
-throwaway dev tool, not a production third-party consumer. `isBrowserRuntime`
-also covers floorplan's real deployment, where that premise doesn't
-obviously hold: `isExternal=True` is already sent correctly for every
-Discord-derived agent, but the ghost/headless treatment it would otherwise
-drive could never engage for us, structurally, regardless of what we sent.
-Flagged upstream as a request to make that behavior protocol-controllable
-instead of purely client-runtime-detected.
+```mermaid
+sequenceDiagram
+    participant Arch as architect
+    participant C as corridor<br/>(EventBusService)
+    participant FP as floorplan
 
-**Resolved**, same day, in
-[`df517d1`](https://github.com/pixel-agents-hq/pixel-agents/commit/df517d19aa8a503ffa950315e51a3f200f2edf1f)
-(this repo's current vendor pin): `AgentCreated` gained an optional
-`isHeadless: bool` and `ExistingAgents` a matching `headlessAgents: dict[str, bool]`
-override, resolved as `explicitHeadless ?? (isExternal && !isBrowserRuntime)`
-— an explicit per-agent value now wins over the old heuristic. This also
-settled the domain-model question this doc left open: given
-`AgentRef.is_bot` already exists as a durable fact about every agent this
-bus describes, "headless" has a real, useful Discord-vocabulary meaning
-now that it's actually settable — see "Now unblocked" below.
+    Note over Arch: cog_load
+    Arch->>C: publish_event(AgentPresenceChanged(ARCHITECT_AGENT_REF, status="online"))
+    C->>FP: dispatch(event)
 
-## Subscription lifecycle
+    Note over Arch: A2A task received -- tool loop runs
+    loop each tool call / thinking step
+        Arch->>C: publish_event(AgentReplied(ARCHITECT_AGENT_REF, summary=<step label>))
+        C->>FP: dispatch(event)
+    end
 
-Precedent already exists in this exact file for the *opposite* direction:
-`corridor/adapters/cog_base.py`'s `register_dependent`/`unregister_dependent`
-lets corridor cascade-unload a cog that depends on corridor, so a
-dependent never keeps running against a corridor that's gone away. A
-subscription has the reverse failure mode — corridor must not keep a
-stale handler closure bound to a subscriber's now-unloaded Cog instance —
-so the cleanup direction is reversed too: **the subscriber unsubscribes
-itself**, from its own `cog_unload`, rather than corridor tracking and
-cascading it.
+    Note over Arch: cog_unload
+    Arch->>C: publish_event(AgentPresenceChanged(ARCHITECT_AGENT_REF, status="offline"))
+    C->>FP: dispatch(event)
+```
+
+### testbench
+
+Unchanged. A dev/test-only Discord UI (`testbench/adapters/views.py`)
+that lets an operator manually construct and publish any event from the
+closed `AgentActivityEvent` set, generated from `corridor/event_catalog.py`
+— useful for exercising subscriber code before a real automated publisher
+exists (`AgentStatusChanged`, `AgentToolStarted`, `AgentHighlighted`,
+`AgentUnhighlighted` today).
+
+## Subscribers
+
+The subscriber set is **dynamic, not a hardcoded list.** Any cog can
+subscribe by calling `corridor.subscribe_event(event_type, handler,
+owner=...)` from its own `cog_load` — corridor's `EventBusService` (and
+this doc) don't enumerate a closed set of subscribers the way they
+enumerate a closed set of *event types*. floorplan is the only subscriber
+that exists today, not the only one the design allows for. Unloading a
+subscriber's cog removes its subscription: the subscriber calls
+`corridor.unsubscribe_owner(owner)` from its own `cog_unload`
+(`floorplan/adapters/event_subscriptions.py` does this for floorplan
+today), and corridor also defensively drops a subscriber's registrations
+via `CogBase.on_cog_remove` if the cog disappears without calling that
+itself — see "Delivery semantics" below for the full mechanism.
+
+### floorplan — the only subscriber today
+
+floorplan subscribes to all six event types at `cog_load`
+(`floorplan/adapters/event_subscriptions.py::EventSubscriptionsMixin`) and
+unsubscribes at `cog_unload`, translating each into the existing
+`OfficeService.reconcile`/`send_message_activity`/`clear_message_activity`
+calls — unchanged mechanics. Under this design, **floorplan must not call
+`publish_event` anywhere** — its own `discord_gateway.py` listener bodies
+move to corridor (see "Migration notes"), and any per-subscriber filtering
+floorplan used to apply before publishing (guild-enabled, office-tracking,
+`broadcast_messages`) becomes filtering it applies to what it *renders*
+from the events corridor now publishes unconditionally.
+
+```mermaid
+sequenceDiagram
+    participant DC as Discord gateway
+    participant C as corridor<br/>(new listeners + EventBusService)
+    participant FP as floorplan<br/>(subscriber only)
+    participant Hub as floorplan's<br/>ClientHub
+    participant B as Browser webview
+
+    DC->>C: on_presence_update(before, after)
+    C->>C: build AgentPresenceChanged from the<br/>member's current presence/activities
+    C->>C: publish_event(AgentPresenceChanged(...))
+    C->>FP: dispatch(event)  [wrapped: a raising handler is<br/>logged, not propagated to corridor]
+    FP->>FP: apply floorplan's own guild/office-tracking<br/>filtering, then OfficeService.reconcile()
+    FP->>Hub: broadcast(agentCreated / agentClosed /<br/>agentStatus, as reconcile() decides)
+    Hub->>B: push over open socket
+```
+
+## Delivery semantics
+
+- **Sync, awaited dispatch, with per-subscriber error isolation.**
+  `EventBusService.publish` awaits each subscriber's handler in turn
+  inside a `try`/`except`, logs and continues on failure — mirroring
+  `ClientHub`'s per-socket isolation. A subscriber that raises never
+  breaks the publisher's own turn.
+- **Guild scoping.** Every event's `AgentRef` carries `guild_id` (now
+  `int | None`); corridor's bus itself does not filter dispatch by it —
+  that stays each subscriber's own responsibility. An event with
+  `guild_id=None` (a genuine agent, e.g. architect) isn't guild-scoped at
+  all — floorplan's subscriber handlers resolve it to a `GenuineAgentKey`
+  and render it on the one shared office canvas unconditionally, rather
+  than checking any guild's settings. See
+  `docs/office-agent-identity-design.md`.
+- **Ordering and backpressure.** Explicitly out of scope — event volume
+  is bounded by Discord message/interaction rates and A2A task volume,
+  nowhere near where ordering or backpressure would matter.
+- **Subscription lifecycle.** The subscriber unsubscribes itself, from
+  its own `cog_unload` (`corridor.unsubscribe_owner(owner)`), rather than
+  corridor tracking and cascading it — the reverse direction of
+  `register_dependent`/`unregister_dependent`. Corridor also defensively
+  drops a subscriber's registrations if its Cog disappears without
+  calling `unsubscribe_owner` itself: `CogBase.on_cog_remove` is a
+  `@commands.Cog.listener()` for Red's `cog_remove` dispatch (fired
+  unconditionally after every cog removal, crash-mid-`cog_unload()` or
+  not), calling `unsubscribe_owner(cog.qualified_name)`.
 
 ```mermaid
 sequenceDiagram
@@ -636,374 +438,43 @@ sequenceDiagram
     C-->>FP: handler dropped
 ```
 
-**Resolved: corridor also defensively drops an owner's subscriptions if
-that owner's Cog disappears without ever calling `unsubscribe_owner`** (a
-crash partway through its own `cog_unload`, say) —
-`register_dependent`'s cascade exists precisely because corridor doesn't
-trust every dependent to clean up after itself perfectly, and the same
-distrust applies here.
+## Migration notes
 
-The mechanism, verified against the real installed discord.py 2.7.1 +
-Red-DiscordBot 3.5.24 source: `Bot.remove_cog` pops the cog from
-`bot.cogs` **before** calling `cog_unload()`; `Cog._eject` runs
-`cog_unload()` inside its own `try`/`except Exception` and swallows
-(logs) whatever it raises — discord.py's way, not corridor's — and the
-cog is already gone from `bot.cogs` by the time that runs either way.
-Red's own `remove_cog` override then unconditionally does
-`self.dispatch("cog_remove", cog)` — fired exactly once per real removal,
-crash-mid-`cog_unload()` or not, for every removal path (`[p]unload`,
-`[p]reload`, a direct `remove_cog` call). `CogBase.on_cog_remove`
-(`corridor/adapters/cog_base.py`) is a `@commands.Cog.listener()` for
-exactly this event, calling `unsubscribe_owner(cog.qualified_name)` — no
-polling, no new mechanism, an already-existing Red hook that fires
-reliably regardless of how the cog went away.
+All landed:
 
-## Shipped example: pico publishes, floorplan renders it
-
-This is the flow the whole design exists to support — closing the loop
-between [`docs/architecture.md` §4](architecture.md#4-runtime-data-flow-picos-gate-then-tool-loop)
-(pico's tool loop) and
-[§3a](architecture.md#3a-presence-mirroring-via-corridors-pubsub-bus)
-(floorplan's canvas broadcast), with corridor mediating instead of either
-cog knowing about the other:
-
-```mermaid
-sequenceDiagram
-    participant Pico as pico<br/>(ReplyTool)
-    participant C as corridor<br/>(EventBusService)
-    participant FP as floorplan
-    participant Hub as floorplan's<br/>ClientHub
-    participant B as Browser webview
-
-    Pico->>Pico: tool loop calls ReplyTool.handler,<br/>sends via corridor.send_reply
-    Pico->>C: publish_event(AgentReplied(AgentRef(bot_user_id, guild_id, is_bot=True), summary))
-    C->>C: look up subscribers registered for AgentReplied
-    C->>FP: dispatch(event)  [wrapped: a raising handler is<br/>logged, not propagated to pico]
-    FP->>FP: OfficeService.send_message_activity --<br/>agent_id via agent_id(user_id),<br/>send agentToolStart(status=summary) + agentSelected
-    FP->>Hub: broadcast(message)
-    Hub->>B: push over open socket
-    Note over FP,Hub: after message_tool_clear_delay,<br/>floorplan sends agentToolsClear (existing mechanism)
-```
-
-pico never imports anything from floorplan, and floorplan never imports
-anything from pico — both only ever talk to corridor. This is the same
-shape `docs/architecture.md` §1 already documents for `required_cogs`:
-corridor is the one edge every other cog gets, never each other.
-
-The `corridor.send_reply` call at the top of this diagram *also* creates a
-real Discord message, which floorplan's own `on_message` listener would
-otherwise see and publish a second `AgentReplied` for — floorplan's
-`on_message` explicitly excludes messages from this bot's own account
-(never other bots) specifically to avoid that double-publish. See the
-mapping table above.
-
-## Shipped example: floorplan publishes and subscribes to itself
-
-Unlike the pico example above, this path is real, shipped by this PR, and
-has a twist the pico/floorplan example doesn't: **floorplan is both the
-publisher and the subscriber for `AgentPresenceChanged`.** The bus still
-does real work here — it's the seam between "listening to Discord" and
-"rendering to the canvas" inside floorplan itself, the same seam a future
-second cog (or pico) could plug a publisher or subscriber into without
-floorplan's gateway listeners or translation code changing at all:
-
-```mermaid
-sequenceDiagram
-    participant DC as Discord gateway
-    participant FP1 as floorplan<br/>(discord_gateway.py,<br/>publisher)
-    participant C as corridor<br/>(EventBusService)
-    participant FP2 as floorplan<br/>(event_subscriptions.py,<br/>subscriber)
-    participant Hub as floorplan's<br/>ClientHub
-    participant B as Browser webview
-
-    DC->>FP1: on_presence_update(before, after)
-    FP1->>FP1: build AgentPresenceChanged from the<br/>member's current PresenceStatus/ActivitySnapshots
-    FP1->>C: publish_event(AgentPresenceChanged(...))
-    C->>C: look up subscribers registered for AgentPresenceChanged
-    C->>FP2: dispatch(event)  [wrapped: a raising handler is<br/>logged, not propagated to the publisher]
-    FP2->>FP2: reconstruct AgentSnapshot,<br/>call OfficeService.reconcile() unchanged
-    FP2->>Hub: broadcast(agentCreated / agentClosed /<br/>agentTeamInfo / agentStatus, as reconcile() decides)
-    Hub->>B: push over open socket
-```
-
-The same shape repeats for `AgentReplied`: `on_message` publishes it for
-every tracked member's Discord message, and `event_subscriptions.py`'s
-`_on_agent_replied` subscribes to drive `send_message_activity`/
-`clear_message_activity` unchanged (see the mapping table above for the
-exact wire sequence). `on_member_remove` publishes the same
-`AgentPresenceChanged(status="offline")` shape as any other presence
-change — there's no separate "member left" event, matching this doc's
-original one-rich-event design decision.
-
-## Delivery semantics — settled, as shipped
-
-- **Sync, awaited dispatch, with per-subscriber error isolation.**
-  `EventBusService.publish` awaits each subscriber's handler in turn inside
-  a `try`/`except`, logs and continues on failure — mirroring `ClientHub`'s
-  per-socket isolation. A subscriber that raises never breaks the
-  publisher's own turn (pico's tool loop doesn't fail because floorplan's
-  rendering threw; verified by
-  `corridor/tests/test_event_bus_service.py`'s isolation tests). Whether
-  dispatch should instead be fire-and-forget (`asyncio.create_task` per
-  handler) is worth revisiting once there's a second subscriber and real
-  latency data — the shipped synchronous version keeps failure modes easy
-  to reason about, and nothing about the presence path's latency has given
-  a reason to revisit it.
-- **Guild scoping.** Every event's `AgentRef` carries `guild_id`; corridor's
-  bus itself does not filter dispatch by it. That stays each subscriber's
-  own responsibility — floorplan's `_on_agent_presence_changed`/
-  `_on_agent_replied` re-read their own per-guild `enabled` config at
-  dispatch time (`floorplan/adapters/event_subscriptions.py`), the same
-  gate the old direct-call code applied — so corridor doesn't need to know
-  any subscriber's own guild-enablement model.
-- **Ordering and backpressure.** Explicitly out of scope — event volume
-  here is bounded by Discord message/interaction rates on a single guild,
-  nowhere near where ordering or backpressure would matter. Revisit only
-  if that assumption stops holding.
-- **Testing.** Every cog's test suite already installs corridor's shared
-  `redbot.core`/`discord` stubs via `corridor.testing.install_stubs()`
-  (see `corridor/testing.py`, imported by `pico/conftest.py`,
-  `floorplan/tests/conftest.py`, etc.). `floorplan/tests/conftest.py`'s
-  `FakeCorridor` now implements a real mini pub/sub — it records every
-  published event to `.published` *and* dispatches to registered
-  subscribers, deliberately without corridor's own error isolation so a
-  bug in a test's handler fails loudly instead of being swallowed —
-  following the existing stub-set convention rather than inventing a new
-  one.
-
-## What this PR lands, and what's still follow-up
-
-- [x] `corridor/domain/models.py`: `AgentRef` and the closed
-      `AgentActivityEvent` set — `AgentReplied`/`AgentToolStarted`/
-      `AgentStatusChanged`/`AgentHighlighted`/`AgentUnhighlighted`/
-      `AgentPresenceChanged` — plus the `AgentActivity` value object.
-      `AgentToolStarted`'s paired-clear-dataclass question is resolved (no
-      — see below); `AgentReplied`'s clear mechanism is settled and
-      shipped: reuse floorplan's existing `message_tool_clear_delay` →
-      `agentToolsClear` (see the mapping table above for why **not** also
-      `agentDeselected`).
-- [x] `corridor/application/event_bus_service.py`: `EventBusService`
-      (`publish`, `subscribe` keyed by concrete class, `unsubscribe_owner`),
-      unit-tested in isolation the way `PermissionService`/`ReplyService`
-      are.
-- [x] `corridor/adapters/cog_base.py`: `publish_event`/`subscribe_event`/
-      `unsubscribe_owner` chokepoint methods, wired the same way
-      `send_reply`/`require_permission` are.
-- [x] pico: publish `AgentReplied` from `ReplyTool.handler`, right after
-      `corridor.send_reply` succeeds, with `AgentRef` pointing at pico's
-      own bot user (`self.bot.user.id`, guild-scoped to the invoking
-      guild). `AgentStatusChanged` (after `GateService.decide`/the tool
-      loop finishes) is **not** part of this PR — still future work.
-- [x] floorplan: publish `AgentPresenceChanged` (member update/presence
-      update/join/remove listeners) and `AgentReplied` (tracked-member
-      messages) at the point `discord_gateway.py` used to call
-      `OfficeService`/`PresenceService` directly; subscribe at `cog_load`,
-      unsubscribe at `cog_unload`
-      (`floorplan/adapters/event_subscriptions.py`), translate each event
-      back into the existing `OfficeService.reconcile`/
-      `send_message_activity`/`clear_message_activity` calls, completely
-      unchanged — see the sequence diagram below.
-- [x] Update [`docs/architecture.md`](architecture.md) once pico's publish
-      landed — the dependency graph in §1 didn't change shape (just
-      corridor's own responsibilities grew), but §2's ownership map, §3a
-      (renamed off "no corridor involvement"), and §4's pico diagram now
-      show the real, shipped `AgentReplied` shape. A full
-      pico → corridor → floorplan diagram replacing this doc's own
-      "Shipped example" sections still doesn't exist there — this doc
-      stays the deep-dive reference, `docs/architecture.md` a condensed
-      cross-reference to it.
-- [x] `AgentHighlighted`/`AgentUnhighlighted` (map to `agentSelected`/
-      `agentDeselected`) — floorplan now subscribes to both
-      (`OfficeService.highlight_agent`/`unhighlight_agent`, gated on
-      `is_tracked`); `agent_deselected(id)` is a new builder in
-      `pixelagents/contracts/outbound.py` (it didn't exist before this).
-      `AgentReplied`'s own translation still gets `agentSelected` for free
-      from `OfficeService.send_message_activity`, unrelated to this
-      subscription — these two are for a publisher that wants to highlight
-      an agent *without* a full `AgentReplied`. No automated publisher
-      exists yet; `testbench` can publish either manually today.
-- [x] `AgentToolStarted`/`AgentStatusChanged` — floorplan now subscribes to
-      both (`OfficeService.start_tool_activity`/`set_status`, gated on
-      `is_tracked`). `AgentToolStarted`'s paired-clear-dataclass question
-      is resolved (no — see below). No automated publisher exists yet for
-      either; `testbench` can publish either manually today.
-- [x] Defensive subscription cleanup: `corridor/adapters/cog_base.py::on_cog_remove`
-      listens for Red's `cog_remove` dispatch (fired unconditionally after
-      every cog removal, crash-mid-`cog_unload()` or not) and calls
-      `unsubscribe_owner(cog.qualified_name)` — see "Subscription
-      lifecycle" below.
-- [x] Headless/ghost rendering driven by `agent.is_bot` — floorplan's
-      translation sets `isHeadless=agent.is_bot` when building
-      `agentCreated`/`existingAgents` (`pixelagents/application/office.py`).
-      Fixed alongside a pre-existing drift: `isExternal=True` was never
-      actually wired at either `agent_created` call site despite being
-      documented as such — now genuinely set for every Discord-derived
-      agent.
-- [ ] Headless/ghost rendering driven by `agent.is_bot` — **no new
-      dataclass** (`AgentRef.is_bot` already covers it); floorplan-side
-      translation work only: set `isHeadless=agent.is_bot` when building
-      `agentCreated`/`existingAgents`. Still not done — verified via grep,
-      `isHeadless`/`headlessAgents` appear nowhere in `pixelagents/` or
-      `floorplan/` yet. This item doesn't touch corridor's bus at all,
-      since `is_bot` comes from Discord directly and floorplan already has
-      it independently of any `AgentActivityEvent`.
-- [x] A real consumer-driven check for `corridor/corridor.yaml`:
-      `corridor/event_catalog.py` introspects `corridor/domain/models.py`'s
-      real dataclasses into a plain-data schema, and
-      `contracts/corridor/generate_corridor_contract.py` regenerates
-      `corridor.yaml` from it; CI's `--check` mode fails on any drift, the same way
-      `contracts/pixel_agents/lint_outbound_contract.py` verifies
-      `pixelagents.contracts.outbound` against
-      `pixel-agents-consumer-contract.yaml` — see "Verifying this design:
-      two committed contracts" below.
-
-## Now unblocked: what pixel-agents-hq/pixel-agents#396 shipped
-
-Both additions flagged during this doc's review pass are unblocked as of
-the vendor pin bump to `df517d1`.
-
-1. **`agentSelected`/`agentDeselected` → `AgentHighlighted`/`AgentUnhighlighted`.**
-   Mapping: `AgentHighlighted(agent: AgentRef)` → `agentSelected(id)`,
-   `AgentUnhighlighted(agent: AgentRef)` → `agentDeselected(id)`. Both are
-   independently publishable — a publisher can highlight an agent without
-   also faking a full `AgentReplied` — and floorplan now subscribes to
-   both (`OfficeService.highlight_agent`/`unhighlight_agent`, gated on
-   `is_tracked` the same way every other subscriber handler is).
-   `agent_deselected(agent_id)` is a **new** builder in
-   `pixelagents/contracts/outbound.py` added specifically for this —
-   `agentDeselected` had no producer at all before. This is independent of
-   `AgentReplied`'s own translation, which still gets `agentSelected` for
-   free from `OfficeService.send_message_activity` (matching that
-   method's pre-existing parity for a raw Discord message) and clears via
-   `OfficeService.clear_message_activity` sending only `agentToolsClear` —
-   not `agentDeselected` too, since `agentSelected` has no expiry to race
-   and an unconditional deselect at clear time would be a re-ping with no
-   visible effect. The unbounded-pinning risk this review originally
-   flagged is closed regardless: `agentDeselected` is real, safe to send
-   anytime, and reachable today by publishing `AgentUnhighlighted` — from
-   `testbench`, manually, until an automated publisher exists.
-2. **Headless agents: distinguishes bot accounts from human members —
-   still needs no new corridor dataclass.** `AgentRef.is_bot` already
-   carries the fact that drives this. What changed is that it's now
-   *implementable*, and now implemented: `OfficeService.spawn`/`reconcile`
-   (`pixelagents/application/office.py`) pass `is_headless=snapshot.is_bot`
-   into every `agent_created(...)` call, and `existing_agents_message`
-   builds a `headlessAgents` map alongside `externalAgents` from a new
-   `self._agent_is_bot` cache (keyed by bare `user_id` — `is_bot` is
-   guild-invariant). This is worth being precise about: **it requires zero
-   involvement from corridor's bus.** `is_bot` is `discord.Member.bot`,
-   which floorplan's own presence-mirroring code already reads directly
-   from the Discord gateway and forwards into `AgentSnapshot.is_bot` — it
-   doesn't need an `AgentActivityEvent` to learn a fact it already has.
-   The domain model doesn't change; only `OfficeService`'s existing
-   translation code gained the field. Verified via grep:
-   `isHeadless`/`headlessAgents` now appear in
-   `pixelagents/contracts/outbound.py` and
-   `pixelagents/application/office.py`.
-
-## Verifying this design: two committed contracts
-
-Everything above is a design that can drift two ways: pixel-agents' upstream
-WebSocket protocol can change (it already has, twice, during this doc's own
-review pass), and corridor's future implementation can drift from what this
-doc says it will build. Both get a committed, CI-checked contract — one per
-side of floorplan's translation boundary, matching the "two channels, one
-bridge" framing from earlier in this doc. Neither contract references the
-other's vocabulary; only floorplan ever touches both.
-
-```mermaid
-flowchart LR
-    subgraph corridor_yaml["corridor/corridor.yaml"]
-        cAgentRef["AgentRef / AgentActivity<br/><small>value objects</small>"]
-        cActivities["AgentReplied / AgentToolStarted /<br/>AgentStatusChanged / AgentHighlighted /<br/>AgentUnhighlighted / AgentPresenceChanged"]
-    end
-
-    FP["floorplan"]
-
-    subgraph pa_yaml["contracts/pixel_agents/<br/>pixel-agents-consumer-contract.yaml"]
-        wMessages["agentCreated / agentClosed /<br/>agentToolStart / agentToolDone /<br/>agentToolsClear / agentStatus /<br/>agentSelected / existingAgents / ..."]
-    end
-
-    cActivities -->|subscribed by| FP
-    FP -->|builds via<br/>pixelagents.contracts.outbound| wMessages
-```
-
-### `contracts/pixel_agents/pixel-agents-consumer-contract.yaml`
-
-A **generated, but committed** file — unlike `contracts/pixel_index/contract.yaml`
-(gitignored, rebuilt fresh every run), this one is meant to be read: it's
-produced by `generate_consumer_contract.py` introspecting
-`pixelagents.contracts.outbound`'s TypedDicts (via `typing.get_type_hints`/
-`__required_keys__`, since they're plain `TypedDict`s, not pydantic models —
-`model_json_schema()` doesn't apply here the way it does for Pixel Index),
-but CI regenerates it and fails on any diff from the committed copy, so a
-change to `outbound.py` always shows up as a reviewable diff to this file in
-the same PR — never silent, never hand-typed. Checked two ways, matching
-Pixel Index's existing offline/live split:
-
-- **Offline** (`lint_outbound_contract.py`, every PR, no network): do
-  `pixelagents.contracts.outbound`'s builders still produce exactly what
-  we've committed to?
-- **Live** (`verify_outbound.py`'s new `consumer_contract_drift` check,
-  scheduled + PR-gated, needs the real vendor clone): does upstream's
-  *actual*, currently-pinned `core/asyncapi.yaml` still support every field
-  this contract declares?
-
-**Deliberately narrower than "Verified against the real wire protocol"
-above.** That section documents everything this doc has *verified against
-upstream* — including `agentDeselected` and `isHeadless`/`headlessAgents`,
-per "Now unblocked." This generated contract only covers what
-`pixelagents.contracts.outbound` (+ `existing_agents_message`) *actually
-builds today* — neither of those two appears in it yet, because no producer
-exists for them. They'll appear automatically, with zero generator changes,
-the moment a future PR adds real producers (floorplan's `AgentHighlighted`/
-`AgentUnhighlighted` translation, most likely). Until then, this file is
-narrower than the doc's own prose by design — not a gap to close, just two
-different questions ("what have we verified is possible" vs. "what do we
-actually send").
-
-### `corridor/corridor.yaml`
-
-A **generated, but committed** file, following the same pattern as
-`pixel-agents-consumer-contract.yaml` above, with one difference from every
-other contract in this repo: it lives inside `corridor/` itself, not
-`contracts/`. `docs/corridor.md` documents `contracts/` as a
-`SHARED_LIBRARY`-type package "other cogs never import at runtime" —
-CI-only. That held fine while `corridor.yaml` only had CI readers
-(`generate_corridor_contract.py --check`, `lint_corridor_contract.py`).
-It stopped holding once `testbench` needed the same schema at *runtime*,
-to build its Discord UI generically off the event set — a real cog can't
-import `contracts` without breaking that rule, so the contract (and the
-introspection that builds it) moved to where every cog that already
-depends on corridor can reach it: `corridor/event_catalog.py` now owns
-`build_contract()` (introspecting every `Agent`-prefixed name in
-`corridor.domain.__all__` via `dataclasses.fields()`/`typing.get_type_hints()`
-— a different introspection API than the TypedDict-based `pixel_agents`
-generator, since corridor's domain types are plain dataclasses, not
-TypedDicts), and `contracts/corridor/generate_corridor_contract.py`
-imports that function rather than duplicating it. All eight names appear
-in the rendered `version`/`status`/`events` shape: the two value objects
-(`AgentRef`, `AgentActivity`) and the six `AgentActivityEvent` members
-(`AgentReplied`, `AgentToolStarted`, `AgentStatusChanged`,
-`AgentHighlighted`, `AgentUnhighlighted`, `AgentPresenceChanged`) —
-`AgentActivityEvent` itself is skipped, since it's a union alias, not a
-dataclass.
-
-Unlike `pixel_agents`' contract, there's no separate offline-capture lint
-here: corridor's domain types are plain in-process dataclasses, never
-serialized to JSON, so there's no "captured wire message" to
-runtime-validate the way `outbound.py`'s TypedDicts are. The generator's
-own `--check` mode *is* the full consumer-driven check: CI runs
-`python -m contracts.corridor.generate_corridor_contract --check` and fails
-on any diff from the committed copy, so a change to
-`corridor/domain/models.py` always shows up as a reviewable diff to this
-file in the same PR — never silent, never hand-typed, exactly like the
-`pixel_agents` contract above. `contracts/corridor/lint_corridor_contract.py`
-keeps one narrower job on top: every event name in the committed
-`corridor.yaml` is still mentioned in this doc's own text, so the doc can't
-silently drift out of sync with the model it describes.
+1. **`AgentRef` field-type change.** `discord_user_id`/`guild_id` are now
+   `int | None`, and `AgentRef` also gained `agent_key: str | None` for
+   genuine agents (see `docs/office-agent-identity-design.md`). Every
+   existing construction/pattern-match site was updated: floorplan's
+   subscriber handlers resolve an `OfficeIdentity` (`_office_identity` in
+   `floorplan/adapters/event_subscriptions.py`) instead of dropping an
+   event with no Discord snowflakes — a genuine agent renders on the
+   shared office canvas rather than being silently discarded; pico's
+   `ReplyTool` and testbench's manual UI needed no change (they always
+   pass real `int`s, a subtype of `int | None`).
+2. **Floorplan's old publish-time gating moved to the subscriber side.**
+   `_on_agent_presence_changed` already re-checked `guild_settings.enabled`;
+   `_on_agent_replied` now also re-checks `guild_settings.enabled` and
+   `broadcast_messages()` itself, replacing the checks corridor's own
+   listeners no longer make before publishing. `include_bots` was never a
+   publish-time gate (`reconcile()` has always taken it as a parameter);
+   `is_tracked` was already a subscriber-side check.
+3. **Architect's fixed `AgentRef`.** `ARCHITECT_AGENT_REF` is a
+   module-level constant in `architect/adapters/cog_base.py`, alongside
+   the `WEBVIEW_BASE_PATH` constant it's declared next to.
+4. **Contract regeneration.** `corridor/corridor.yaml` was regenerated
+   (`AgentRef`'s field types only) via
+   `corridor/event_catalog.py::build_contract()`.
+   `contracts/pixel_agents/pixel-agents-consumer-contract.yaml` needed no
+   change — this design never added a new wire-protocol field, only moved
+   which cog constructs the same corridor-side dataclasses.
+5. **No lint config change needed.** `contracts/corridor/lint_corridor_contract.py`'s
+   cross-reference check (every event name in `corridor.yaml` must stay
+   mentioned in this doc's own text) still targets this same file, at the
+   same path — this rewrite keeps every event name (`AgentReplied`,
+   `AgentToolStarted`, `AgentStatusChanged`, `AgentHighlighted`,
+   `AgentUnhighlighted`, `AgentPresenceChanged`) mentioned above.
 
 See [`docs/contract-testing.md`](contract-testing.md) for the full
-methodology this reuses (why generate instead of hand-write, how drift
-is caught, how to read a CI result) and [`contracts/README.md`](../contracts/README.md)
+contract-generation methodology and [`contracts/README.md`](../contracts/README.md)
 for local run commands.

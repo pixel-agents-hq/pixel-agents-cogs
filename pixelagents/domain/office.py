@@ -45,6 +45,25 @@ class AgentKey:
 
 
 @dataclass(frozen=True, slots=True)
+class GenuineAgentKey:
+    """Identity of a genuine agent -- one with no Discord account, e.g.
+    architect. Parallel to AgentKey, never a variant of it: AgentKey's
+    fields are real Discord snowflakes by construction, and a genuine
+    agent doesn't have one to supply. `agent_key` is a short, stable slug
+    ("architect") -- see corridor.domain.AgentRef.agent_key, the field
+    this is built from. See docs/office-agent-identity-design.md."""
+
+    agent_key: str
+
+
+# The identity shape every OfficeService entry point that used to take
+# only AgentKey now accepts -- is_tracked, highlight_agent,
+# unhighlight_agent, start_tool_activity, set_status, send_message_activity,
+# clear_message_activity.
+OfficeIdentity: TypeAlias = AgentKey | GenuineAgentKey
+
+
+@dataclass(frozen=True, slots=True)
 class ActivitySnapshot:
     """The activity fields currently needed to build an office label."""
 

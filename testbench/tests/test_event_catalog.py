@@ -66,9 +66,10 @@ class TestValueObjectFields(unittest.TestCase):
         self.assertEqual(
             fields,
             (
-                FieldSpec(name="discord_user_id", type_str="int", required=True),
-                FieldSpec(name="guild_id", type_str="int", required=True),
+                FieldSpec(name="discord_user_id", type_str="int | None", required=True),
+                FieldSpec(name="guild_id", type_str="int | None", required=True),
                 FieldSpec(name="is_bot", type_str="bool", required=True),
+                FieldSpec(name="agent_key", type_str="str | None", required=False, default=None),
             ),
         )
 

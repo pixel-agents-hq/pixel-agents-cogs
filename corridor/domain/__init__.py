@@ -1,8 +1,10 @@
+from .agent_directory import RegisteredAgent, card_with_url
 from .llm_tools import LLMToolSpec, ToolDescription, infer_parameters, llm_tool, llm_tool_spec
 from .models import (
     EMPLOYEE_KEY,
     OWNER_KEY,
     RESERVED_GROUP_KEYS,
+    A2ASettings,
     AgentActivity,
     AgentActivityEvent,
     AgentHighlighted,
@@ -34,6 +36,7 @@ __all__ = [
     "LLMToolSpec",
     "OWNER_KEY",
     "RESERVED_GROUP_KEYS",
+    "A2ASettings",
     "AgentActivity",
     "AgentActivityEvent",
     "AgentHighlighted",
@@ -50,6 +53,7 @@ __all__ = [
     "MemberCapabilities",
     "PermissionGroupDef",
     "PermissionSettings",
+    "RegisteredAgent",
     "RegisteredTool",
     "RenderedReply",
     "ReplyField",
@@ -59,6 +63,7 @@ __all__ = [
     "ToolAvailabilityCheck",
     "ToolVisibilityFilter",
     "ToolDescription",
+    "card_with_url",
     "infer_parameters",
     "llm_tool",
     "llm_tool_spec",

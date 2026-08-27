@@ -12,6 +12,7 @@ from redbot.core import Config
 
 from ..domain import (
     RESERVED_GROUP_KEYS,
+    A2ASettings,
     GuildSettings,
     IconPreference,
     IconSource,
@@ -30,10 +31,18 @@ CONFIG_IDENTIFIER = 0x636F72726964  # "corrid" in hex
 DEFAULT_LLM_BASE_URL = "https://litellm.nntin.xyz/"
 DEFAULT_LLM_MODEL = "chatgpt/gpt-5.4"
 
+# Moved here from architect (see docs/agent-directory-design.md) -- there is
+# now exactly one A2A listener process-wide, owned by corridor, not one per
+# agent. Same defaults architect's own former a2a_host/a2a_port fields used.
+DEFAULT_A2A_HOST = "127.0.0.1"
+DEFAULT_A2A_PORT = 8931
+
 GLOBAL_DEFAULTS: dict[str, object] = {
     "llm_base_url": DEFAULT_LLM_BASE_URL,
     "llm_api_key": None,
     "llm_model": DEFAULT_LLM_MODEL,
+    "a2a_host": DEFAULT_A2A_HOST,
+    "a2a_port": DEFAULT_A2A_PORT,
 }
 
 DEFAULT_PERMISSION_GROUPS: list[dict[str, object]] = [
@@ -135,6 +144,20 @@ class RedCorridorRepository:
 
     async def set_llm_model(self, value: str) -> None:
         await self._config.llm_model.set(value)
+
+    async def a2a_settings(self) -> A2ASettings:
+        return A2ASettings(
+            a2a_host=cast(str, await self._config.a2a_host()),
+            a2a_port=cast(int, await self._config.a2a_port()),
+        )
+
+    async def set_a2a_host(self, value: str) -> None:
+        await self._config.a2a_host.set(value)
+
+    async def set_a2a_port(self, value: int) -> None:
+        if isinstance(value, bool) or not 1 <= value <= 65535:
+            raise ValueError("Port must be an integer from 1 through 65535.")
+        await self._config.a2a_port.set(value)
 
     async def set_reply_mode(self, guild_id: int, mode: ReplyMode) -> None:
         await self._config.guild_from_id(guild_id).reply_mode.set(mode.value)

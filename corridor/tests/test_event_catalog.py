@@ -23,9 +23,10 @@ class TestBuildContract(unittest.TestCase):
         self.assertEqual(
             entry["fields"],
             {
-                "discord_user_id": {"type": "int"},
-                "guild_id": {"type": "int"},
+                "discord_user_id": {"type": "int | None"},
+                "guild_id": {"type": "int | None"},
                 "is_bot": {"type": "bool"},
+                "agent_key": {"type": "str | None", "default": None},
             },
         )
 

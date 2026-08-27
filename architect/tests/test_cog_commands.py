@@ -340,3 +340,66 @@ class TestDependentRegistration(unittest.IsolatedAsyncioTestCase):
 
         assert bot.corridor is not None
         self.assertNotIn("architect", bot.corridor.registered_dependents)
+
+
+class TestPresencePublishing(unittest.IsolatedAsyncioTestCase):
+    """architect announces itself on corridor's event bus the same way
+    floorplan's on_member_join/on_member_remove do for a Discord member --
+    see docs/corridor-pubsub-design.md."""
+
+    async def test_cog_load_publishes_online_presence(self) -> None:
+        bot = FakeBot()
+        cog = Architect(bot=bot)
+
+        await cog.cog_load()
+        self.addAsyncCleanup(cog.cog_unload)
+
+        assert bot.corridor is not None
+        presence_events = [
+            event
+            for event in bot.corridor.published
+            if type(event).__name__ == "AgentPresenceChanged"
+        ]
+        self.assertEqual(len(presence_events), 1)
+        event = presence_events[0]
+        self.assertEqual(event.status, "online")
+        self.assertEqual(event.display_name, "architect")
+        self.assertIsNone(event.agent.discord_user_id)
+        self.assertIsNone(event.agent.guild_id)
+        self.assertTrue(event.agent.is_bot)
+        self.assertEqual(event.agent.agent_key, "architect")
+
+    async def test_cog_unload_publishes_offline_presence(self) -> None:
+        bot = FakeBot()
+        cog = Architect(bot=bot)
+        await cog.cog_load()
+
+        await cog.cog_unload()
+
+        assert bot.corridor is not None
+        statuses = [
+            event.status
+            for event in bot.corridor.published
+            if type(event).__name__ == "AgentPresenceChanged"
+        ]
+        self.assertEqual(statuses, ["online", "offline"])
+
+    async def test_tool_activity_publishes_agent_replied(self) -> None:
+        bot = FakeBot()
+        cog = Architect(bot=bot)
+        await cog.cog_load()
+        self.addAsyncCleanup(cog.cog_unload)
+
+        await cog._publish_activity("using tool describe_office")
+
+        assert bot.corridor is not None
+        replied_events = [
+            event for event in bot.corridor.published if type(event).__name__ == "AgentReplied"
+        ]
+        self.assertEqual(len(replied_events), 1)
+        event = replied_events[0]
+        self.assertEqual(event.summary, "using tool describe_office")
+        self.assertIsNone(event.agent.discord_user_id)
+        self.assertIsNone(event.agent.guild_id)
+        self.assertTrue(event.agent.is_bot)
+        self.assertEqual(event.agent.agent_key, "architect")

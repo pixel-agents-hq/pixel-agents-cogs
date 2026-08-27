@@ -181,11 +181,28 @@ class AgentRef:
     """A Discord member represented as a webview agent. Deliberately holds
     the *raw* Discord user ID, not floorplan's derived, JS-safe negative
     agent ID -- that derivation (`_discord_id_to_agent_id`) stays
-    floorplan's own concern, the only place that currently needs it."""
+    floorplan's own concern, the only place that currently needs it.
 
-    discord_user_id: int
-    guild_id: int
+    `discord_user_id`/`guild_id` are `None` for an agent with no real
+    Discord account or guild scope -- e.g. architect, which is
+    A2A-reachable rather than a Discord bot login. Deliberately Optional
+    rather than a sentinel (`0`/`-1`): a sentinel would type-lie (claim to
+    be a real Discord snowflake) and risks colliding with an actual ID;
+    `None` states the domain honestly. See
+    docs/corridor-pubsub-design.md.
+
+    `agent_key` is a stable slug ("architect") identifying a *genuine*
+    agent -- one with no Discord account at all. Required (non-None)
+    exactly when `discord_user_id`/`guild_id` are both `None`; `None`
+    whenever they're set. An `AgentRef` is either a Discord account
+    (identified by its snowflakes) or a genuine agent (identified by
+    `agent_key`), never a mix of both identity schemes. See
+    docs/office-agent-identity-design.md."""
+
+    discord_user_id: int | None
+    guild_id: int | None
     is_bot: bool
+    agent_key: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

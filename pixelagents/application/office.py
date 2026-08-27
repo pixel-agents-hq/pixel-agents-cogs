@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import random
 from collections.abc import Callable, Mapping, Sequence
@@ -18,7 +19,7 @@ from ..contracts.outbound import (
     agent_tool_start,
     agent_tools_clear,
 )
-from ..domain import AgentKey, AgentSnapshot, MessageSnapshot
+from ..domain import AgentKey, AgentSnapshot, GenuineAgentKey, MessageSnapshot, OfficeIdentity
 from .presence import PresenceService, SendMessage, ServerMessage
 
 JS_MAX_SAFE = (1 << 53) - 1
@@ -44,6 +45,20 @@ def to_agent_id(external_id: int) -> int:
 
     mapped = external_id % JS_MAX_SAFE
     return -(mapped if mapped != 0 else JS_MAX_SAFE)
+
+
+def to_genuine_agent_id(agent_key: str) -> int:
+    """Map a genuine agent's stable slug (e.g. "architect") to a positive
+    JavaScript-safe integer -- disjoint from to_agent_id's always-negative
+    range by construction, so a genuine agent's webview ID can never
+    collide with a real Discord user's, with no collision registry
+    needed. A stable hash (not Python's randomized hash()) so the same
+    agent_key maps to the same ID across restarts. See
+    docs/office-agent-identity-design.md."""
+
+    digest = hashlib.sha256(agent_key.encode()).digest()
+    mapped = int.from_bytes(digest[:8], "big") % JS_MAX_SAFE
+    return mapped if mapped != 0 else JS_MAX_SAFE
 
 
 def merge_seat_patch(
@@ -102,6 +117,14 @@ class OfficeService:
         # internally-chosen representative guild_id, which isn't exposed.
         self._agent_is_bot: dict[int, bool] = {}
         self._logged_collisions: set[int] = set()
+        # Genuine agents (no Discord account, e.g. architect) -- a second,
+        # simpler roster alongside self._agents: no cross-guild merge logic
+        # applies (a genuine agent isn't guild-scoped, so there's only ever
+        # one entry per agent_key), folded into the same outward-facing
+        # roster (existing_agents_message/bootstrap_messages) every
+        # connecting browser already receives. See
+        # docs/office-agent-identity-design.md.
+        self._genuine_agents: dict[str, tuple[str, str]] = {}
 
     @property
     def active_agents(self) -> dict[tuple[int, int], tuple[str, str]]:
@@ -120,6 +143,15 @@ class OfficeService:
     def agent_id(user_id: int) -> int:
         return to_agent_id(user_id)
 
+    @staticmethod
+    def genuine_agent_id(agent_key: str) -> int:
+        return to_genuine_agent_id(agent_key)
+
+    def _agent_id_for(self, identity: OfficeIdentity) -> int:
+        if isinstance(identity, GenuineAgentKey):
+            return self.genuine_agent_id(identity.agent_key)
+        return self.agent_id(identity.user_id)
+
     def tracked_user_ids(self) -> list[int]:
         seen: set[int] = set()
         ordered: list[int] = []
@@ -136,8 +168,10 @@ class OfficeService:
             representatives.setdefault(user_id, agent_state)
         return representatives
 
-    def is_tracked(self, key: AgentKey) -> bool:
-        return (key.guild_id, key.user_id) in self._agents
+    def is_tracked(self, identity: OfficeIdentity) -> bool:
+        if isinstance(identity, GenuineAgentKey):
+            return identity.agent_key in self._genuine_agents
+        return (identity.guild_id, identity.user_id) in self._agents
 
     def is_user_active_in_other_guild(self, guild_id: int, user_id: int) -> bool:
         return any(gid != guild_id and uid == user_id for gid, uid in self._agents)
@@ -185,6 +219,17 @@ class OfficeService:
             # external, unconditionally.
             external_agents[str(agent_id)] = True
             headless_agents[str(agent_id)] = self._agent_is_bot.get(user_id, False)
+        for agent_key, (folder, _) in self._genuine_agents.items():
+            agent_id = self.genuine_agent_id(agent_key)
+            agent_ids.append(agent_id)
+            folder_names[str(agent_id)] = folder
+            agent_meta[str(agent_id)] = self.seat_meta(agent_id, seats)
+            # Ships with the same treatment a Discord bot gets for now --
+            # see docs/office-agent-identity-design.md's open question on
+            # whether a genuine agent deserves its own distinct isExternal/
+            # isHeadless value.
+            external_agents[str(agent_id)] = True
+            headless_agents[str(agent_id)] = True
         return {
             "type": "existingAgents",
             "agents": agent_ids,
@@ -308,6 +353,59 @@ class OfficeService:
             await self._send(agent_closed(agent_id))
         await self.send_existing_agents()
 
+    async def reconcile_genuine_agent(
+        self, identity: GenuineAgentKey, display_name: str, status: str
+    ) -> None:
+        """Mirrors reconcile() for a genuine agent -- no cross-guild merge
+        logic applies (a genuine agent has exactly one entry), and no
+        rich-presence activities (not modeled for genuine agents yet, see
+        docs/office-agent-identity-design.md). status="offline" closes it,
+        the same as a Discord member going offline or leaving."""
+
+        cached = self._genuine_agents.get(identity.agent_key)
+        if status == "offline":
+            if cached is not None:
+                await self.close_genuine_agent(identity)
+            return
+
+        agent_id = self.genuine_agent_id(identity.agent_key)
+        if cached is None:
+            self._genuine_agents[identity.agent_key] = (status, display_name)
+            palette, hue_shift = await self.assign_palette(agent_id)
+            await self._send(
+                agent_created(
+                    agent_id, status, palette, hue_shift, is_external=True, is_headless=True
+                )
+            )
+            await self._send(agent_team_info(agent_id, display_name))
+            await self.send_existing_agents()
+            return
+
+        cached_status, cached_name = cached
+        if status != cached_status:
+            self._genuine_agents[identity.agent_key] = (status, display_name)
+            palette, hue_shift = await self.assign_palette(agent_id)
+            await self._send(agent_closed(agent_id))
+            await self._send(
+                agent_created(
+                    agent_id, status, palette, hue_shift, is_external=True, is_headless=True
+                )
+            )
+            if display_name != cached_name:
+                await self._send(agent_team_info(agent_id, display_name))
+            await self.send_existing_agents()
+        elif display_name != cached_name:
+            self._genuine_agents[identity.agent_key] = (status, display_name)
+            await self._send(agent_team_info(agent_id, display_name))
+
+    async def close_genuine_agent(self, identity: GenuineAgentKey) -> None:
+        if identity.agent_key not in self._genuine_agents:
+            return
+        agent_id = self.genuine_agent_id(identity.agent_key)
+        del self._genuine_agents[identity.agent_key]
+        await self._send(agent_closed(agent_id))
+        await self.send_existing_agents()
+
     async def despawn_guild(self, guild_id: int) -> None:
         keys = [AgentKey(gid, uid) for gid, uid in list(self._agents) if gid == guild_id]
         for key in keys:
@@ -365,27 +463,45 @@ class OfficeService:
         if label:
             await self.presence.send_tool(agent_id, label)
 
-    async def highlight_agent(self, key: AgentKey) -> None:
-        await self._send(agent_selected(self.agent_id(key.user_id)))
+    async def send_genuine_agent_activity(self, identity: GenuineAgentKey, content: str) -> None:
+        """A genuine agent's AgentReplied (tool use/thinking) -- the same
+        wire treatment send_message_activity gives a real Discord message,
+        minus MessageSnapshot's Discord-shaped message_id (a genuine agent
+        has no real message to key off; floorplan's synthetic-id comment
+        for the Discord path already notes nothing downstream depends on
+        its real value either)."""
 
-    async def unhighlight_agent(self, key: AgentKey) -> None:
-        await self._send(agent_deselected(self.agent_id(key.user_id)))
+        agent_id = self.genuine_agent_id(identity.agent_key)
+        truncated = content if len(content) <= 40 else content[:40] + "…"
+        await self._send(
+            agent_tool_start(agent_id, f"activity-{identity.agent_key}", "Message", truncated)
+        )
+        await self._send(agent_selected(agent_id))
+
+    async def clear_genuine_agent_activity(self, identity: GenuineAgentKey) -> None:
+        await self._send(agent_tools_clear(self.genuine_agent_id(identity.agent_key)))
+
+    async def highlight_agent(self, identity: OfficeIdentity) -> None:
+        await self._send(agent_selected(self._agent_id_for(identity)))
+
+    async def unhighlight_agent(self, identity: OfficeIdentity) -> None:
+        await self._send(agent_deselected(self._agent_id_for(identity)))
 
     async def start_tool_activity(
-        self, key: AgentKey, tool_id: str, status: str, tool_name: str | None = None
+        self, identity: OfficeIdentity, tool_id: str, status: str, tool_name: str | None = None
     ) -> None:
         await self._send(
-            agent_tool_start(self.agent_id(key.user_id), tool_id, tool_name or "", status)
+            agent_tool_start(self._agent_id_for(identity), tool_id, tool_name or "", status)
         )
 
     async def set_status(
         self,
-        key: AgentKey,
+        identity: OfficeIdentity,
         status: Literal["active", "waiting"],
         awaiting_input: bool | None = None,
     ) -> None:
         await self._send(
-            agent_status(self.agent_id(key.user_id), status, awaiting_input=awaiting_input)
+            agent_status(self._agent_id_for(identity), status, awaiting_input=awaiting_input)
         )
 
     def bootstrap_messages(
@@ -457,6 +573,8 @@ class OfficeService:
         # already online before this client connected.
         for user_id, (_, name) in self._representative_agents().items():
             messages.append(agent_team_info(self.agent_id(user_id), name))
+        for agent_key, (_, name) in self._genuine_agents.items():
+            messages.append(agent_team_info(self.genuine_agent_id(agent_key), name))
         for key, label in self.presence.replay(set(self._agents)):
             agent_id = self.agent_id(key.user_id)
             messages.append(

@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import discord
 
-from corridor.domain import AgentPresenceChanged, AgentReplied
+from corridor.domain import AgentPresenceChanged, AgentRef, AgentReplied
 from floorplan.application import TaskSupervisor
 from floorplan.floorplan import Floorplan as FloorplanCog
 from floorplan.infrastructure.discord import member_snapshot, message_snapshot
@@ -165,15 +165,14 @@ class TestCogTaskLifecycle(unittest.IsolatedAsyncioTestCase):
         await cog.config.message_tool_clear_delay.set(3600.0)
         socket = _FakeClientWebSocketResponse()
         cog._client_hub.add(socket)
-        message = SimpleNamespace(
-            guild=SimpleNamespace(id=1),
-            author=SimpleNamespace(id=2, bot=False),
-            id=99,
-            content="hello",
-            clean_content="hello",
+        # corridor now publishes AgentReplied directly (on_message moved to
+        # corridor/adapters/discord_gateway.py) -- drive the subscriber
+        # handler the same way corridor's publish would dispatch to it.
+        event = AgentReplied(
+            agent=AgentRef(discord_user_id=2, guild_id=1, is_bot=False), summary="hello"
         )
 
-        await cog.on_message(message)
+        await cog._on_agent_replied(event)
         self.assertEqual(len(cog._task_supervisor.tasks), 1)
 
         await cog.cog_unload()
@@ -183,5 +182,5 @@ class TestCogTaskLifecycle(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(socket.closed)
         self.assertEqual(cog._task_supervisor.tasks, frozenset())
 
-        await cog.on_message(message)
+        await cog._on_agent_replied(event)
         self.assertEqual(len(socket._sent), 2)

@@ -100,11 +100,13 @@ class ArchitectAgentExecutor(AgentExecutor):
         tools: Sequence[ToolSpec],
         settings: Callable[[], Awaitable[GlobalSettings]],
         llm_settings: Callable[[], Awaitable[LLMSettings]],
+        publish_activity: Callable[[str], Awaitable[None]] | None = None,
     ) -> None:
         self._tool_loop = tool_loop
         self._tools = tools
         self._settings = settings
         self._llm_settings = llm_settings
+        self._publish_activity = publish_activity
 
     async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
         task_id = context.task_id or uuid.uuid4().hex
@@ -144,6 +146,7 @@ class ArchitectAgentExecutor(AgentExecutor):
             tools=self._tools,
             max_tool_calls=settings.max_tool_calls,
             debug=settings.debug_logging,
+            on_activity=self._publish_activity,
         )
 
         if result.stopped_reason != "final_text" or result.text is None:

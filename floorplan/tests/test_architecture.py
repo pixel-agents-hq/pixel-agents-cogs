@@ -82,14 +82,10 @@ def test_discord_cogmeta_reverse_mro_scan_finds_each_listener_once() -> None:
         for value in discovered.values()
         for listener_name in value.__cog_listener_names__
     ]
-    expected = {
-        "on_dashboard_cog_add",
-        "on_member_join",
-        "on_member_remove",
-        "on_member_update",
-        "on_message",
-        "on_presence_update",
-    }
+    # on_member_join/on_member_remove/on_member_update/on_message/
+    # on_presence_update moved to corridor's own DiscordGatewayMixin --
+    # floorplan is a pure subscriber now, see docs/corridor-pubsub-design.md.
+    expected = {"on_dashboard_cog_add"}
     assert set(listener_names) == expected
     assert all(count == 1 for count in Counter(listener_names).values())
 

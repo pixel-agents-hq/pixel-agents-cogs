@@ -6,11 +6,12 @@ import asyncio
 import logging
 from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from aiohttp import web
 from redbot.core.bot import Red
 
+from corridor.domain import AgentPresenceChanged, AgentRef, AgentReplied
 from pixelagents.application.office import OfficeService
 
 from ..application import ToolLoopService
@@ -37,6 +38,15 @@ log = logging.getLogger("red.architect")
 # Injected as a `<base href>` at serve time (WebviewAssetProvider.base_href)
 # -- mirrors floorplan's own WEBVIEW_BASE_PATH constant, one route per cog.
 WEBVIEW_BASE_PATH = "/third-party/architect/static/"
+
+# architect's own fixed identity on corridor's event bus -- architect is
+# A2A-reachable, not a Discord bot login, and isn't scoped to one guild,
+# so it has neither a real discord_user_id nor a guild_id (see AgentRef's
+# docstring and docs/corridor-pubsub-design.md).
+ARCHITECT_AGENT_REF = AgentRef(
+    discord_user_id=None, guild_id=None, is_bot=True, agent_key="architect"
+)
+ARCHITECT_DISPLAY_NAME = "architect"
 
 
 class _LazyPixelAgents:
@@ -91,6 +101,7 @@ class CogBase:
             tools=self._tools,
             settings=self._repository.global_settings,
             llm_settings=lambda: self._corridor.llm_settings(),
+            publish_activity=self._publish_activity,
         )
         self._a2a_server = A2AServer(self._executor)
         self._pixelagents: Any = None
@@ -139,6 +150,7 @@ class CogBase:
         # So unloading corridor cascades to unload this cog too, instead of
         # leaving it running with a stale corridor reference.
         self._corridor.register_dependent("architect")
+        await self._publish_presence("online")
         self._pixelagents = await ensure_loaded(self.bot, "pixelagents", "PixelAgents")
         await self._notify_owners_dashboard_missing_if_unloaded()
         error = await self._start_a2a_server()
@@ -262,7 +274,38 @@ class CogBase:
         await self._a2a_server.stop()
         await self._websocket_server.stop()
         if self._corridor is not None:
+            await self._publish_presence("offline")
             self._corridor.unregister_dependent("architect")
+
+    async def _publish_presence(self, status: Literal["online", "offline"]) -> None:
+        """Announces architect's own presence on corridor's event bus --
+        mirrors floorplan's on_member_join/on_member_remove publishing the
+        same AgentPresenceChanged shape for a Discord member. A publish
+        failure here must never fail cog_load/cog_unload itself."""
+
+        try:
+            await self._corridor.publish_event(
+                AgentPresenceChanged(
+                    agent=ARCHITECT_AGENT_REF,
+                    display_name=ARCHITECT_DISPLAY_NAME,
+                    status=status,
+                )
+            )
+        except Exception:
+            log.exception("architect: failed to publish presence %s", status)
+
+    async def _publish_activity(self, summary: str) -> None:
+        """Reports one tool-use or "thinking" step from architect's own
+        tool loop as an AgentReplied -- see AgentReplied's docstring on why
+        this overloads that event rather than AgentToolStarted. A publish
+        failure must never fail the tool loop itself."""
+
+        try:
+            await self._corridor.publish_event(
+                AgentReplied(agent=ARCHITECT_AGENT_REF, summary=summary)
+            )
+        except Exception:
+            log.exception("architect: failed to publish tool/thinking activity")
 
     async def _notify_owners_dashboard_missing_if_unloaded(self) -> None:
         """Overridden by DashboardMixin -- kept as a no-op stub here so

@@ -28,6 +28,7 @@ from corridor.domain import (
     AgentUnhighlighted,
 )
 from floorplan.tests.test_floorplan import _connect, _make_cog
+from pixelagents.domain import GenuineAgentKey
 
 
 async def _enable_guild(cog, guild_id, *, include_bots=True):
@@ -237,6 +238,32 @@ class TestOnAgentReplied(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(len(self.ws._sent), 0)
 
+    async def test_disabled_guild_is_a_noop(self):
+        """corridor now publishes AgentReplied unconditionally -- the
+        guild-enabled gate that used to happen before floorplan's own
+        on_message even published now lives here instead."""
+
+        await self.cog.config.guild_from_id(100).enabled.set(False)
+        self.cog._agents[(100, 1)] = ("online", "Tin")
+        await self.cog._on_agent_replied(
+            AgentReplied(
+                agent=AgentRef(discord_user_id=1, guild_id=100, is_bot=False),
+                summary="Hello world",
+            )
+        )
+        self.assertEqual(len(self.ws._sent), 0)
+
+    async def test_broadcast_messages_disabled_is_a_noop(self):
+        await self.cog.config.broadcast_messages.set(False)
+        self.cog._agents[(100, 1)] = ("online", "Tin")
+        await self.cog._on_agent_replied(
+            AgentReplied(
+                agent=AgentRef(discord_user_id=1, guild_id=100, is_bot=False),
+                summary="Hello world",
+            )
+        )
+        self.assertEqual(len(self.ws._sent), 0)
+
     async def test_message_clear_does_not_reping(self):
         """After the message-clear delay, only agentToolsClear is sent —
         agentSelected (sent at message-start) already made the message
@@ -390,6 +417,97 @@ class TestOnAgentStatusChanged(unittest.IsolatedAsyncioTestCase):
             )
         )
         self.assertEqual(len(self.ws._sent), 0)
+
+
+class TestGenuineAgentDispatch(unittest.IsolatedAsyncioTestCase):
+    """A genuine agent (e.g. architect, agent_key set, no Discord
+    snowflakes) renders on the same shared canvas, dispatched through
+    OfficeService's parallel genuine-agent entry points instead of being
+    dropped. See docs/office-agent-identity-design.md."""
+
+    async def asyncSetUp(self):
+        self.cog = _make_cog()
+        self.ws = _connect(self.cog)
+        self.ref = AgentRef(discord_user_id=None, guild_id=None, is_bot=True, agent_key="architect")
+
+    async def test_presence_online_spawns_unconditionally(self):
+        """No guild-enabled gate applies -- unlike a Discord presence
+        event, there's no guild config repository call at all here."""
+
+        await self.cog._on_agent_presence_changed(
+            AgentPresenceChanged(agent=self.ref, display_name="architect", status="online")
+        )
+        sent_types = [json.loads(s)["type"] for s in self.ws._sent]
+        self.assertIn("agentCreated", sent_types)
+        self.assertTrue(self.cog._office_service.is_tracked(GenuineAgentKey("architect")))
+
+    async def test_presence_offline_closes(self):
+        await self.cog._on_agent_presence_changed(
+            AgentPresenceChanged(agent=self.ref, display_name="architect", status="online")
+        )
+        self.ws._sent.clear()
+
+        await self.cog._on_agent_presence_changed(
+            AgentPresenceChanged(agent=self.ref, display_name="architect", status="offline")
+        )
+        sent_types = [json.loads(s)["type"] for s in self.ws._sent]
+        self.assertIn("agentClosed", sent_types)
+        self.assertFalse(self.cog._office_service.is_tracked(GenuineAgentKey("architect")))
+
+    async def test_replied_sends_tool_start_and_selects(self):
+        await self.cog._on_agent_presence_changed(
+            AgentPresenceChanged(agent=self.ref, display_name="architect", status="online")
+        )
+        self.ws._sent.clear()
+
+        await self.cog._on_agent_replied(
+            AgentReplied(agent=self.ref, summary="using tool describe_office")
+        )
+        sent = [json.loads(s) for s in self.ws._sent]
+        self.assertEqual([m["type"] for m in sent], ["agentToolStart", "agentSelected"])
+        self.assertEqual(sent[0]["status"], "using tool describe_office")
+
+    async def test_replied_clear_after_delay_sends_only_agent_tools_clear(self):
+        await self.cog._on_agent_presence_changed(
+            AgentPresenceChanged(agent=self.ref, display_name="architect", status="online")
+        )
+        await self.cog._on_agent_replied(
+            AgentReplied(agent=self.ref, summary="using tool describe_office")
+        )
+        self.ws._sent.clear()
+        agent_id = self.cog._office_service.genuine_agent_id("architect")
+
+        await self.cog._clear_tool_after_delay(agent_id, 0)
+
+        sent_types = [json.loads(s)["type"] for s in self.ws._sent]
+        self.assertEqual(sent_types, ["agentToolsClear"])
+
+    async def test_replied_not_tracked_is_a_noop(self):
+        """Mirrors a Discord AgentReplied for an untracked member -- a
+        genuine agent must be spawned (a presence event already seen)
+        before its activity renders."""
+
+        await self.cog._on_agent_replied(AgentReplied(agent=self.ref, summary="hello"))
+        self.assertEqual(len(self.ws._sent), 0)
+
+    async def test_highlighted_and_tool_started_and_status_changed(self):
+        await self.cog._on_agent_presence_changed(
+            AgentPresenceChanged(agent=self.ref, display_name="architect", status="online")
+        )
+        self.ws._sent.clear()
+
+        await self.cog._on_agent_highlighted(AgentHighlighted(agent=self.ref))
+        await self.cog._on_agent_tool_started(
+            AgentToolStarted(agent=self.ref, tool_id="t1", status="thinking")
+        )
+        await self.cog._on_agent_status_changed(AgentStatusChanged(agent=self.ref, status="active"))
+
+        agent_id = self.cog._office_service.genuine_agent_id("architect")
+        sent = [json.loads(s) for s in self.ws._sent]
+        self.assertEqual([m["id"] for m in sent], [agent_id, agent_id, agent_id])
+        self.assertEqual(
+            [m["type"] for m in sent], ["agentSelected", "agentToolStart", "agentStatus"]
+        )
 
 
 if __name__ == "__main__":

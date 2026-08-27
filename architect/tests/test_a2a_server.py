@@ -62,6 +62,27 @@ class TestArchitectAgentExecutor(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(tool_loop.calls[0]["user_input"], "please help")
         self.assertEqual(tool_loop.calls[0]["debug"], False)
 
+    async def test_execute_passes_publish_activity_through_to_the_tool_loop(self) -> None:
+        tool_loop = ScriptedToolLoop(ToolLoopResult(1, "final_text", text="the answer"))
+        reported: list[str] = []
+
+        async def publish_activity(summary: str) -> None:
+            reported.append(summary)
+
+        executor = ArchitectAgentExecutor(
+            tool_loop=tool_loop,  # type: ignore[arg-type]
+            tools=[],
+            settings=lambda: _settings_async(),
+            llm_settings=lambda: _llm_settings_async(),  # type: ignore[arg-type, return-value]
+            publish_activity=publish_activity,
+        )
+        queue = FakeEventQueue()
+        context = FakeRequestContext("please help")
+
+        await executor.execute(context, queue)  # type: ignore[arg-type]
+
+        self.assertIs(tool_loop.calls[0]["on_activity"], publish_activity)
+
     async def test_execute_passes_debug_logging_through_to_the_tool_loop(self) -> None:
         tool_loop = ScriptedToolLoop(ToolLoopResult(1, "final_text", text="the answer"))
         executor = ArchitectAgentExecutor(

@@ -265,3 +265,97 @@ class TestToolLoopService(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertIn("the answer is 42", "\n".join(captured.output))
+
+
+class TestOnActivity(unittest.IsolatedAsyncioTestCase):
+    """on_activity reports each tool call and each "thinking" turn (a
+    tool-calling turn's own text content) -- see
+    docs/corridor-pubsub-design.md's architect AgentReplied mapping."""
+
+    async def test_reports_a_tool_call(self) -> None:
+        llm = ScriptedLLM(
+            [_response(tool_calls=[_tool_call("call-1")]), _response(content="done: hi")]
+        )
+        service = ToolLoopService(llm)
+        activity: list[str] = []
+
+        async def record(summary: str) -> None:
+            activity.append(summary)
+
+        await service.run(
+            base_url="https://x",
+            api_key="k",
+            model="m",
+            system_prompt="sys",
+            user_input="echo hi",
+            tools=[EchoTool()],
+            max_tool_calls=5,
+            on_activity=record,
+        )
+
+        self.assertEqual(activity, ["using tool echo"])
+
+    async def test_reports_thinking_content_alongside_a_tool_call(self) -> None:
+        llm = ScriptedLLM(
+            [
+                _response(content="let me check that", tool_calls=[_tool_call("call-1")]),
+                _response(content="done: hi"),
+            ]
+        )
+        service = ToolLoopService(llm)
+        activity: list[str] = []
+
+        async def record(summary: str) -> None:
+            activity.append(summary)
+
+        await service.run(
+            base_url="https://x",
+            api_key="k",
+            model="m",
+            system_prompt="sys",
+            user_input="echo hi",
+            tools=[EchoTool()],
+            max_tool_calls=5,
+            on_activity=record,
+        )
+
+        self.assertEqual(activity, ["thinking: let me check that", "using tool echo"])
+
+    async def test_no_activity_reported_for_a_final_answer_with_no_tool_calls(self) -> None:
+        llm = ScriptedLLM([_response(content="the answer is 42")])
+        service = ToolLoopService(llm)
+        activity: list[str] = []
+
+        async def record(summary: str) -> None:
+            activity.append(summary)
+
+        await service.run(
+            base_url="https://x",
+            api_key="k",
+            model="m",
+            system_prompt="sys",
+            user_input="what is the answer?",
+            tools=[EchoTool()],
+            max_tool_calls=5,
+            on_activity=record,
+        )
+
+        self.assertEqual(activity, [])
+
+    async def test_omitting_on_activity_does_not_raise(self) -> None:
+        llm = ScriptedLLM(
+            [_response(tool_calls=[_tool_call("call-1")]), _response(content="done: hi")]
+        )
+        service = ToolLoopService(llm)
+
+        result = await service.run(
+            base_url="https://x",
+            api_key="k",
+            model="m",
+            system_prompt="sys",
+            user_input="echo hi",
+            tools=[EchoTool()],
+            max_tool_calls=5,
+        )
+
+        self.assertEqual(result.stopped_reason, "final_text")

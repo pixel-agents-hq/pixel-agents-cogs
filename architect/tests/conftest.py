@@ -51,6 +51,8 @@ class FakeCorridor:
         self.replies: list[dict[str, Any]] = []
         self.registered_dependents: set[str] = set()
         self._llm_settings = FakeLLMSettings()
+        self.published: list[Any] = []
+        self._subscribers: dict[type, list[tuple[str, Any]]] = {}
 
     async def llm_settings(self) -> FakeLLMSettings:
         return self._llm_settings
@@ -60,6 +62,22 @@ class FakeCorridor:
 
     def unregister_dependent(self, extension_name: str) -> None:
         self.registered_dependents.discard(extension_name)
+
+    async def publish_event(self, event: object) -> None:
+        """Mirrors corridor's real EventBusService.publish -- records every
+        published event, then dispatches to any registered subscriber. Kept
+        in sync with floorplan/tests/conftest.py's own FakeCorridor."""
+
+        self.published.append(event)
+        for _owner, handler in list(self._subscribers.get(type(event), ())):
+            await handler(event)
+
+    def subscribe_event(self, event_type: type, handler: Any, *, owner: str) -> None:
+        self._subscribers.setdefault(event_type, []).append((owner, handler))
+
+    def unsubscribe_owner(self, owner: str) -> None:
+        for handlers in self._subscribers.values():
+            handlers[:] = [(o, h) for o, h in handlers if o != owner]
 
     async def send_reply(
         self,

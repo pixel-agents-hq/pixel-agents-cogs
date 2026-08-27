@@ -19,6 +19,7 @@ class CommandsMixin:
     """Requires `self._corridor` (provided by CogBase)."""
 
     _corridor: Any
+    _reply: Any
 
     @commands.hybrid_group(name="testbench")
     @commands.guild_only()
@@ -45,6 +46,6 @@ class CommandsMixin:
         description = "\n".join(
             f"- **{spec.name}**: {', '.join(field.name for field in spec.fields)}" for spec in specs
         )
-        await self._corridor.send_reply(
+        await self._reply.send_reply(
             ctx, title="Publishable corridor events", description=description
         )

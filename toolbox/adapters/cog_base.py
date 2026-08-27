@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Any
 
 from redbot.core import commands, data_manager
@@ -21,6 +22,13 @@ from ..infrastructure import (
 from .tool_wrapping import collect_wrappable_tools
 
 log = logging.getLogger("red.toolbox")
+
+# Conventional path for toolbox's own bundled avatar image -- passed to
+# corridor.reply_sender() regardless of whether a real file exists here
+# yet; existence is checked fresh on every send, so dropping a real image
+# at this exact path later needs no code change. See
+# docs/reply-identity-design.md.
+AVATAR_PATH = Path(__file__).resolve().parent.parent / "assets" / "avatar.png"
 
 
 class CogBase:
@@ -45,6 +53,7 @@ class CogBase:
         self._tool_visibility_repository = RedToolVisibilityRepository.create(self)
         self._tool_visibility_service = ToolVisibilityService(self._tool_visibility_repository)
         self._corridor: Any = None
+        self._reply: Any = None
 
     async def cog_load(self) -> None:
         """Extension point for start-up work (background tasks, sessions, ...).
@@ -59,6 +68,7 @@ class CogBase:
         # So unloading corridor cascades to unload this cog too, instead of
         # leaving it running with a stale corridor reference.
         self._corridor.register_dependent("toolbox")
+        self._reply = self._corridor.reply_sender(owner="Toolbox", avatar_path=AVATAR_PATH)
         self._corridor.register_tool_visibility_filter(self._is_tool_visible, owner="Toolbox")
         await self._service.reactivate()
         # Every cog already loaded by the time toolbox itself finishes

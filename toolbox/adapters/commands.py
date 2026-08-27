@@ -29,6 +29,7 @@ class CommandsMixin:
 
     _service: NodeService
     _corridor: Any
+    _reply: Any
     _tool_selection_service: ToolSelectionService
     _tool_visibility_service: ToolVisibilityService
 
@@ -62,15 +63,15 @@ class CommandsMixin:
         """
 
         target = f" {version}" if version else " the default LTS version"
-        await self._corridor.send_reply(
+        await self._reply.send_reply(
             ctx, title="toolbox", description=f"Installing Node.js{target}…"
         )
         try:
             installation = await self._service.install(version)
         except NodeInstallError as exc:
-            await self._corridor.send_reply(ctx, title="toolbox", description=f"⚠️ {exc}")
+            await self._reply.send_reply(ctx, title="toolbox", description=f"⚠️ {exc}")
             return
-        await self._corridor.send_reply(
+        await self._reply.send_reply(
             ctx, title="toolbox", description=f"✅ Installed Node.js {installation.version}."
         )
 
@@ -82,11 +83,11 @@ class CommandsMixin:
 
         installation = await self._service.uninstall()
         if installation is None:
-            await self._corridor.send_reply(
+            await self._reply.send_reply(
                 ctx, title="toolbox", description="Node.js is not installed."
             )
             return
-        await self._corridor.send_reply(
+        await self._reply.send_reply(
             ctx, title="toolbox", description=f"✅ Uninstalled Node.js {installation.version}."
         )
 
@@ -98,11 +99,11 @@ class CommandsMixin:
 
         status = await self._service.status()
         if not status.installed:
-            await self._corridor.send_reply(
+            await self._reply.send_reply(
                 ctx, title="toolbox", description="Node.js is not installed."
             )
             return
-        await self._corridor.send_reply(
+        await self._reply.send_reply(
             ctx,
             title="toolbox",
             description=f"Node.js {status.version} (`{status.install_dir}`)",

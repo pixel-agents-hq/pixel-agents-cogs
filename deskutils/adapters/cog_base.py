@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from redbot.core.bot import Red
@@ -9,6 +10,13 @@ from redbot.core.bot import Red
 from ..application import TextService, TimeService
 from ..dependency_loader import ensure_corridor_loaded
 from ..infrastructure import SystemClock
+
+# Conventional path for deskutils' own bundled avatar image -- passed to
+# corridor.reply_sender() regardless of whether a real file exists here
+# yet; existence is checked fresh on every send, so dropping a real image
+# at this exact path later needs no code change. See
+# docs/reply-identity-design.md.
+AVATAR_PATH = Path(__file__).resolve().parent.parent / "assets" / "avatar.png"
 
 
 class CogBase:
@@ -26,6 +34,7 @@ class CogBase:
         self._service = TimeService(SystemClock())
         self._text_service = TextService()
         self._corridor: Any = None
+        self._reply: Any = None
 
     async def cog_load(self) -> None:
         """Extension point for start-up work (background tasks, sessions, ...).
@@ -40,6 +49,7 @@ class CogBase:
         # So unloading corridor cascades to unload this cog too, instead of
         # leaving it running with a stale corridor reference.
         self._corridor.register_dependent("deskutils")
+        self._reply = self._corridor.reply_sender(owner="Deskutils", avatar_path=AVATAR_PATH)
         # Scans self for @llm_tool-decorated commands and
         # registers each -- inert if pico (or any other LLM-tool consumer)
         # never loads, corridor's registry just holds it unread. See

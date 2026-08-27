@@ -79,6 +79,25 @@ class FakeCorridor:
     ) -> None:
         self.replies.append({"title": title, "description": description, "content": content})
 
+    def reply_sender(self, *, owner: str, avatar_path: Any = None) -> FakeReplySender:
+        """Stands in for corridor.reply_sender -- author identity is a
+        corridor-side concern, covered by corridor's own test suite; this
+        cog's tests only need the same `self.replies` recording
+        `send_reply` already provides."""
+
+        return FakeReplySender(self)
+
+
+class FakeReplySender:
+    def __init__(self, corridor: FakeCorridor) -> None:
+        self._corridor = corridor
+
+    async def send_reply(self, ctx: object, **kwargs: object) -> None:
+        await self._corridor.send_reply(ctx, **kwargs)  # type: ignore[arg-type]
+
+    async def render_reply(self, ctx: object, **kwargs: object) -> None:
+        await self._corridor.send_reply(ctx, **kwargs)  # type: ignore[arg-type]
+
 
 @dataclass(frozen=True)
 class FakeModuleSpec:

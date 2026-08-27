@@ -11,7 +11,7 @@ from typing import Any, Literal, cast
 from aiohttp import web
 from redbot.core.bot import Red
 
-from corridor.domain import AgentPresenceChanged, AgentReplied, AgentRef
+from corridor.domain import AgentPresenceChanged, AgentRef, AgentReplied
 from pixelagents.application.office import OfficeService
 
 from ..application import ToolLoopService

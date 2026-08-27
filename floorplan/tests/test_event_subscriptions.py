@@ -27,8 +27,8 @@ from corridor.domain import (
     AgentToolStarted,
     AgentUnhighlighted,
 )
-from pixelagents.domain import GenuineAgentKey
 from floorplan.tests.test_floorplan import _connect, _make_cog
+from pixelagents.domain import GenuineAgentKey
 
 
 async def _enable_guild(cog, guild_id, *, include_bots=True):

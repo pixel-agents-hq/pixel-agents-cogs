@@ -112,6 +112,14 @@ module = ["corridor.adapters.cog_base"]
 disable_error_code = ["untyped-decorator"]
 
 [[tool.mypy.overrides]]
+# Same gap as corridor.adapters.cog_base above: its five
+# @commands.Cog.listener() handlers (on_member_update, on_presence_update,
+# on_member_join, on_member_remove, on_message) are dynamically typed
+# without Red's real stubs installed.
+module = ["corridor.adapters.discord_gateway"]
+disable_error_code = ["untyped-decorator"]
+
+[[tool.mypy.overrides]]
 # `commands.Context.send` returns Any with Red absent from the type job.
 module = ["corridor.adapters.api"]
 disable_error_code = ["no-any-return"]

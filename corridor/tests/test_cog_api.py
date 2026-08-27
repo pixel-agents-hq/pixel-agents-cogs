@@ -7,14 +7,46 @@ from __future__ import annotations
 import unittest
 from collections.abc import Awaitable, Callable
 
+from a2a.server.agent_execution.agent_executor import AgentExecutor
+from a2a.server.agent_execution.context import RequestContext
+from a2a.server.events.event_queue import EventQueue
+from a2a.types import AgentCapabilities, AgentCard, AgentInterface
+from a2a.utils import TransportProtocol
+
 from ..corridor import Corridor
-from ..domain import RegisteredTool, ReplyField, ReplyMode, llm_tool
+from ..domain import RegisteredAgent, RegisteredTool, ReplyField, ReplyMode, llm_tool
 from ..infrastructure import LiteLLMClient
 from .conftest import FakeBot, FakeContext, FakeGuild, FakeMember
 
 
 async def _tool_handler(ctx: object, raw_input: object) -> dict[str, object]:
     return {}
+
+
+class _DummyExecutor(AgentExecutor):
+    async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
+        raise NotImplementedError
+
+    async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
+        raise NotImplementedError
+
+
+def _agent(agent_key: str) -> RegisteredAgent:
+    card = AgentCard(
+        name=agent_key,
+        description="A test agent.",
+        version="0.1.0",
+        supported_interfaces=[
+            AgentInterface(
+                url="http://placeholder/", protocol_binding=TransportProtocol.JSONRPC.value
+            )
+        ],
+        capabilities=AgentCapabilities(),
+        default_input_modes=["text/plain"],
+        default_output_modes=["text/plain"],
+        skills=[],
+    )
+    return RegisteredAgent(agent_key=agent_key, card=card, executor=_DummyExecutor())
 
 
 def _tool(
@@ -465,3 +497,45 @@ class TestCorridorApi(unittest.IsolatedAsyncioTestCase):
         member = FakeMember(2, self.guild)
         allowed = await self.corridor.list_tools_for(FakeContext(author=member, guild=self.guild))
         self.assertEqual({tool.name for tool in allowed}, {"a_tool"})
+
+    async def test_register_agent_and_list_agents_roundtrip(self) -> None:
+        await self.corridor.register_agent(_agent("architect"), owner="Architect")
+
+        agents = self.corridor.list_agents()
+
+        self.assertEqual([agent.agent_key for agent in agents], ["architect"])
+
+    async def test_register_agent_rewrites_the_cards_url_to_corridors_own_listener(self) -> None:
+        await self.corridor.set_a2a_host("127.0.0.1")
+
+        await self.corridor.register_agent(_agent("architect"), owner="Architect")
+        await self.corridor.cog_unload()  # stop the real listener set_a2a_host started
+
+        agents = self.corridor.list_agents()
+        settings = await self.corridor.a2a_settings()
+        expected = f"http://{settings.a2a_host}:{settings.a2a_port}/architect/"
+        self.assertEqual(agents[0].card.supported_interfaces[0].url, expected)
+
+    async def test_unregister_agent_owner_removes_only_that_owners_agents(self) -> None:
+        await self.corridor.register_agent(_agent("architect"), owner="Architect")
+        await self.corridor.register_agent(_agent("agent-n"), owner="AgentN")
+
+        self.corridor.unregister_agent_owner("Architect")
+
+        self.assertEqual([agent.agent_key for agent in self.corridor.list_agents()], ["agent-n"])
+
+    async def test_unregister_agent_removes_by_key_regardless_of_owner(self) -> None:
+        await self.corridor.register_agent(_agent("architect"), owner="Architect")
+
+        self.corridor.unregister_agent("architect")
+
+        self.assertEqual(self.corridor.list_agents(), ())
+
+    async def test_cog_load_starts_the_shared_a2a_listener(self) -> None:
+        await self.corridor.set_a2a_port(8960)
+        await self.corridor.cog_unload()  # stop the listener set_a2a_port already started
+
+        await self.corridor.cog_load()
+        self.addAsyncCleanup(self.corridor.cog_unload)
+
+        self.assertTrue(self.corridor._a2a_server.running)

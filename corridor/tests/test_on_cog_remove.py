@@ -13,8 +13,14 @@ import unittest
 from dataclasses import dataclass
 from types import SimpleNamespace
 
+from a2a.server.agent_execution.agent_executor import AgentExecutor
+from a2a.server.agent_execution.context import RequestContext
+from a2a.server.events.event_queue import EventQueue
+from a2a.types import AgentCapabilities, AgentCard, AgentInterface
+from a2a.utils import TransportProtocol
+
 from ..corridor import Corridor
-from ..domain import RegisteredTool
+from ..domain import RegisteredAgent, RegisteredTool
 from .conftest import FakeBot
 
 
@@ -29,6 +35,32 @@ def _tool(name: str) -> RegisteredTool:
         parameters={"type": "object", "properties": {}},
         handler=_tool_handler,
     )
+
+
+class _DummyExecutor(AgentExecutor):
+    async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
+        raise NotImplementedError
+
+    async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
+        raise NotImplementedError
+
+
+def _agent(agent_key: str) -> RegisteredAgent:
+    card = AgentCard(
+        name=agent_key,
+        description="A test agent.",
+        version="0.1.0",
+        supported_interfaces=[
+            AgentInterface(
+                url="http://placeholder/", protocol_binding=TransportProtocol.JSONRPC.value
+            )
+        ],
+        capabilities=AgentCapabilities(),
+        default_input_modes=["text/plain"],
+        default_output_modes=["text/plain"],
+        skills=[],
+    )
+    return RegisteredAgent(agent_key=agent_key, card=card, executor=_DummyExecutor())
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,6 +123,20 @@ class TestOnCogRemove(unittest.IsolatedAsyncioTestCase):
         await self.corridor.on_cog_remove(SimpleNamespace(qualified_name="SomeOtherCog"))
 
         self.assertEqual({tool.name for tool in self.corridor.list_tools()}, {"a"})
+
+    async def test_removed_owners_registered_agents_are_dropped(self) -> None:
+        await self.corridor.register_agent(_agent("architect"), owner="Architect")
+
+        await self.corridor.on_cog_remove(SimpleNamespace(qualified_name="Architect"))
+
+        self.assertEqual(self.corridor.list_agents(), ())
+
+    async def test_removal_of_an_unrelated_cog_leaves_other_owners_agents_registered(self) -> None:
+        await self.corridor.register_agent(_agent("architect"), owner="Architect")
+
+        await self.corridor.on_cog_remove(SimpleNamespace(qualified_name="SomeOtherCog"))
+
+        self.assertEqual({agent.agent_key for agent in self.corridor.list_agents()}, {"architect"})
 
     async def test_does_not_affect_the_dependent_cascade(self) -> None:
         """This is additive to, not a replacement for, register_dependent's

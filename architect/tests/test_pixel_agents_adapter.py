@@ -3,13 +3,17 @@ docs/architect-semantic-ir-design.md sections 6.1/6.2 (v2)."""
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from ..domain.office_ir import (
     Direction,
     FurnitureItem,
     FurnitureKind,
+    Grid,
     GridPosition,
     TileKind,
 )
+from ..infrastructure.color_names import hsb_for
 from ..infrastructure.furniture_styles import FurnitureStyleManifest
 from ..infrastructure.pixel_agents_adapter import decode, encode
 
@@ -123,6 +127,25 @@ class TestDecodeGrid:
         assert cell.material == 5
         assert cell.color == "warm_beige"
 
+    def test_tile_color_not_matching_any_palette_entry_keeps_its_exact_raw_value(self) -> None:
+        # Deliberately not any of color_names._PALETTE's canonical values --
+        # nearest_name() still has to pick *something* for the semantic
+        # name, but raw_color must retain exactly what was decoded.
+        raw = {
+            "version": 1,
+            "cols": 1,
+            "rows": 1,
+            "tiles": [5],
+            "tileColors": [{"h": 123, "s": 17, "b": -8, "c": 42}],
+            "furniture": [],
+        }
+
+        office = decode(raw, _styles())
+
+        cell = office.grid.at(GridPosition(0, 0))
+        assert cell.color == "forest_green"  # nearest match, not exact
+        assert cell.raw_color == (123, 17, -8, 42)
+
 
 class TestDecodeFurniture:
     def test_known_asset_becomes_furniture_item_with_kind_style_facing(self) -> None:
@@ -163,6 +186,24 @@ class TestDecodeFurniture:
         office = decode(raw, _styles())
 
         assert office.furniture[0].color == "bright_red"
+
+    def test_furniture_color_not_matching_any_palette_entry_keeps_its_exact_raw_value(self) -> None:
+        raw = _flat_layout(5, 5)
+        raw["furniture"] = [
+            {
+                "uid": "f-1",
+                "type": "DESK_FRONT",
+                "col": 1,
+                "row": 1,
+                "color": {"h": 123, "s": 17, "b": -8, "c": 42},
+            }
+        ]
+
+        office = decode(raw, _styles())
+
+        item = office.furniture[0]
+        assert item.color == "forest_green"  # nearest match, not exact
+        assert item.raw_color == (123, 17, -8, 42)
 
 
 class TestDecodeSeats:
@@ -241,6 +282,18 @@ class TestDecodeZones:
         assert zone.tiles.top_left == GridPosition(1, 1)
         assert zone.tiles.width == 2
         assert zone.tiles.height == 2
+
+    def test_zone_hex_color_not_matching_any_palette_entry_keeps_its_exact_raw_value(self) -> None:
+        raw = _flat_layout(5, 5)
+        raw["areas"] = [{"label": "Quiet Zone", "color": "#123456"}]
+        raw["areaTiles"] = [None] * 25
+        raw["areaTiles"][1 * 5 + 1] = "Quiet Zone"
+
+        office = decode(raw, _styles())
+
+        zone = office.zones[0]
+        assert zone.color == "forest_green"  # nearest match, not exact
+        assert zone.raw_color == "#123456"
 
     def test_exact_zone_membership_lives_on_the_grid_not_a_bounding_rect(self) -> None:
         raw = _flat_layout(5, 5)
@@ -421,3 +474,73 @@ class TestRoundTrip:
 
         assert redecoded.furniture[0].position == GridPosition(1, 1)
         assert redecoded.furniture[0].style == "desk"
+
+    def test_untouched_tile_color_not_matching_any_palette_entry_survives_encode_exactly(
+        self,
+    ) -> None:
+        """The bug this guards against: encode() used to always re-expand
+        `color` to the palette's canonical value, silently replacing any
+        tile color that wasn't already one of the ~12 fixed entries even
+        though decode() never touched it."""
+
+        raw = {
+            "version": 1,
+            "cols": 1,
+            "rows": 1,
+            "tiles": [5],
+            "tileColors": [{"h": 123, "s": 17, "b": -8, "c": 42}],
+            "furniture": [],
+        }
+
+        office = decode(raw, _styles())
+        encoded = encode(office, _styles())
+
+        assert encoded["tileColors"] == [{"h": 123, "s": 17, "b": -8, "c": 42}]
+
+    def test_untouched_furniture_color_not_matching_any_palette_entry_survives_encode_exactly(
+        self,
+    ) -> None:
+        raw = _flat_layout(5, 5)
+        raw["furniture"] = [
+            {
+                "uid": "f-1",
+                "type": "DESK_FRONT",
+                "col": 1,
+                "row": 1,
+                "color": {"h": 123, "s": 17, "b": -8, "c": 42},
+            }
+        ]
+
+        office = decode(raw, _styles())
+        encoded = encode(office, _styles())
+
+        assert encoded["furniture"][0]["color"] == {"h": 123, "s": 17, "b": -8, "c": 42}
+
+    def test_untouched_zone_hex_color_not_matching_any_palette_entry_survives_encode_exactly(
+        self,
+    ) -> None:
+        raw = _flat_layout(5, 5)
+        raw["areas"] = [{"label": "Quiet Zone", "color": "#123456"}]
+        raw["areaTiles"] = [None] * 25
+        raw["areaTiles"][1 * 5 + 1] = "Quiet Zone"
+
+        office = decode(raw, _styles())
+        encoded = encode(office, _styles())
+
+        assert encoded["areas"] == [{"label": "Quiet Zone", "color": "#123456"}]
+
+    def test_freshly_authored_color_falls_back_to_the_palettes_canonical_value(self) -> None:
+        """The complement of the tests above: a color an LLM tool actually
+        picked (no raw ground truth -- `raw_color=None`) has no exact
+        original to preserve, so it correctly encodes to the semantic
+        name's own canonical palette value."""
+
+        office = decode(_flat_layout(1, 1, fill=5), _styles())
+        painted_cell = replace(
+            office.grid.at(GridPosition(0, 0)), color="cool_blue", raw_color=None
+        )
+        office = replace(office, grid=Grid(1, 1, (painted_cell,)))
+
+        encoded = encode(office, _styles())
+
+        assert encoded["tileColors"] == [hsb_for("cool_blue")]

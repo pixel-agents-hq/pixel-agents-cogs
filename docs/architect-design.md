@@ -283,16 +283,23 @@ The fix has three parts:
 1. **`architect` runs its own office WebSocket server**
    (`infrastructure/websocket.py`, `infrastructure/client_hub.py`) — a
    deliberate parallel copy of floorplan's `WebSocketServer`/`ClientHub`,
-   pared down to read-only (no ticket/editor-authorization concept at all,
-   since nothing can mutate this layout from the browser yet). On its one
-   handled inbound message, `webviewReady`, it sends the connecting client
-   a bootstrap sequence built by **reusing**
+   but with no ticket/editor-authorization concept at all, unlike
+   floorplan's: **any** connected client can mutate architect's layout,
+   by design (see §5.1 below), not just floorplan's bot-owner/`keyholder`
+   editors. It handles two inbound messages: `webviewReady` sends the
+   connecting client a bootstrap sequence built by **reusing**
    `pixelagents.application.office.OfficeService.bootstrap_messages`
    directly (not duplicated — unlike the transport classes, `OfficeService`
    is pixelagents' own generic, framework-neutral application layer, the
    intended shared surface floorplan itself already builds its own
    bootstrap from) with an always-empty seat/agent roster (`NullSeatRepository`)
-   and architect's own stored layout.
+   and architect's own stored layout; `saveLayout` decodes the whole raw
+   layout the browser sends through `OfficeLayoutService.replace_layout`
+   (§8's own validation still applies, so a malformed or rule-violating
+   payload is rejected, logged, and dropped — never partially persisted,
+   never allowed to crash the connection) and persists+broadcasts it,
+   exactly the shape floorplan's own `SaveLayoutMessage` handling already
+   has.
 2. **A distinct external path, `/architect/ws`**, so an operator's
    reverse-proxy rule can route it to architect's own bind (`ws_host`/
    `ws_port`, its own Config fields, defaulting to `127.0.0.1:8932`)
@@ -315,12 +322,36 @@ The fix has three parts:
    `architect/tests/test_ws_rewrite_shim.py`, including the composition
    case.
 
+### 5.1 Why architect's in-browser editor has no authorization, unlike floorplan's
+
+floorplan gates its own live editor to bot-owner/`keyholder`-capability
+members (`floorplan/adapters/office_gateway.py::_can_edit_layout_user`,
+a `/session` ticket + WebSocket `authorize` handshake) because floorplan's
+layout is the one thing Discord presence, the Pixel Index catalogue
+(`[p]floorplan layout load`), and every guild member's view of the office
+all depend on — an unauthenticated visitor overwriting it would be a real
+incident. architect's layout is not that: it's a separate, disposable
+sandbox Config value, seeded once from pixelagents' bundled default and
+otherwise owned entirely by this cog, with no other system reading or
+depending on it. This was an explicit product decision (not an oversight,
+and a deliberate reversal of this document's original "no in-browser
+editor at all" scoping, §8's history) — anyone who can reach
+`/third-party/architect` should be able to freely edit it, matching
+floorplan's own webview-editor *shape* (`saveLayout` in, `layoutLoaded`
+broadcast out) but with the ticket/authorization layer removed entirely,
+not merely left unenforced. `infrastructure/websocket.py`'s own module
+docstring is the load-bearing reference for this if it's revisited.
+
 `architect`'s own live WebSocket connection was verified end-to-end (not
 mocked) in `architect/tests/test_office_websocket_live.py`: a real
-loopback server, a real `aiohttp` client, `webviewReady` in, the seeded
-`layoutLoaded` message out. What the webview actually *displays* beyond
-the raw layout — its own agent's pixel-sprite representation, a status
-view, … — remains deferred, same as originally scoped.
+loopback server, a real `aiohttp` client — `webviewReady` in, the seeded
+`layoutLoaded` message out; `saveLayout` in (from a connection that never
+sent an `authorize` message at all), the persisted `layoutLoaded` message
+broadcast to every other connected client out; and a structurally invalid
+`saveLayout` payload logged and dropped without persisting anything or
+crashing the connection. What the webview actually *displays* beyond the
+raw layout — its own agent's pixel-sprite representation, a status view,
+… — remains deferred, same as originally scoped.
 
 ## 6. Discord command surface
 
@@ -382,9 +413,10 @@ fail to load.
   commands (`adapters/office_commands.py`) that now both write to it.
 - What `architect`'s webview actually displays beyond the raw layout (its
   own agent's pixel-sprite representation, a status view, …).
-- An in-browser editor for architect's office (no `/session` ticket
-  endpoint, no editor-authorization concept, no `saveLayout` handling —
-  every WebSocket connection is a read-only viewer).
+- An in-browser editor for architect's office is **no longer** out of
+  scope: `saveLayout` is handled (§5, §5.1) with deliberately no `/session`
+  ticket endpoint or editor-authorization concept at all — see §5.1 for
+  why that's a design decision, not an omission.
 - Live-rebinding the office WebSocket server on a `[p]architect ws
   host/port` change (persist-only + reload, matching floorplan's own
   convention — see §6).

@@ -11,9 +11,11 @@ any mutation didn't touch drifts across a save + reload."""
 from __future__ import annotations
 
 import unittest
+from typing import cast
 
 from ..application.office_layout_service import OfficeLayoutService
 from ..domain.office_ir import FurnitureKind, GridPosition, GridRect, TileKind
+from ..infrastructure.color_names import hsb_for
 from ..infrastructure.furniture_styles import FurnitureStyleLoader
 from ..infrastructure.office_layout_repository import OfficeLayoutRepository
 from .conftest import FakePixelAgents
@@ -75,6 +77,27 @@ def _irregular_layout(cols: int = 10, rows: int = 8) -> dict[str, object]:
         "tiles": tiles,
         "furniture": [],
     }
+
+
+def _irregular_layout_with_off_palette_colors(cols: int = 10, rows: int = 8) -> dict[str, object]:
+    """Same shape as `_irregular_layout`, but every floor cell carries a
+    `tileColors` entry that deliberately does not match any of
+    `color_names._PALETTE`'s ~12 canonical entries -- proving losslessness
+    against a real layout, not one that happens to already use canonical
+    values (docs/architect-semantic-ir-design.md section 6.3)."""
+
+    raw = _irregular_layout(cols, rows)
+    tiles = cast("list[int]", raw["tiles"])
+    tile_colors: list[dict[str, int] | None] = []
+    for i, value in enumerate(tiles):
+        if value in (0, 255):
+            tile_colors.append(None)
+        else:
+            # A distinct off-palette value per cell, so any accidental
+            # cross-cell contamination would also be caught.
+            tile_colors.append({"h": i % 359, "s": 17, "b": -8, "c": 42})
+    raw["tileColors"] = tile_colors
+    return raw
 
 
 def _index(cols: int, col: int, row: int) -> int:
@@ -179,6 +202,50 @@ class TestEndToEndLosslessRoundTrip(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([f.id for f in before.furniture], [f.id for f in after.furniture])
         self.assertEqual(item.id, after.furniture[0].id)
         self.assertEqual(zone.id, after.zones[0].id)
+
+    async def test_off_palette_tile_colors_survive_untouched_through_the_full_stack(self) -> None:
+        """The bug this guards against: even a cell whose *material* was
+        repainted (but not its color) used to lose its exact original
+        color to the nearest palette match on the very next save, because
+        `encode()` always re-expanded every semantic color name to its
+        canonical value rather than only the cells a mutation actually
+        recolored."""
+
+        layout = _irregular_layout_with_off_palette_colors()
+        original_tile_colors = list(cast("list[object]", layout["tileColors"]))
+        settings = FakeSettingsRepository(layout)
+        service = _service(settings)
+
+        # Repaint material only (no color) -- every cell in this rect must
+        # keep its exact original raw color, not the palette's nearest
+        # match for whatever semantic name it decoded to.
+        await service.paint_tiles(
+            area=GridRect(GridPosition(1, 1), 2, 2), kind=TileKind.FLOOR, material=3
+        )
+        # Actually author a new color on a disjoint cell -- this one, and
+        # only this one, has no exact ground truth to preserve, so it
+        # correctly ends up at "cool_blue"'s canonical HSB value.
+        await service.paint_tiles(
+            area=GridRect(GridPosition(4, 4), 1, 1),
+            kind=TileKind.FLOOR,
+            material=3,
+            color="cool_blue",
+        )
+
+        persisted = cast("dict[str, object]", await settings.layout())
+        persisted_tile_colors = cast("list[object]", persisted["tileColors"])
+
+        def _pos(col: int, row: int) -> int:
+            return row * 10 + col
+
+        for row in range(1, 6):
+            for col in range(1, 7):
+                if (col, row) == (4, 4):
+                    continue
+                i = _pos(col, row)
+                self.assertEqual(persisted_tile_colors[i], original_tile_colors[i], (col, row))
+
+        self.assertEqual(persisted_tile_colors[_pos(4, 4)], hsb_for("cool_blue"))
 
     async def test_paint_floor_preserves_zone_tag_on_repaint(self) -> None:
         settings = FakeSettingsRepository(_irregular_layout())

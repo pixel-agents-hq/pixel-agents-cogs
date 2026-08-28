@@ -136,9 +136,22 @@ class OfficeLayoutService:
                 updates[position] = TileCell.wall(zone_label=cell.zone_label)
             else:
                 assert material is not None
+                # `color is None` means this cell's color is untouched by
+                # this call -- carry its exact original raw_color forward
+                # too, not just the semantic name, so it still round-trips
+                # byte-for-byte on encode (docs/architect-semantic-ir-design.md
+                # section 6.3). A newly authored color has no raw ground
+                # truth of its own yet, so raw_color is correctly absent.
+                new_color: str | None
+                new_raw_color: tuple[int, int, int, int] | None
+                if color is not None:
+                    new_color, new_raw_color = color, None
+                else:
+                    new_color, new_raw_color = cell.color, cell.raw_color
                 updates[position] = TileCell.floor(
                     material,
-                    color if color is not None else cell.color,
+                    new_color,
+                    raw_color=new_raw_color,
                     zone_label=cell.zone_label,
                 )
         new_grid = office.grid.replacing(updates)
@@ -267,6 +280,28 @@ class OfficeLayoutService:
         self._validate(new_office, styles)
         await self._persist(new_office, styles)
         return updated
+
+    async def replace_layout(self, *, raw: dict[str, Any]) -> Office:
+        """Accept a whole raw Pixel Agents layout -- e.g. the full-office
+        payload architect's in-browser editor sends after a drag-and-drop
+        session, not an incremental change -- and persist it wholesale.
+        `decode()` parses it against the live style manifest the same way
+        `_load()` does; section 8's whole-`Office` validation still applies
+        before anything is persisted, so a malformed or corrupted payload
+        is rejected exactly like any other mutation, never partially
+        written. Raises `OfficeValidationError` for a structurally invalid
+        or rule-violating layout; a caller reachable from an unauthenticated
+        transport (the browser editor has no login of its own) must treat
+        any other exception `decode()` itself can raise -- e.g. a missing
+        or wrong-typed field -- as equally possible and equally safe to
+        just drop, since nothing is persisted unless every step here
+        succeeds."""
+
+        styles = self._style_loader.styles()
+        office = self._repository.decode_raw(raw, styles)
+        self._validate(office, styles)
+        await self._persist(office, styles)
+        return office
 
     async def remove_zone(self, *, zone_id: str) -> None:
         office, styles = await self._load()

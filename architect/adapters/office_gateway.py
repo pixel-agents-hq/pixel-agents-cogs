@@ -1,11 +1,13 @@
 """Bridges architect's own WebSocket transport to pixelagents' generic
-office bootstrap protocol.
+office bootstrap protocol, and to `OfficeLayoutService` for saves.
 
-Read-only: architect never accepts `saveLayout`/`saveAgentSeats` messages
-(there is no in-browser editor) -- the WebSocket server this bridges to
-(`infrastructure/websocket.py`) only ever calls in here for one thing,
-`webviewReady`, matching the single message this webview needs to answer
-until the future layout-editing tools exist (see docs/architect-design.md).
+The WebSocket server this bridges to (`infrastructure/websocket.py`) only
+ever calls in here for two things: `webviewReady` (send the bootstrap
+sequence) and `saveLayout` (persist a whole new layout the in-browser
+editor produced). There is deliberately no editor-authorization concept --
+see `infrastructure/websocket.py`'s module docstring for why architect's
+layout, unlike floorplan's, is meant to be freely editable by anyone who
+can reach the page.
 
 `pixelagents.application.office.OfficeService.bootstrap_messages` is
 reused directly, not duplicated: unlike `WebviewAssetProvider`/
@@ -27,8 +29,8 @@ from .cog_base import CogBase
 
 class OfficeGatewayMixin(CogBase):
     """Requires `self._repository`, `self._websocket_server`,
-    `self._client_hub`, `self._office_service`, `self._webview_assets`
-    (all provided by CogBase)."""
+    `self._client_hub`, `self._office_service`, `self._webview_assets`,
+    `self._office_layout_service` (all provided by CogBase)."""
 
     async def _start_ws_server(self) -> bool:
         settings = await self._repository.global_settings()
@@ -55,6 +57,18 @@ class OfficeGatewayMixin(CogBase):
         )
         for message in messages:
             await self._client_hub.send_to(socket, message)
+
+    async def _on_save_layout(self, raw_layout: dict[str, Any]) -> None:
+        """Persist a whole-office payload from the in-browser editor.
+        `OfficeLayoutService.replace_layout` already broadcasts the
+        persisted `layoutLoaded` message to every connected client (the
+        same `broadcast` callback every other mutation uses) on success.
+        Deliberately does not catch here -- `infrastructure/websocket.py`'s
+        `_handle_save_layout` is the one place that logs and drops a
+        rejected/malformed save, matching floorplan's own single-layer
+        `handle_message` convention rather than catching twice."""
+
+        await self._office_layout_service.replace_layout(raw=raw_layout)
 
 
 __all__ = ["OfficeGatewayMixin"]

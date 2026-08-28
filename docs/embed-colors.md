@@ -21,19 +21,20 @@ Cogs are grouped into three visual categories, each with one shared color.
 A cog with no clear category gets no color (Discord's default gray) rather
 than being forced into a bucket that doesn't fit:
 
-| Category  | Color            | Hex       | Cogs                    |
-|-----------|------------------|-----------|--------------------------|
-| Agent     | Discord blurple  | `#5865F2` | pico, architect          |
-| Room      | Discord teal     | `#1ABC9C` | corridor, floorplan      |
-| Furniture | Discord gold     | `#F1C40F` | toolbox, testbench       |
-| *(none)*  | Discord default gray | —    | deskutils, pixelagents   |
+| Category  | Color            | Hex       | Cogs                          |
+|-----------|------------------|-----------|--------------------------------|
+| Agent     | Discord blurple  | `#5865F2` | pico, architect                |
+| Room      | Discord teal     | `#1ABC9C` | corridor, floorplan             |
+| Furniture | Discord gold     | `#F1C40F` | toolbox, testbench, deskutils   |
+| *(none)*  | Discord default gray | —    | pixelagents                    |
 
-deskutils (time/text-counting/message-quoting utilities) and pixelagents
+deskutils' commands are utilities (time, text-counting, message-quoting) in
+the same vein as toolbox/testbench, so it's folded into Furniture. pixelagents
 (vendors/builds the webview for floorplan to serve, with almost no
-chat-facing surface of its own) don't clearly fit Agent, Room, or
-Furniture -- rather than guess, both are left uncategorized. Either can be
-folded into a category later without any structural change: just pass
-`category=` at its own binding site (see §4).
+chat-facing surface of its own) still doesn't clearly fit Agent, Room, or
+Furniture -- rather than guess, it's left uncategorized. It can be folded
+into a category later without any structural change: just pass `category=`
+at its own binding site (see §4).
 
 The `floorplan/adapters/settings_panel.py` Container's `accent_colour` is
 a separate UI surface (Components V2, not a classic embed) and is out of
@@ -62,7 +63,7 @@ category color is applied through corridor's one shared
 deliberately separate parameters throughout the reply pipeline
 (`ReplyService.render`, `CogBase.render_reply`/`send_reply`,
 `ReplySender`), not one derived from the other. A cog can bind one without
-the other -- deskutils binds an identity with no category (stays
+the other -- pixelagents binds an identity with no category (stays
 uncategorized), and nothing stops a future cog from wanting a category
 with no author identity. Folding `category` into `ReplyIdentity` would
 make that impossible without a workaround.
@@ -74,14 +75,14 @@ repeats it:
 - `ReplySender` (`corridor/adapters/reply_sender.py`) binds `category`
   once per cog, alongside `owner`/`avatar_path`, via
   `CogBase.reply_sender(owner=..., avatar_path=..., category=...)`.
-  pico, architect, testbench, toolbox, and now **corridor itself** (bound
-  in `CogBase.__init__`, since corridor is a Room cog like floorplan) each
-  pass their own category at that one binding site; deskutils omits it
-  (stays uncategorized). corridor's own commands
-  (`corridor/adapters/commands.py`) go through `self._reply.send_reply(...)`
-  the same way every dependent cog's commands go through their own bound
-  `self._reply` -- not `self.send_reply(...)` directly -- so `category=`
-  is never repeated across its 9 reply call sites.
+  pico, architect, testbench, toolbox, deskutils, and **corridor itself**
+  (bound in `CogBase.__init__`, since corridor is a Room cog like
+  floorplan) each pass their own category at that one binding site.
+  corridor's own commands (`corridor/adapters/commands.py`) go through
+  `self._reply.send_reply(...)` the same way every dependent cog's
+  commands go through their own bound `self._reply` -- not
+  `self.send_reply(...)` directly -- so `category=` is never repeated
+  across its 9 reply call sites.
 - `floorplan/adapters/replies.py` bypasses `ReplySender` (it needs
   interaction-aware dispatch) but still binds `category=ReplyCategory.ROOM`
   at just the one `render_reply(...)` call every one of its commands

@@ -7,6 +7,8 @@ from typing import Any
 
 from redbot.core.bot import Red
 
+from corridor.domain import ReplyCategory
+
 from ..application import TextService, TimeService
 from ..dependency_loader import ensure_corridor_loaded
 from ..infrastructure import SystemClock
@@ -49,7 +51,9 @@ class CogBase:
         # So unloading corridor cascades to unload this cog too, instead of
         # leaving it running with a stale corridor reference.
         self._corridor.register_dependent("deskutils")
-        self._reply = self._corridor.reply_sender(owner="Deskutils", avatar_path=AVATAR_PATH)
+        self._reply = self._corridor.reply_sender(
+            owner="Deskutils", avatar_path=AVATAR_PATH, category=ReplyCategory.FURNITURE
+        )
         # Scans self for @llm_tool-decorated commands and
         # registers each -- inert if pico (or any other LLM-tool consumer)
         # never loads, corridor's registry just holds it unread. See

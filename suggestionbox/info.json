@@ -1,0 +1,21 @@
+{
+    "$schema": "https://raw.githubusercontent.com/Cog-Creators/Red-DiscordBot/V3/develop/schema/red_cog.schema.json",
+    "name": "suggestionbox",
+    "short": "MCP feedback server for reporting errors/improvements, per-agent gated.",
+    "description": "Runs an MCP tools server (report_error, suggest_improvement) that posts to a bot-owner-configured Discord channel. Registers into corridor's AgentToolServerRegistry so a registered A2A agent's own tool loop (architect today) can call the same tools, gated per agent by a Components V2 toggle panel.",
+    "end_user_data_statement": "This cog does not persistently store any data or metadata about Discord users. It stores a bot-owner-configured feedback channel, MCP listener host/port, and a per-agent access list.",
+    "install_msg": "Requires corridor (auto-loaded). Configure the feedback channel with [p]suggestionbox channel #channel and the MCP listener with [p]suggestionbox mcp host/port (both bot owner). Grant a registered A2A agent access to these tools via [p]suggestionbox agents.",
+    "author": ["Pixel Agents HQ Contributors"],
+    "required_cogs": {"corridor": "https://github.com/pixel-agents-hq/pixel-agents-cogs"},
+    "requirements": ["mcp>=1.29,<2", "uvicorn"],
+    "tags": [
+        "mcp",
+        "feedback",
+        "suggestionbox"
+    ],
+    "min_bot_version": "3.5.24",
+    "min_python_version": [3, 11, 0],
+    "hidden": false,
+    "disabled": false,
+    "type": "COG"
+}

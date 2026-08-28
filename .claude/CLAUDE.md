@@ -24,12 +24,15 @@ reading in full before making a cross-cog change; this file only covers
 what changes how you should act.
 
 Packages: `corridor` (shared permissions/reply-rendering/LLM
-connection/A2A listener — hidden but load-bearing), `pixelagents` (vendors
-+ builds the webview), `floorplan` (serves it, mirrors Discord presence),
-`toolbox` (host Node.js install + LLM tool toggle panel), `pico` (LLM
-Discord presence, sole A2A coordinator), `architect` (second LLM agent,
-A2A-only), `testbench` (owner-only bus-event publisher for testing),
-`deskutils` (small utilities), `contracts` (CI-only, not a runtime cog).
+connection/A2A listener/MCP client bridging a registered agent-tool server
+into a registered A2A agent's own tool loop — hidden but load-bearing),
+`pixelagents` (vendors + builds the webview), `floorplan` (serves it,
+mirrors Discord presence), `toolbox` (host Node.js install + LLM tool
+toggle panel), `pico` (LLM Discord presence, sole A2A coordinator),
+`architect` (second LLM agent, A2A-only), `suggestionbox` (MCP feedback
+server: report_error/suggest_improvement, per-agent gated), `testbench`
+(owner-only bus-event publisher for testing), `deskutils` (small
+utilities), `contracts` (CI-only, not a runtime cog).
 
 ## Commands
 
@@ -49,13 +52,14 @@ python -m pytest -q pixelagents/tests
 python -m pytest -q toolbox/
 python -m pytest -q pico/
 python -m pytest -q architect/
+python -m pytest -q suggestionbox/
 python -m pytest -q testbench/
 python -m pytest -q deskutils/
 
 # lint/format/types run fine across all cogs at once:
-python -m ruff format --check corridor floorplan pixelagents toolbox pico architect testbench deskutils
-python -m ruff check corridor floorplan pixelagents toolbox pico architect testbench deskutils
-python -m mypy corridor floorplan pixelagents toolbox pico architect testbench deskutils
+python -m ruff format --check corridor floorplan pixelagents toolbox pico architect suggestionbox testbench deskutils
+python -m ruff check corridor floorplan pixelagents toolbox pico architect suggestionbox testbench deskutils
+python -m mypy corridor floorplan pixelagents toolbox pico architect suggestionbox testbench deskutils
 
 # CI-only contract/lint checks:
 python -m unittest discover -s contracts/tests

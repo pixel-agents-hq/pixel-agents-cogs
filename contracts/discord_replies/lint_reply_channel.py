@@ -85,6 +85,7 @@ COG_PACKAGES = (
     "floorplan",
     "pico",
     "pixelagents",
+    "suggestionbox",
     "testbench",
     "toolbox",
 )

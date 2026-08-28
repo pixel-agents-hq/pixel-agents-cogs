@@ -313,14 +313,15 @@ class TestReplyService(unittest.IsolatedAsyncioTestCase):
             footer_text="Guild footer",
             icon=IconPreference(source=IconSource.BOT),
         )
-        override = FooterOverride(name="architect", icon_url="http://x/architect/avatar.png")
+        override = FooterOverride(name="architect", icon_filename="avatar.png")
 
         rendered = await self.service.render(
             1, preferences, ReplyContent(), prefix=";", footer_override=override
         )
 
         self.assertEqual(rendered.footer_text, "architect")
-        self.assertEqual(rendered.footer_icon_url, "http://x/architect/avatar.png")
+        self.assertIsNone(rendered.footer_icon_url)
+        self.assertEqual(rendered.footer_icon_attachment, "avatar.png")
 
     async def test_embed_mode_falls_back_to_guild_footer_without_an_override(self) -> None:
         preferences = ReplyPreferences(
@@ -374,7 +375,7 @@ class TestReplyService(unittest.IsolatedAsyncioTestCase):
             footer_text=None,
             icon=IconPreference(source=IconSource.BOT),
         )
-        override = FooterOverride(name="architect", icon_url="http://x/architect/avatar.png")
+        override = FooterOverride(name="architect", icon_filename="avatar.png")
 
         rendered = await self.service.render(
             1, preferences, ReplyContent(description="Body"), prefix=";", footer_override=override
@@ -382,4 +383,5 @@ class TestReplyService(unittest.IsolatedAsyncioTestCase):
 
         self.assertIsNone(rendered.footer_text)
         self.assertIsNone(rendered.footer_icon_url)
+        self.assertIsNone(rendered.footer_icon_attachment)
         self.assertEqual(rendered.content, "Body")

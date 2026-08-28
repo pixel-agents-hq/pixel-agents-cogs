@@ -663,6 +663,7 @@ class _FakeRenderedReply:
         author_name=None,
         author_icon_attachment=None,
         category=None,
+        footer_icon_attachment=None,
     ):
         self.mode = mode
         self.content = content
@@ -675,6 +676,7 @@ class _FakeRenderedReply:
         self.author_name = author_name
         self.author_icon_attachment = author_icon_attachment
         self.category = category
+        self.footer_icon_attachment = footer_icon_attachment
 
 
 class FakeCorridor:

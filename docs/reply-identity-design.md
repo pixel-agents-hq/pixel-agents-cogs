@@ -367,6 +367,25 @@ harmless call in discord.py — no need to special-case the zero-file path.
 
 ## 7. Consulted-agent footer identity: corridor serves `/<agent_key>/avatar.png`
 
+**Update:** this section's original design had pico read the footer icon
+from `agent.card.icon_url` -- a real HTTP URL served off the route
+described below. That URL is only ever reachable from wherever corridor's
+`a2a_host`/`a2a_port` actually bind (127.0.0.1 by default), which is fine
+for this same process's own agent-to-agent calls but means *Discord's own
+servers* can never fetch it to render the footer icon -- the footer name
+showed up correctly in testing, but the icon silently never did. Since
+every agent in this repo shares pico's own filesystem/process, pico now
+reads `RegisteredAgent.avatar_path` directly instead and attaches it as a
+Discord attachment (`FooterOverride.icon_filename` + a `footer_icon_path`
+threaded through `ReplySender.send_reply`/`build_reply_payload`, the same
+reliable mechanism §2 below already uses for the calling cog's own
+author icon) -- see `corridor/adapters/api.py::build_reply_payload` and
+`pico/tools/consult_agent_tool.py` for the current implementation. The
+route/`icon_url` mechanism described below is **kept as-is**: it's real,
+correct A2A protocol infrastructure for a genuine external A2A client that
+doesn't share this filesystem, just no longer what pico's own Discord
+footer uses.
+
 Corridor's existing shared A2A listener (`docs/agent-directory-design.md`)
 is reused as-is — no second HTTP surface. This is the same "corridor
 rewrites a URL field on a card it's mounting" shape `card_with_url`
@@ -479,6 +498,16 @@ small public-facing image," categorically less sensitive than the
 JSON-RPC surface already accepted there.
 
 ## 8. `ConsultAgentTool`/`ReplyTool` wiring
+
+**Update:** the snippets below are the section's original design and no
+longer match the parameter names in the actual code (`footer_icon_url` /
+`agent.card.icon_url` became `footer_icon_path` / `agent.avatar_path` --
+see §7's update note above for why). The shape they illustrate --
+`_agent_tools` builds one `ConsultAgentTool` per registered agent,
+`ConsultAgentTool` turns that into a `FooterOverride` and forwards it
+through a bound `ReplySenderProtocol` -- is otherwise still accurate; see
+`pico/adapters/listener.py`/`pico/tools/consult_agent_tool.py` for the
+exact current code.
 
 **`pico/adapters/listener.py`'s `_agent_tools`:** reads the (possibly
 empty-string, protobuf-default) `agent.card.icon_url` and normalizes it to

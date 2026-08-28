@@ -18,10 +18,15 @@ just pico's summary of it.
 
 Both announcements carry pico's own bound author identity (via `reply`,
 a `ReplySender`) *and*, in the footer, the *consulted* agent's own
-identity when it published one (`footer_icon_url`, sourced from the real
-`a2a.types.AgentCard.icon_url` field corridor serves off its shared A2A
-listener -- see docs/reply-identity-design.md section 7) -- distinct
-identities, visible on the same message.
+identity when it has one (`footer_icon_path`, the same real local `Path`
+`RegisteredAgent.avatar_path` carries -- attached as a Discord attachment
+the same reliable way `reply`'s own avatar is, not fetched from a URL: the
+agent's `a2a.types.AgentCard.icon_url` field points at corridor's shared
+A2A listener, which only binds `a2a_host`/`a2a_port` -- 127.0.0.1 by
+default -- so Discord's own servers can never fetch it, even though it
+works fine for this same process's own agent-to-agent calls. See
+docs/reply-identity-design.md section 7) -- distinct identities, visible
+on the same message.
 
 If the target agent is unloaded or unreachable at call time, that's both
 reported back to the LLM as a tool error *and* announced in the channel --
@@ -33,6 +38,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Sequence
+from pathlib import Path
 from typing import Protocol
 
 from pydantic import BaseModel, Field
@@ -77,6 +83,7 @@ class ReplySenderProtocol(Protocol):
         content: str | None = None,
         fields: Sequence[ReplyField] = (),
         footer_override: FooterOverride | None = None,
+        footer_icon_path: Path | None = None,
     ) -> object: ...
 
 
@@ -102,7 +109,7 @@ class ConsultAgentTool:
         agent_key: str,
         base_url: str,
         description: str,
-        footer_icon_url: str | None = None,
+        footer_icon_path: Path | None = None,
     ) -> None:
         self.name = f"consult_{agent_key}"
         self.description = description or f"Delegate a task to {agent_key}."
@@ -111,8 +118,11 @@ class ConsultAgentTool:
         self._ctx = ctx
         self._agent_key = agent_key
         self._base_url = base_url
+        self._footer_icon_path = footer_icon_path
         self._footer_override = (
-            FooterOverride(name=agent_key, icon_url=footer_icon_url) if footer_icon_url else None
+            FooterOverride(name=agent_key, icon_filename=footer_icon_path.name)
+            if footer_icon_path is not None
+            else None
         )
 
     @property
@@ -143,7 +153,10 @@ class ConsultAgentTool:
 
         try:
             await self._reply.send_reply(
-                self._ctx, description=description, footer_override=self._footer_override
+                self._ctx,
+                description=description,
+                footer_override=self._footer_override,
+                footer_icon_path=self._footer_icon_path,
             )
         except Exception:
             log.warning("pico: %s could not announce an A2A exchange", self.name, exc_info=True)

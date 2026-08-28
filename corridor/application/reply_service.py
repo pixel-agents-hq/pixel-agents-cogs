@@ -136,9 +136,11 @@ class ReplyService:
             ReplyField(field.name, _fence(field.value), False, field.code) if field.code else field
             for field in fields
         )
+        footer_icon_attachment: str | None = None
         if footer_override is not None:
             footer_text: str | None = footer_override.name
-            footer_icon_url: str | None = footer_override.icon_url
+            footer_icon_url: str | None = None
+            footer_icon_attachment = footer_override.icon_filename
         else:
             footer_text = preferences.footer_text
             footer_icon_url = await self._resolve_icon(guild_id, preferences)
@@ -153,6 +155,7 @@ class ReplyService:
             show_timestamp=preferences.show_timestamp,
             author_name=identity.owner if identity is not None else None,
             author_icon_attachment=identity.avatar_filename if identity is not None else None,
+            footer_icon_attachment=footer_icon_attachment,
             category=category,
         )
 

@@ -110,10 +110,12 @@ def _agent_tools(corridor: Any, reply: Any, client: Any, ctx: commands.Context) 
     `ctx` and pico's own bound `reply` sender (same convention as
     `ReplyTool`/`CrossCogTool`), since it announces the A2A exchange in
     this same channel as it happens -- with the consulted agent's own
-    icon in the footer, read from `agent.card.icon_url` (a protobuf
-    string field, `""` not `None` when unset -- normalized here) and
-    served by corridor's shared A2A listener, see
-    docs/reply-identity-design.md section 7. If corridor has zero
+    icon in the footer, attached from `agent.avatar_path` (the same real
+    local `Path` corridor also uses to serve that agent's `icon_url` over
+    its shared A2A listener for genuine external A2A clients -- pico
+    reads the file directly instead, since every agent in this repo
+    shares pico's own filesystem/process; see
+    docs/reply-identity-design.md section 7). If corridor has zero
     registered agents (no agent cog loaded, or every one currently
     unregistered), this returns an empty list: no error, no
     special-cased "not configured" branch, since there's no longer a
@@ -133,7 +135,7 @@ def _agent_tools(corridor: Any, reply: Any, client: Any, ctx: commands.Context) 
                     agent_key=agent.agent_key,
                     base_url=agent.card.supported_interfaces[0].url,
                     description=agent.card.description,
-                    footer_icon_url=agent.card.icon_url or None,
+                    footer_icon_path=agent.avatar_path,
                 )
             )
         except Exception:

@@ -174,13 +174,22 @@ class FooterOverride:
     """Overrides a guild's own configured footer for one message --
     `ConsultAgentTool`'s only consumer today: the *consulted* agent's
     name+avatar, distinct from the calling cog's own author identity and
-    from the guild's `footer_text`/icon preference. `icon_url` is a real
-    HTTP(S) URL (not `attachment://`) -- see corridor's shared A2A
-    listener serving `/<agent_key>/avatar.png`,
+    from the guild's `footer_text`/icon preference.
+
+    `icon_filename` is a bare filename (e.g. "avatar.png"), like
+    `ReplyIdentity.avatar_filename` -- not a real HTTP(S) URL. The
+    consulted agent's avatar is always on the *same* filesystem as the
+    consulting cog today (every agent in this repo runs in the same bot
+    process), so the adapter layer attaches it as a Discord attachment
+    the same reliable way it already does the calling cog's own avatar,
+    rather than a URL Discord's servers would have to fetch over the
+    network -- corridor's own `a2a_host` setting defaults to `127.0.0.1`,
+    which Discord's own infrastructure can never reach even though it
+    works fine for this same process's own agent-to-agent calls. See
     docs/reply-identity-design.md section 7."""
 
     name: str
-    icon_url: str
+    icon_filename: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -200,6 +209,12 @@ class RenderedReply:
     author_name: str | None
     author_icon_attachment: str | None
     category: ReplyCategory | None = None
+    # Set instead of footer_icon_url (mutually exclusive, never both) when
+    # the footer comes from a FooterOverride with an icon_filename --
+    # ConsultAgentTool's consulted-agent icon, attached the same way
+    # author_icon_attachment is rather than fetched from footer_icon_url's
+    # real HTTP(S) URL. See FooterOverride's own docstring.
+    footer_icon_attachment: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

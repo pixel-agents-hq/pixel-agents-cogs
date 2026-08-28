@@ -10,6 +10,7 @@ this tool's own module docstring."""
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
 from typing import Any
 
 from ..infrastructure.architect_client import ArchitectRequestError
@@ -34,6 +35,7 @@ class FakeCorridor:
     def __init__(self) -> None:
         self.replies: list[str | None] = []
         self.footer_overrides: list[Any] = []
+        self.footer_icon_paths: list[Path | None] = []
 
     async def send_reply(
         self,
@@ -41,10 +43,12 @@ class FakeCorridor:
         *,
         description: str | None = None,
         footer_override: Any = None,
+        footer_icon_path: Path | None = None,
         **_: Any,
     ) -> None:
         self.replies.append(description)
         self.footer_overrides.append(footer_override)
+        self.footer_icon_paths.append(footer_icon_path)
 
 
 def _tool(
@@ -52,7 +56,7 @@ def _tool(
     corridor: FakeCorridor,
     *,
     agent_key: str = "architect",
-    footer_icon_url: str | None = None,
+    footer_icon_path: Path | None = None,
 ) -> ConsultAgentTool:
     return ConsultAgentTool(
         client,
@@ -61,7 +65,7 @@ def _tool(
         agent_key=agent_key,
         base_url="http://localhost:8931/architect/",
         description="A test agent.",
-        footer_icon_url=footer_icon_url,
+        footer_icon_path=footer_icon_path,
     )
 
 
@@ -152,7 +156,7 @@ class TestConsultAgentToolAnnouncements(unittest.IsolatedAsyncioTestCase):
         tool = _tool(
             FakeArchitectAsker(answer="ok"),
             corridor,
-            footer_icon_url="http://x/architect/avatar.png",
+            footer_icon_path=Path("/architect/assets/avatar.png"),
         )
 
         await tool.handler(ConsultAgentInput(prompt="hi"))
@@ -160,9 +164,15 @@ class TestConsultAgentToolAnnouncements(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(corridor.footer_overrides), 2)
         for override in corridor.footer_overrides:
             self.assertEqual(override.name, "architect")
-            self.assertEqual(override.icon_url, "http://x/architect/avatar.png")
+            self.assertEqual(override.icon_filename, "avatar.png")
+        # The real local Path is forwarded alongside the override on every
+        # call, not just used to derive icon_filename -- this is what lets
+        # build_reply_payload actually attach the file (see
+        # docs/reply-identity-design.md section 7 on why this is an
+        # attachment, not a URL corridor's shared A2A listener serves).
+        self.assertEqual(corridor.footer_icon_paths, [Path("/architect/assets/avatar.png")] * 2)
 
-    async def test_no_footer_override_without_an_icon_url(self) -> None:
+    async def test_no_footer_override_without_an_icon_path(self) -> None:
         corridor = FakeCorridor()
         tool = _tool(FakeArchitectAsker(answer="ok"), corridor)
 

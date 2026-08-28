@@ -83,6 +83,7 @@ class ReplySender:
         fields: Sequence[ReplyField] = (),
         code: Sequence[str] = (),
         footer_override: FooterOverride | None = None,
+        footer_icon_path: Path | None = None,
     ) -> discord.Message:
         rendered = await self._cog_base.render_reply(
             ctx,
@@ -95,7 +96,9 @@ class ReplySender:
             footer_override=footer_override,
             category=self._category,
         )
-        return await send_rendered_reply(ctx, rendered, avatar_path=self._avatar_path)
+        return await send_rendered_reply(
+            ctx, rendered, avatar_path=self._avatar_path, footer_icon_path=footer_icon_path
+        )
 
     async def publish_event(self, event: object) -> None:
         """Forwarded, not duplicated -- `ReplyTool` needs both this and

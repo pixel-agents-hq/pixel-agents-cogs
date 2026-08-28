@@ -12,6 +12,7 @@ carry constructor kwargs as attributes."""
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 
 from corridor.domain import RegisteredTool
@@ -94,14 +95,18 @@ def _ctx(author: object = None) -> SimpleNamespace:
 
 
 def _agent(
-    agent_key: str, *, url: str = "http://localhost:8931/architect/", icon_url: str = ""
+    agent_key: str,
+    *,
+    url: str = "http://localhost:8931/architect/",
+    icon_url: str = "",
+    avatar_path: Path | None = None,
 ) -> SimpleNamespace:
     card = SimpleNamespace(
         description=f"{agent_key} agent.",
         supported_interfaces=[SimpleNamespace(url=url)],
         icon_url=icon_url,
     )
-    return SimpleNamespace(agent_key=agent_key, card=card)
+    return SimpleNamespace(agent_key=agent_key, card=card, avatar_path=avatar_path)
 
 
 class TestAgentTools(unittest.TestCase):

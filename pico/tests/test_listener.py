@@ -115,7 +115,12 @@ class TestAgentTools(unittest.TestCase):
         corridor.agents = [_agent("architect"), _agent("agent-n")]
 
         tools = _agent_tools(
-            corridor, corridor.reply_sender(owner="Pico"), ArchitectClient(), _ctx()
+            corridor,
+            corridor.reply_sender(owner="Pico"),
+            ArchitectClient(),
+            _ctx(),
+            guild_id=1,
+            bot_user_id=999,
         )
 
         self.assertEqual({tool.name for tool in tools}, {"consult_architect", "consult_agent-n"})
@@ -125,7 +130,12 @@ class TestAgentTools(unittest.TestCase):
         corridor = FakeCorridor()
 
         tools = _agent_tools(
-            corridor, corridor.reply_sender(owner="Pico"), ArchitectClient(), _ctx()
+            corridor,
+            corridor.reply_sender(owner="Pico"),
+            ArchitectClient(),
+            _ctx(),
+            guild_id=1,
+            bot_user_id=999,
         )
 
         self.assertEqual(tools, [])
@@ -136,7 +146,12 @@ class TestAgentTools(unittest.TestCase):
         corridor.agents = [broken, _agent("architect")]
 
         tools = _agent_tools(
-            corridor, corridor.reply_sender(owner="Pico"), ArchitectClient(), _ctx()
+            corridor,
+            corridor.reply_sender(owner="Pico"),
+            ArchitectClient(),
+            _ctx(),
+            guild_id=1,
+            bot_user_id=999,
         )
 
         self.assertEqual([tool.name for tool in tools], ["consult_architect"])

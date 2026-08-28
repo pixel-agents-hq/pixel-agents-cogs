@@ -60,6 +60,26 @@ class TestArchitectAgentExecutor(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(tool_loop.calls[0]["user_input"], "please help")
         self.assertEqual(tool_loop.calls[0]["debug"], False)
 
+    async def test_execute_reports_tool_calls_made_as_message_metadata(self) -> None:
+        """pico's `ArchitectClient` reads this back to surface a "Tool
+        calls" field on the "📩 ... replied" Discord embed -- see
+        pico/infrastructure/architect_client.py's `_tool_calls_made`."""
+
+        tool_loop = ScriptedToolLoop(ToolLoopResult(4, "final_text", text="the answer"))
+        executor = ArchitectAgentExecutor(
+            tool_loop=tool_loop,  # type: ignore[arg-type]
+            tools=[],
+            settings=lambda: _settings_async(),
+            llm_settings=lambda: _llm_settings_async(),  # type: ignore[arg-type, return-value]
+        )
+        queue = FakeEventQueue()
+        context = FakeRequestContext("please help")
+
+        await executor.execute(context, queue)  # type: ignore[arg-type]
+
+        final_message = queue.events[-1].status.message
+        self.assertEqual(final_message.metadata["tool_calls_made"], 4)
+
     async def test_execute_passes_publish_activity_through_to_the_tool_loop(self) -> None:
         tool_loop = ScriptedToolLoop(ToolLoopResult(1, "final_text", text="the answer"))
         reported: list[str] = []
@@ -157,3 +177,31 @@ class TestBuildAgentCard(unittest.TestCase):
         card = build_agent_card(tools=[])
 
         self.assertEqual([skill.id for skill in card.skills], ["chat"])
+
+    def test_description_warns_that_only_explicit_instructions_are_acted_on(self) -> None:
+        """Regression guard for a real incident: a user asked (via pico) for
+        architect to move a table and stated a goal that a chair also end up
+        in the freed corner; architect moved only the table, reading the
+        stated goal as context rather than a second instruction, and the
+        user had to ask again. This card's description is the one place a
+        consulting agent's LLM sees architect's own behavior (see
+        pico/adapters/listener.py, which sets ConsultAgentTool.description
+        to this exact string) -- so architect documents its own literalism
+        here rather than every caller having to assume it."""
+
+        card = build_agent_card(tools=[])
+
+        self.assertIn("explicit instruction", card.description)
+
+    def test_description_warns_that_it_has_no_memory_of_past_consultations(self) -> None:
+        """A follow-up delegation (e.g. asking architect to now place the
+        chair after an earlier call moved the table) is a brand-new prompt
+        with no memory of the earlier one -- see ArchitectAgentExecutor's
+        own docstring: 'there is no persisted multi-turn conversation'. A
+        consulting agent's LLM needs to know that to restate whatever
+        context a follow-up depends on, rather than assuming architect
+        remembers."""
+
+        card = build_agent_card(tools=[])
+
+        self.assertIn("no memory", card.description)

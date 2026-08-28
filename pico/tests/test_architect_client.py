@@ -21,7 +21,7 @@ from corridor.domain import RegisteredAgent, card_with_url
 from corridor.infrastructure.a2a_server import A2AServer
 
 from ..infrastructure import architect_client as architect_client_module
-from ..infrastructure.architect_client import ArchitectClient, ArchitectRequestError
+from ..infrastructure.architect_client import AgentAskResult, ArchitectClient, ArchitectRequestError
 
 _PORT = 8935
 _BASE_URL = f"http://127.0.0.1:{_PORT}/architect/"
@@ -82,9 +82,22 @@ class TestArchitectClientLiveRoundTrip(unittest.IsolatedAsyncioTestCase):
     async def test_ask_returns_architects_final_text(self) -> None:
         await self._start_server(ToolLoopResult(0, "final_text", text="hello from architect"))
 
-        answer = await ArchitectClient().ask(base_url=_BASE_URL, text="hi")
+        result = await ArchitectClient().ask(base_url=_BASE_URL, text="hi")
 
-        self.assertEqual(answer, "hello from architect")
+        self.assertEqual(result, AgentAskResult(answer="hello from architect", tool_calls_made=0))
+
+    async def test_ask_returns_the_tool_calls_architect_actually_made(self) -> None:
+        """Real round trip: architect's ArchitectAgentExecutor attaches
+        `tool_calls_made` as metadata on its final message
+        (architect/infrastructure/a2a_server.py), and this asserts pico's
+        client reads that back correctly through the real wire format, not
+        a mock -- the field the "📩 ... replied" Discord embed surfaces."""
+
+        await self._start_server(ToolLoopResult(3, "final_text", text="moved the table"))
+
+        result = await ArchitectClient().ask(base_url=_BASE_URL, text="hi")
+
+        self.assertEqual(result, AgentAskResult(answer="moved the table", tool_calls_made=3))
 
     async def test_ask_raises_when_architect_task_fails(self) -> None:
         await self._start_server(ToolLoopResult(5, "max_tool_calls", text=None))

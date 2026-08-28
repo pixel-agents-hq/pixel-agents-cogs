@@ -48,7 +48,12 @@ AGENT_NAME = "architect"
 AGENT_VERSION = "0.1.0"
 AGENT_DESCRIPTION = (
     "A second, independent LLM agent reachable only over A2A -- never "
-    "Discord-user-facing. Consult it to delegate a sub-task."
+    "Discord-user-facing. Consult it to delegate a sub-task. It only acts on "
+    "what the delegated prompt states as an explicit instruction -- a goal "
+    "or rationale mentioned alongside that instruction is read as context, "
+    "not as a second thing to also do, so list every step you want it to "
+    "carry out. It has no memory of past consultations -- each prompt is "
+    "answered on its own, so restate any earlier context a follow-up needs."
 )
 
 
@@ -155,7 +160,12 @@ class ArchitectAgentExecutor(AgentExecutor):
             )
             return
 
-        await updater.complete(updater.new_agent_message([Part(text=result.text)]))
+        await updater.complete(
+            updater.new_agent_message(
+                [Part(text=result.text)],
+                metadata={"tool_calls_made": result.tool_calls_made},
+            )
+        )
 
     async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
         raise UnsupportedOperationError(

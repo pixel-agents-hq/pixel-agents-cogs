@@ -75,21 +75,25 @@ jobs:
           # process-wide A2A listener (uvicorn/Starlette on top of a2a-sdk's
           # http-server extra), even for cogs that never start it. Needs the
           # same 'a2a-sdk[http-server]'+uvicorn pair as architect/pico below.
-          # mcp's own dependency chain (pydantic-settings -> typing-inspection)
-          # hit this exact same typing_extensions incident a second, unrelated
-          # way: typing-inspection>=0.4.3 itself requires typing_extensions
-          # >=4.15.0 (0.4.0-0.4.2 only need >=4.12.0), and nothing pinned it
-          # before mcp. 'typing-inspection<0.4.3' is declared on every cog
-          # whose own info.json requirements include pydantic at all
-          # (architect/corridor/floorplan/pico), not only the one that added
-          # mcp -- the real Downloader installs every loaded cog's
-          # requirements into one shared dir via repeated `pip install
-          # --target` calls, which never replace an already-installed
-          # package without --upgrade, so whichever cog happens to install
-          # first has to plant a compatible version itself; corridor's own
-          # pin alone cannot undo an incompatible one an earlier cog already
-          # planted. See corridor/infrastructure/mcp_client.py's own
-          # docstring for the full incident writeup.
+          # mcp pulls in pydantic-settings, whose own pydantic>=2.7.0 floor
+          # has no upper bound -- Red's real Downloader installs every
+          # loaded cog's requirements into ONE shared directory via `pip
+          # install -U` per cog, so suggestionbox's own pip call (mcp,
+          # uvicorn -- no pydantic pin of its own, originally) was free to
+          # upgrade the shared directory's already-correctly-pinned
+          # pydantic to 2.12+, whose pydantic_core needs a newer
+          # typing_extensions than Red ships, hitting this exact same
+          # Sentinel incident a second, unrelated way. suggestionbox/
+          # info.json now pins pydantic>=2.11.3,<2.12 too, purely to stop
+          # its own install from moving the shared pydantic version, even
+          # though nothing in suggestionbox's own code imports it directly.
+          # 'typing-inspection<0.4.3' (declared alongside mcp everywhere)
+          # is a separate, narrower defensive pin for the same class of
+          # incident (typing-inspection>=0.4.3 itself needs
+          # typing_extensions>=4.15.0), kept even though the pydantic_core
+          # path above is the one actually observed in CI. See
+          # corridor/infrastructure/mcp_client.py's own docstring for the
+          # full incident writeup.
           - cog: corridor
             test_target: "corridor/"
             lint_target: "corridor"

@@ -9,32 +9,41 @@ also forces a `pydantic>=2.12` floor that collides with the
 (see that pin's own comment in `corridor/info.json`). `mcp<2` keeps the
 API this module (and `suggestionbox`'s own server) is written against.
 
-A second, unrelated pin was needed for the exact same underlying incident
-class (see `corridor/info.json`'s own `pydantic` comment: Red-DiscordBot
-pins `typing_extensions==4.13.2` in its own site-packages, ahead of the
-Downloader's cog-requirements dir on `sys.path`, so anything needing a
-newer one fails at runtime with `cannot import name 'Sentinel'` regardless
-of what actually got installed). `mcp` pulls in `pydantic-settings`, whose
-own `typing-inspection>=0.4.0` floor is unconstrained above -- absent an
-upper pin, pip resolves the *latest* `typing-inspection` (0.4.3+), which
-raised *its own* `typing_extensions` floor to `>=4.15.0` (0.4.0-0.4.2 only
-need `>=4.12.0`).
+A second incident, from the same root cause, needed a second, non-obvious
+fix. Red's real Downloader (`redbot.cogs.downloader.repo_manager.Repo.
+install_requirements`) installs *every currently-loaded cog's*
+`requirements` into **one shared directory**, via one `pip install -U -t
+<shared dir> <that cog's requirements>` call per cog (`-U` = `--upgrade`).
+`mcp` pulls in `pydantic-settings`, whose own `pydantic>=2.7.0` floor has
+no upper bound. `suggestionbox` (the only cog that needs `mcp` without
+already needing `pydantic` for its own reasons) originally didn't declare
+`pydantic` at all -- so *its* pip call, running after corridor's already-
+correctly-pinned one in the same shared directory, had nothing in its own
+constraint set stopping pip from using `-U` to upgrade the
+already-installed, compatible `pydantic` to the latest release (2.12+),
+silently breaking every other cog that shares that one directory. Confirmed
+by reproducing the exact two-call sequence locally: corridor's own pinned
+install lands `pydantic==2.11.10` (`pydantic_core==2.33.2`, no `Sentinel`
+import); a subsequent unpinned `pip install -U -t <same dir> mcp>=1.29,<2
+uvicorn` then upgrades it to `pydantic==2.13.5`, whose `pydantic_core` does
+`from typing_extensions import Sentinel` at its own top level -- Red-
+DiscordBot's own site-packages `typing_extensions` is pinned to `4.13.2`
+and sits ahead of the Downloader's shared directory on `sys.path` (see
+`corridor/info.json`'s own `pydantic` comment), so that import always
+fails at runtime regardless of what actually got installed into the
+cog-requirements directory. The fix: `suggestionbox/info.json` declares
+`pydantic>=2.11.3,<2.12` too, even though nothing in `suggestionbox`'s own
+code imports pydantic directly -- purely to stop its own `pip install -U`
+call from ever being allowed to move the shared directory's `pydantic`
+off the version every other cog was built and tested against.
 
-Pinning `typing-inspection<0.4.3` only on the cog that happens to declare
-`mcp` is not enough: the Downloader installs each loaded cog's
-`requirements` into one shared directory via repeated `pip install
---target` calls, and a bare `pip install --target` never *replaces* a
-package already on disk there without `--upgrade` (confirmed by
-reproducing the exact sequence: installing `architect`'s own
-unconstrained-on-typing-inspection `pydantic<2.12` requirement first
-already plants an unpinned, incompatible `typing-inspection`, which
-`corridor`'s own later, correctly-pinned install can no longer undo --
-it just leaves two conflicting versions' files coexisting on disk).
-`typing-inspection<0.4.3` therefore has to be declared on *every* cog
-whose own `requirements` include `pydantic` at all (`architect`,
-`corridor`, `floorplan`, `pico` -- see each one's own `info.json`), not
-only the one that added `mcp`, so whichever of them the Downloader
-happens to install first plants a compatible version from the start.
+`typing-inspection<0.4.3` (declared alongside `mcp` on every cog that
+needs it) is a separate, narrower defensive pin for the same class of
+"an unconstrained transitive floor resolves to a too-new release that
+needs a newer `typing_extensions` than Red ships" failure -- 0.4.3 raised
+its own `typing_extensions` floor to `>=4.15.0` (0.4.0-0.4.2 only need
+`>=4.12.0`) -- kept even though the `pydantic_core` incident above turned
+out to be the one actually observed in CI.
 
 Opens a fresh `streamable_http_client`/`ClientSession` pair per call rather
 than holding one open across calls -- unlike `LiteLLMClient`'s one

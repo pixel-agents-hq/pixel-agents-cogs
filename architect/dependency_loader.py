@@ -28,10 +28,7 @@ async def ensure_corridor_loaded(bot: Any) -> Any:
     try:
         await bot.load_extension(spec)
     except Exception as exc:
-        import traceback
-
-        tb = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
-        _raise_load_error(f"Corridor could not be auto-loaded: {exc}\n{tb}", cause=exc)
+        _raise_load_error(f"Corridor could not be auto-loaded: {exc}", cause=exc)
 
     corridor = bot.get_cog("Corridor")
     if corridor is None:

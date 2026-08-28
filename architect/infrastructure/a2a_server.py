@@ -52,7 +52,8 @@ AGENT_DESCRIPTION = (
     "what the delegated prompt states as an explicit instruction -- a goal "
     "or rationale mentioned alongside that instruction is read as context, "
     "not as a second thing to also do, so list every step you want it to "
-    "carry out."
+    "carry out. It has no memory of past consultations -- each prompt is "
+    "answered on its own, so restate any earlier context a follow-up needs."
 )
 
 

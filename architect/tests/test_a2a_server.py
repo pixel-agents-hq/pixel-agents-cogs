@@ -172,3 +172,16 @@ class TestBuildAgentCard(unittest.TestCase):
         card = build_agent_card(tools=[])
 
         self.assertIn("explicit instruction", card.description)
+
+    def test_description_warns_that_it_has_no_memory_of_past_consultations(self) -> None:
+        """A follow-up delegation (e.g. asking architect to now place the
+        chair after an earlier call moved the table) is a brand-new prompt
+        with no memory of the earlier one -- see ArchitectAgentExecutor's
+        own docstring: 'there is no persisted multi-turn conversation'. A
+        consulting agent's LLM needs to know that to restate whatever
+        context a follow-up depends on, rather than assuming architect
+        remembers."""
+
+        card = build_agent_card(tools=[])
+
+        self.assertIn("no memory", card.description)

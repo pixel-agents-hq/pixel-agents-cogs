@@ -11,6 +11,7 @@ from ..domain import (
     FooterOverride,
     IconSource,
     RenderedReply,
+    ReplyCategory,
     ReplyField,
     ReplyIdentity,
     ReplyMode,
@@ -72,6 +73,7 @@ class ReplyService:
         prefix: str,
         identity: ReplyIdentity | None = None,
         footer_override: FooterOverride | None = None,
+        category: ReplyCategory | None = None,
     ) -> RenderedReply:
         title = _substitute_prefix(content.title, prefix)
         description = _substitute_prefix(content.description, prefix)
@@ -151,6 +153,7 @@ class ReplyService:
             show_timestamp=preferences.show_timestamp,
             author_name=identity.owner if identity is not None else None,
             author_icon_attachment=identity.avatar_filename if identity is not None else None,
+            category=category,
         )
 
     async def _resolve_icon(self, guild_id: int, preferences: ReplyPreferences) -> str | None:

@@ -49,6 +49,19 @@ class ReplyMode(StrEnum):
     EMBED = "embed"
 
 
+class ReplyCategory(StrEnum):
+    """Which visual bucket a cog's embeds belong to, for the shared
+    category->color scheme (see docs/embed-colors.md). `None` (the absence
+    of a category, everywhere this is used) means "no opinion" -- Discord's
+    default gray -- not a fourth category; deskutils and pixelagents
+    deliberately stay uncategorized rather than being forced into one of
+    these three."""
+
+    AGENT = "agent"
+    ROOM = "room"
+    FURNITURE = "furniture"
+
+
 class IconSource(StrEnum):
     CUSTOM = "custom"
     BOT = "bot"
@@ -186,6 +199,7 @@ class RenderedReply:
     show_timestamp: bool
     author_name: str | None
     author_icon_attachment: str | None
+    category: ReplyCategory | None = None
 
 
 @dataclass(frozen=True, slots=True)

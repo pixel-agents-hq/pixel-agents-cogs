@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 
 from ..corridor import Corridor
-from ..domain import FooterOverride, ReplyMode
+from ..domain import REPLY_CATEGORY_COLORS, FooterOverride, ReplyCategory, ReplyMode
 from .conftest import FakeBot, FakeContext, FakeGuild, FakeMember
 
 
@@ -81,6 +81,26 @@ class TestReplySender(unittest.IsolatedAsyncioTestCase):
         embed.set_footer.assert_called_once_with(
             text="architect", icon_url="http://x/architect/avatar.png"
         )
+
+    async def test_send_reply_carries_the_bound_category_to_the_embed_color(self) -> None:
+        member = FakeMember(2, self.guild)
+        ctx = FakeContext(author=member, guild=self.guild)
+        sender = self.corridor.reply_sender(owner="Pico", category=ReplyCategory.AGENT)
+
+        await sender.send_reply(ctx, title="Hi")
+
+        embed = ctx.sent[0]["embed"]
+        self.assertEqual(embed.color, REPLY_CATEGORY_COLORS[ReplyCategory.AGENT])
+
+    async def test_send_reply_with_no_bound_category_leaves_the_embed_uncolored(self) -> None:
+        member = FakeMember(2, self.guild)
+        ctx = FakeContext(author=member, guild=self.guild)
+        sender = self.corridor.reply_sender(owner="Architect")
+
+        await sender.send_reply(ctx, title="Hi")
+
+        embed = ctx.sent[0]["embed"]
+        self.assertIsNone(embed.color)
 
     async def test_send_reply_text_mode_prefixes_the_owner_name(self) -> None:
         await self.corridor.set_reply_mode(self.guild.id, ReplyMode.TEXT)

@@ -122,7 +122,7 @@ class ReplyMixin(PixelAgentsBase):
         # ReplyField above: a hard corridor import here would crash a
         # reload attempted at a moment corridor isn't currently loaded.
         from corridor.adapters.api import build_reply_payload
-        from corridor.domain import ReplyIdentity
+        from corridor.domain import ReplyCategory, ReplyIdentity
 
         rendered = await self._corridor.render_reply(
             ctx,
@@ -131,6 +131,7 @@ class ReplyMixin(PixelAgentsBase):
             fields=fields,
             code=code,
             identity=ReplyIdentity(owner="Floorplan", avatar_filename=AVATAR_PATH.name),
+            category=ReplyCategory.ROOM,
         )
         kwargs, files = build_reply_payload(rendered, avatar_path=AVATAR_PATH)
         if files:

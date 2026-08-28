@@ -9,7 +9,7 @@ from typing import Any
 from redbot.core import commands, data_manager
 from redbot.core.bot import Red
 
-from corridor.domain import RegisteredTool
+from corridor.domain import RegisteredTool, ReplyCategory
 
 from ..application import NodeService, ToolSelectionService, ToolVisibilityService
 from ..dependency_loader import ensure_corridor_loaded
@@ -68,7 +68,9 @@ class CogBase:
         # So unloading corridor cascades to unload this cog too, instead of
         # leaving it running with a stale corridor reference.
         self._corridor.register_dependent("toolbox")
-        self._reply = self._corridor.reply_sender(owner="Toolbox", avatar_path=AVATAR_PATH)
+        self._reply = self._corridor.reply_sender(
+            owner="Toolbox", avatar_path=AVATAR_PATH, category=ReplyCategory.FURNITURE
+        )
         self._corridor.register_tool_visibility_filter(self._is_tool_visible, owner="Toolbox")
         await self._service.reactivate()
         # Every cog already loaded by the time toolbox itself finishes

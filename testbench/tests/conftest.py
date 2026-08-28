@@ -74,7 +74,9 @@ class FakeCorridor:
         self.permission_checks.append(group)
         return self.allow_permission
 
-    def reply_sender(self, *, owner: str, avatar_path: Any = None) -> FakeReplySender:
+    def reply_sender(
+        self, *, owner: str, avatar_path: Any = None, category: Any = None
+    ) -> FakeReplySender:
         """Stands in for corridor.reply_sender -- author identity is a
         corridor-side concern, covered by corridor's own test suite; this
         cog's tests only need the same `self.replies` recording

@@ -10,7 +10,7 @@ import discord
 from redbot.core import commands
 from redbot.core.bot import Red
 
-from ..domain import RenderedReply, ReplyMode
+from ..domain import REPLY_CATEGORY_COLORS, RenderedReply, ReplyMode
 
 
 class DiscordMemberRef:
@@ -71,7 +71,8 @@ def build_reply_payload(
         # TEXT-mode equivalent at all.
         return {"content": reply.content}, []
 
-    embed = discord.Embed(title=reply.embed_title, description=reply.embed_description)
+    color = REPLY_CATEGORY_COLORS.get(reply.category) if reply.category is not None else None
+    embed = discord.Embed(title=reply.embed_title, description=reply.embed_description, color=color)
     for field in reply.fields:
         embed.add_field(name=field.name, value=field.value, inline=field.inline)
 

@@ -33,6 +33,7 @@ from ..domain import (
     RegisteredAgent,
     RegisteredTool,
     RenderedReply,
+    ReplyCategory,
     ReplyField,
     ReplyIdentity,
     ReplyMode,
@@ -178,6 +179,7 @@ class CogBase:
         code: Sequence[str] = (),
         identity: ReplyIdentity | None = None,
         footer_override: FooterOverride | None = None,
+        category: ReplyCategory | None = None,
     ) -> RenderedReply:
         """Render title/description/content -- plus any embed `fields`
         (name/value/inline, discord.Embed.add_field-shaped) -- against a
@@ -209,9 +211,14 @@ class CogBase:
 
         `identity`/`footer_override` are almost never passed here directly
         -- prefer `reply_sender()`'s bound object, which supplies
-        `identity` automatically. `footer_override` is `ConsultAgentTool`'s
-        one use case (the *consulted* agent's identity, not the caller's
-        own) -- see docs/reply-identity-design.md."""
+        `identity` (and `category`) automatically. `footer_override` is
+        `ConsultAgentTool`'s one use case (the *consulted* agent's identity,
+        not the caller's own) -- see docs/reply-identity-design.md.
+        `category` picks this embed's accent color from the shared
+        Agent/Room/Furniture scheme (docs/embed-colors.md); `None` (the
+        default) leaves Discord's own gray, deliberately independent of
+        `identity` -- a cog can have an author name with no category color,
+        or vice versa."""
 
         assert ctx.guild is not None, "render_reply needs a guild context"
         settings = await self._repository.guild_settings(ctx.guild.id)
@@ -228,6 +235,7 @@ class CogBase:
             prefix=ctx.clean_prefix,
             identity=identity,
             footer_override=footer_override,
+            category=category,
         )
 
     async def send_reply(
@@ -241,6 +249,7 @@ class CogBase:
         code: Sequence[str] = (),
         identity: ReplyIdentity | None = None,
         footer_override: FooterOverride | None = None,
+        category: ReplyCategory | None = None,
     ) -> discord.Message:
         rendered = await self.render_reply(
             ctx,
@@ -251,24 +260,35 @@ class CogBase:
             code=code,
             identity=identity,
             footer_override=footer_override,
+            category=category,
         )
         return await send_rendered_reply(ctx, rendered)
 
-    def reply_sender(self, *, owner: str, avatar_path: Path | None = None) -> ReplySender:
+    def reply_sender(
+        self,
+        *,
+        owner: str,
+        avatar_path: Path | None = None,
+        category: ReplyCategory | None = None,
+    ) -> ReplySender:
         """A per-cog bound sender, obtained once (typically in the calling
         cog's own `cog_load`, alongside `register_dependent`/
         `register_agent`) and reused at every one of that cog's own
-        `send_reply`/`render_reply` call sites -- so `owner`/`avatar_path`
-        never needs repeating as an argument at any of them. See
+        `send_reply`/`render_reply` call sites -- so `owner`/`avatar_path`/
+        `category` never needs repeating as an argument at any of them. See
         docs/reply-identity-design.md.
 
         `avatar_path` should be the cog's *conventional* asset path
         (`<cog_package>/assets/avatar.png`) regardless of whether that
         file currently exists -- existence is checked fresh on every send
         (`build_reply_payload`), so dropping a real image there later
-        needs no code change."""
+        needs no code change.
 
-        return ReplySender(self, owner=owner, avatar_path=avatar_path)
+        `category` (see docs/embed-colors.md) is `None` by default --
+        Discord's own gray -- for any cog that doesn't fit the shared
+        Agent/Room/Furniture scheme, rather than guessing a bucket for it."""
+
+        return ReplySender(self, owner=owner, avatar_path=avatar_path, category=category)
 
     async def default_prefix(self) -> str:
         """The bot's global default command prefix -- what Red resolves DM

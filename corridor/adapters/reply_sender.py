@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 import discord
 from redbot.core import commands
 
-from ..domain import FooterOverride, RenderedReply, ReplyField, ReplyIdentity
+from ..domain import FooterOverride, RenderedReply, ReplyCategory, ReplyField, ReplyIdentity
 from .api import send_rendered_reply
 
 if TYPE_CHECKING:
@@ -36,9 +36,17 @@ class ReplySender:
     outright (rather than a not-yet-existing conventional path) is only
     appropriate for a cog that will never want author icons at all."""
 
-    def __init__(self, cog_base: CogBase, *, owner: str, avatar_path: Path | None = None) -> None:
+    def __init__(
+        self,
+        cog_base: CogBase,
+        *,
+        owner: str,
+        avatar_path: Path | None = None,
+        category: ReplyCategory | None = None,
+    ) -> None:
         self._cog_base = cog_base
         self._avatar_path = avatar_path
+        self._category = category
         self._identity = ReplyIdentity(
             owner=owner,
             avatar_filename=avatar_path.name if avatar_path is not None else None,
@@ -62,6 +70,7 @@ class ReplySender:
             fields=fields,
             code=code,
             identity=self._identity,
+            category=self._category,
         )
 
     async def send_reply(
@@ -84,6 +93,7 @@ class ReplySender:
             code=code,
             identity=self._identity,
             footer_override=footer_override,
+            category=self._category,
         )
         return await send_rendered_reply(ctx, rendered, avatar_path=self._avatar_path)
 

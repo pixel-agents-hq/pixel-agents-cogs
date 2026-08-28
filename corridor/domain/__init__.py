@@ -28,6 +28,7 @@ from .models import (
     PermissionSettings,
     RegisteredTool,
     RenderedReply,
+    ReplyCategory,
     ReplyField,
     ReplyIdentity,
     ReplyMode,
@@ -36,12 +37,14 @@ from .models import (
     ToolHandler,
     ToolVisibilityFilter,
 )
+from .reply_colors import REPLY_CATEGORY_COLORS
 
 __all__ = [
     "EMPLOYEE_KEY",
     "LLMToolSpec",
     "OWNER_KEY",
     "RESERVED_GROUP_KEYS",
+    "REPLY_CATEGORY_COLORS",
     "A2ASettings",
     "AgentActivity",
     "AgentActivityEvent",
@@ -63,6 +66,7 @@ __all__ = [
     "RegisteredAgent",
     "RegisteredTool",
     "RenderedReply",
+    "ReplyCategory",
     "ReplyField",
     "ReplyIdentity",
     "ReplyMode",

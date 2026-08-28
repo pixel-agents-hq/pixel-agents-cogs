@@ -119,7 +119,9 @@ class FakeCorridor:
         self._next_message_id += 1
         return message
 
-    def reply_sender(self, *, owner: str, avatar_path: Any = None) -> FakeReplySender:
+    def reply_sender(
+        self, *, owner: str, avatar_path: Any = None, category: Any = None
+    ) -> FakeReplySender:
         """Stands in for corridor.reply_sender -- author identity is a
         corridor-side concern, covered by corridor's own test suite;
         pico's tests only need the same `self.replies` recording

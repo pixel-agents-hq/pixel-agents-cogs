@@ -11,7 +11,7 @@ import unittest
 from pathlib import Path
 
 from ..adapters.api import build_reply_payload, send_rendered_reply
-from ..domain import ReplyMode
+from ..domain import REPLY_CATEGORY_COLORS, ReplyCategory, ReplyMode
 from ..domain.models import RenderedReply
 from .conftest import FakeContext, FakeGuild, FakeMember
 
@@ -24,6 +24,7 @@ def _reply(
     footer_text: str | None = None,
     footer_icon_url: str | None = None,
     content: str | None = None,
+    category: ReplyCategory | None = None,
 ) -> RenderedReply:
     return RenderedReply(
         mode=mode,
@@ -36,6 +37,7 @@ def _reply(
         show_timestamp=False,
         author_name=author_name,
         author_icon_attachment=author_icon_attachment,
+        category=category,
     )
 
 
@@ -104,6 +106,16 @@ class TestBuildReplyPayload(unittest.TestCase):
         kwargs, _files = build_reply_payload(_reply())
 
         kwargs["embed"].set_footer.assert_not_called()
+
+    def test_no_category_sets_no_color(self) -> None:
+        kwargs, _files = build_reply_payload(_reply())
+
+        self.assertIsNone(kwargs["embed"].color)
+
+    def test_category_sets_its_mapped_color(self) -> None:
+        kwargs, _files = build_reply_payload(_reply(category=ReplyCategory.AGENT))
+
+        self.assertEqual(kwargs["embed"].color, REPLY_CATEGORY_COLORS[ReplyCategory.AGENT])
 
 
 class TestSendRenderedReply(unittest.IsolatedAsyncioTestCase):

@@ -113,7 +113,9 @@ class FakeCorridor:
             }
         )
 
-    def reply_sender(self, *, owner: str, avatar_path: Any = None) -> FakeReplySender:
+    def reply_sender(
+        self, *, owner: str, avatar_path: Any = None, category: Any = None
+    ) -> FakeReplySender:
         """Stands in for corridor.reply_sender -- records reply/author
         identity is a corridor-side concern, covered by corridor's own
         test suite; architect's tests only need the same `self.replies`

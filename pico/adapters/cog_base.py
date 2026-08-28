@@ -7,6 +7,8 @@ from typing import Any
 
 from redbot.core.bot import Red
 
+from corridor.domain import ReplyCategory
+
 from ..application import GateService, ToolLoopService
 from ..dependency_loader import ensure_corridor_loaded
 from ..infrastructure import ArchitectClient, CorridorLLMClient, RedPicoRepository
@@ -49,7 +51,9 @@ class CogBase:
         # So unloading corridor cascades to unload this cog too, instead of
         # leaving it running with a stale corridor reference.
         self._corridor.register_dependent("pico")
-        self._reply = self._corridor.reply_sender(owner="Pico", avatar_path=AVATAR_PATH)
+        self._reply = self._corridor.reply_sender(
+            owner="Pico", avatar_path=AVATAR_PATH, category=ReplyCategory.AGENT
+        )
 
     async def cog_unload(self) -> None:
         if self._corridor is not None:

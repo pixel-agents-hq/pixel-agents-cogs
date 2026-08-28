@@ -19,7 +19,7 @@ from typing import Any
 
 from redbot.core import commands
 
-from ..domain import ReplyField
+from ..domain import ReplyCategory, ReplyField
 from .settings_ui import SharedSettingsView
 
 _MASKED_KEY = "•" * 8
@@ -61,7 +61,9 @@ class CommandsMixin:
         """Set the LiteLLM proxy base URL."""
 
         await self.set_llm_base_url(url)  # type: ignore[attr-defined]
-        await self.send_reply(ctx, description=f"LLM endpoint set to `{url}`.")  # type: ignore[attr-defined]
+        await self.send_reply(  # type: ignore[attr-defined]
+            ctx, description=f"LLM endpoint set to `{url}`.", category=ReplyCategory.ROOM
+        )
 
     @llm_group.command(name="key")
     @commands.is_owner()
@@ -73,7 +75,9 @@ class CommandsMixin:
             await ctx.message.delete()
         except Exception:  # best-effort: missing perms/already-deleted must not block the update
             pass
-        await self.send_reply(ctx, description="LLM virtual key updated.")  # type: ignore[attr-defined]
+        await self.send_reply(  # type: ignore[attr-defined]
+            ctx, description="LLM virtual key updated.", category=ReplyCategory.ROOM
+        )
 
     @llm_group.command(name="model")
     @commands.is_owner()
@@ -81,7 +85,9 @@ class CommandsMixin:
         """Set the model name passed to the LLM endpoint."""
 
         await self.set_llm_model(model)  # type: ignore[attr-defined]
-        await self.send_reply(ctx, description=f"LLM model set to `{model}`.")  # type: ignore[attr-defined]
+        await self.send_reply(  # type: ignore[attr-defined]
+            ctx, description=f"LLM model set to `{model}`.", category=ReplyCategory.ROOM
+        )
 
     @corridor_group.group(name="a2a", invoke_without_command=True)
     @commands.is_owner()
@@ -104,9 +110,12 @@ class CommandsMixin:
             await self.send_reply(  # type: ignore[attr-defined]
                 ctx,
                 description=f"A2A listener host set to `{host}`, but it failed to start: {error}",
+                category=ReplyCategory.ROOM,
             )
             return
-        await self.send_reply(ctx, description=f"A2A listener host set to `{host}`.")  # type: ignore[attr-defined]
+        await self.send_reply(  # type: ignore[attr-defined]
+            ctx, description=f"A2A listener host set to `{host}`.", category=ReplyCategory.ROOM
+        )
 
     @a2a_group.command(name="port")
     @commands.is_owner()
@@ -117,15 +126,20 @@ class CommandsMixin:
         try:
             error = await self.set_a2a_port(port)  # type: ignore[attr-defined]
         except ValueError as exc:
-            await self.send_reply(ctx, description=str(exc))  # type: ignore[attr-defined]
+            await self.send_reply(  # type: ignore[attr-defined]
+                ctx, description=str(exc), category=ReplyCategory.ROOM
+            )
             return
         if error is not None:
             await self.send_reply(  # type: ignore[attr-defined]
                 ctx,
                 description=f"A2A listener port set to `{port}`, but it failed to start: {error}",
+                category=ReplyCategory.ROOM,
             )
             return
-        await self.send_reply(ctx, description=f"A2A listener port set to `{port}`.")  # type: ignore[attr-defined]
+        await self.send_reply(  # type: ignore[attr-defined]
+            ctx, description=f"A2A listener port set to `{port}`.", category=ReplyCategory.ROOM
+        )
 
     @corridor_group.command(name="status")
     async def corridor_status(self, ctx: commands.Context) -> None:
@@ -150,7 +164,9 @@ class CommandsMixin:
                 False,
             ),
         ]
-        await self.send_reply(ctx, title="Corridor LLM Status", fields=fields)  # type: ignore[attr-defined]
+        await self.send_reply(  # type: ignore[attr-defined]
+            ctx, title="Corridor LLM Status", fields=fields, category=ReplyCategory.ROOM
+        )
 
 
 __all__ = ["CommandsMixin"]

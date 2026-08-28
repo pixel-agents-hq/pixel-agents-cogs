@@ -11,7 +11,13 @@ from typing import Any, Literal, cast
 from aiohttp import web
 from redbot.core.bot import Red
 
-from corridor.domain import AgentPresenceChanged, AgentRef, AgentReplied, RegisteredAgent
+from corridor.domain import (
+    AgentPresenceChanged,
+    AgentRef,
+    AgentReplied,
+    RegisteredAgent,
+    ReplyCategory,
+)
 from pixelagents.application.office import OfficeService
 
 from ..application import ToolLoopService
@@ -157,7 +163,9 @@ class CogBase:
         # So unloading corridor cascades to unload this cog too, instead of
         # leaving it running with a stale corridor reference.
         self._corridor.register_dependent("architect")
-        self._reply = self._corridor.reply_sender(owner="Architect", avatar_path=AVATAR_PATH)
+        self._reply = self._corridor.reply_sender(
+            owner="Architect", avatar_path=AVATAR_PATH, category=ReplyCategory.AGENT
+        )
         await self._publish_presence("online")
         await self._register_with_corridor()
         self._pixelagents = await ensure_loaded(self.bot, "pixelagents", "PixelAgents")

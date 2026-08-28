@@ -676,6 +676,7 @@ class _FakeRenderedReply:
         show_timestamp=False,
         author_name=None,
         author_icon_attachment=None,
+        category=None,
     ):
         self.mode = mode
         self.content = content
@@ -687,6 +688,7 @@ class _FakeRenderedReply:
         self.show_timestamp = show_timestamp
         self.author_name = author_name
         self.author_icon_attachment = author_icon_attachment
+        self.category = category
 
 
 class FakeCorridor:
@@ -773,6 +775,7 @@ class FakeCorridor:
         code=(),
         identity=None,
         footer_override=None,
+        category=None,
     ):
         """Mirrors corridor's real render_reply, including resolving
         `guild_id`/`prefix` from `ctx` itself (a caller never supplies
@@ -842,6 +845,7 @@ class FakeCorridor:
             footer_icon_url=footer_icon_url,
             author_name=identity.owner if identity is not None else None,
             author_icon_attachment=identity.avatar_filename if identity is not None else None,
+            category=category,
         )
 
 

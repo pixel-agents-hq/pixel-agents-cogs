@@ -10,6 +10,7 @@ from ..domain import (
     FooterOverride,
     IconPreference,
     IconSource,
+    ReplyCategory,
     ReplyField,
     ReplyIdentity,
     ReplyMode,
@@ -264,6 +265,46 @@ class TestReplyService(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(rendered.author_name, "Architect")
         self.assertEqual(rendered.author_icon_attachment, "avatar.png")
+
+    async def test_embed_mode_with_no_category_has_no_color(self) -> None:
+        preferences = ReplyPreferences(
+            mode=ReplyMode.EMBED,
+            show_timestamp=False,
+            footer_text=None,
+            icon=IconPreference(source=IconSource.BOT),
+        )
+
+        rendered = await self.service.render(1, preferences, ReplyContent(), prefix=";")
+
+        self.assertIsNone(rendered.category)
+
+    async def test_embed_mode_carries_category_through(self) -> None:
+        preferences = ReplyPreferences(
+            mode=ReplyMode.EMBED,
+            show_timestamp=False,
+            footer_text=None,
+            icon=IconPreference(source=IconSource.BOT),
+        )
+
+        rendered = await self.service.render(
+            1, preferences, ReplyContent(), prefix=";", category=ReplyCategory.AGENT
+        )
+
+        self.assertEqual(rendered.category, ReplyCategory.AGENT)
+
+    async def test_text_mode_never_carries_a_category(self) -> None:
+        preferences = ReplyPreferences(
+            mode=ReplyMode.TEXT,
+            show_timestamp=False,
+            footer_text=None,
+            icon=IconPreference(source=IconSource.BOT),
+        )
+
+        rendered = await self.service.render(
+            1, preferences, ReplyContent(content="Body"), prefix=";", category=ReplyCategory.ROOM
+        )
+
+        self.assertIsNone(rendered.category)
 
     async def test_embed_mode_footer_override_wins_over_guild_footer(self) -> None:
         preferences = ReplyPreferences(

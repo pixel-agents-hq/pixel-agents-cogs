@@ -3,6 +3,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .agent_directory import RegisteredAgent, card_with_url
 
+from .agent_tool_server import AgentAllowedCheck, RegisteredMcpServer
 from .llm_tools import LLMToolSpec, ToolDescription, infer_parameters, llm_tool, llm_tool_spec
 from .models import (
     EMPLOYEE_KEY,
@@ -46,6 +47,7 @@ __all__ = [
     "RESERVED_GROUP_KEYS",
     "REPLY_CATEGORY_COLORS",
     "A2ASettings",
+    "AgentAllowedCheck",
     "AgentActivity",
     "AgentActivityEvent",
     "AgentHighlighted",
@@ -64,6 +66,7 @@ __all__ = [
     "PermissionGroupDef",
     "PermissionSettings",
     "RegisteredAgent",
+    "RegisteredMcpServer",
     "RegisteredTool",
     "RenderedReply",
     "ReplyCategory",

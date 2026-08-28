@@ -14,7 +14,7 @@ import discord
 from redbot.core import commands
 
 from ..domain import FooterOverride, RenderedReply, ReplyCategory, ReplyField, ReplyIdentity
-from .api import send_rendered_reply
+from .api import send_rendered_reply, send_rendered_reply_to_channel
 
 if TYPE_CHECKING:
     from .cog_base import CogBase
@@ -98,6 +98,55 @@ class ReplySender:
         )
         return await send_rendered_reply(
             ctx, rendered, avatar_path=self._avatar_path, footer_icon_path=footer_icon_path
+        )
+
+    async def render_channel_reply(
+        self,
+        guild_id: int,
+        *,
+        title: str | None = None,
+        description: str | None = None,
+        content: str | None = None,
+        fields: Sequence[ReplyField] = (),
+        code: Sequence[str] = (),
+    ) -> RenderedReply:
+        return await self._cog_base.render_channel_reply(
+            guild_id,
+            title=title,
+            description=description,
+            content=content,
+            fields=fields,
+            code=code,
+            identity=self._identity,
+            category=self._category,
+        )
+
+    async def send_channel_reply(
+        self,
+        channel: discord.abc.Messageable,
+        guild_id: int,
+        *,
+        title: str | None = None,
+        description: str | None = None,
+        content: str | None = None,
+        fields: Sequence[ReplyField] = (),
+        code: Sequence[str] = (),
+        footer_override: FooterOverride | None = None,
+        footer_icon_path: Path | None = None,
+    ) -> discord.Message:
+        rendered = await self._cog_base.render_channel_reply(
+            guild_id,
+            title=title,
+            description=description,
+            content=content,
+            fields=fields,
+            code=code,
+            identity=self._identity,
+            footer_override=footer_override,
+            category=self._category,
+        )
+        return await send_rendered_reply_to_channel(
+            channel, rendered, avatar_path=self._avatar_path, footer_icon_path=footer_icon_path
         )
 
     async def publish_event(self, event: object) -> None:

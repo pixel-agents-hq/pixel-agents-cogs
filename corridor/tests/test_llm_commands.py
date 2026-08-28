@@ -89,7 +89,12 @@ class TestLLMCommands(unittest.IsolatedAsyncioTestCase):
 
         embed = self.ctx.sent[-1]["embed"]
         self.assertEqual(embed.color, REPLY_CATEGORY_COLORS[ReplyCategory.ROOM])
-        embed.set_author.assert_called_once_with(name="Corridor", icon_url=None)
+        # corridor/assets/avatar.png is a real, committed file (see
+        # docs/reply-identity-design.md's rollout) -- corridor's own
+        # ReplySender picks it up automatically, same as every other cog.
+        embed.set_author.assert_called_once_with(
+            name="Corridor", icon_url="attachment://avatar.png"
+        )
 
     async def test_status_masks_the_key_when_set(self) -> None:
         await self.corridor.llm_key.callback(self.corridor, self.ctx, "sk-super-secret")

@@ -136,9 +136,22 @@ class OfficeLayoutService:
                 updates[position] = TileCell.wall(zone_label=cell.zone_label)
             else:
                 assert material is not None
+                # `color is None` means this cell's color is untouched by
+                # this call -- carry its exact original raw_color forward
+                # too, not just the semantic name, so it still round-trips
+                # byte-for-byte on encode (docs/architect-semantic-ir-design.md
+                # section 6.3). A newly authored color has no raw ground
+                # truth of its own yet, so raw_color is correctly absent.
+                new_color: str | None
+                new_raw_color: tuple[int, int, int, int] | None
+                if color is not None:
+                    new_color, new_raw_color = color, None
+                else:
+                    new_color, new_raw_color = cell.color, cell.raw_color
                 updates[position] = TileCell.floor(
                     material,
-                    color if color is not None else cell.color,
+                    new_color,
+                    raw_color=new_raw_color,
                     zone_label=cell.zone_label,
                 )
         new_grid = office.grid.replacing(updates)

@@ -105,6 +105,13 @@ class TileCell:
     # no semantic meaning (section 1), constrained 1-9 by
     # Field(ge=1, le=9) wherever a tool accepts it
     color: str | None  # semantic color name (section 6.3), FLOOR only
+    raw_color: tuple[int, int, int, int] | None  # exact (h, s, b, c) this cell
+    # decoded from, when its color has never been repainted since -- lets
+    # the adapter re-emit the *original* value instead of `color`'s
+    # canonical palette value on encode (section 6.3's "untouched cell
+    # round-trips exactly" claim). `None` for a cell with no color, or one
+    # a mutation has actually repainted (no more precise ground truth than
+    # the palette's canonical value exists for a freshly authored color).
     zone_label: str | None  # which Zone owns this cell, if any
 
     @classmethod
@@ -113,15 +120,28 @@ class TileCell:
         # is an independent array upstream, so a wall tile can genuinely
         # have a zone label in the raw JSON, and losslessness means
         # preserving that even though it renders oddly.
-        return cls(TileKind.WALL, material=None, color=None, zone_label=zone_label)
+        return cls(TileKind.WALL, material=None, color=None, raw_color=None, zone_label=zone_label)
 
     @classmethod
     def void(cls, *, zone_label: str | None = None) -> TileCell:
-        return cls(TileKind.VOID, material=None, color=None, zone_label=zone_label)
+        return cls(TileKind.VOID, material=None, color=None, raw_color=None, zone_label=zone_label)
 
     @classmethod
-    def floor(cls, material: int, color: str | None, *, zone_label: str | None = None) -> TileCell:
-        return cls(TileKind.FLOOR, material=material, color=color, zone_label=zone_label)
+    def floor(
+        cls,
+        material: int,
+        color: str | None,
+        *,
+        raw_color: tuple[int, int, int, int] | None = None,
+        zone_label: str | None = None,
+    ) -> TileCell:
+        return cls(
+            TileKind.FLOOR,
+            material=material,
+            color=color,
+            raw_color=raw_color,
+            zone_label=zone_label,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -178,6 +198,9 @@ class FurnitureItem:
     facing: Direction | None = None  # None for non-orientable items (plants, clocks)
     label: str | None = None  # optional human/LLM-given name, e.g. "Priya's desk"
     color: str | None = None  # optional semantic color name, e.g. "blue" (section 6.3)
+    raw_color: tuple[int, int, int, int] | None = None  # exact (h, s, b, c) this
+    # item decoded with, when unmodified since -- same "prefer this over
+    # color's canonical value on encode" contract as `TileCell.raw_color`.
 
 
 @dataclass(frozen=True, slots=True)
@@ -216,6 +239,9 @@ class Zone:
     label: str
     color: str  # semantic color name (section 6.3), not hex
     tiles: GridRect  # bounding-box summary, derived from Grid
+    raw_color: str | None = None  # exact hex this zone decoded with, when
+    # unmodified since -- same "prefer this over color's canonical value on
+    # encode" contract as `TileCell.raw_color`.
 
 
 @dataclass(frozen=True, slots=True)

@@ -10,7 +10,18 @@ every decode, dominant-color sampling, "always emit pattern 1").
 
 There is no room concept anywhere in this module (or anywhere in Pixel
 Agents itself) -- `Zone`/`areaTiles` is the only spatial-grouping concept
-upstream actually has, and it's what this module builds directly."""
+upstream actually has, and it's what this module builds directly.
+
+Color is the one place a raw value and a semantic value coexist
+(section 6.3): `decode()` always also stashes the exact original
+`{h,s,b,c}`/hex on `TileCell.raw_color`/`FurnitureItem.raw_color`/
+`Zone.raw_color`, and `encode()` prefers that over the semantic name's
+canonical palette value whenever it's present. `raw_color` is `None` only
+for a color that's genuinely new -- authored or changed by a mutation
+(`OfficeLayoutService`'s job to clear it there) -- so an *untouched* cell's
+exact color survives a round trip, and only a cell a tool actually
+repainted gets the palette's nearest-match value, matching the "no
+inference, no sampling" claim above on every axis, not just tiles/areas."""
 
 from __future__ import annotations
 
@@ -36,6 +47,15 @@ from .furniture_styles import FurnitureStyleManifest
 
 _WALL = 0
 _VOID = 255
+
+
+def _hsb_to_raw(color: HsbColor) -> tuple[int, int, int, int]:
+    return (color["h"], color["s"], color["b"], color["c"])
+
+
+def _raw_to_hsb(raw: tuple[int, int, int, int]) -> HsbColor:
+    h, s, b, c = raw
+    return {"h": h, "s": s, "b": b, "c": c}
 
 
 def decode(raw: dict[str, Any], styles: FurnitureStyleManifest) -> Office:
@@ -93,7 +113,8 @@ def _build_grid(
         else:
             color_raw = tile_colors[i] if tile_colors is not None else None
             color = nearest_name(color_raw) if color_raw is not None else None
-            cells.append(TileCell.floor(value, color, zone_label=zone_label))
+            raw_color = _hsb_to_raw(color_raw) if color_raw is not None else None
+            cells.append(TileCell.floor(value, color, raw_color=raw_color, zone_label=zone_label))
     return Grid(cols, rows, tuple(cells))
 
 
@@ -124,6 +145,7 @@ def _decode_furniture(
                 position=GridPosition(col=entry["col"], row=entry["row"]),
                 facing=facing,
                 color=nearest_name(color_raw) if color_raw is not None else None,
+                raw_color=_hsb_to_raw(color_raw) if color_raw is not None else None,
             )
         )
         id_uid_map[uid] = uid
@@ -183,11 +205,13 @@ def _decode_zones(grid: Grid, raw_areas: list[dict[str, Any]]) -> list[Zone]:
         max_col = max(p.col for p in positions)
         min_row = min(p.row for p in positions)
         max_row = max(p.row for p in positions)
+        raw_color = cast(str, area["color"])
         zones.append(
             Zone(
                 id=f"zone:{label}",
                 label=label,
-                color=nearest_hex_name(cast(str, area["color"])),
+                color=nearest_hex_name(raw_color),
+                raw_color=raw_color,
                 tiles=GridRect(
                     GridPosition(min_col, min_row),
                     width=max_col - min_col + 1,
@@ -225,7 +249,11 @@ def encode(office: Office, styles: FurnitureStyleManifest) -> dict[str, Any]:
     }
     if office.zones or any(label is not None for label in area_tiles):
         result["areas"] = [
-            {"label": zone.label, "color": hex_for(zone.color)} for zone in office.zones
+            {
+                "label": zone.label,
+                "color": zone.raw_color if zone.raw_color is not None else hex_for(zone.color),
+            }
+            for zone in office.zones
         ]
         result["areaTiles"] = area_tiles
     for key in ("pets", "carpetTiles", "layoutRevision"):
@@ -257,7 +285,12 @@ def _encode_grid(grid: Grid) -> tuple[list[int], list[HsbColor | None], list[str
             tile_colors.append(None)
         else:
             tiles.append(cast(int, cell.material))
-            tile_colors.append(hsb_for(cell.color) if cell.color is not None else None)
+            if cell.color is None:
+                tile_colors.append(None)
+            elif cell.raw_color is not None:
+                tile_colors.append(_raw_to_hsb(cell.raw_color))
+            else:
+                tile_colors.append(hsb_for(cell.color))
         area_tiles.append(cell.zone_label)
     return tiles, tile_colors, area_tiles
 
@@ -282,7 +315,9 @@ def _encode_furniture(office: Office, styles: FurnitureStyleManifest) -> list[di
             "row": item.position.row,
         }
         if item.color is not None:
-            entry["color"] = hsb_for(item.color)
+            entry["color"] = (
+                _raw_to_hsb(item.raw_color) if item.raw_color is not None else hsb_for(item.color)
+            )
         encoded.append(entry)
 
     return encoded

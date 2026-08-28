@@ -61,28 +61,31 @@ category color is applied through corridor's one shared
 `ReplyIdentity` (owner name + avatar) and `category` (embed color) are
 deliberately separate parameters throughout the reply pipeline
 (`ReplyService.render`, `CogBase.render_reply`/`send_reply`,
-`ReplySender`), not one derived from the other. The tempting alternative --
-add `category` as a field on `ReplyIdentity` -- doesn't work: corridor's
-*own* replies (`corridor/adapters/commands.py`) call `self.send_reply(...)`
-directly with no bound identity at all (corridor is its own renderer, see
-that file's module docstring), so a category tied to identity would leave
-corridor's own embeds uncolored despite corridor being a Room cog. Keeping
-`category` a first-class, independently-passed parameter lets corridor
-color its own replies Room-teal without also having to invent an author
-name/avatar for itself.
+`ReplySender`), not one derived from the other. A cog can bind one without
+the other -- deskutils binds an identity with no category (stays
+uncategorized), and nothing stops a future cog from wanting a category
+with no author identity. Folding `category` into `ReplyIdentity` would
+make that impossible without a workaround.
 
-Every call site that wants a color states it explicitly:
+Every cog binds its own category exactly once, at the one place it already
+binds everything else about how its replies render, so no call site ever
+repeats it:
 
 - `ReplySender` (`corridor/adapters/reply_sender.py`) binds `category`
   once per cog, alongside `owner`/`avatar_path`, via
-  `CogBase.reply_sender(owner=..., avatar_path=..., category=...)` --
-  pico, architect, testbench, toolbox each pass their own category at
-  their one `cog_load` binding site; deskutils omits it (stays
-  uncategorized).
-- `floorplan/adapters/replies.py` and `corridor/adapters/commands.py`
-  bypass `ReplySender` (floorplan needs interaction-aware dispatch;
-  corridor is its own renderer) and pass `category=ReplyCategory.ROOM`
-  directly at each of their own render/send call sites.
+  `CogBase.reply_sender(owner=..., avatar_path=..., category=...)`.
+  pico, architect, testbench, toolbox, and now **corridor itself** (bound
+  in `CogBase.__init__`, since corridor is a Room cog like floorplan) each
+  pass their own category at that one binding site; deskutils omits it
+  (stays uncategorized). corridor's own commands
+  (`corridor/adapters/commands.py`) go through `self._reply.send_reply(...)`
+  the same way every dependent cog's commands go through their own bound
+  `self._reply` -- not `self.send_reply(...)` directly -- so `category=`
+  is never repeated across its 9 reply call sites.
+- `floorplan/adapters/replies.py` bypasses `ReplySender` (it needs
+  interaction-aware dispatch) but still binds `category=ReplyCategory.ROOM`
+  at just the one `render_reply(...)` call every one of its commands
+  funnels through.
 - `pixelagents/adapters/replies.py` passes no `category`, so its replies
   stay the default gray -- the same neutral default every omitted
   `category` argument produces, not a special case.

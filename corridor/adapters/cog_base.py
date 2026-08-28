@@ -49,6 +49,13 @@ log = logging.getLogger("red.corridor")
 
 _EventT = TypeVar("_EventT")
 
+# Conventional path for corridor's own bundled avatar image -- passed to
+# reply_sender() below regardless of whether a real file exists here yet;
+# existence is checked fresh on every send, so dropping a real image at
+# this exact path later needs no code change. See
+# docs/reply-identity-design.md.
+AVATAR_PATH = Path(__file__).resolve().parent.parent / "assets" / "avatar.png"
+
 
 class CogBase:
     """Wire services once and own resources spanning the Cog lifetime."""
@@ -71,6 +78,13 @@ class CogBase:
         # (matches pico's original lifecycle before this moved here).
         self._llm_client = LiteLLMClient(logger=log)
         self._dependents: set[str] = set()
+        # corridor is a Room cog like floorplan (docs/embed-colors.md) --
+        # bound the same way every dependent cog binds its own identity via
+        # reply_sender(), rather than repeating category=ReplyCategory.ROOM
+        # at each of commands.py's own send_reply call sites.
+        self._reply = self.reply_sender(
+            owner="Corridor", avatar_path=AVATAR_PATH, category=ReplyCategory.ROOM
+        )
 
     async def cog_load(self) -> None:
         """Starts corridor's one shared A2A listener -- see

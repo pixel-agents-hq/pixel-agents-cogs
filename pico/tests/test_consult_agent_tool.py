@@ -13,27 +13,35 @@ import unittest
 from pathlib import Path
 from typing import Any
 
-from ..infrastructure.architect_client import ArchitectRequestError
+from ..infrastructure.architect_client import AgentAskResult, ArchitectRequestError
 from ..tools.consult_agent_tool import ConsultAgentInput, ConsultAgentOutput, ConsultAgentTool
 
 
 class FakeArchitectAsker:
-    def __init__(self, *, answer: str | None = None, fail_with: Exception | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        answer: str | None = None,
+        tool_calls_made: int | None = None,
+        fail_with: Exception | None = None,
+    ) -> None:
         self.answer = answer
+        self.tool_calls_made = tool_calls_made
         self.fail_with = fail_with
         self.calls: list[dict[str, str]] = []
 
-    async def ask(self, *, base_url: str, text: str) -> str:
+    async def ask(self, *, base_url: str, text: str) -> AgentAskResult:
         self.calls.append({"base_url": base_url, "text": text})
         if self.fail_with is not None:
             raise self.fail_with
         assert self.answer is not None
-        return self.answer
+        return AgentAskResult(answer=self.answer, tool_calls_made=self.tool_calls_made)
 
 
 class FakeReplySender:
     def __init__(self) -> None:
         self.replies: list[str | None] = []
+        self.fields: list[Any] = []
         self.footer_overrides: list[Any] = []
         self.footer_icon_paths: list[Path | None] = []
 
@@ -42,11 +50,13 @@ class FakeReplySender:
         ctx: object,
         *,
         description: str | None = None,
+        fields: Any = (),
         footer_override: Any = None,
         footer_icon_path: Path | None = None,
         **_: Any,
     ) -> None:
         self.replies.append(description)
+        self.fields.append(fields)
         self.footer_overrides.append(footer_override)
         self.footer_icon_paths.append(footer_icon_path)
 
@@ -157,6 +167,25 @@ class TestConsultAgentToolAnnouncements(unittest.IsolatedAsyncioTestCase):
         self.assertIn("architect", reply.replies[0] or "")
         self.assertIn("38 items total", reply.replies[1] or "")
         self.assertIn("architect", reply.replies[1] or "")
+
+    async def test_reply_announcement_carries_a_tool_calls_field(self) -> None:
+        reply = FakeReplySender()
+        tool = _tool(FakeArchitectAsker(answer="ok", tool_calls_made=3), reply)
+
+        await tool.handler(ConsultAgentInput(prompt="hi"))
+
+        self.assertEqual(reply.fields[0], ())  # the outgoing question carries none
+        self.assertEqual(len(reply.fields[1]), 1)
+        self.assertEqual(reply.fields[1][0].name, "Tool calls")
+        self.assertEqual(reply.fields[1][0].value, "3")
+
+    async def test_reply_announcement_has_no_tool_calls_field_when_unreported(self) -> None:
+        reply = FakeReplySender()
+        tool = _tool(FakeArchitectAsker(answer="ok", tool_calls_made=None), reply)
+
+        await tool.handler(ConsultAgentInput(prompt="hi"))
+
+        self.assertEqual(reply.fields[1], ())
 
     async def test_announces_the_question_then_a_failure(self) -> None:
         reply = FakeReplySender()

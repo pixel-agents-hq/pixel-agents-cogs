@@ -160,7 +160,12 @@ class ArchitectAgentExecutor(AgentExecutor):
             )
             return
 
-        await updater.complete(updater.new_agent_message([Part(text=result.text)]))
+        await updater.complete(
+            updater.new_agent_message(
+                [Part(text=result.text)],
+                metadata={"tool_calls_made": result.tool_calls_made},
+            )
+        )
 
     async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
         raise UnsupportedOperationError(

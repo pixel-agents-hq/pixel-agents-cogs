@@ -60,6 +60,26 @@ class TestArchitectAgentExecutor(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(tool_loop.calls[0]["user_input"], "please help")
         self.assertEqual(tool_loop.calls[0]["debug"], False)
 
+    async def test_execute_reports_tool_calls_made_as_message_metadata(self) -> None:
+        """pico's `ArchitectClient` reads this back to surface a "Tool
+        calls" field on the "📩 ... replied" Discord embed -- see
+        pico/infrastructure/architect_client.py's `_tool_calls_made`."""
+
+        tool_loop = ScriptedToolLoop(ToolLoopResult(4, "final_text", text="the answer"))
+        executor = ArchitectAgentExecutor(
+            tool_loop=tool_loop,  # type: ignore[arg-type]
+            tools=[],
+            settings=lambda: _settings_async(),
+            llm_settings=lambda: _llm_settings_async(),  # type: ignore[arg-type, return-value]
+        )
+        queue = FakeEventQueue()
+        context = FakeRequestContext("please help")
+
+        await executor.execute(context, queue)  # type: ignore[arg-type]
+
+        final_message = queue.events[-1].status.message
+        self.assertEqual(final_message.metadata["tool_calls_made"], 4)
+
     async def test_execute_passes_publish_activity_through_to_the_tool_loop(self) -> None:
         tool_loop = ScriptedToolLoop(ToolLoopResult(1, "final_text", text="the answer"))
         reported: list[str] = []

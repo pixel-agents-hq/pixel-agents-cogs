@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from dataclasses import dataclass
 
 import httpx
 from a2a.client import ClientConfig, create_client
@@ -42,8 +43,21 @@ class ArchitectRequestError(RuntimeError):
     LLMRequestError is handled elsewhere in this cog."""
 
 
+@dataclass(frozen=True, slots=True)
+class AgentAskResult:
+    """One consulted agent's answer, plus whatever optional operational
+    metadata it chose to report on its final message -- `tool_calls_made`
+    is None whenever that key is absent, since `ask()`'s own contract is
+    generic across any future agent (see `ArchitectAsker`'s docstring in
+    consult_agent_tool.py), not every one of which necessarily runs a
+    bounded tool-calling loop or reports one."""
+
+    answer: str
+    tool_calls_made: int | None = None
+
+
 class ArchitectClient:
-    async def ask(self, *, base_url: str, text: str) -> str:
+    async def ask(self, *, base_url: str, text: str) -> AgentAskResult:
         httpx_client = httpx.AsyncClient(timeout=_REQUEST_TIMEOUT_SECONDS)
         try:
             client = await create_client(
@@ -60,6 +74,7 @@ class ArchitectClient:
             )
             request = SendMessageRequest(message=message)
             final_text: str | None = None
+            tool_calls_made: int | None = None
             failed = False
             async for response in client.send_message(request):
                 status = None
@@ -71,12 +86,14 @@ class ArchitectClient:
                     parts = [part.text for part in response.message.parts if part.text]
                     if parts:
                         final_text = "\n".join(parts)
+                        tool_calls_made = _tool_calls_made(response.message.metadata)
                     continue
 
                 if status is not None and status.HasField("message"):
                     parts = [part.text for part in status.message.parts if part.text]
                     if parts:
                         final_text = "\n".join(parts)
+                        tool_calls_made = _tool_calls_made(status.message.metadata)
                 if status is not None and status.state == TaskState.TASK_STATE_FAILED:
                     failed = True
                     break
@@ -89,7 +106,20 @@ class ArchitectClient:
 
         if failed or final_text is None:
             raise ArchitectRequestError(final_text or "architect did not return an answer")
-        return final_text
+        return AgentAskResult(answer=final_text, tool_calls_made=tool_calls_made)
 
 
-__all__ = ["ArchitectClient", "ArchitectRequestError"]
+def _tool_calls_made(metadata: object) -> int | None:
+    """`metadata` is a protobuf Struct -- membership/indexing work, but not
+    `.get()` -- reporting it is a consulted agent's own choice (see
+    `AgentAskResult`'s docstring), so a missing or non-numeric key is a
+    normal case, not an error."""
+
+    try:
+        raw = metadata["tool_calls_made"]  # type: ignore[index]
+    except (KeyError, TypeError):
+        return None
+    return int(raw) if isinstance(raw, (int, float)) else None
+
+
+__all__ = ["AgentAskResult", "ArchitectClient", "ArchitectRequestError"]

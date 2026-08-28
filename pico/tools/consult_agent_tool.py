@@ -61,7 +61,7 @@ from pydantic import BaseModel, Field
 
 from corridor.domain import AgentRef, AgentReplied, FooterOverride, ReplyField
 
-from ..infrastructure.architect_client import ArchitectRequestError
+from ..infrastructure.architect_client import AgentAskResult, ArchitectRequestError
 
 log = logging.getLogger("red.pico")
 
@@ -81,7 +81,7 @@ class ArchitectAsker(Protocol):
     architect's original hardcoded tool; the client itself is generic
     (`ask(base_url=..., text=...)`), not architect-specific."""
 
-    async def ask(self, *, base_url: str, text: str) -> str: ...
+    async def ask(self, *, base_url: str, text: str) -> AgentAskResult: ...
 
 
 class ReplySenderProtocol(Protocol):
@@ -182,21 +182,24 @@ class ConsultAgentTool:
                 summary=f"Asking {self._agent_key}: {raw_input.prompt}",
             )
         try:
-            answer = await self._client.ask(base_url=self._base_url, text=raw_input.prompt)
+            result = await self._client.ask(base_url=self._base_url, text=raw_input.prompt)
         except ArchitectRequestError as exc:
             log.warning("pico: %s failed: %s", self.name, exc)
             await self._announce(f"⚠️ **{self._agent_key}** could not be reached: {exc}")
             return ConsultAgentOutput(status="error", error=str(exc))
-        await self._announce(f"📩 **{self._agent_key}** replied: {answer}")
+        await self._announce(
+            f"📩 **{self._agent_key}** replied: {result.answer}",
+            fields=_tool_call_fields(result.tool_calls_made),
+        )
         await self._publish_agent_replied(
             agent=AgentRef(
                 discord_user_id=None, guild_id=None, is_bot=True, agent_key=self._agent_key
             ),
-            summary=answer,
+            summary=result.answer,
         )
-        return ConsultAgentOutput(status="ok", answer=answer)
+        return ConsultAgentOutput(status="ok", answer=result.answer)
 
-    async def _announce(self, description: str) -> None:
+    async def _announce(self, description: str, *, fields: Sequence[ReplyField] = ()) -> None:
         """Best-effort -- a failure to post the announcement must never
         turn a successful (or already-failed) A2A call into a reported
         tool failure, same convention `ReplyTool._publish_agent_replied`
@@ -206,6 +209,7 @@ class ConsultAgentTool:
             await self._reply.send_reply(
                 self._ctx,
                 description=description,
+                fields=fields,
                 footer_override=self._footer_override,
                 footer_icon_path=self._footer_icon_path,
             )
@@ -227,6 +231,16 @@ class ConsultAgentTool:
             log.warning(
                 "pico: %s could not publish an AgentReplied event", self.name, exc_info=True
             )
+
+
+def _tool_call_fields(tool_calls_made: int | None) -> Sequence[ReplyField]:
+    """Omitted entirely when the consulted agent didn't report a count --
+    see `AgentAskResult`'s docstring on why that's a normal case, not an
+    error, for any agent that isn't running a bounded tool-calling loop."""
+
+    if tool_calls_made is None:
+        return ()
+    return (ReplyField("Tool calls", str(tool_calls_made)),)
 
 
 __all__ = [

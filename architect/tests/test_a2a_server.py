@@ -133,6 +133,76 @@ class TestArchitectAgentExecutor(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(states[-1], TaskState.TASK_STATE_FAILED)
         self.assertEqual(tool_loop.calls, [])
 
+    async def test_execute_appends_mcp_tools_to_the_fixed_tools(self) -> None:
+        tool_loop = ScriptedToolLoop(ToolLoopResult(1, "final_text", text="the answer"))
+        mcp_tool = ReviewDesignTool()
+        mcp_tool.name = "report_error"
+        calls = 0
+
+        async def mcp_tools() -> list[object]:
+            nonlocal calls
+            calls += 1
+            return [mcp_tool]
+
+        executor = ArchitectAgentExecutor(
+            tool_loop=tool_loop,  # type: ignore[arg-type]
+            tools=[ReviewDesignTool()],
+            settings=lambda: _settings_async(),
+            llm_settings=lambda: _llm_settings_async(),  # type: ignore[arg-type, return-value]
+            mcp_tools=mcp_tools,  # type: ignore[arg-type]
+        )
+        queue = FakeEventQueue()
+        context = FakeRequestContext("please help")
+
+        await executor.execute(context, queue)  # type: ignore[arg-type]
+
+        tool_names = [tool.name for tool in tool_loop.calls[0]["tools"]]  # type: ignore[union-attr]
+        self.assertEqual(tool_names, ["review_design", "report_error"])
+        self.assertEqual(calls, 1)
+
+    async def test_execute_refetches_mcp_tools_every_call(self) -> None:
+        """A bot owner flipping suggestionbox's per-agent toggle must take
+        effect on architect's very next A2A message, not require a reload
+        -- see docs/suggestionbox-design.md §6."""
+
+        tool_loop = ScriptedToolLoop(ToolLoopResult(1, "final_text", text="the answer"))
+        calls = 0
+
+        async def mcp_tools() -> list[object]:
+            nonlocal calls
+            calls += 1
+            return []
+
+        executor = ArchitectAgentExecutor(
+            tool_loop=tool_loop,  # type: ignore[arg-type]
+            tools=[],
+            settings=lambda: _settings_async(),
+            llm_settings=lambda: _llm_settings_async(),  # type: ignore[arg-type, return-value]
+            mcp_tools=mcp_tools,  # type: ignore[arg-type]
+        )
+        queue = FakeEventQueue()
+
+        await executor.execute(FakeRequestContext("first"), queue)  # type: ignore[arg-type]
+        await executor.execute(FakeRequestContext("second"), queue)  # type: ignore[arg-type]
+
+        self.assertEqual(calls, 2)
+
+    async def test_execute_with_no_mcp_tools_callable_uses_only_the_fixed_tools(self) -> None:
+        tool_loop = ScriptedToolLoop(ToolLoopResult(1, "final_text", text="the answer"))
+        executor = ArchitectAgentExecutor(
+            tool_loop=tool_loop,  # type: ignore[arg-type]
+            tools=[ReviewDesignTool()],
+            settings=lambda: _settings_async(),
+            llm_settings=lambda: _llm_settings_async(),  # type: ignore[arg-type, return-value]
+        )
+        queue = FakeEventQueue()
+        context = FakeRequestContext("please help")
+
+        await executor.execute(context, queue)  # type: ignore[arg-type]
+
+        tool_names = [tool.name for tool in tool_loop.calls[0]["tools"]]  # type: ignore[union-attr]
+        self.assertEqual(tool_names, ["review_design"])
+
     async def test_execute_fails_the_task_when_the_loop_hits_max_tool_calls(self) -> None:
         tool_loop = ScriptedToolLoop(ToolLoopResult(5, "max_tool_calls", text=None))
         executor = ArchitectAgentExecutor(

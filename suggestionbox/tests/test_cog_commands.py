@@ -115,10 +115,14 @@ class TestMcpRegistration(unittest.IsolatedAsyncioTestCase):
     async def test_bind_failure_notifies_owners_and_does_not_raise(self) -> None:
         bot = FakeBot(FakeCorridor())
         cog = Suggestionbox(bot=bot)
-        await cog._repository.set_mcp_port(8942)
+        # An OS-assigned (port 0) blocker, not a hardcoded port -- this
+        # environment can have unrelated processes already bound to a
+        # fixed high port, and an ephemeral one is guaranteed free.
         blocker = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        blocker.bind(("127.0.0.1", 8942))
+        blocker.bind(("127.0.0.1", 0))
         blocker.listen(1)
+        port = blocker.getsockname()[1]
+        await cog._repository.set_mcp_port(port)
         try:
             await cog.cog_load()  # must not raise
             self.addAsyncCleanup(cog.cog_unload)

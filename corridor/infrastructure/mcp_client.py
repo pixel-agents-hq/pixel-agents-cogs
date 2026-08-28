@@ -9,6 +9,20 @@ also forces a `pydantic>=2.12` floor that collides with the
 (see that pin's own comment in `corridor/info.json`). `mcp<2` keeps the
 API this module (and `suggestionbox`'s own server) is written against.
 
+A second, unrelated pin was needed for the exact same underlying incident
+class (see `corridor/info.json`'s own `pydantic` comment: Red-DiscordBot
+pins `typing_extensions==4.13.2` in its own site-packages, ahead of the
+Downloader's cog-requirements dir on `sys.path`, so anything needing a
+newer one fails at runtime with `cannot import name 'Sentinel'` regardless
+of what actually got installed). `mcp` pulls in `pydantic-settings`, whose
+own `typing-inspection>=0.4.0` floor is satisfied by the *latest*
+`typing-inspection` (0.4.3+) absent an upper pin -- and 0.4.3 raised
+*its own* `typing_extensions` floor to `>=4.15.0` (0.4.0-0.4.2 only need
+`>=4.12.0`). `pydantic` alone never triggered this because its own
+`typing-inspection>=0.4.0` floor was satisfied by an old-enough version
+before `mcp` entered the dependency resolution. `typing-inspection<0.4.3`
+(see `corridor/info.json`) pins it back down.
+
 Opens a fresh `streamable_http_client`/`ClientSession` pair per call rather
 than holding one open across calls -- unlike `LiteLLMClient`'s one
 reusable `aiohttp.ClientSession` (reused because pico/architect's chat

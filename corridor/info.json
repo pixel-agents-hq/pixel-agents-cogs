@@ -11,7 +11,8 @@
         "pydantic>=2.11.3,<2.12",
         "a2a-sdk[http-server]",
         "uvicorn",
-        "mcp>=1.29,<2"
+        "mcp>=1.29,<2",
+        "typing-inspection<0.4.3"
     ],
     "tags": ["shared", "settings", "permissions"],
     "min_bot_version": "3.5.24",

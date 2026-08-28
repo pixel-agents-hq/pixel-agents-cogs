@@ -7,7 +7,7 @@
     "install_msg": "Requires corridor (auto-loaded). Configure the feedback channel with [p]suggestionbox channel #channel and the MCP listener with [p]suggestionbox mcp host/port (both bot owner). Grant a registered A2A agent access to these tools via [p]suggestionbox agents.",
     "author": ["Pixel Agents HQ Contributors"],
     "required_cogs": {"corridor": "https://github.com/pixel-agents-hq/pixel-agents-cogs"},
-    "requirements": ["mcp>=1.29,<2", "uvicorn"],
+    "requirements": ["mcp>=1.29,<2", "uvicorn", "typing-inspection<0.4.3"],
     "tags": [
         "mcp",
         "feedback",

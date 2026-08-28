@@ -8,10 +8,13 @@ every LLM-backed dependent (pico, architect) -- moved here from pico's
 former `[p]pico llm ...` group, see docs/architect-design.md. The
 `[p]corridor a2a ...` group configures corridor's one shared A2A listener,
 used by every registered agent -- moved here from architect's former
-`[p]architect a2a ...` group, see docs/agent-directory-design.md. These replies
-go through `self.send_reply`/`self.render_reply` directly (corridor is its
-own renderer, so there's no `self._corridor` to reach through -- see
-contracts/discord_replies/lint_reply_channel.py's `_CORRIDOR_REPLY_CALLS`)."""
+`[p]architect a2a ...` group, see docs/agent-directory-design.md. These
+replies go through `self._reply.send_reply` -- corridor binds its own
+`ReplySender` in `CogBase.__init__` the same way every dependent cog binds
+its own, rather than repeating `category=` at each call site here (see
+docs/embed-colors.md); there's still no `self._corridor` to reach through,
+corridor is its own renderer. See
+contracts/discord_replies/lint_reply_channel.py's `_CORRIDOR_REPLY_CALLS`."""
 
 from __future__ import annotations
 
@@ -20,15 +23,18 @@ from typing import Any
 from redbot.core import commands
 
 from ..domain import ReplyField
+from .reply_sender import ReplySender
 from .settings_ui import SharedSettingsView
 
 _MASKED_KEY = "•" * 8
 
 
 class CommandsMixin:
-    """Requires `self.guild_settings`, `self.llm_settings`, `self.send_reply`,
+    """Requires `self.guild_settings`, `self.llm_settings`, `self._reply`,
     `self.set_llm_base_url`/`set_llm_api_key`/`set_llm_model` (all provided
     by CogBase)."""
+
+    _reply: ReplySender
 
     @commands.guild_only()
     @commands.admin_or_permissions(manage_guild=True)
@@ -61,7 +67,7 @@ class CommandsMixin:
         """Set the LiteLLM proxy base URL."""
 
         await self.set_llm_base_url(url)  # type: ignore[attr-defined]
-        await self.send_reply(ctx, description=f"LLM endpoint set to `{url}`.")  # type: ignore[attr-defined]
+        await self._reply.send_reply(ctx, description=f"LLM endpoint set to `{url}`.")
 
     @llm_group.command(name="key")
     @commands.is_owner()
@@ -73,7 +79,7 @@ class CommandsMixin:
             await ctx.message.delete()
         except Exception:  # best-effort: missing perms/already-deleted must not block the update
             pass
-        await self.send_reply(ctx, description="LLM virtual key updated.")  # type: ignore[attr-defined]
+        await self._reply.send_reply(ctx, description="LLM virtual key updated.")
 
     @llm_group.command(name="model")
     @commands.is_owner()
@@ -81,7 +87,7 @@ class CommandsMixin:
         """Set the model name passed to the LLM endpoint."""
 
         await self.set_llm_model(model)  # type: ignore[attr-defined]
-        await self.send_reply(ctx, description=f"LLM model set to `{model}`.")  # type: ignore[attr-defined]
+        await self._reply.send_reply(ctx, description=f"LLM model set to `{model}`.")
 
     @corridor_group.group(name="a2a", invoke_without_command=True)
     @commands.is_owner()
@@ -101,12 +107,12 @@ class CommandsMixin:
 
         error = await self.set_a2a_host(host)  # type: ignore[attr-defined]
         if error is not None:
-            await self.send_reply(  # type: ignore[attr-defined]
+            await self._reply.send_reply(
                 ctx,
                 description=f"A2A listener host set to `{host}`, but it failed to start: {error}",
             )
             return
-        await self.send_reply(ctx, description=f"A2A listener host set to `{host}`.")  # type: ignore[attr-defined]
+        await self._reply.send_reply(ctx, description=f"A2A listener host set to `{host}`.")
 
     @a2a_group.command(name="port")
     @commands.is_owner()
@@ -117,15 +123,15 @@ class CommandsMixin:
         try:
             error = await self.set_a2a_port(port)  # type: ignore[attr-defined]
         except ValueError as exc:
-            await self.send_reply(ctx, description=str(exc))  # type: ignore[attr-defined]
+            await self._reply.send_reply(ctx, description=str(exc))
             return
         if error is not None:
-            await self.send_reply(  # type: ignore[attr-defined]
+            await self._reply.send_reply(
                 ctx,
                 description=f"A2A listener port set to `{port}`, but it failed to start: {error}",
             )
             return
-        await self.send_reply(ctx, description=f"A2A listener port set to `{port}`.")  # type: ignore[attr-defined]
+        await self._reply.send_reply(ctx, description=f"A2A listener port set to `{port}`.")
 
     @corridor_group.command(name="status")
     async def corridor_status(self, ctx: commands.Context) -> None:
@@ -150,7 +156,7 @@ class CommandsMixin:
                 False,
             ),
         ]
-        await self.send_reply(ctx, title="Corridor LLM Status", fields=fields)  # type: ignore[attr-defined]
+        await self._reply.send_reply(ctx, title="Corridor LLM Status", fields=fields)
 
 
 __all__ = ["CommandsMixin"]

@@ -9,6 +9,7 @@ from __future__ import annotations
 import unittest
 
 from ..corridor import Corridor
+from ..domain import REPLY_CATEGORY_COLORS, ReplyCategory
 from .conftest import FakeBot, FakeContext, FakeGuild, FakeMember
 
 
@@ -75,6 +76,25 @@ class TestLLMCommands(unittest.IsolatedAsyncioTestCase):
 
         settings = await self.corridor.llm_settings()
         self.assertEqual(settings.llm_model, "gpt-test")
+
+    async def test_llm_endpoint_reply_is_colored_room(self) -> None:
+        """corridor binds its own ReplySender in CogBase.__init__ (owner
+        "Corridor", category=ReplyCategory.ROOM) the same way every
+        dependent cog binds its own -- see commands.py's module docstring
+        and docs/embed-colors.md -- so its own replies pick up both the
+        author name and the shared Room color with nothing repeated at
+        each of its own send_reply call sites."""
+
+        await self.corridor.llm_endpoint.callback(self.corridor, self.ctx, "https://example.test/")
+
+        embed = self.ctx.sent[-1]["embed"]
+        self.assertEqual(embed.color, REPLY_CATEGORY_COLORS[ReplyCategory.ROOM])
+        # corridor/assets/avatar.png is a real, committed file (see
+        # docs/reply-identity-design.md's rollout) -- corridor's own
+        # ReplySender picks it up automatically, same as every other cog.
+        embed.set_author.assert_called_once_with(
+            name="Corridor", icon_url="attachment://avatar.png"
+        )
 
     async def test_status_masks_the_key_when_set(self) -> None:
         await self.corridor.llm_key.callback(self.corridor, self.ctx, "sk-super-secret")

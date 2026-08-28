@@ -1344,13 +1344,13 @@ class TestReplyHelper(unittest.IsolatedAsyncioTestCase):
     async def test_prefix_uses_ctx_send(self):
         ctx = make_ctx()
         await self.cog._reply(ctx, "hello")
-        ctx.send.assert_awaited_once_with(content="hello")
+        ctx.send.assert_awaited_once_with(content="**Floorplan:** hello")
 
     async def test_text_mode_renders_through_corridor(self):
         self.cog._corridor = FakeCorridor(reply_mode="text")
         ctx = make_ctx()
         await self.cog._reply(ctx, "hello", title="Pixel Agents")
-        ctx.send.assert_awaited_once_with(content="hello")
+        ctx.send.assert_awaited_once_with(content="**Floorplan:** hello")
         self.assertEqual(
             self.cog._corridor.rendered_replies,
             [(ctx.guild.id, "Pixel Agents", "hello", None, ())],
@@ -1388,7 +1388,7 @@ class TestReplyHelper(unittest.IsolatedAsyncioTestCase):
         await self.cog._reply(ctx, title="Status", fields=fields)
 
         ctx.send.assert_awaited_once_with(
-            content="Status\n**Serving:** yes\n**Clients:** 3"
+            content="**Floorplan:** Status\n**Serving:** yes\n**Clients:** 3"
         )
 
     async def test_view_only_reply_bypasses_corridor(self):

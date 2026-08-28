@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable, Sequence
+from pathlib import Path
 from typing import Any, TypeVar, cast
 
 import discord
@@ -24,6 +25,7 @@ from ..application import (
 )
 from ..domain import (
     A2ASettings,
+    FooterOverride,
     GuildSettings,
     IconPreference,
     LLMSettings,
@@ -31,7 +33,9 @@ from ..domain import (
     RegisteredAgent,
     RegisteredTool,
     RenderedReply,
+    ReplyCategory,
     ReplyField,
+    ReplyIdentity,
     ReplyMode,
     ToolVisibilityFilter,
     card_with_url,
@@ -39,10 +43,18 @@ from ..domain import (
 from ..infrastructure import A2AServer, LiteLLMClient, RedCorridorRepository
 from .api import BotIconResolver, BotOwnerRegistry, DiscordMemberRef, send_rendered_reply
 from .llm_tool_registration import collect_registered_tools
+from .reply_sender import ReplySender
 
 log = logging.getLogger("red.corridor")
 
 _EventT = TypeVar("_EventT")
+
+# Conventional path for corridor's own bundled avatar image -- passed to
+# reply_sender() below regardless of whether a real file exists here yet;
+# existence is checked fresh on every send, so dropping a real image at
+# this exact path later needs no code change. See
+# docs/reply-identity-design.md.
+AVATAR_PATH = Path(__file__).resolve().parent.parent / "assets" / "avatar.png"
 
 
 class CogBase:
@@ -66,6 +78,13 @@ class CogBase:
         # (matches pico's original lifecycle before this moved here).
         self._llm_client = LiteLLMClient(logger=log)
         self._dependents: set[str] = set()
+        # corridor is a Room cog like floorplan (docs/embed-colors.md) --
+        # bound the same way every dependent cog binds its own identity via
+        # reply_sender(), rather than repeating category=ReplyCategory.ROOM
+        # at each of commands.py's own send_reply call sites.
+        self._reply = self.reply_sender(
+            owner="Corridor", avatar_path=AVATAR_PATH, category=ReplyCategory.ROOM
+        )
 
     async def cog_load(self) -> None:
         """Starts corridor's one shared A2A listener -- see
@@ -172,6 +191,9 @@ class CogBase:
         content: str | None = None,
         fields: Sequence[ReplyField] = (),
         code: Sequence[str] = (),
+        identity: ReplyIdentity | None = None,
+        footer_override: FooterOverride | None = None,
+        category: ReplyCategory | None = None,
     ) -> RenderedReply:
         """Render title/description/content -- plus any embed `fields`
         (name/value/inline, discord.Embed.add_field-shaped) -- against a
@@ -199,7 +221,18 @@ class CogBase:
         The single source of truth other cogs use when they need their own
         interaction-aware dispatch (ephemeral responses, hybrid-command
         followups, ...) instead of `send_reply`'s plain `ctx.send`. See
-        floorplan's (or pixelagents') `ReplyMixin` for that use."""
+        floorplan's (or pixelagents') `ReplyMixin` for that use.
+
+        `identity`/`footer_override` are almost never passed here directly
+        -- prefer `reply_sender()`'s bound object, which supplies
+        `identity` (and `category`) automatically. `footer_override` is
+        `ConsultAgentTool`'s one use case (the *consulted* agent's identity,
+        not the caller's own) -- see docs/reply-identity-design.md.
+        `category` picks this embed's accent color from the shared
+        Agent/Room/Furniture scheme (docs/embed-colors.md); `None` (the
+        default) leaves Discord's own gray, deliberately independent of
+        `identity` -- a cog can have an author name with no category color,
+        or vice versa."""
 
         assert ctx.guild is not None, "render_reply needs a guild context"
         settings = await self._repository.guild_settings(ctx.guild.id)
@@ -214,6 +247,9 @@ class CogBase:
                 code=tuple(code),
             ),
             prefix=ctx.clean_prefix,
+            identity=identity,
+            footer_override=footer_override,
+            category=category,
         )
 
     async def send_reply(
@@ -225,6 +261,9 @@ class CogBase:
         content: str | None = None,
         fields: Sequence[ReplyField] = (),
         code: Sequence[str] = (),
+        identity: ReplyIdentity | None = None,
+        footer_override: FooterOverride | None = None,
+        category: ReplyCategory | None = None,
     ) -> discord.Message:
         rendered = await self.render_reply(
             ctx,
@@ -233,8 +272,37 @@ class CogBase:
             content=content,
             fields=fields,
             code=code,
+            identity=identity,
+            footer_override=footer_override,
+            category=category,
         )
         return await send_rendered_reply(ctx, rendered)
+
+    def reply_sender(
+        self,
+        *,
+        owner: str,
+        avatar_path: Path | None = None,
+        category: ReplyCategory | None = None,
+    ) -> ReplySender:
+        """A per-cog bound sender, obtained once (typically in the calling
+        cog's own `cog_load`, alongside `register_dependent`/
+        `register_agent`) and reused at every one of that cog's own
+        `send_reply`/`render_reply` call sites -- so `owner`/`avatar_path`/
+        `category` never needs repeating as an argument at any of them. See
+        docs/reply-identity-design.md.
+
+        `avatar_path` should be the cog's *conventional* asset path
+        (`<cog_package>/assets/avatar.png`) regardless of whether that
+        file currently exists -- existence is checked fresh on every send
+        (`build_reply_payload`), so dropping a real image there later
+        needs no code change.
+
+        `category` (see docs/embed-colors.md) is `None` by default --
+        Discord's own gray -- for any cog that doesn't fit the shared
+        Agent/Room/Furniture scheme, rather than guessing a bucket for it."""
+
+        return ReplySender(self, owner=owner, avatar_path=avatar_path, category=category)
 
     async def default_prefix(self) -> str:
         """The bot's global default command prefix -- what Red resolves DM
@@ -427,21 +495,25 @@ class CogBase:
         `AgentExecutor` are built. `owner` should be that cog's class
         name, matching `subscribe_event`'s convention.
 
-        Overwrites `agent.card`'s one `supported_interfaces[0].url` with
-        corridor's own configured host/port plus `/<agent_key>/` before
-        storing it -- the registering agent has no way to know what
-        host/port it will ultimately be reachable at, since it no longer
-        binds a listener of its own. Async (unlike `register_tool`)
-        because it needs corridor's own current A2A settings to build
-        that URL. Also rebuilds the live route table, so the new agent is
+        Overwrites `agent.card`'s one `supported_interfaces[0].url` (and
+        `icon_url`, when `agent.avatar_path` is set) with corridor's own
+        configured host/port plus `/<agent_key>/` before storing it --
+        the registering agent has no way to know what host/port it will
+        ultimately be reachable at, since it no longer binds a listener
+        of its own. Async (unlike `register_tool`) because it needs
+        corridor's own current A2A settings to build that URL. Also
+        rebuilds the live route table, so the new agent (and its avatar
+        route, if any -- see docs/reply-identity-design.md section 7) is
         reachable immediately, not just on corridor's next `cog_load`."""
 
         settings = await self._repository.a2a_settings()
-        url = f"http://{settings.a2a_host}:{settings.a2a_port}/{agent.agent_key}/"
+        base = f"http://{settings.a2a_host}:{settings.a2a_port}/{agent.agent_key}/"
+        icon_url = f"{base}avatar.png" if agent.avatar_path is not None else None
         rewritten = RegisteredAgent(
             agent_key=agent.agent_key,
-            card=card_with_url(agent.card, url),
+            card=card_with_url(agent.card, base, icon_url=icon_url),
             executor=agent.executor,
+            avatar_path=agent.avatar_path,
         )
         self._agent_directory.register(rewritten, owner=owner)
         self._a2a_server.rebuild_routes(self._agent_directory.list_agents())

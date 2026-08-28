@@ -10,6 +10,13 @@ from unittest.mock import MagicMock
 
 from aiohttp import web as _aiohttp_web
 
+# Framework-neutral (zero discord.py/redbot imports), safe to import
+# directly regardless of the stub modules this file installs below --
+# needed so _FakeRenderedReply.mode matches the real ReplyMode enum
+# build_reply_payload (corridor/adapters/api.py) now compares against via
+# `is`, not a plain "text"/"embed" string.
+from corridor.domain import ReplyMode
+
 
 def _make_stub_module(name: str, **attrs) -> types.ModuleType:
     mod = types.ModuleType(name)
@@ -651,8 +658,12 @@ class _FakeRenderedReply:
         embed_description=None,
         fields=(),
         footer_text=None,
+        footer_icon_url=None,
         show_timestamp=False,
-        icon_url=None,
+        author_name=None,
+        author_icon_attachment=None,
+        category=None,
+        footer_icon_attachment=None,
     ):
         self.mode = mode
         self.content = content
@@ -660,8 +671,12 @@ class _FakeRenderedReply:
         self.embed_description = embed_description
         self.fields = fields
         self.footer_text = footer_text
+        self.footer_icon_url = footer_icon_url
         self.show_timestamp = show_timestamp
-        self.icon_url = icon_url
+        self.author_name = author_name
+        self.author_icon_attachment = author_icon_attachment
+        self.category = category
+        self.footer_icon_attachment = footer_icon_attachment
 
 
 class FakeCorridor:
@@ -707,7 +722,17 @@ class FakeCorridor:
         return text.replace("[p]", self._default_prefix)
 
     async def render_reply(
-        self, ctx, *, title=None, description=None, content=None, fields=(), code=()
+        self,
+        ctx,
+        *,
+        title=None,
+        description=None,
+        content=None,
+        fields=(),
+        code=(),
+        identity=None,
+        footer_override=None,
+        category=None,
     ):
         """Mirrors corridor's real render_reply, including resolving
         `guild_id`/`prefix` from `ctx` itself (a caller never supplies
@@ -745,7 +770,10 @@ class FakeCorridor:
                 else f"**{field.name}:** {field.value}"
                 for field in fields
             )
-            return _FakeRenderedReply(mode="text", content="\n".join(lines))
+            text = "\n".join(lines)
+            if identity is not None and text:
+                text = f"**{identity.owner}:** {text}"
+            return _FakeRenderedReply(mode=ReplyMode.TEXT, content=text)
 
         embed_description = description or content
         if code_blocks:
@@ -759,11 +787,22 @@ class FakeCorridor:
             else field
             for field in fields
         )
+        if footer_override is not None:
+            footer_text = footer_override.name
+            footer_icon_url = footer_override.icon_url
+        else:
+            footer_text = None
+            footer_icon_url = None
         return _FakeRenderedReply(
-            mode="embed",
+            mode=ReplyMode.EMBED,
             embed_title=title,
             embed_description=embed_description,
             fields=embed_fields,
+            footer_text=footer_text,
+            footer_icon_url=footer_icon_url,
+            author_name=identity.owner if identity is not None else None,
+            author_icon_attachment=identity.avatar_filename if identity is not None else None,
+            category=category,
         )
 
 

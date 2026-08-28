@@ -30,11 +30,12 @@ def _permission_denied_result() -> dict[str, object]:
 
 
 class CommandsMixin:
-    """Requires `self._service: CounterService` and `self._corridor`
-    (both provided by CogBase)."""
+    """Requires `self._service: CounterService`, `self._corridor`, and
+    `self._reply` (all provided by CogBase)."""
 
     _service: CounterService
     _corridor: Any
+    _reply: Any
 
     @commands.hybrid_group(name="{{cookiecutter.cog_name}}")
     async def {{cookiecutter.cog_name}}_group(self, ctx: commands.Context) -> None:
@@ -48,7 +49,7 @@ class CommandsMixin:
         """Show this server's current count."""
 
         snapshot = await self._service.show(ctx.guild.id)
-        await self._corridor.send_reply(ctx, title="Count", description=str(snapshot.count))
+        await self._reply.send_reply(ctx, title="Count", description=str(snapshot.count))
 
     # The three decorated commands below are intentionally different
     # examples: no input (`bump`), bounded numeric input (`project`), and
@@ -72,7 +73,7 @@ class CommandsMixin:
         if not await self._corridor.require_permission(ctx, "keyholder"):
             return _permission_denied_result()
         snapshot = await self._service.bump(ctx.guild.id)
-        await self._corridor.send_reply(ctx, title="Count", description=f"Now: {snapshot.count}")
+        await self._reply.send_reply(ctx, title="Count", description=f"Now: {snapshot.count}")
         return {"status": "ok", "count": snapshot.count}
 
     @{{cookiecutter.cog_name}}_group.command(name="project")
@@ -103,12 +104,12 @@ class CommandsMixin:
             or not _MIN_PROJECTION <= amount <= _MAX_PROJECTION
         ):
             message = "Amount must be a whole number from 1 through 10."
-            await self._corridor.send_reply(ctx, title="Count projection", description=message)
+            await self._reply.send_reply(ctx, title="Count projection", description=message)
             return {"status": "error", "error": "invalid_amount", "message": message}
 
         snapshot = await self._service.show(ctx.guild.id)
         projected = snapshot.count + amount
-        await self._corridor.send_reply(
+        await self._reply.send_reply(
             ctx,
             title="Count projection",
             description=f"Current: {snapshot.count}; after {amount}: {projected}",
@@ -140,7 +141,7 @@ class CommandsMixin:
             return _permission_denied_result()
         if not isinstance(style, str) or style not in _REPORT_STYLES:
             message = "Style must be `compact` or `detailed`."
-            await self._corridor.send_reply(ctx, title="Count report", description=message)
+            await self._reply.send_reply(ctx, title="Count report", description=message)
             return {"status": "error", "error": "invalid_style", "message": message}
 
         snapshot = await self._service.show(ctx.guild.id)
@@ -149,7 +150,7 @@ class CommandsMixin:
             if style == "compact"
             else f"Server {snapshot.guild_id} currently has a count of {snapshot.count}."
         )
-        await self._corridor.send_reply(ctx, title="Count report", description=description)
+        await self._reply.send_reply(ctx, title="Count report", description=description)
         return {
             "status": "ok",
             "guild_id": snapshot.guild_id,

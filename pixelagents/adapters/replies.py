@@ -14,9 +14,9 @@ that.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-import discord
 from redbot.core import commands
 
 if TYPE_CHECKING:
@@ -34,6 +34,12 @@ if TYPE_CHECKING:
 from .cog_base import PixelAgentsBase
 
 _REPLY_TITLE = "Pixel Agents"
+
+# Conventional bundled-avatar path for this mixin's own render_reply calls
+# -- see docs/reply-identity-design.md. ReplyIdentity itself is only
+# constructed lazily, inside _render_reply_payload below, for the same
+# reload-safety reason ReplyField stays under TYPE_CHECKING.
+AVATAR_PATH = Path(__file__).resolve().parent.parent / "assets" / "avatar.png"
 
 
 class ReplyMixin(PixelAgentsBase):
@@ -75,23 +81,22 @@ class ReplyMixin(PixelAgentsBase):
         fields: Sequence[ReplyField],
         code: Sequence[str] = (),
     ) -> dict[str, Any]:
+        # Deferred, not a top-level import -- same reload-safety reasoning
+        # this module's own docstring/TYPE_CHECKING block gives for
+        # ReplyField above: a hard corridor import here would crash a
+        # reload attempted at a moment corridor isn't currently loaded.
+        from corridor.adapters.api import build_reply_payload
+        from corridor.domain import ReplyIdentity
+
         rendered = await self._corridor.render_reply(
             ctx,
             title=title or _REPLY_TITLE,
             description=description,
             fields=fields,
             code=code,
+            identity=ReplyIdentity(owner="Pixel Agents", avatar_filename=AVATAR_PATH.name),
         )
-        if rendered.mode == "text":
-            return {"content": rendered.content}
-
-        embed = discord.Embed(title=rendered.embed_title, description=rendered.embed_description)
-        for field in rendered.fields:
-            embed.add_field(name=field.name, value=field.value, inline=field.inline)
-        if rendered.icon_url:
-            embed.set_author(name=rendered.embed_title or "", icon_url=rendered.icon_url)
-        if rendered.footer_text:
-            embed.set_footer(text=rendered.footer_text, icon_url=rendered.icon_url)
-        if rendered.show_timestamp:
-            embed.timestamp = discord.utils.utcnow()
-        return {"embed": embed}
+        kwargs, files = build_reply_payload(rendered, avatar_path=AVATAR_PATH)
+        if files:
+            kwargs["files"] = files
+        return kwargs

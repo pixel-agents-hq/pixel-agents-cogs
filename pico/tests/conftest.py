@@ -104,6 +104,7 @@ class FakeCorridor:
         description: str | None = None,
         content: str | None = None,
         fields: object = (),
+        footer_override: object = None,
     ) -> FakeSentMessage:
         self.replies.append(
             {
@@ -111,11 +112,36 @@ class FakeCorridor:
                 "description": description,
                 "content": content,
                 "fields": list(fields),  # type: ignore[call-overload]
+                "footer_override": footer_override,
             }
         )
         message = FakeSentMessage(self._next_message_id)
         self._next_message_id += 1
         return message
+
+    def reply_sender(
+        self, *, owner: str, avatar_path: Any = None, category: Any = None
+    ) -> FakeReplySender:
+        """Stands in for corridor.reply_sender -- author identity is a
+        corridor-side concern, covered by corridor's own test suite;
+        pico's tests only need the same `self.replies` recording
+        `send_reply` already provides."""
+
+        return FakeReplySender(self)
+
+
+class FakeReplySender:
+    def __init__(self, corridor: FakeCorridor) -> None:
+        self._corridor = corridor
+
+    async def send_reply(self, ctx: object, **kwargs: object) -> FakeSentMessage:
+        return await self._corridor.send_reply(ctx, **kwargs)  # type: ignore[arg-type]
+
+    async def render_reply(self, ctx: object, **kwargs: object) -> FakeSentMessage:
+        return await self._corridor.send_reply(ctx, **kwargs)  # type: ignore[arg-type]
+
+    async def publish_event(self, event: object) -> None:
+        pass
 
 
 @dataclass(frozen=True)

@@ -102,6 +102,7 @@ class FakeCorridor:
         description: str | None = None,
         content: str | None = None,
         fields: object = (),
+        **_: object,
     ) -> None:
         self.replies.append(
             {
@@ -111,6 +112,30 @@ class FakeCorridor:
                 "fields": list(fields),  # type: ignore[call-overload]
             }
         )
+
+    def reply_sender(
+        self, *, owner: str, avatar_path: Any = None, category: Any = None
+    ) -> FakeReplySender:
+        """Stands in for corridor.reply_sender -- records reply/author
+        identity is a corridor-side concern, covered by corridor's own
+        test suite; architect's tests only need the same `self.replies`
+        recording `send_reply` already provides."""
+
+        return FakeReplySender(self)
+
+
+class FakeReplySender:
+    def __init__(self, corridor: FakeCorridor) -> None:
+        self._corridor = corridor
+
+    async def send_reply(self, ctx: object, **kwargs: object) -> None:
+        await self._corridor.send_reply(ctx, **kwargs)  # type: ignore[arg-type]
+
+    async def render_reply(self, ctx: object, **kwargs: object) -> None:
+        await self._corridor.send_reply(ctx, **kwargs)  # type: ignore[arg-type]
+
+    async def publish_event(self, event: object) -> None:
+        await self._corridor.publish_event(event)
 
 
 class FakePixelAgents:

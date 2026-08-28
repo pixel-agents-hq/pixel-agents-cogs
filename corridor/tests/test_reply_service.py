@@ -6,7 +6,16 @@ from __future__ import annotations
 import unittest
 
 from ..application import ReplyContent, ReplyService
-from ..domain import IconPreference, IconSource, ReplyField, ReplyMode, ReplyPreferences
+from ..domain import (
+    FooterOverride,
+    IconPreference,
+    IconSource,
+    ReplyCategory,
+    ReplyField,
+    ReplyIdentity,
+    ReplyMode,
+    ReplyPreferences,
+)
 
 
 class FakeIconResolver:
@@ -50,7 +59,7 @@ class TestReplyService(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(rendered.embed_title, "Title")
-        self.assertEqual(rendered.icon_url, "https://example.com/bot.png")
+        self.assertEqual(rendered.footer_icon_url, "https://example.com/bot.png")
         self.assertTrue(rendered.show_timestamp)
 
     async def test_embed_mode_resolves_server_icon_per_guild(self) -> None:
@@ -65,7 +74,7 @@ class TestReplyService(unittest.IsolatedAsyncioTestCase):
             42, preferences, ReplyContent(description="Body"), prefix=";"
         )
 
-        self.assertEqual(rendered.icon_url, "https://example.com/guild/42.png")
+        self.assertEqual(rendered.footer_icon_url, "https://example.com/guild/42.png")
 
     async def test_embed_mode_uses_custom_icon_without_calling_resolver(self) -> None:
         preferences = ReplyPreferences(
@@ -79,7 +88,7 @@ class TestReplyService(unittest.IsolatedAsyncioTestCase):
             1, preferences, ReplyContent(description="Body"), prefix=";"
         )
 
-        self.assertEqual(rendered.icon_url, "https://example.com/x.png")
+        self.assertEqual(rendered.footer_icon_url, "https://example.com/x.png")
 
     async def test_embed_mode_carries_fields_through_unchanged(self) -> None:
         preferences = ReplyPreferences(
@@ -212,3 +221,167 @@ class TestReplyService(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(rendered.content, "**Fix:**\n```\n;foo bar\n```")
+
+    async def test_embed_mode_with_no_identity_has_no_author(self) -> None:
+        preferences = ReplyPreferences(
+            mode=ReplyMode.EMBED,
+            show_timestamp=False,
+            footer_text=None,
+            icon=IconPreference(source=IconSource.BOT),
+        )
+
+        rendered = await self.service.render(1, preferences, ReplyContent(), prefix=";")
+
+        self.assertIsNone(rendered.author_name)
+        self.assertIsNone(rendered.author_icon_attachment)
+
+    async def test_embed_mode_author_name_always_shows_without_an_avatar(self) -> None:
+        preferences = ReplyPreferences(
+            mode=ReplyMode.EMBED,
+            show_timestamp=False,
+            footer_text=None,
+            icon=IconPreference(source=IconSource.BOT),
+        )
+
+        rendered = await self.service.render(
+            1, preferences, ReplyContent(), prefix=";", identity=ReplyIdentity(owner="Architect")
+        )
+
+        self.assertEqual(rendered.author_name, "Architect")
+        self.assertIsNone(rendered.author_icon_attachment)
+
+    async def test_embed_mode_author_icon_attachment_carried_through(self) -> None:
+        preferences = ReplyPreferences(
+            mode=ReplyMode.EMBED,
+            show_timestamp=False,
+            footer_text=None,
+            icon=IconPreference(source=IconSource.BOT),
+        )
+        identity = ReplyIdentity(owner="Architect", avatar_filename="avatar.png")
+
+        rendered = await self.service.render(
+            1, preferences, ReplyContent(), prefix=";", identity=identity
+        )
+
+        self.assertEqual(rendered.author_name, "Architect")
+        self.assertEqual(rendered.author_icon_attachment, "avatar.png")
+
+    async def test_embed_mode_with_no_category_has_no_color(self) -> None:
+        preferences = ReplyPreferences(
+            mode=ReplyMode.EMBED,
+            show_timestamp=False,
+            footer_text=None,
+            icon=IconPreference(source=IconSource.BOT),
+        )
+
+        rendered = await self.service.render(1, preferences, ReplyContent(), prefix=";")
+
+        self.assertIsNone(rendered.category)
+
+    async def test_embed_mode_carries_category_through(self) -> None:
+        preferences = ReplyPreferences(
+            mode=ReplyMode.EMBED,
+            show_timestamp=False,
+            footer_text=None,
+            icon=IconPreference(source=IconSource.BOT),
+        )
+
+        rendered = await self.service.render(
+            1, preferences, ReplyContent(), prefix=";", category=ReplyCategory.AGENT
+        )
+
+        self.assertEqual(rendered.category, ReplyCategory.AGENT)
+
+    async def test_text_mode_never_carries_a_category(self) -> None:
+        preferences = ReplyPreferences(
+            mode=ReplyMode.TEXT,
+            show_timestamp=False,
+            footer_text=None,
+            icon=IconPreference(source=IconSource.BOT),
+        )
+
+        rendered = await self.service.render(
+            1, preferences, ReplyContent(content="Body"), prefix=";", category=ReplyCategory.ROOM
+        )
+
+        self.assertIsNone(rendered.category)
+
+    async def test_embed_mode_footer_override_wins_over_guild_footer(self) -> None:
+        preferences = ReplyPreferences(
+            mode=ReplyMode.EMBED,
+            show_timestamp=False,
+            footer_text="Guild footer",
+            icon=IconPreference(source=IconSource.BOT),
+        )
+        override = FooterOverride(name="architect", icon_filename="avatar.png")
+
+        rendered = await self.service.render(
+            1, preferences, ReplyContent(), prefix=";", footer_override=override
+        )
+
+        self.assertEqual(rendered.footer_text, "architect")
+        self.assertIsNone(rendered.footer_icon_url)
+        self.assertEqual(rendered.footer_icon_attachment, "avatar.png")
+
+    async def test_embed_mode_falls_back_to_guild_footer_without_an_override(self) -> None:
+        preferences = ReplyPreferences(
+            mode=ReplyMode.EMBED,
+            show_timestamp=False,
+            footer_text="Guild footer",
+            icon=IconPreference(source=IconSource.BOT),
+        )
+
+        rendered = await self.service.render(1, preferences, ReplyContent(), prefix=";")
+
+        self.assertEqual(rendered.footer_text, "Guild footer")
+        self.assertEqual(rendered.footer_icon_url, "https://example.com/bot.png")
+
+    async def test_text_mode_prefixes_owner_name(self) -> None:
+        preferences = ReplyPreferences(
+            mode=ReplyMode.TEXT,
+            show_timestamp=False,
+            footer_text=None,
+            icon=IconPreference(source=IconSource.BOT),
+        )
+
+        rendered = await self.service.render(
+            1,
+            preferences,
+            ReplyContent(description="Body"),
+            prefix=";",
+            identity=ReplyIdentity(owner="Pico"),
+        )
+
+        self.assertEqual(rendered.content, "**Pico:** Body")
+
+    async def test_text_mode_omits_prefix_when_content_is_empty(self) -> None:
+        preferences = ReplyPreferences(
+            mode=ReplyMode.TEXT,
+            show_timestamp=False,
+            footer_text=None,
+            icon=IconPreference(source=IconSource.BOT),
+        )
+
+        rendered = await self.service.render(
+            1, preferences, ReplyContent(), prefix=";", identity=ReplyIdentity(owner="Pico")
+        )
+
+        self.assertEqual(rendered.content, "")
+
+    async def test_text_mode_drops_footer_override_entirely(self) -> None:
+        preferences = ReplyPreferences(
+            mode=ReplyMode.TEXT,
+            show_timestamp=False,
+            footer_text=None,
+            icon=IconPreference(source=IconSource.BOT),
+        )
+        override = FooterOverride(name="architect", icon_filename="avatar.png")
+
+        rendered = await self.service.render(
+            1, preferences, ReplyContent(description="Body"), prefix=";", footer_override=override
+        )
+
+        self.assertIsNone(rendered.footer_text)
+        self.assertIsNone(rendered.footer_icon_url)
+        self.assertIsNone(rendered.footer_icon_attachment)
+        self.assertEqual(rendered.content, "Body")

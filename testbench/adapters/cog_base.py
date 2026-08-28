@@ -8,11 +8,21 @@ register_dependent/unregister_dependent lifecycle remain."""
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from redbot.core.bot import Red
 
+from corridor.domain import ReplyCategory
+
 from ..dependency_loader import ensure_corridor_loaded
+
+# Conventional path for testbench's own bundled avatar image -- passed to
+# corridor.reply_sender() regardless of whether a real file exists here
+# yet; existence is checked fresh on every send, so dropping a real image
+# at this exact path later needs no code change. See
+# docs/reply-identity-design.md.
+AVATAR_PATH = Path(__file__).resolve().parent.parent / "assets" / "avatar.png"
 
 
 class CogBase:
@@ -23,6 +33,7 @@ class CogBase:
     def __init__(self, bot: Red) -> None:
         self.bot = bot
         self._corridor: Any = None
+        self._reply: Any = None
 
     async def cog_load(self) -> None:
         """Extension point for start-up work (background tasks, sessions, ...).
@@ -37,6 +48,9 @@ class CogBase:
         # So unloading corridor cascades to unload this cog too, instead of
         # leaving it running with a stale corridor reference.
         self._corridor.register_dependent("testbench")
+        self._reply = self._corridor.reply_sender(
+            owner="Testbench", avatar_path=AVATAR_PATH, category=ReplyCategory.FURNITURE
+        )
 
     async def cog_unload(self) -> None:
         """Extension point for teardown work."""

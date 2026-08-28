@@ -86,6 +86,7 @@ class CommandsMixin:
     _service: TimeService
     _text_service: TextService
     _corridor: Any
+    _reply: Any
 
     @commands.hybrid_group(name="deskutils")
     async def deskutils_group(self, ctx: commands.Context) -> None:
@@ -101,11 +102,11 @@ class CommandsMixin:
 
         if not isinstance(text, str):
             message = "Text to count must be a string."
-            await self._corridor.send_reply(ctx, title="Text count", description=message)
+            await self._reply.send_reply(ctx, title="Text count", description=message)
             return {"status": "error", "error": "invalid_text", "message": message}
 
         statistics = self._text_service.count(text)
-        await self._corridor.send_reply(
+        await self._reply.send_reply(
             ctx,
             title="Text count",
             fields=[
@@ -129,24 +130,24 @@ class CommandsMixin:
 
         if message_link is not None and not isinstance(message_link, str):
             message = "The message link must be a string."
-            await self._corridor.send_reply(ctx, title="Quote", description=message)
+            await self._reply.send_reply(ctx, title="Quote", description=message)
             return {"status": "error", "error": "invalid_message", "message": message}
 
         try:
             target = await _resolve_quoted_message(ctx, message_link)
         except _QuoteResolutionError as exc:
-            await self._corridor.send_reply(ctx, title="Quote", description=exc.message)
+            await self._reply.send_reply(ctx, title="Quote", description=exc.message)
             return {"status": "error", "error": exc.code, "message": exc.message}
 
         content = target.content
         if not content or not content.strip():
             message = "That message has no text to quote."
-            await self._corridor.send_reply(ctx, title="Quote", description=message)
+            await self._reply.send_reply(ctx, title="Quote", description=message)
             return {"status": "error", "error": "empty_message", "message": message}
 
         author_name = target.author.display_name
         jump_url = target.jump_url
-        await self._corridor.send_reply(
+        await self._reply.send_reply(
             ctx,
             title="Quoted message",
             description=_quoted_text(content),
@@ -225,7 +226,7 @@ class CommandsMixin:
                     f"⚠️ Unknown time zone `{timezone}`. Use an IANA name, e.g. "
                     "`America/New_York` or `Europe/London`."
                 )
-                await self._corridor.send_reply(
+                await self._reply.send_reply(
                     ctx,
                     title="deskutils",
                     description=warning,
@@ -242,5 +243,5 @@ class CommandsMixin:
             result["timezone"] = timezone
             result["localized"] = localized_text
 
-        await self._corridor.send_reply(ctx, title="Current time", fields=fields)
+        await self._reply.send_reply(ctx, title="Current time", fields=fields)
         return result

@@ -49,6 +49,19 @@ class ReplyMode(StrEnum):
     EMBED = "embed"
 
 
+class ReplyCategory(StrEnum):
+    """Which visual bucket a cog's embeds belong to, for the shared
+    category->color scheme (see docs/embed-colors.md). `None` (the absence
+    of a category, everywhere this is used) means "no opinion" -- Discord's
+    default gray -- not a fourth category; deskutils and pixelagents
+    deliberately stay uncategorized rather than being forced into one of
+    these three."""
+
+    AGENT = "agent"
+    ROOM = "room"
+    FURNITURE = "furniture"
+
+
 class IconSource(StrEnum):
     CUSTOM = "custom"
     BOT = "bot"
@@ -140,6 +153,46 @@ class ReplyField:
 
 
 @dataclass(frozen=True, slots=True)
+class ReplyIdentity:
+    """Which cog is sending -- bound once per cog via `CogBase.reply_sender`,
+    not repeated at each of corridor.send_reply's 60+ call sites. See
+    docs/reply-identity-design.md.
+
+    `avatar_filename` is a bare filename (e.g. "avatar.png"), not a path --
+    this module has zero framework/filesystem-aware imports by design. The
+    adapter layer (`ReplySender`) resolves it against the cog's actual
+    bundled asset path and checks the file exists fresh on every send;
+    `None` here just means "no avatar filename was ever configured for
+    this identity," not "the file happens to be missing right now.\""""
+
+    owner: str
+    avatar_filename: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class FooterOverride:
+    """Overrides a guild's own configured footer for one message --
+    `ConsultAgentTool`'s only consumer today: the *consulted* agent's
+    name+avatar, distinct from the calling cog's own author identity and
+    from the guild's `footer_text`/icon preference.
+
+    `icon_filename` is a bare filename (e.g. "avatar.png"), like
+    `ReplyIdentity.avatar_filename` -- not a real HTTP(S) URL. The
+    consulted agent's avatar is always on the *same* filesystem as the
+    consulting cog today (every agent in this repo runs in the same bot
+    process), so the adapter layer attaches it as a Discord attachment
+    the same reliable way it already does the calling cog's own avatar,
+    rather than a URL Discord's servers would have to fetch over the
+    network -- corridor's own `a2a_host` setting defaults to `127.0.0.1`,
+    which Discord's own infrastructure can never reach even though it
+    works fine for this same process's own agent-to-agent calls. See
+    docs/reply-identity-design.md section 7."""
+
+    name: str
+    icon_filename: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class RenderedReply:
     """Framework-neutral description of what to send. The adapter layer turns
     this into a plain ctx.send() or a discord.Embed -- this module never
@@ -151,8 +204,17 @@ class RenderedReply:
     embed_description: str | None
     fields: tuple[ReplyField, ...]
     footer_text: str | None
+    footer_icon_url: str | None
     show_timestamp: bool
-    icon_url: str | None
+    author_name: str | None
+    author_icon_attachment: str | None
+    category: ReplyCategory | None = None
+    # Set instead of footer_icon_url (mutually exclusive, never both) when
+    # the footer comes from a FooterOverride with an icon_filename --
+    # ConsultAgentTool's consulted-agent icon, attached the same way
+    # author_icon_attachment is rather than fetched from footer_icon_url's
+    # real HTTP(S) URL. See FooterOverride's own docstring.
+    footer_icon_attachment: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

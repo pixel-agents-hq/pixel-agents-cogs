@@ -85,7 +85,16 @@ class ListenerMixin:
                 bot_user_id=_bot_user_id(self.bot),
             )
         ]
-        tools.extend(_agent_tools(self._corridor, self._reply, self._architect_client, ctx))
+        tools.extend(
+            _agent_tools(
+                self._corridor,
+                self._reply,
+                self._architect_client,
+                ctx,
+                guild_id=guild.id,
+                bot_user_id=_bot_user_id(self.bot),
+            )
+        )
         tools.extend(await _cross_cog_tools(self._corridor, ctx))
         result = await self._tool_loop_service.run(
             base_url=llm_settings.llm_base_url,
@@ -103,7 +112,15 @@ class ListenerMixin:
         )
 
 
-def _agent_tools(corridor: Any, reply: Any, client: Any, ctx: commands.Context) -> list[ToolSpec]:
+def _agent_tools(
+    corridor: Any,
+    reply: Any,
+    client: Any,
+    ctx: commands.Context,
+    *,
+    guild_id: int,
+    bot_user_id: int | None,
+) -> list[ToolSpec]:
     """One `consult_<agent_key>` tool per agent currently registered in
     corridor's `AgentDirectoryService`, pulled fresh each turn -- see
     docs/agent-directory-design.md. Each tool closes over this turn's
@@ -115,8 +132,11 @@ def _agent_tools(corridor: Any, reply: Any, client: Any, ctx: commands.Context) 
     its shared A2A listener for genuine external A2A clients -- pico
     reads the file directly instead, since every agent in this repo
     shares pico's own filesystem/process; see
-    docs/reply-identity-design.md section 7). If corridor has zero
-    registered agents (no agent cog loaded, or every one currently
+    docs/reply-identity-design.md section 7). `guild_id`/`bot_user_id`
+    (same values `ReplyTool` above is built with) let each tool publish
+    `AgentReplied` events attributing the outgoing question to pico's own
+    Discord identity -- see `ConsultAgentTool`'s own module docstring. If
+    corridor has zero registered agents (no agent cog loaded, or every one currently
     unregistered), this returns an empty list: no error, no
     special-cased "not configured" branch, since there's no longer a
     single hardcoded agent to be "not configured." One malformed entry's
@@ -135,6 +155,9 @@ def _agent_tools(corridor: Any, reply: Any, client: Any, ctx: commands.Context) 
                     agent_key=agent.agent_key,
                     base_url=agent.card.supported_interfaces[0].url,
                     description=agent.card.description,
+                    corridor=corridor,
+                    guild_id=guild_id,
+                    bot_user_id=bot_user_id,
                     footer_icon_path=agent.avatar_path,
                 )
             )

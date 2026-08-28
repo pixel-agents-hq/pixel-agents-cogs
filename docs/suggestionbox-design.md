@@ -1,6 +1,13 @@
 # suggestionbox: an MCP feedback server, mediated by corridor for A2A agents
 
-**Status: design only, nothing implemented.**
+**Status: implemented.** See the implementation checklist (§10) and this
+repo's own PRs for what actually landed; a follow-up review pass may note
+small deviations from the plan below (e.g. `render_channel_reply` reusing
+corridor's existing `default_prefix()` helper instead of skipping prefix
+substitution outright, and an unrelated `typing-inspection<0.4.3`
+packaging pin discovered while wiring CI) -- this doc is left as originally
+written rather than retouched to match, so a review comparing the two is
+meaningful.
 
 ## 1. Problem
 

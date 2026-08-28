@@ -1,11 +1,26 @@
 """aiohttp transport for architect's own office WebSocket.
 
-Read-only for now -- there is no ticket/editor-authorization concept here
-at all, since layout edits arrive only through future Discord commands and
-tools, never live in the browser (see docs/architect-design.md). The only
-inbound message this server ever reacts to is `webviewReady`; anything
-else is ignored, matching floorplan's own "unknown message types are
-forward-compatible no-ops" convention (`floorplan/contracts/websocket.py`).
+Deliberately no ticket/editor-authorization concept, unlike floorplan's own
+`WebSocketServer` -- a live-connected client can save a layout here with no
+login check at all. This is an explicit choice, not an oversight: floorplan
+gates its live editor to bot-owner/`keyholder`-capability members because
+its layout is the one thing Discord presence and the Pixel Index catalogue
+both depend on, but architect's layout is a separate, disposable sandbox
+(seeded once from pixelagents' bundled default, otherwise owned entirely by
+this cog) that anyone who can reach `/third-party/architect` should be able
+to freely edit. See docs/architect-design.md section 5.
+
+Every inbound message this server reacts to: `webviewReady` (send the
+connecting client the current layout) and `saveLayout` (persist a whole new
+layout the browser's in-page editor produced, then broadcast it back out to
+every connected client -- `OfficeLayoutService.replace_layout` already does
+this last part via its own `broadcast` callback). Anything else is ignored,
+matching floorplan's own "unknown message types are forward-compatible
+no-ops" convention (`floorplan/contracts/websocket.py`). A malformed
+`saveLayout` payload -- or one that fails `OfficeLayoutService`'s own
+validation -- is logged and dropped, never allowed to crash the connection;
+with no login gate, a broken or hostile payload is exactly as likely as a
+legitimate one and must be exactly as harmless.
 
 Exposed externally at `WEBSOCKET_PATH`, a path distinct from floorplan's
 own `/ws` -- both this internal aiohttp route and the operator's
@@ -22,12 +37,14 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Awaitable, Callable, Mapping
+from typing import Any
 
 from aiohttp import WSMsgType, web
 
 from .client_hub import ClientHub
 
 WebviewReadyHandler = Callable[[web.WebSocketResponse], Awaitable[None]]
+SaveLayoutHandler = Callable[[dict[str, Any]], Awaitable[None]]
 HealthSnapshot = Callable[[], Mapping[str, object]]
 
 # Must match the path infrastructure/webview.py's WS_REWRITE_SHIM rewrites
@@ -44,11 +61,13 @@ class WebSocketServer:
         *,
         clients: ClientHub,
         on_webview_ready: WebviewReadyHandler,
+        on_save_layout: SaveLayoutHandler,
         health_snapshot: HealthSnapshot,
         logger: logging.Logger | None = None,
     ) -> None:
         self.clients = clients
         self._on_webview_ready = on_webview_ready
+        self._on_save_layout = on_save_layout
         self._health_snapshot = health_snapshot
         self._log = logger or logging.getLogger(__name__)
         self.runner: web.AppRunner | None = None
@@ -118,14 +137,37 @@ class WebSocketServer:
                 except (TypeError, json.JSONDecodeError) as exc:
                     self._log.warning("architect: invalid client JSON ignored: %s", exc)
                     continue
-                if isinstance(payload, Mapping) and payload.get("type") == "webviewReady":
+                if not isinstance(payload, Mapping):
+                    continue
+                message_type = payload.get("type")
+                if message_type == "webviewReady":
                     await self._on_webview_ready(socket)
+                elif message_type == "saveLayout":
+                    await self._handle_save_layout(payload)
         finally:
             self.clients.remove(socket)
             self._log.info(
                 "architect: office client disconnected (%d left)", self.clients.client_count
             )
         return socket
+
+    async def _handle_save_layout(self, payload: Mapping[str, object]) -> None:
+        """Structural shape check first (no login gate means a malformed
+        or hostile payload is exactly as likely as a legitimate one), then
+        delegate to `_on_save_layout` -- any exception it raises (invalid
+        per `OfficeLayoutService`'s own rules, or a missing/wrong-typed
+        field `decode()` itself trips over) is logged and dropped, same as
+        any other unauthorized-editor-adjacent failure mode: never crash
+        the connection over it."""
+
+        layout = payload.get("layout")
+        if not isinstance(layout, Mapping):
+            self._log.warning("architect: saveLayout message missing a layout object, ignored")
+            return
+        try:
+            await self._on_save_layout(dict(layout))
+        except Exception as exc:
+            self._log.warning("architect: saveLayout rejected, ignored: %s", exc)
 
 
 __all__ = ["WEBSOCKET_PATH", "WebSocketServer"]

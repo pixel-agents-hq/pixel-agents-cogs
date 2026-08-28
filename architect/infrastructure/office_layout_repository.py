@@ -39,6 +39,15 @@ class OfficeLayoutRepository:
             raise OfficeLayoutNotSeededError("architect's office layout has not been seeded yet")
         return decode(raw, styles)
 
+    def decode_raw(self, raw: dict[str, Any], styles: FurnitureStyleManifest) -> Office:
+        """Decode a raw Pixel Agents layout that didn't come from storage --
+        e.g. a whole-office payload the in-browser editor sends after a
+        drag-and-drop session -- without touching `set_layout()`. Mirrors
+        `load()`'s own `decode()` call exactly; the caller (`OfficeLayoutService
+        .replace_layout`) still has to call `save()` separately to persist it."""
+
+        return decode(raw, styles)
+
     async def save(self, office: Office, styles: FurnitureStyleManifest) -> dict[str, Any]:
         """Encode and persist `office`, returning the raw JSON that was
         stored -- the caller (`OfficeLayoutService`) uses this to

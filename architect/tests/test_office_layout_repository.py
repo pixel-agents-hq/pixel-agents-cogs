@@ -57,3 +57,17 @@ class TestOfficeLayoutRepository(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(raw["cols"], 3)
         self.assertEqual(await settings.layout(), raw)
+
+    async def test_decode_raw_decodes_without_touching_storage(self) -> None:
+        settings = FakeSettingsRepository(layout=_flat_layout(3, 3))
+        repository = OfficeLayoutRepository(settings)
+        styles = FurnitureStyleManifest.from_raw({"styles": []})
+
+        office = repository.decode_raw(_flat_layout(6, 2), styles)
+
+        self.assertEqual(office.width, 6)
+        self.assertEqual(office.height, 2)
+        # decode_raw() never calls set_layout() -- storage is unchanged.
+        stored = await settings.layout()
+        assert stored is not None
+        self.assertEqual(stored["cols"], 3)

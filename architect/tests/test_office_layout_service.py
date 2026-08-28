@@ -570,3 +570,91 @@ class TestSeats(unittest.IsolatedAsyncioTestCase):
         updated = await service.vacate_seat(seat_id=seat_id)
 
         self.assertIsNone(updated.occupant_id)
+
+
+class TestReplaceLayout(unittest.IsolatedAsyncioTestCase):
+    """`replace_layout` backs the in-browser editor's `saveLayout` message
+    (no Discord command or LLM tool calls it) -- unlike every other
+    mutation, its input is a whole raw Pixel Agents layout, not an
+    incremental IR change."""
+
+    async def test_valid_layout_replaces_the_stored_office_wholesale(self) -> None:
+        service = _service()
+        raw = {
+            "version": 1,
+            "cols": 2,
+            "rows": 1,
+            "tiles": [1, 1],
+            "furniture": [],
+        }
+
+        office = await service.replace_layout(raw=raw)
+
+        self.assertEqual(office.width, 2)
+        self.assertEqual(office.height, 1)
+        described = await service.describe()
+        self.assertEqual(described.width, 2)
+        self.assertEqual(described.height, 1)
+
+    async def test_valid_layout_with_furniture_is_decoded_and_validated(self) -> None:
+        service = _service()
+        raw = {
+            "version": 1,
+            "cols": 4,
+            "rows": 4,
+            "tiles": [1] * 16,
+            "furniture": [{"uid": "d-1", "type": "DESK_FRONT", "col": 0, "row": 0}],
+        }
+
+        office = await service.replace_layout(raw=raw)
+
+        self.assertEqual(len(office.furniture), 1)
+        self.assertEqual(office.furniture[0].style, "desk")
+
+    async def test_structurally_invalid_layout_raises_and_does_not_persist(self) -> None:
+        service = _service()
+        before = await service.describe()
+
+        with self.assertRaises(KeyError):
+            # Missing "cols"/"rows"/"tiles" entirely -- decode() itself
+            # raises, which the caller (the WebSocket transport) is
+            # responsible for catching, not this service.
+            await service.replace_layout(raw={"furniture": []})
+
+        after = await service.describe()
+        self.assertEqual(before.width, after.width)
+        self.assertEqual(before.height, after.height)
+
+    async def test_layout_that_violates_placement_rules_raises_and_does_not_persist(self) -> None:
+        service = _service()
+        # A desk anchored directly on a WALL tile (_empty_layout() is
+        # all-wall) fails the same section 8 placement rule
+        # place_furniture/move_furniture already enforce.
+        raw = {
+            "version": 1,
+            "cols": 4,
+            "rows": 4,
+            "tiles": [0] * 16,
+            "furniture": [{"uid": "d-1", "type": "DESK_FRONT", "col": 0, "row": 0}],
+        }
+
+        with self.assertRaises(OfficeValidationError):
+            await service.replace_layout(raw=raw)
+
+        after = await service.describe()
+        self.assertEqual(after.furniture, [])
+
+    async def test_broadcast_is_invoked_on_successful_replace(self) -> None:
+        broadcasts: list[dict[str, object]] = []
+
+        async def broadcast(raw: dict[str, object]) -> None:
+            broadcasts.append(raw)
+
+        service = _service(broadcast=broadcast)
+
+        await service.replace_layout(
+            raw={"version": 1, "cols": 1, "rows": 1, "tiles": [1], "furniture": []}
+        )
+
+        self.assertEqual(len(broadcasts), 1)
+        self.assertEqual(broadcasts[0]["cols"], 1)

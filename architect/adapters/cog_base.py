@@ -136,6 +136,7 @@ class CogBase:
         self._websocket_server = WebSocketServer(
             clients=self._client_hub,
             on_webview_ready=self._on_webview_ready,
+            on_save_layout=self._on_save_layout,
             health_snapshot=self._health_snapshot,
             logger=log,
         )
@@ -324,6 +325,10 @@ class CogBase:
         `PixelAgentsBase`."""
 
     async def _on_webview_ready(self, socket: web.WebSocketResponse) -> None:
+        """Overridden by OfficeGatewayMixin -- kept as a no-op stub here so
+        CogBase alone stays usable without that mixin."""
+
+    async def _on_save_layout(self, raw_layout: dict[str, Any]) -> None:
         """Overridden by OfficeGatewayMixin -- kept as a no-op stub here so
         CogBase alone stays usable without that mixin."""
 

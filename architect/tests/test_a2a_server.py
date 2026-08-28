@@ -157,3 +157,18 @@ class TestBuildAgentCard(unittest.TestCase):
         card = build_agent_card(tools=[])
 
         self.assertEqual([skill.id for skill in card.skills], ["chat"])
+
+    def test_description_warns_that_only_explicit_instructions_are_acted_on(self) -> None:
+        """Regression guard for a real incident: a user asked (via pico) for
+        architect to move a table and stated a goal that a chair also end up
+        in the freed corner; architect moved only the table, reading the
+        stated goal as context rather than a second instruction, and the
+        user had to ask again. This card's description is the one place a
+        consulting agent's LLM sees architect's own behavior (see
+        pico/adapters/listener.py, which sets ConsultAgentTool.description
+        to this exact string) -- so architect documents its own literalism
+        here rather than every caller having to assume it."""
+
+        card = build_agent_card(tools=[])
+
+        self.assertIn("explicit instruction", card.description)

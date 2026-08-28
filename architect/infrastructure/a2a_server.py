@@ -48,7 +48,11 @@ AGENT_NAME = "architect"
 AGENT_VERSION = "0.1.0"
 AGENT_DESCRIPTION = (
     "A second, independent LLM agent reachable only over A2A -- never "
-    "Discord-user-facing. Consult it to delegate a sub-task."
+    "Discord-user-facing. Consult it to delegate a sub-task. It only acts on "
+    "what the delegated prompt states as an explicit instruction -- a goal "
+    "or rationale mentioned alongside that instruction is read as context, "
+    "not as a second thing to also do, so list every step you want it to "
+    "carry out."
 )
 
 

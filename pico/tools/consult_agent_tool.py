@@ -67,15 +67,7 @@ log = logging.getLogger("red.pico")
 
 
 class ConsultAgentInput(BaseModel):
-    prompt: str = Field(
-        description=(
-            "The task or question to delegate to this agent. If the user asked for more "
-            "than one concrete step, state every step as an explicit instruction to carry "
-            "out -- don't fold a later step into background/rationale phrasing like 'Goal: "
-            "...', since the receiving agent may treat that as context rather than "
-            "something to act on now."
-        )
-    )
+    prompt: str = Field(description="The task or question to delegate to this agent.")
 
 
 class ConsultAgentOutput(BaseModel):

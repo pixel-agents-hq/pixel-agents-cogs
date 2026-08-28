@@ -83,6 +83,22 @@ def _tool(
     )
 
 
+class TestConsultAgentInput(unittest.TestCase):
+    def test_prompt_field_tells_the_caller_to_state_every_step_explicitly(self) -> None:
+        """Regression guard for a real incident: pico's LLM folded a second
+        requested action into 'Goal: ...' rationale phrasing when composing
+        the delegated prompt, and the receiving agent treated it as
+        background context rather than an instruction to carry out --
+        requiring the user to ask a second time. The schema description is
+        the only lever available to steer how pico's LLM fills this field."""
+
+        schema = ConsultAgentInput.model_json_schema()
+        description = schema["properties"]["prompt"]["description"]
+
+        self.assertIn("every step", description)
+        self.assertIn("Goal:", description)
+
+
 class TestConsultAgentTool(unittest.IsolatedAsyncioTestCase):
     async def test_handler_returns_the_answer_on_success(self) -> None:
         client = FakeArchitectAsker(answer="the answer")

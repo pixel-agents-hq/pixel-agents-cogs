@@ -23,6 +23,37 @@ from ..suggestionbox import Suggestionbox
 from .conftest import FakeBot, FakeChannel, FakeContext, FakeCorridor
 
 
+class TestCommandsAreOwnerGated(unittest.TestCase):
+    """A `@commands.is_owner()` decorator on a parent hybrid_group does NOT
+    propagate to its subcommands in discord.py -- every other cog in this
+    repo (toolbox, architect, ...) decorates each subcommand individually
+    for exactly this reason. Regression guard: an earlier revision of
+    commands.py only decorated `suggestionbox_group` itself, leaving
+    channel/mcp host/mcp port/agents runnable by anyone despite this cog's
+    own "every command here is bot-owner-only" design."""
+
+    def setUp(self) -> None:
+        self.cog = Suggestionbox(bot=FakeBot())
+
+    def test_suggestionbox_group_is_owner_gated(self) -> None:
+        self.assertTrue(getattr(self.cog.suggestionbox_group.callback, "__is_owner__", False))
+
+    def test_channel_is_owner_gated(self) -> None:
+        self.assertTrue(getattr(self.cog.channel.callback, "__is_owner__", False))
+
+    def test_mcp_group_is_owner_gated(self) -> None:
+        self.assertTrue(getattr(self.cog.mcp_group.callback, "__is_owner__", False))
+
+    def test_mcp_host_is_owner_gated(self) -> None:
+        self.assertTrue(getattr(self.cog.mcp_host.callback, "__is_owner__", False))
+
+    def test_mcp_port_is_owner_gated(self) -> None:
+        self.assertTrue(getattr(self.cog.mcp_port.callback, "__is_owner__", False))
+
+    def test_agents_is_owner_gated(self) -> None:
+        self.assertTrue(getattr(self.cog.agents.callback, "__is_owner__", False))
+
+
 class TestChannelCommand(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         self.bot = FakeBot(FakeCorridor())

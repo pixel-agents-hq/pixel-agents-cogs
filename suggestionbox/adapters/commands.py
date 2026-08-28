@@ -48,6 +48,7 @@ class CommandsMixin:
             await ctx.send_help()
 
     @suggestionbox_group.command(name="channel")
+    @commands.is_owner()
     async def channel(self, ctx: commands.Context, channel: discord.TextChannel) -> None:
         """Set the one Discord channel report_error/suggest_improvement post to."""
 
@@ -59,6 +60,7 @@ class CommandsMixin:
         )
 
     @suggestionbox_group.group(name="mcp")
+    @commands.is_owner()
     async def mcp_group(self, ctx: commands.Context) -> None:
         """Configure this cog's own MCP listener host/port."""
 
@@ -66,6 +68,7 @@ class CommandsMixin:
             await ctx.send_help()
 
     @mcp_group.command(name="host")
+    @commands.is_owner()
     async def mcp_host(self, ctx: commands.Context, host: str) -> None:
         """Set the MCP listener's bind host and restart it."""
 
@@ -81,6 +84,7 @@ class CommandsMixin:
         )
 
     @mcp_group.command(name="port")
+    @commands.is_owner()
     async def mcp_port(self, ctx: commands.Context, port: int) -> None:
         """Set the MCP listener's bind port and restart it."""
 
@@ -101,6 +105,7 @@ class CommandsMixin:
         )
 
     @suggestionbox_group.command(name="agents")
+    @commands.is_owner()
     async def agents(self, ctx: commands.Context) -> None:
         """Open the per-agent MCP access panel."""
 

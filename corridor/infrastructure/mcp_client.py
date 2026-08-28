@@ -15,13 +15,26 @@ pins `typing_extensions==4.13.2` in its own site-packages, ahead of the
 Downloader's cog-requirements dir on `sys.path`, so anything needing a
 newer one fails at runtime with `cannot import name 'Sentinel'` regardless
 of what actually got installed). `mcp` pulls in `pydantic-settings`, whose
-own `typing-inspection>=0.4.0` floor is satisfied by the *latest*
-`typing-inspection` (0.4.3+) absent an upper pin -- and 0.4.3 raised
-*its own* `typing_extensions` floor to `>=4.15.0` (0.4.0-0.4.2 only need
-`>=4.12.0`). `pydantic` alone never triggered this because its own
-`typing-inspection>=0.4.0` floor was satisfied by an old-enough version
-before `mcp` entered the dependency resolution. `typing-inspection<0.4.3`
-(see `corridor/info.json`) pins it back down.
+own `typing-inspection>=0.4.0` floor is unconstrained above -- absent an
+upper pin, pip resolves the *latest* `typing-inspection` (0.4.3+), which
+raised *its own* `typing_extensions` floor to `>=4.15.0` (0.4.0-0.4.2 only
+need `>=4.12.0`).
+
+Pinning `typing-inspection<0.4.3` only on the cog that happens to declare
+`mcp` is not enough: the Downloader installs each loaded cog's
+`requirements` into one shared directory via repeated `pip install
+--target` calls, and a bare `pip install --target` never *replaces* a
+package already on disk there without `--upgrade` (confirmed by
+reproducing the exact sequence: installing `architect`'s own
+unconstrained-on-typing-inspection `pydantic<2.12` requirement first
+already plants an unpinned, incompatible `typing-inspection`, which
+`corridor`'s own later, correctly-pinned install can no longer undo --
+it just leaves two conflicting versions' files coexisting on disk).
+`typing-inspection<0.4.3` therefore has to be declared on *every* cog
+whose own `requirements` include `pydantic` at all (`architect`,
+`corridor`, `floorplan`, `pico` -- see each one's own `info.json`), not
+only the one that added `mcp`, so whichever of them the Downloader
+happens to install first plants a compatible version from the start.
 
 Opens a fresh `streamable_http_client`/`ClientSession` pair per call rather
 than holding one open across calls -- unlike `LiteLLMClient`'s one

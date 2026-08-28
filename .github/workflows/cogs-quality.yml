@@ -78,11 +78,18 @@ jobs:
           # mcp's own dependency chain (pydantic-settings -> typing-inspection)
           # hit this exact same typing_extensions incident a second, unrelated
           # way: typing-inspection>=0.4.3 itself requires typing_extensions
-          # >=4.15.0 (0.4.0-0.4.2 only need >=4.12.0) -- pydantic's own
-          # typing-inspection>=0.4.0 floor alone was satisfied by an old-
-          # enough version before mcp entered the resolution, so this never
-          # surfaced until now. 'typing-inspection<0.4.3' pins it back down;
-          # see corridor/infrastructure/mcp_client.py's own docstring.
+          # >=4.15.0 (0.4.0-0.4.2 only need >=4.12.0), and nothing pinned it
+          # before mcp. 'typing-inspection<0.4.3' is declared on every cog
+          # whose own info.json requirements include pydantic at all
+          # (architect/corridor/floorplan/pico), not only the one that added
+          # mcp -- the real Downloader installs every loaded cog's
+          # requirements into one shared dir via repeated `pip install
+          # --target` calls, which never replace an already-installed
+          # package without --upgrade, so whichever cog happens to install
+          # first has to plant a compatible version itself; corridor's own
+          # pin alone cannot undo an incompatible one an earlier cog already
+          # planted. See corridor/infrastructure/mcp_client.py's own
+          # docstring for the full incident writeup.
           - cog: corridor
             test_target: "corridor/"
             lint_target: "corridor"

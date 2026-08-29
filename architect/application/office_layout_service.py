@@ -569,21 +569,28 @@ def _touching_anchor(
     new_record: FurnitureFacing,
 ) -> GridPosition:
     """The anchor for `new_record`'s footprint so it sits flush against
-    `target`'s `side`, `offset` tiles along that side from `target`'s own
-    anchor corner (0 = aligned with target's anchor col/row). Pure
-    arithmetic on footprint dimensions -- bounds/collision are still
-    validated the normal way afterward, same as any other position.
+    `target`'s `side`. Pure arithmetic on footprint dimensions --
+    bounds/collision are still validated the normal way afterward, same as
+    any other position.
 
     occupied_cells() only ever excludes background_tiles *rows* (dr starts
-    at background_tiles, never affects dc) -- so column growth (east/west
-    touching) never has a background asymmetry, and south touching (the
-    side background_tiles never strips) is always the plain "one tile past
-    the target's occupied edge" case. North is the one exception: when
-    target has background rows, its own north-most `background_tiles` rows
-    are walkable (not in its occupied_cells), so the flush position for a
-    new item is target's own anchor row itself, not one tile further out
-    -- that's the exact gap this function exists to stop the caller from
-    getting wrong by hand."""
+    at background_tiles, never affects dc) -- so south touching (the side
+    background_tiles never strips) is always the plain "one tile past the
+    target's occupied edge" case, and column growth itself (footprint_width)
+    never has a background asymmetry. North is the one side where the
+    touch row itself changes: when target has background rows, its own
+    north-most `background_tiles` rows are walkable (not in its
+    occupied_cells), so the flush position for a new item is target's own
+    anchor row itself, not one tile further out.
+
+    `offset`'s own axis has the same asymmetry once more, in the other
+    pair of sides: for west/east, offset runs along target's *occupied*
+    rows, not its full anchor-inclusive footprint -- target's background
+    rows are its decorative back edge, not real surface a side item should
+    align against, so offset=0 starts at target.anchor_row +
+    target.background_tiles, not target.anchor_row itself. For north/south,
+    offset runs along columns, which never have this asymmetry, so it
+    starts at target.anchor_col unmodified."""
 
     if side is Direction.SOUTH:
         touch_row = target.position.row + target_record.footprint_height
@@ -597,12 +604,16 @@ def _touching_anchor(
         return GridPosition(
             target.position.col + offset, touch_row - new_record.footprint_height + 1
         )
+    # West/east: offset runs along target's *occupied* rows, not its full
+    # anchor-inclusive footprint -- target's background rows (if any) are
+    # its decorative back edge, not real table surface a side chair should
+    # align against, so offset 0 starts at target.anchor_row +
+    # background_tiles, same skip north touching already has to make.
+    row_start = target.position.row + target_record.background_tiles
     if side is Direction.WEST:
-        return GridPosition(
-            target.position.col - new_record.footprint_width, target.position.row + offset
-        )
+        return GridPosition(target.position.col - new_record.footprint_width, row_start + offset)
     return GridPosition(  # Direction.EAST
-        target.position.col + target_record.footprint_width, target.position.row + offset
+        target.position.col + target_record.footprint_width, row_start + offset
     )
 
 

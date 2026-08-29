@@ -416,7 +416,10 @@ class TestPlaceFurnitureTouching(unittest.IsolatedAsyncioTestCase):
             touching=Touching(furniture_id=desk.id, side=Direction.WEST),
         )
 
-        self.assertEqual(chair.position, GridPosition(0, 1))
+        # offset=0 aligns with desk's *occupied* top row (anchor row 1 +
+        # background_tiles 1 = row 2), not its background/anchor row --
+        # the desk's real surface, not its decorative back edge.
+        self.assertEqual(chair.position, GridPosition(0, 2))
 
     async def test_touching_east(self) -> None:
         service = _service()
@@ -431,8 +434,9 @@ class TestPlaceFurnitureTouching(unittest.IsolatedAsyncioTestCase):
             touching=Touching(furniture_id=desk.id, side=Direction.EAST),
         )
 
-        # Desk anchor col 1 + footprint_width 3 = 4.
-        self.assertEqual(chair.position, GridPosition(4, 1))
+        # Desk anchor col 1 + footprint_width 3 = 4; row 2, same reasoning
+        # as test_touching_west.
+        self.assertEqual(chair.position, GridPosition(4, 2))
 
     async def test_touching_offset_moves_along_the_side(self) -> None:
         service = _service()

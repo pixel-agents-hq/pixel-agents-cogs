@@ -504,15 +504,15 @@ class DescribeTilesTool:
         )
 
 
-# -- find_wall_anchors -----------------------------------------------------
+# -- find_furniture_anchors -------------------------------------------------
 
 
-class WallAnchorSummary(BaseModel):
+class FurnitureAnchorSummary(BaseModel):
     col: int
     row: int
 
 
-def _build_find_wall_anchors_input(style_loader: FurnitureStyleLoader) -> type[BaseModel]:
+def _build_find_furniture_anchors_input(style_loader: FurnitureStyleLoader) -> type[BaseModel]:
     """Same live-manifest `style` enum place_furniture's input builds --
     see `_build_place_furniture_input`."""
 
@@ -520,7 +520,7 @@ def _build_find_wall_anchors_input(style_loader: FurnitureStyleLoader) -> type[B
     style_type: Any = Literal[tuple(style_ids)] if style_ids else str
 
     return create_model(
-        "FindWallAnchorsInput",
+        "FindFurnitureAnchorsInput",
         style=(
             style_type,
             Field(description="Style id -- must exist in the current style manifest."),
@@ -540,29 +540,38 @@ def _build_find_wall_anchors_input(style_loader: FurnitureStyleLoader) -> type[B
     )
 
 
-class FindWallAnchorsOutput(BaseModel):
+class FindFurnitureAnchorsOutput(BaseModel):
     status: Literal["ok", "error"] = "ok"
     message: str | None = None
-    anchors: list[WallAnchorSummary] = Field(
+    anchors: list[FurnitureAnchorSummary] = Field(
         default_factory=list,
         description=(
             "Every col/row place_furniture would currently accept for this style/facing at or "
-            "near the searched region, capped at limit. Empty means none was found in this "
-            "region -- try a larger or different region, not a different anchor rule."
+            "near the searched region, in scan order (rows top-to-bottom, then columns "
+            "left-to-right), capped at limit. Empty means none was found in this region -- try "
+            "a larger or different region, not a different anchor rule. Each one is already "
+            "collision-free -- if you're placing something flush against an existing item's "
+            "edge, use the first anchor returned rather than padding it with an extra tile of "
+            "manual margin."
         ),
     )
 
 
-class FindWallAnchorsTool:
-    name = "find_wall_anchors"
+class FindFurnitureAnchorsTool:
+    name = "find_furniture_anchors"
     description = (
         "Search a region for every anchor position place_furniture would currently accept for "
-        "a given style/facing -- read-only, places nothing. For a can_place_on_walls style, the "
+        "a given style/facing -- read-only, places nothing. Works for ANY style, not just "
+        "wall-mounted ones: for a floor style (a chair, a second table, ...) this finds the "
+        "exact tile(s) flush against an existing item's edge -- e.g. to seat a chair touching "
+        "a table with no gap, search the single-tile-wide strip immediately on the chair's "
+        "side of the table instead of guessing a row and hoping, or probing with a real "
+        "place_furniture call and removing it afterward. For a can_place_on_walls style, the "
         "search also covers the row overhang above the region that a wall only one tile thick "
         "can require (see place_furniture's own description); this saves working out the "
         "correct bottom-row-touches-wall math by hand or discovering it via a failed "
-        "place_furniture call. Use this before place_furniture for any wall-mounted style you "
-        "haven't placed an instance of yet, or whenever you're unsure a spot is valid."
+        "place_furniture call. Use this before place_furniture whenever you're unsure a spot "
+        "is valid, or want the closest legal position to something already placed."
     )
 
     def __init__(self, service: OfficeLayoutService, style_loader: FurnitureStyleLoader) -> None:
@@ -571,16 +580,16 @@ class FindWallAnchorsTool:
 
     @property
     def Input(self) -> type[BaseModel]:
-        return _build_find_wall_anchors_input(self._style_loader)
+        return _build_find_furniture_anchors_input(self._style_loader)
 
     @property
     def Output(self) -> type[BaseModel]:
-        return FindWallAnchorsOutput
+        return FindFurnitureAnchorsOutput
 
     async def handler(self, raw_input: BaseModel) -> BaseModel:
         facing_raw = getattr(raw_input, "facing", None)
         try:
-            anchors = await self._service.find_wall_anchors(
+            anchors = await self._service.find_furniture_anchors(
                 style=raw_input.style,  # type: ignore[attr-defined]
                 facing=Direction(facing_raw) if facing_raw else None,
                 area=GridRect(
@@ -591,9 +600,11 @@ class FindWallAnchorsTool:
                 limit=raw_input.limit,  # type: ignore[attr-defined]
             )
         except OfficeValidationError as exc:
-            return _error(FindWallAnchorsOutput, exc)
-        return FindWallAnchorsOutput(
-            anchors=[WallAnchorSummary(col=position.col, row=position.row) for position in anchors]
+            return _error(FindFurnitureAnchorsOutput, exc)
+        return FindFurnitureAnchorsOutput(
+            anchors=[
+                FurnitureAnchorSummary(col=position.col, row=position.row) for position in anchors
+            ]
         )
 
 
@@ -724,9 +735,10 @@ class PlaceFurnitureTool:
         "first to find a free spot, list_furniture_styles first to learn a style's exact "
         "footprint dimensions -- describe_office/find_furniture only show the footprint of "
         "items already placed, so a style with no existing instances has no other way to "
-        "learn its footprint before the first placement attempt -- and find_wall_anchors to "
-        "get exact valid col/row anchors directly instead of computing the bottom-row-touches-"
-        "wall math by hand."
+        "learn its footprint before the first placement attempt -- and find_furniture_anchors "
+        "to get exact valid col/row anchors directly (including flush-adjacent-to-existing-"
+        "item positions for ordinary floor styles) instead of computing the bottom-row-touches-"
+        "wall math by hand or guessing a spacing gap."
     )
 
     def __init__(self, service: OfficeLayoutService, style_loader: FurnitureStyleLoader) -> None:
@@ -1066,7 +1078,7 @@ def build_office_tools(
         FindFurnitureTool(service, style_loader),
         ListFurnitureStylesTool(style_loader),
         DescribeTilesTool(service, style_loader),
-        FindWallAnchorsTool(service, style_loader),
+        FindFurnitureAnchorsTool(service, style_loader),
         PaintTilesTool(service),
         PlaceFurnitureTool(service, style_loader),
         MoveFurnitureTool(service, style_loader),

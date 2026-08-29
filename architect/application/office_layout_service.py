@@ -98,6 +98,62 @@ class OfficeLayoutService:
             )
         return [office.grid.at(position) for position in area.positions()]
 
+    async def find_wall_anchors(
+        self,
+        *,
+        style: str,
+        facing: Direction | None = None,
+        area: GridRect,
+        limit: int = 20,
+    ) -> list[GridPosition]:
+        """Read-only: every anchor at or near `area` where
+        `place_furniture(style=style, facing=facing, position=...)` would
+        succeed right now, probing the exact same `_furniture_placement_error`
+        place_furniture/move_furniture already validate against -- never
+        reimplements the wall/floor-anchor rule, so it can't drift out of
+        sync with it. For a `can_place_on_walls` style the scan also covers
+        the row overhang above `area` fix 4 introduced (sized to the
+        style's own `footprint_height`, not a guess), since that's exactly
+        the anchor a caller can't otherwise find without a failed
+        placement attempt first."""
+
+        office, styles = await self._load()
+        if area.width * area.height > _MAX_DESCRIBE_TILES_AREA:
+            raise OfficeValidationError(
+                f"find_wall_anchors area is too large ({area.width * area.height} tiles, "
+                f"max {_MAX_DESCRIBE_TILES_AREA})"
+            )
+        if not _rect_in_bounds(area, office):
+            raise OfficeValidationError(
+                f"area extends outside the {office.width}x{office.height} grid "
+                f"(0-based coordinates, far edge exclusive: {_rect_out_of_bounds_detail(area, office)})"
+            )
+        style_def = styles.by_style_id(style)
+        if style_def is None:
+            raise OfficeValidationError(f"style {style!r} does not exist")
+        resolved_facing = facing if facing is not None else style_def.default_facing
+        record = style_def.facing_record(resolved_facing)
+        if record is None:
+            return []
+
+        occupied = _occupied_cells_by_others(office, styles)
+        row_start = area.top_left.row - (record.footprint_height - 1)
+        row_end = area.top_left.row + area.height
+        col_end = area.top_left.col + area.width
+
+        anchors: list[GridPosition] = []
+        for row in range(row_start, row_end):
+            for col in range(area.top_left.col, col_end):
+                position = GridPosition(col, row)
+                error = _furniture_placement_error(
+                    office, styles, style_def, resolved_facing, position, occupied
+                )
+                if error is None:
+                    anchors.append(position)
+                    if len(anchors) >= limit:
+                        return anchors
+        return anchors
+
     # -- mutations -----------------------------------------------------
 
     async def paint_tiles(

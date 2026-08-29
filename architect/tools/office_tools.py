@@ -437,13 +437,30 @@ class DescribeTilesOutput(BaseModel):
     status: Literal["ok", "error"] = "ok"
     message: str | None = None
     tiles: list[TileSummary] = Field(default_factory=list)
+    is_empty: bool = Field(
+        default=True,
+        description=(
+            "True when no tile in this region is occupied by furniture -- equivalent to "
+            "blocking_furniture_ids being empty. Says nothing about tile kind: a region can be "
+            "is_empty=True and still be all wall or void, not floor."
+        ),
+    )
+    blocking_furniture_ids: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Every distinct furniture id with at least one occupied_cells entry inside this "
+            "region -- the answer to 'is this area free' without cross-referencing "
+            "describe_office/find_furniture's footprints against this region by hand."
+        ),
+    )
 
 
 class DescribeTilesTool:
     name = "describe_tiles"
     description = (
         "Show the exact per-tile state (kind, material, color, zone, occupying furniture) "
-        "of a bounded region, capped at 400 tiles. Use this to check what's actually at a "
+        "of a bounded region, capped at 400 tiles, plus an is_empty/blocking_furniture_ids "
+        "summary of whether any furniture occupies it. Use this to check what's actually at a "
         "position before placing or painting something there. Coordinates are 0-based and "
         "width/height are exclusive of the far edge (col+width and row+height must not exceed "
         "the office's width/height from describe_office) -- e.g. an office 21 tiles wide has "
@@ -473,11 +490,110 @@ class DescribeTilesTool:
             return _error(DescribeTilesOutput, exc)
         office = await self._service.describe()
         furniture_by_cell = _furniture_by_cell(office, self._style_loader.styles())
+        summaries = [
+            _tile_summary(position, cell, furniture_by_cell)
+            for position, cell in zip(area.positions(), tiles, strict=True)
+        ]
+        blocking_furniture_ids = sorted(
+            {summary.furniture_id for summary in summaries if summary.furniture_id is not None}
+        )
         return DescribeTilesOutput(
-            tiles=[
-                _tile_summary(position, cell, furniture_by_cell)
-                for position, cell in zip(area.positions(), tiles, strict=True)
-            ]
+            tiles=summaries,
+            is_empty=not blocking_furniture_ids,
+            blocking_furniture_ids=blocking_furniture_ids,
+        )
+
+
+# -- find_wall_anchors -----------------------------------------------------
+
+
+class WallAnchorSummary(BaseModel):
+    col: int
+    row: int
+
+
+def _build_find_wall_anchors_input(style_loader: FurnitureStyleLoader) -> type[BaseModel]:
+    """Same live-manifest `style` enum place_furniture's input builds --
+    see `_build_place_furniture_input`."""
+
+    style_ids = style_loader.styles().style_ids()
+    style_type: Any = Literal[tuple(style_ids)] if style_ids else str
+
+    return create_model(
+        "FindWallAnchorsInput",
+        style=(
+            style_type,
+            Field(description="Style id -- must exist in the current style manifest."),
+        ),
+        facing=(
+            Literal[_DIRECTION_VALUES] | None,
+            Field(default=None, description="Facing direction. Omit to use the style's default."),
+        ),
+        col=(int, Field(description="Top-left column of the region to search.")),
+        row=(int, Field(description="Top-left row of the region to search.")),
+        width=(int, Field(description="Region width in tiles.")),
+        height=(int, Field(description="Region height in tiles.")),
+        limit=(
+            int,
+            Field(default=20, ge=1, le=100, description="Stop after this many anchors are found."),
+        ),
+    )
+
+
+class FindWallAnchorsOutput(BaseModel):
+    status: Literal["ok", "error"] = "ok"
+    message: str | None = None
+    anchors: list[WallAnchorSummary] = Field(
+        default_factory=list,
+        description=(
+            "Every col/row place_furniture would currently accept for this style/facing at or "
+            "near the searched region, capped at limit. Empty means none was found in this "
+            "region -- try a larger or different region, not a different anchor rule."
+        ),
+    )
+
+
+class FindWallAnchorsTool:
+    name = "find_wall_anchors"
+    description = (
+        "Search a region for every anchor position place_furniture would currently accept for "
+        "a given style/facing -- read-only, places nothing. For a can_place_on_walls style, the "
+        "search also covers the row overhang above the region that a wall only one tile thick "
+        "can require (see place_furniture's own description); this saves working out the "
+        "correct bottom-row-touches-wall math by hand or discovering it via a failed "
+        "place_furniture call. Use this before place_furniture for any wall-mounted style you "
+        "haven't placed an instance of yet, or whenever you're unsure a spot is valid."
+    )
+
+    def __init__(self, service: OfficeLayoutService, style_loader: FurnitureStyleLoader) -> None:
+        self._service = service
+        self._style_loader = style_loader
+
+    @property
+    def Input(self) -> type[BaseModel]:
+        return _build_find_wall_anchors_input(self._style_loader)
+
+    @property
+    def Output(self) -> type[BaseModel]:
+        return FindWallAnchorsOutput
+
+    async def handler(self, raw_input: BaseModel) -> BaseModel:
+        facing_raw = getattr(raw_input, "facing", None)
+        try:
+            anchors = await self._service.find_wall_anchors(
+                style=raw_input.style,  # type: ignore[attr-defined]
+                facing=Direction(facing_raw) if facing_raw else None,
+                area=GridRect(
+                    GridPosition(raw_input.col, raw_input.row),  # type: ignore[attr-defined]
+                    raw_input.width,  # type: ignore[attr-defined]
+                    raw_input.height,  # type: ignore[attr-defined]
+                ),
+                limit=raw_input.limit,  # type: ignore[attr-defined]
+            )
+        except OfficeValidationError as exc:
+            return _error(FindWallAnchorsOutput, exc)
+        return FindWallAnchorsOutput(
+            anchors=[WallAnchorSummary(col=position.col, row=position.row) for position in anchors]
         )
 
 
@@ -605,10 +721,12 @@ class PlaceFurnitureTool:
         "tile as its style requires. For a wall-mounted style, the tile that must actually "
         "touch a wall is the *bottom* row of the footprint (the occupied_cells entries with "
         "the largest row value for that column), not col/row itself. Use describe_tiles "
-        "first to find a free spot, and list_furniture_styles first to learn a style's exact "
+        "first to find a free spot, list_furniture_styles first to learn a style's exact "
         "footprint dimensions -- describe_office/find_furniture only show the footprint of "
         "items already placed, so a style with no existing instances has no other way to "
-        "learn its footprint before the first placement attempt."
+        "learn its footprint before the first placement attempt -- and find_wall_anchors to "
+        "get exact valid col/row anchors directly instead of computing the bottom-row-touches-"
+        "wall math by hand."
     )
 
     def __init__(self, service: OfficeLayoutService, style_loader: FurnitureStyleLoader) -> None:
@@ -948,6 +1066,7 @@ def build_office_tools(
         FindFurnitureTool(service, style_loader),
         ListFurnitureStylesTool(style_loader),
         DescribeTilesTool(service, style_loader),
+        FindWallAnchorsTool(service, style_loader),
         PaintTilesTool(service),
         PlaceFurnitureTool(service, style_loader),
         MoveFurnitureTool(service, style_loader),

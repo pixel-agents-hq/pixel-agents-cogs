@@ -562,6 +562,87 @@ class TestDescribeTiles(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(tiles), 6)
 
 
+class TestFindWallAnchors(unittest.IsolatedAsyncioTestCase):
+    async def test_unknown_style_fails(self) -> None:
+        service = _service()
+
+        with self.assertRaises(OfficeValidationError):
+            await service.find_wall_anchors(
+                style="not_a_style", area=GridRect(GridPosition(0, 0), 1, 1)
+            )
+
+    async def test_area_too_large_fails(self) -> None:
+        service = _service(_empty_layout(cols=30, rows=30))
+
+        with self.assertRaises(OfficeValidationError):
+            await service.find_wall_anchors(
+                style="whiteboard", area=GridRect(GridPosition(0, 0), 21, 20)
+            )
+
+    async def test_finds_every_valid_anchor_for_a_single_row_wall_style(self) -> None:
+        # The whole default 5x5 grid is untouched WALL (_empty_layout()),
+        # so every column in a 1-row search area is a valid whiteboard
+        # anchor.
+        service = _service()
+
+        anchors = await service.find_wall_anchors(
+            style="whiteboard", area=GridRect(GridPosition(0, 0), 5, 1)
+        )
+
+        self.assertEqual(anchors, [GridPosition(col, 0) for col in range(5)])
+
+    async def test_search_covers_the_overhang_above_the_region(self) -> None:
+        # Rows 1-4 are painted floor, leaving row 0 as the only WALL row --
+        # a hanging_plant (footprint_height=2) searched over row 0 itself
+        # can only anchor at row -1 (bottom row = -1 + 2 - 1 = 0, the one
+        # real wall row); row 0 itself gives bottom row 1, which is floor.
+        service = _service()
+        await _paint_floor(service, GridRect(GridPosition(0, 1), 5, 4))
+
+        anchors = await service.find_wall_anchors(
+            style="hanging_plant", area=GridRect(GridPosition(2, 0), 1, 1)
+        )
+
+        self.assertEqual(anchors, [GridPosition(2, -1)])
+
+    async def test_finds_anchors_for_a_floor_style_too(self) -> None:
+        service = _service()
+        await _paint_floor(service, GridRect(GridPosition(0, 0), 2, 1))
+
+        anchors = await service.find_wall_anchors(
+            style="wooden_chair", area=GridRect(GridPosition(0, 0), 3, 1)
+        )
+
+        # (2, 0) is still untouched WALL -- not a valid floor anchor.
+        self.assertEqual(anchors, [GridPosition(0, 0), GridPosition(1, 0)])
+
+    async def test_limit_caps_the_result(self) -> None:
+        service = _service()
+
+        anchors = await service.find_wall_anchors(
+            style="whiteboard", area=GridRect(GridPosition(0, 0), 5, 1), limit=2
+        )
+
+        self.assertEqual(len(anchors), 2)
+
+    async def test_every_returned_anchor_actually_places_successfully(self) -> None:
+        # The whole point: find_wall_anchors must never suggest a position
+        # place_furniture would then reject.
+        service = _service()
+        await _paint_floor(service, GridRect(GridPosition(0, 1), 5, 4))
+
+        anchors = await service.find_wall_anchors(
+            style="hanging_plant", area=GridRect(GridPosition(0, 0), 5, 1)
+        )
+        self.assertTrue(anchors)
+
+        for anchor in anchors:
+            item = await service.place_furniture(
+                kind=FurnitureKind.DECOR, style="hanging_plant", position=anchor
+            )
+            await service.remove_furniture(furniture_id=item.id)
+
+
 class TestZones(unittest.IsolatedAsyncioTestCase):
     async def test_create_zone_with_unknown_color_fails(self) -> None:
         service = _service()

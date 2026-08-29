@@ -9,7 +9,7 @@ import unittest
 from pydantic import ValidationError
 
 from ..application.office_layout_service import OfficeLayoutService
-from ..domain.office_ir import GridPosition, GridRect, TileKind
+from ..domain.office_ir import FurnitureKind, GridPosition, GridRect, TileKind
 from ..infrastructure.furniture_styles import FurnitureStyleLoader
 from ..infrastructure.office_layout_repository import OfficeLayoutRepository
 from ..tools.office_tools import (
@@ -19,6 +19,7 @@ from ..tools.office_tools import (
     DescribeTilesTool,
     FindFurnitureInput,
     FindFurnitureTool,
+    FindWallAnchorsTool,
     ListFurnitureStylesInput,
     ListFurnitureStylesTool,
     PaintTilesInput,
@@ -118,7 +119,7 @@ class TestBuildOfficeTools(unittest.TestCase):
         tools = build_office_tools(service, loader)
 
         names = {tool.name for tool in tools}  # type: ignore[attr-defined]
-        self.assertEqual(len(names), 13)
+        self.assertEqual(len(names), 14)
 
 
 class TestDescribeOfficeTool(unittest.IsolatedAsyncioTestCase):
@@ -310,6 +311,67 @@ class TestDescribeTilesTool(unittest.IsolatedAsyncioTestCase):
         tool = DescribeTilesTool(_service(), _loader())
 
         output = await tool.handler(DescribeTilesInput(col=0, row=0, width=99, height=99))
+
+        self.assertEqual(output.status, "error")
+
+    async def test_reports_is_empty_when_no_furniture_occupies_the_region(self) -> None:
+        service = _service()
+        await service.paint_tiles(
+            area=GridRect(GridPosition(0, 0), 2, 2), kind=TileKind.FLOOR, material=2
+        )
+        tool = DescribeTilesTool(service, _loader())
+
+        output = await tool.handler(DescribeTilesInput(col=0, row=0, width=2, height=2))
+
+        self.assertTrue(output.is_empty)
+        self.assertEqual(output.blocking_furniture_ids, [])
+
+    async def test_reports_blocking_furniture_ids_when_occupied(self) -> None:
+        service = _service()
+        await service.paint_tiles(
+            area=GridRect(GridPosition(0, 0), 2, 2), kind=TileKind.FLOOR, material=2
+        )
+        chair = await service.place_furniture(
+            kind=FurnitureKind.SEATING, style="wooden_chair", position=GridPosition(0, 0)
+        )
+        tool = DescribeTilesTool(service, _loader())
+
+        output = await tool.handler(DescribeTilesInput(col=0, row=0, width=2, height=2))
+
+        self.assertFalse(output.is_empty)
+        self.assertEqual(output.blocking_furniture_ids, [chair.id])
+
+
+class TestFindWallAnchorsTool(unittest.IsolatedAsyncioTestCase):
+    async def test_finds_anchors_for_a_wall_style(self) -> None:
+        service = _service()
+        # Row 3 is the only WALL row in an otherwise all-floor 5x5 grid.
+        await service.paint_tiles(area=GridRect(GridPosition(0, 3), 5, 1), kind=TileKind.WALL)
+        tool = FindWallAnchorsTool(service, _loader())
+
+        output = await tool.handler(
+            tool.Input.model_validate(
+                {"style": "whiteboard", "col": 0, "row": 2, "width": 5, "height": 2}
+            )
+        )
+
+        self.assertEqual(output.status, "ok")
+        # whiteboard is 2x2: col=4 would need col 5 too, out of the 5-wide
+        # grid, so only cols 0-3 qualify -- all anchored at row 2 (bottom
+        # row 2+2-1=3, the painted WALL row).
+        self.assertEqual(
+            {(anchor.col, anchor.row) for anchor in output.anchors},
+            {(0, 2), (1, 2), (2, 2), (3, 2)},
+        )
+
+    async def test_area_too_large_reports_error_not_exception(self) -> None:
+        tool = FindWallAnchorsTool(_service(), _loader())
+
+        output = await tool.handler(
+            tool.Input.model_validate(
+                {"style": "whiteboard", "col": 0, "row": 0, "width": 99, "height": 99}
+            )
+        )
 
         self.assertEqual(output.status, "error")
 

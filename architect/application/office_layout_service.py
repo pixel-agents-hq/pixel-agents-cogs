@@ -98,7 +98,7 @@ class OfficeLayoutService:
             )
         return [office.grid.at(position) for position in area.positions()]
 
-    async def find_wall_anchors(
+    async def find_furniture_anchors(
         self,
         *,
         style: str,
@@ -111,16 +111,26 @@ class OfficeLayoutService:
         succeed right now, probing the exact same `_furniture_placement_error`
         place_furniture/move_furniture already validate against -- never
         reimplements the wall/floor-anchor rule, so it can't drift out of
-        sync with it. For a `can_place_on_walls` style the scan also covers
+        sync with it. Works for any style, not just `can_place_on_walls`
+        ones: a floor style (a chair, a second table) is validated the same
+        way, so scanning a thin strip against an existing item's edge finds
+        the exact flush-adjacent anchor instead of leaving an unvalidated
+        guess-gap. For a `can_place_on_walls` style the scan also covers
         the row overhang above `area` fix 4 introduced (sized to the
         style's own `footprint_height`, not a guess), since that's exactly
         the anchor a caller can't otherwise find without a failed
-        placement attempt first."""
+        placement attempt first. Anchors are returned in scan order, rows
+        top-to-bottom then columns left-to-right within `area` -- point
+        `area` at the strip immediately touching the reference item's edge
+        (not a wider buffer zone) and use the first anchor returned as the
+        flush position, rather than adding an extra tile of margin beyond
+        it "to be safe": every returned anchor is already collision-free,
+        there is no closer-but-hidden option being screened out."""
 
         office, styles = await self._load()
         if area.width * area.height > _MAX_DESCRIBE_TILES_AREA:
             raise OfficeValidationError(
-                f"find_wall_anchors area is too large ({area.width * area.height} tiles, "
+                f"find_furniture_anchors area is too large ({area.width * area.height} tiles, "
                 f"max {_MAX_DESCRIBE_TILES_AREA})"
             )
         if not _rect_in_bounds(area, office):

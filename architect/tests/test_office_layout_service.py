@@ -562,12 +562,12 @@ class TestDescribeTiles(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(tiles), 6)
 
 
-class TestFindWallAnchors(unittest.IsolatedAsyncioTestCase):
+class TestFindFurnitureAnchors(unittest.IsolatedAsyncioTestCase):
     async def test_unknown_style_fails(self) -> None:
         service = _service()
 
         with self.assertRaises(OfficeValidationError):
-            await service.find_wall_anchors(
+            await service.find_furniture_anchors(
                 style="not_a_style", area=GridRect(GridPosition(0, 0), 1, 1)
             )
 
@@ -575,7 +575,7 @@ class TestFindWallAnchors(unittest.IsolatedAsyncioTestCase):
         service = _service(_empty_layout(cols=30, rows=30))
 
         with self.assertRaises(OfficeValidationError):
-            await service.find_wall_anchors(
+            await service.find_furniture_anchors(
                 style="whiteboard", area=GridRect(GridPosition(0, 0), 21, 20)
             )
 
@@ -585,7 +585,7 @@ class TestFindWallAnchors(unittest.IsolatedAsyncioTestCase):
         # anchor.
         service = _service()
 
-        anchors = await service.find_wall_anchors(
+        anchors = await service.find_furniture_anchors(
             style="whiteboard", area=GridRect(GridPosition(0, 0), 5, 1)
         )
 
@@ -599,7 +599,7 @@ class TestFindWallAnchors(unittest.IsolatedAsyncioTestCase):
         service = _service()
         await _paint_floor(service, GridRect(GridPosition(0, 1), 5, 4))
 
-        anchors = await service.find_wall_anchors(
+        anchors = await service.find_furniture_anchors(
             style="hanging_plant", area=GridRect(GridPosition(2, 0), 1, 1)
         )
 
@@ -609,7 +609,7 @@ class TestFindWallAnchors(unittest.IsolatedAsyncioTestCase):
         service = _service()
         await _paint_floor(service, GridRect(GridPosition(0, 0), 2, 1))
 
-        anchors = await service.find_wall_anchors(
+        anchors = await service.find_furniture_anchors(
             style="wooden_chair", area=GridRect(GridPosition(0, 0), 3, 1)
         )
 
@@ -619,19 +619,19 @@ class TestFindWallAnchors(unittest.IsolatedAsyncioTestCase):
     async def test_limit_caps_the_result(self) -> None:
         service = _service()
 
-        anchors = await service.find_wall_anchors(
+        anchors = await service.find_furniture_anchors(
             style="whiteboard", area=GridRect(GridPosition(0, 0), 5, 1), limit=2
         )
 
         self.assertEqual(len(anchors), 2)
 
     async def test_every_returned_anchor_actually_places_successfully(self) -> None:
-        # The whole point: find_wall_anchors must never suggest a position
+        # The whole point: find_furniture_anchors must never suggest a position
         # place_furniture would then reject.
         service = _service()
         await _paint_floor(service, GridRect(GridPosition(0, 1), 5, 4))
 
-        anchors = await service.find_wall_anchors(
+        anchors = await service.find_furniture_anchors(
             style="hanging_plant", area=GridRect(GridPosition(0, 0), 5, 1)
         )
         self.assertTrue(anchors)

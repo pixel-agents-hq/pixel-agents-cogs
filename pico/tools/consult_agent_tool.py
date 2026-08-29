@@ -16,6 +16,19 @@ before). This is a deliberate transparency feature: a Discord user
 watching the channel sees the real, unparaphrased A2A conversation, not
 just pico's summary of it.
 
+Between those two guaranteed messages, a variable number of additional
+"🐛" debug-event announcements may also appear -- one per intermediate
+activity event the consulted agent chooses to stream mid-task (thinking
+prose, a tool call's name+arguments, its result). This is entirely the
+*consulted* agent's own setting to control (architect's
+`[p]architect debuglogging`, see `ArchitectClient`'s module docstring for
+the A2A transport this rides on) -- pico has no debug toggle of its own
+here, `ConsultAgentTool` purely relays whatever `ArchitectAsker.ask()`'s
+`on_activity` callback is given. When that setting is off (the default),
+or for a future agent that never streams anything, `ask()` simply never
+invokes the callback and only the original two messages appear, exactly
+as before.
+
 Both announcements carry pico's own bound author identity (via `reply`,
 a `ReplySender`) *and*, in the footer, the *consulted* agent's own
 identity when it has one (`footer_icon_path`, the same real local `Path`
@@ -53,7 +66,7 @@ A publish failure here is best-effort, like the announcements themselves
 from __future__ import annotations
 
 import logging
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
 from typing import Protocol
 
@@ -81,7 +94,13 @@ class ArchitectAsker(Protocol):
     architect's original hardcoded tool; the client itself is generic
     (`ask(base_url=..., text=...)`), not architect-specific."""
 
-    async def ask(self, *, base_url: str, text: str) -> AgentAskResult: ...
+    async def ask(
+        self,
+        *,
+        base_url: str,
+        text: str,
+        on_activity: Callable[[str], Awaitable[None]] | None = None,
+    ) -> AgentAskResult: ...
 
 
 class ReplySenderProtocol(Protocol):
@@ -182,7 +201,11 @@ class ConsultAgentTool:
                 summary=f"Asking {self._agent_key}: {raw_input.prompt}",
             )
         try:
-            result = await self._client.ask(base_url=self._base_url, text=raw_input.prompt)
+            result = await self._client.ask(
+                base_url=self._base_url,
+                text=raw_input.prompt,
+                on_activity=self._announce_debug_event,
+            )
         except ArchitectRequestError as exc:
             log.warning("pico: %s failed: %s", self.name, exc)
             await self._announce(f"⚠️ **{self._agent_key}** could not be reached: {exc}")
@@ -202,6 +225,18 @@ class ConsultAgentTool:
             summary=result.answer,
         )
         return ConsultAgentOutput(status="ok", answer=result.answer)
+
+    async def _announce_debug_event(self, text: str) -> None:
+        """Bound as `ask()`'s `on_activity` callback -- one extra Discord
+        announcement per intermediate debug event the consulted agent
+        chooses to stream (see this module's own docstring). Truncated
+        defensively: a tool result can be an arbitrarily large JSON blob,
+        and nothing upstream chunks an overlong embed description for us
+        (corridor/adapters/cog_base.py's send_reply is a single message per
+        call) -- better a visibly-truncated event than one that silently
+        fails `_announce`'s own try/except and never appears at all."""
+
+        await self._announce(f"🐛 **{self._agent_key}**: {_truncate(text)}")
 
     async def _announce(self, description: str, *, fields: Sequence[ReplyField] = ()) -> None:
         """Best-effort -- a failure to post the announcement must never
@@ -235,6 +270,20 @@ class ConsultAgentTool:
             log.warning(
                 "pico: %s could not publish an AgentReplied event", self.name, exc_info=True
             )
+
+
+_DEBUG_EVENT_TRUNCATE_LENGTH = 1500
+
+
+def _truncate(text: str, limit: int = _DEBUG_EVENT_TRUNCATE_LENGTH) -> str:
+    """Discord's real embed-description hard cap is 4096 chars, but a tool
+    result can be an arbitrarily large JSON blob -- cut well under that so
+    truncation is visible and deliberate, not a coin-flip against the real
+    limit depending on what else `_announce` renders around it."""
+
+    if len(text) <= limit:
+        return text
+    return text[:limit] + f"... [truncated, {len(text)} chars total]"
 
 
 def _tool_call_fields(

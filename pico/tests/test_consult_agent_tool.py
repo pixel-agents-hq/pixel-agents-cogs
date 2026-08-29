@@ -10,6 +10,7 @@ this tool's own module docstring."""
 from __future__ import annotations
 
 import unittest
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
@@ -26,16 +27,27 @@ class FakeArchitectAsker:
         successful_tool_calls: int | None = None,
         failed_tool_calls: int | None = None,
         fail_with: Exception | None = None,
+        debug_events: list[str] | None = None,
     ) -> None:
         self.answer = answer
         self.tool_calls_made = tool_calls_made
         self.successful_tool_calls = successful_tool_calls
         self.failed_tool_calls = failed_tool_calls
         self.fail_with = fail_with
+        self.debug_events = debug_events or []
         self.calls: list[dict[str, str]] = []
 
-    async def ask(self, *, base_url: str, text: str) -> AgentAskResult:
+    async def ask(
+        self,
+        *,
+        base_url: str,
+        text: str,
+        on_activity: Callable[[str], Awaitable[None]] | None = None,
+    ) -> AgentAskResult:
         self.calls.append({"base_url": base_url, "text": text})
+        if on_activity is not None:
+            for event in self.debug_events:
+                await on_activity(event)
         if self.fail_with is not None:
             raise self.fail_with
         assert self.answer is not None
@@ -273,6 +285,50 @@ class TestConsultAgentToolAnnouncements(unittest.IsolatedAsyncioTestCase):
         await tool.handler(ConsultAgentInput(prompt="hi"))
 
         self.assertEqual(reply.footer_overrides, [None, None])
+
+    async def test_relays_intermediate_debug_events_between_the_question_and_the_answer(
+        self,
+    ) -> None:
+        reply = FakeReplySender()
+        tool = _tool(
+            FakeArchitectAsker(
+                answer="38 items total",
+                debug_events=["thinking: let me check", "calling find_furniture({})"],
+            ),
+            reply,
+        )
+
+        await tool.handler(ConsultAgentInput(prompt="what furniture exists?"))
+
+        self.assertEqual(len(reply.replies), 4)
+        self.assertIn("what furniture exists?", reply.replies[0] or "")
+        self.assertIn("thinking: let me check", reply.replies[1] or "")
+        self.assertIn("architect", reply.replies[1] or "")
+        self.assertIn("calling find_furniture({})", reply.replies[2] or "")
+        self.assertIn("38 items total", reply.replies[3] or "")
+
+    async def test_no_extra_announcements_when_the_consulted_agent_streams_nothing(self) -> None:
+        """The common case, and every agent's behavior before this feature
+        existed -- ask() never invokes on_activity, so exactly the original
+        two messages appear."""
+
+        reply = FakeReplySender()
+        tool = _tool(FakeArchitectAsker(answer="ok"), reply)
+
+        await tool.handler(ConsultAgentInput(prompt="hi"))
+
+        self.assertEqual(len(reply.replies), 2)
+
+    async def test_an_oversized_debug_event_is_truncated(self) -> None:
+        reply = FakeReplySender()
+        oversized = "x" * 5000
+        tool = _tool(FakeArchitectAsker(answer="ok", debug_events=[oversized]), reply)
+
+        await tool.handler(ConsultAgentInput(prompt="hi"))
+
+        debug_announcement = reply.replies[1] or ""
+        self.assertLess(len(debug_announcement), len(oversized))
+        self.assertIn("truncated", debug_announcement)
 
     async def test_a_broken_announcement_does_not_fail_the_tool_call(self) -> None:
         class BrokenReplySender(FakeReplySender):

@@ -641,17 +641,45 @@ class PaintTilesInput(BaseModel):
             "Top-left row of the region to paint. 0-based -- 0 is the office's northmost row."
         )
     )
-    width: int = Field(
+    width: int | None = Field(
+        default=None,
         description=(
-            "Region width in tiles. The region covers columns col..col+width-1 inclusive -- "
-            "col+width must not exceed the office's width (describe_office reports it)."
-        )
+            "Region width in tiles -- a COUNT, not a second column. The region covers columns "
+            "col..col+width-1 inclusive, i.e. col+width (the far edge) is exclusive and must not "
+            "exceed the office's width (describe_office reports it) -- e.g. an office 21 tiles "
+            "wide has valid columns 0..20, so col=0,width=21 is the whole width but "
+            "col=1,width=21 overshoots by 1. Give exactly one of width/height OR end_col/end_row, "
+            "never both -- end_col/end_row avoids this arithmetic entirely: col=5,end_col=10 and "
+            "col=5,width=6 describe the identical 6-column region."
+        ),
     )
-    height: int = Field(
+    height: int | None = Field(
+        default=None,
         description=(
-            "Region height in tiles. The region covers rows row..row+height-1 inclusive -- "
-            "row+height must not exceed the office's height (describe_office reports it)."
-        )
+            "Region height in tiles -- a COUNT, not a second row. The region covers rows "
+            "row..row+height-1 inclusive, i.e. row+height (the far edge) is exclusive and must "
+            "not exceed the office's height (describe_office reports it). Give exactly one of "
+            "width/height OR end_col/end_row, never both -- see width's description."
+        ),
+    )
+    end_col: int | None = Field(
+        default=None,
+        description=(
+            "Rightmost column to paint, INCLUSIVE (unlike width, this is a second column, not a "
+            "count) -- e.g. col=5,end_col=10 paints columns 5 through 10, both included. "
+            "Alternative to width for callers who think in terms of a start/end tile rather than "
+            "a start tile + count; give exactly one of width/height OR end_col/end_row, never "
+            "both. Must be >= col."
+        ),
+    )
+    end_row: int | None = Field(
+        default=None,
+        description=(
+            "Bottommost row to paint, INCLUSIVE (unlike height, this is a second row, not a "
+            "count) -- e.g. row=5,end_row=10 paints rows 5 through 10, both included. "
+            "Alternative to height; give exactly one of width/height OR end_col/end_row, never "
+            "both. Must be >= row."
+        ),
     )
     kind: Literal[_PAINT_KIND_VALUES] = Field(  # type: ignore[valid-type]
         description="'floor' or 'wall'."
@@ -672,11 +700,47 @@ class PaintTilesOutput(BaseModel):
     message: str | None = None
 
 
+def _resolve_paint_region(raw_input: PaintTilesInput) -> GridRect | str:
+    """Translate PaintTilesInput's two mutually-exclusive ways of naming a
+    region (width/height count, or end_col/end_row inclusive far corner)
+    into a single canonical GridRect -- keeping this arithmetic out of the
+    LLM's hands entirely for the end_col/end_row path, the same reasoning
+    that motivated place_furniture's `touching` alternative to `position`.
+    Returns an error message string instead of raising, matching this
+    module's "handler does the actual work and must not raise for expected
+    failure modes" convention (see module docstring)."""
+
+    by_count = raw_input.width is not None and raw_input.height is not None
+    by_corner = raw_input.end_col is not None and raw_input.end_row is not None
+    if by_count == by_corner:
+        return "give exactly one of width/height or end_col/end_row, not both and not neither"
+    if by_count:
+        assert raw_input.width is not None and raw_input.height is not None
+        return GridRect(
+            GridPosition(raw_input.col, raw_input.row), raw_input.width, raw_input.height
+        )
+    assert raw_input.end_col is not None and raw_input.end_row is not None
+    if raw_input.end_col < raw_input.col or raw_input.end_row < raw_input.row:
+        return (
+            f"end_col ({raw_input.end_col}) and end_row ({raw_input.end_row}) must be >= "
+            f"col ({raw_input.col}) and row ({raw_input.row}) respectively"
+        )
+    return GridRect(
+        GridPosition(raw_input.col, raw_input.row),
+        raw_input.end_col - raw_input.col + 1,
+        raw_input.end_row - raw_input.row + 1,
+    )
+
+
 class PaintTilesTool:
     name = "paint_tiles"
     description = (
         "Paint a rectangular region to floor or wall. Painting a wall over furniture fails "
-        "(remove it first)."
+        "(remove it first). Name the region either with width/height (a tile count from "
+        "col/row) or with end_col/end_row (the far corner, inclusive) -- give exactly one of "
+        "the two pairs. end_col/end_row is the safer choice when you already know the last "
+        "tile you want painted, since it needs no off-by-one arithmetic: col=5,end_col=10 and "
+        "col=5,width=6 paint the identical 6-column span."
     )
 
     def __init__(self, service: OfficeLayoutService) -> None:
@@ -692,11 +756,12 @@ class PaintTilesTool:
 
     async def handler(self, raw_input: BaseModel) -> BaseModel:
         assert isinstance(raw_input, PaintTilesInput)
+        area = _resolve_paint_region(raw_input)
+        if isinstance(area, str):
+            return PaintTilesOutput(status="error", message=area)
         try:
             await self._service.paint_tiles(
-                area=GridRect(
-                    GridPosition(raw_input.col, raw_input.row), raw_input.width, raw_input.height
-                ),
+                area=area,
                 kind=TileKind(raw_input.kind),
                 material=raw_input.material,
                 color=raw_input.color,
@@ -931,10 +996,28 @@ class RemoveFurnitureTool:
 class CreateZoneInput(BaseModel):
     label: str = Field(description="Unique zone name, e.g. 'Quiet Zone'.")
     color: str = Field(description="Semantic color name, e.g. 'cool_blue'.")
-    col: int
-    row: int
-    width: int
-    height: int
+    col: int = Field(
+        description="Top-left column of the zone. 0-based -- 0 is the office's westmost column."
+    )
+    row: int = Field(
+        description="Top-left row of the zone. 0-based -- 0 is the office's northmost row."
+    )
+    width: int = Field(
+        description=(
+            "Zone width in tiles -- a COUNT, not a second column. Covers columns "
+            "col..col+width-1 inclusive, i.e. col+width (the far edge) is exclusive and must "
+            "not exceed the office's width (describe_office reports it) -- e.g. an office 21 "
+            "tiles wide has valid columns 0..20, so col=0,width=21 is the whole width but "
+            "col=1,width=21 overshoots by 1."
+        )
+    )
+    height: int = Field(
+        description=(
+            "Zone height in tiles -- a COUNT, not a second row. Covers rows row..row+height-1 "
+            "inclusive, i.e. row+height (the far edge) is exclusive and must not exceed the "
+            "office's height (describe_office reports it)."
+        )
+    )
 
 
 class CreateZoneOutput(BaseModel):
@@ -974,10 +1057,28 @@ class CreateZoneTool:
 
 class ResizeZoneInput(BaseModel):
     zone_id: str = Field(description="Id of the zone to resize.")
-    col: int
-    row: int
-    width: int
-    height: int
+    col: int = Field(
+        description="Top-left column of the zone. 0-based -- 0 is the office's westmost column."
+    )
+    row: int = Field(
+        description="Top-left row of the zone. 0-based -- 0 is the office's northmost row."
+    )
+    width: int = Field(
+        description=(
+            "Zone width in tiles -- a COUNT, not a second column. Covers columns "
+            "col..col+width-1 inclusive, i.e. col+width (the far edge) is exclusive and must "
+            "not exceed the office's width (describe_office reports it) -- e.g. an office 21 "
+            "tiles wide has valid columns 0..20, so col=0,width=21 is the whole width but "
+            "col=1,width=21 overshoots by 1."
+        )
+    )
+    height: int = Field(
+        description=(
+            "Zone height in tiles -- a COUNT, not a second row. Covers rows row..row+height-1 "
+            "inclusive, i.e. row+height (the far edge) is exclusive and must not exceed the "
+            "office's height (describe_office reports it)."
+        )
+    )
 
 
 class ResizeZoneOutput(BaseModel):

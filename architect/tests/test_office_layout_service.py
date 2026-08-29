@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 from typing import Any
 
-from ..application.office_layout_service import OfficeLayoutService, OfficeValidationError
+from ..application.office_layout_service import OfficeLayoutService, OfficeValidationError, Touching
 from ..domain.office_ir import Direction, FurnitureKind, GridPosition, GridRect, TileKind
 from ..infrastructure.furniture_styles import FurnitureStyleLoader
 from ..infrastructure.office_layout_repository import OfficeLayoutRepository
@@ -358,6 +358,169 @@ class TestPlaceFurniture(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(len(broadcasts), 2)  # paint_tiles, then place_furniture
+
+
+class TestPlaceFurnitureTouching(unittest.IsolatedAsyncioTestCase):
+    """`touching` computes the flush anchor for a new item against an
+    existing one -- the alternative to naming an absolute position. Uses
+    `desk` (real DESK_FRONT shape: 3x2, background_tiles=1) as the target
+    throughout, since that's exactly the asymmetric-footprint case that's
+    easy to get wrong by hand: south/east/west have no background-row
+    special case, only north does."""
+
+    async def test_touching_south_lands_one_tile_past_the_occupied_edge(self) -> None:
+        service = _service()
+        await _paint_floor(service, GridRect(GridPosition(0, 0), 5, 5))
+        desk = await service.place_furniture(
+            kind=FurnitureKind.DESK, style="desk", position=GridPosition(1, 1)
+        )
+
+        chair = await service.place_furniture(
+            kind=FurnitureKind.SEATING,
+            style="wooden_chair",
+            touching=Touching(furniture_id=desk.id, side=Direction.SOUTH),
+        )
+
+        # Desk's only occupied row is row 2 (background_tiles=1 excludes
+        # row 1) -- south touching lands one past it, at row 3.
+        self.assertEqual(chair.position, GridPosition(1, 3))
+
+    async def test_touching_north_lands_on_the_background_row(self) -> None:
+        # The exact same coordinate test_furniture_background_tiles_do_not_
+        # block_placement (TestPlaceFurniture) reaches by manual position --
+        # touching must reproduce it, not a tile further out.
+        service = _service()
+        await _paint_floor(service, GridRect(GridPosition(0, 0), 5, 5))
+        desk = await service.place_furniture(
+            kind=FurnitureKind.DESK, style="desk", position=GridPosition(1, 1)
+        )
+
+        chair = await service.place_furniture(
+            kind=FurnitureKind.SEATING,
+            style="wooden_chair",
+            touching=Touching(furniture_id=desk.id, side=Direction.NORTH),
+        )
+
+        self.assertEqual(chair.position, GridPosition(1, 1))
+
+    async def test_touching_west(self) -> None:
+        service = _service()
+        await _paint_floor(service, GridRect(GridPosition(0, 0), 5, 5))
+        desk = await service.place_furniture(
+            kind=FurnitureKind.DESK, style="desk", position=GridPosition(1, 1)
+        )
+
+        chair = await service.place_furniture(
+            kind=FurnitureKind.SEATING,
+            style="wooden_chair",
+            touching=Touching(furniture_id=desk.id, side=Direction.WEST),
+        )
+
+        self.assertEqual(chair.position, GridPosition(0, 1))
+
+    async def test_touching_east(self) -> None:
+        service = _service()
+        await _paint_floor(service, GridRect(GridPosition(0, 0), 5, 5))
+        desk = await service.place_furniture(
+            kind=FurnitureKind.DESK, style="desk", position=GridPosition(1, 1)
+        )
+
+        chair = await service.place_furniture(
+            kind=FurnitureKind.SEATING,
+            style="wooden_chair",
+            touching=Touching(furniture_id=desk.id, side=Direction.EAST),
+        )
+
+        # Desk anchor col 1 + footprint_width 3 = 4.
+        self.assertEqual(chair.position, GridPosition(4, 1))
+
+    async def test_touching_offset_moves_along_the_side(self) -> None:
+        service = _service()
+        await _paint_floor(service, GridRect(GridPosition(0, 0), 5, 5))
+        desk = await service.place_furniture(
+            kind=FurnitureKind.DESK, style="desk", position=GridPosition(1, 1)
+        )
+
+        chair = await service.place_furniture(
+            kind=FurnitureKind.SEATING,
+            style="wooden_chair",
+            touching=Touching(furniture_id=desk.id, side=Direction.SOUTH, offset=1),
+        )
+
+        self.assertEqual(chair.position, GridPosition(2, 3))
+
+    async def test_touching_new_item_with_its_own_background_tiles(self) -> None:
+        # A second desk touching a first desk's south side: the new
+        # item's own background_tiles must also be accounted for, not
+        # just the target's.
+        service = _service()
+        await _paint_floor(service, GridRect(GridPosition(0, 0), 5, 5))
+        desk_a = await service.place_furniture(
+            kind=FurnitureKind.DESK, style="desk", position=GridPosition(1, 1)
+        )
+
+        desk_b = await service.place_furniture(
+            kind=FurnitureKind.DESK,
+            style="desk",
+            touching=Touching(furniture_id=desk_a.id, side=Direction.SOUTH),
+        )
+
+        # desk_a's occupied row is 2; desk_b's own occupied row (anchor +
+        # background_tiles) must land at row 3, one past it -- so desk_b's
+        # anchor is row 2 (background row), not row 3.
+        self.assertEqual(desk_b.position, GridPosition(1, 2))
+
+    async def test_touching_unknown_furniture_id_fails(self) -> None:
+        service = _service()
+        await _paint_floor(service, GridRect(GridPosition(0, 0), 5, 5))
+
+        with self.assertRaises(OfficeValidationError):
+            await service.place_furniture(
+                kind=FurnitureKind.SEATING,
+                style="wooden_chair",
+                touching=Touching(furniture_id="not-a-real-id", side=Direction.SOUTH),
+            )
+
+    async def test_touching_result_is_still_fully_validated(self) -> None:
+        # touching's computed position feeds into the exact same
+        # validation pipeline as an absolute position -- it isn't a
+        # special-cased silent success. wooden_chair has no background
+        # rows, so north touching is the plain "one tile before" case --
+        # placed at the grid's own top edge, that pushes the new chair
+        # off-grid (row -1).
+        service = _service()
+        await _paint_floor(service, GridRect(GridPosition(0, 0), 5, 5))
+        target = await service.place_furniture(
+            kind=FurnitureKind.SEATING, style="wooden_chair", position=GridPosition(1, 0)
+        )
+
+        with self.assertRaises(OfficeValidationError):
+            await service.place_furniture(
+                kind=FurnitureKind.SEATING,
+                style="wooden_chair",
+                touching=Touching(furniture_id=target.id, side=Direction.NORTH),
+            )
+
+    async def test_both_position_and_touching_given_fails(self) -> None:
+        service = _service()
+        await _paint_floor(service, GridRect(GridPosition(0, 0), 5, 5))
+        desk = await service.place_furniture(
+            kind=FurnitureKind.DESK, style="desk", position=GridPosition(1, 1)
+        )
+
+        with self.assertRaises(OfficeValidationError):
+            await service.place_furniture(
+                kind=FurnitureKind.SEATING,
+                style="wooden_chair",
+                position=GridPosition(0, 0),
+                touching=Touching(furniture_id=desk.id, side=Direction.SOUTH),
+            )
+
+    async def test_neither_position_nor_touching_given_fails(self) -> None:
+        service = _service()
+
+        with self.assertRaises(OfficeValidationError):
+            await service.place_furniture(kind=FurnitureKind.SEATING, style="wooden_chair")
 
 
 class TestPreExistingOutOfBoundsWallFixture(unittest.IsolatedAsyncioTestCase):

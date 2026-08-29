@@ -225,6 +225,62 @@ class TestPlaceFurnitureToolDynamicSchema(unittest.IsolatedAsyncioTestCase):
                 {"kind": "desk", "style": "not_a_real_style", "col": 0, "row": 0}
             )
 
+    async def test_touching_places_flush_against_an_existing_item(self) -> None:
+        service = _service()
+        loader = _loader()
+        tool = PlaceFurnitureTool(service, loader)
+        desk_output = await tool.handler(
+            tool.Input.model_validate({"kind": "desk", "style": "desk", "col": 1, "row": 1})
+        )
+        assert desk_output.item is not None
+
+        chair_output = await tool.handler(
+            tool.Input.model_validate(
+                {
+                    "kind": "seating",
+                    "style": "wooden_chair",
+                    "touching": {"furniture_id": desk_output.item.id, "side": "south"},
+                }
+            )
+        )
+
+        assert chair_output.item is not None
+        self.assertEqual(chair_output.status, "ok")
+        self.assertEqual((chair_output.item.col, chair_output.item.row), (1, 3))
+
+    async def test_touching_offset_is_forwarded(self) -> None:
+        service = _service()
+        loader = _loader()
+        tool = PlaceFurnitureTool(service, loader)
+        desk_output = await tool.handler(
+            tool.Input.model_validate({"kind": "desk", "style": "desk", "col": 1, "row": 1})
+        )
+        assert desk_output.item is not None
+
+        chair_output = await tool.handler(
+            tool.Input.model_validate(
+                {
+                    "kind": "seating",
+                    "style": "wooden_chair",
+                    "touching": {"furniture_id": desk_output.item.id, "side": "south", "offset": 1},
+                }
+            )
+        )
+
+        assert chair_output.item is not None
+        self.assertEqual((chair_output.item.col, chair_output.item.row), (2, 3))
+
+    async def test_neither_col_row_nor_touching_reports_error_not_exception(self) -> None:
+        loader = _loader()
+        tool = PlaceFurnitureTool(_service(), loader)
+
+        output = await tool.handler(
+            tool.Input.model_validate({"kind": "seating", "style": "wooden_chair"})
+        )
+
+        self.assertEqual(output.status, "error")
+        self.assertIsNotNone(output.message)
+
 
 class TestRemoveFurnitureTool(unittest.IsolatedAsyncioTestCase):
     async def test_removing_unknown_furniture_reports_error_not_exception(self) -> None:

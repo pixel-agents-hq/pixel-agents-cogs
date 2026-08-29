@@ -21,7 +21,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, create_model
 
-from ..application.office_layout_service import OfficeLayoutService, OfficeValidationError
+from ..application.office_layout_service import OfficeLayoutService, OfficeValidationError, Touching
 from ..domain.office_ir import (
     Direction,
     FurnitureItem,
@@ -106,19 +106,9 @@ class FurnitureSummary(BaseModel):
     background_cells: list[OccupiedCellSummary] = Field(
         default_factory=list,
         description=(
-            "This item's decorative rows -- not in occupied_cells, so nothing is rejected "
-            "for landing here. This is exactly where a chair (or anything else) belongs to "
-            "sit flush against this side of the item -- ANCHOR A CHAIR ON THIS ROW DIRECTLY, "
-            "not one tile further out. Applies the same way whether the style has a facing "
-            "(e.g. a south-facing desk's background cells are its north/back edge) or not "
-            "(e.g. a facing-less table_front's background_cells are still its anchor row, the "
-            "one occupied_cells excludes -- seat a chair there, not at anchor_row - 1). This "
-            "row is easy to get wrong specifically because it's the *only* side of a multi-row "
-            "item that works this way: every other side (south/east/west, or wherever "
-            "occupied_cells' own outer edge is) wants a chair one tile *past* occupied_cells "
-            "instead -- do not place all four sides the same number of tiles from the anchor by "
-            "symmetry, they are not the same rule. See find_furniture_anchors for a worked "
-            "example with real numbers. Empty for a style with no background rows."
+            "This item's decorative rows -- not in occupied_cells, so nothing is rejected for "
+            "landing here. Informational only; use place_furniture's touching parameter to seat "
+            "something flush against this item instead of computing a coordinate from this."
         ),
     )
 
@@ -589,31 +579,11 @@ class FindFurnitureAnchorsOutput(BaseModel):
 class FindFurnitureAnchorsTool:
     name = "find_furniture_anchors"
     description = (
-        "Search a region for every anchor position place_furniture would currently accept for "
-        "a given style/facing -- read-only, places nothing. Works for ANY style, not just "
-        "wall-mounted ones: for a floor style (a chair, a second table, ...) this finds the "
-        "exact tile(s) flush against an existing item's edge -- e.g. to seat a chair touching "
-        "a table with no gap, search the single-tile-wide strip immediately on the chair's "
-        "side of the table instead of guessing a row and hoping, or probing with a real "
-        "place_furniture call and removing it afterward. For a can_place_on_walls style, the "
-        "search also covers the row overhang above the region that a wall only one tile thick "
-        "can require (see place_furniture's own description); this saves working out the "
-        "correct bottom-row-touches-wall math by hand or discovering it via a failed "
-        "place_furniture call. Use this before place_furniture whenever you're unsure a spot "
-        "is valid, or want the closest legal position to something already placed.\n\n"
-        "Worked example -- seating chairs on all four sides of a table, the case most likely "
-        "to get one side wrong: a table_front anchored at (9, 4) with footprint_width=3, "
-        "footprint_height=4, background_tiles=1 reports occupied_cells starting at row 5 (rows "
-        "5-7) and background_cells at row 4 (its own anchor row) in its place_furniture/"
-        "describe_office/find_furniture summary. South/east/west chairs are simple: search the "
-        "single-tile strip immediately past occupied_cells' outer edge on that side (row 8 for "
-        "south, col 8/col 12 for west/east) -- background_tiles never affects those sides. The "
-        "north side is the one that differs: because row 4 is background (non-blocking, not "
-        "'empty space to also leave clear'), the flush north anchor is row 4 itself, not row 3 "
-        "-- search area col=9, row=4, width=3, height=1 for the chair's style, not "
-        "col=9, row=3. Do not assume all four sides sit the same number of tiles from the "
-        "anchor; call this tool per side rather than computing the north side by symmetry with "
-        "the others."
+        "Search a region for every anchor place_furniture would currently accept for a given "
+        "style/facing -- read-only, places nothing. To seat something touching an existing "
+        "item, prefer place_furniture's own touching parameter instead of searching here first. "
+        "Use this tool for open-ended placement: checking a region before committing, or "
+        "finding the wall-overhang row a can_place_on_walls style needs."
     )
 
     def __init__(self, service: OfficeLayoutService, style_loader: FurnitureStyleLoader) -> None:
@@ -732,6 +702,20 @@ class PaintTilesTool:
 # -- place_furniture / move_furniture: dynamic style/facing enum -----------
 
 
+class TouchingInput(BaseModel):
+    furniture_id: str = Field(description="Id of the existing item to place flush against.")
+    side: Literal["north", "south", "east", "west"] = Field(
+        description="Which side of that item to touch."
+    )
+    offset: int = Field(
+        default=0,
+        description=(
+            "0-based position along that side, from the target's own anchor corner -- e.g. "
+            "0, 1, 2 for three chairs in a row along one edge."
+        ),
+    )
+
+
 def _build_place_furniture_input(style_loader: FurnitureStyleLoader) -> type[BaseModel]:
     """A fresh `Input` model built on every access, per section 7's
     "Constraining style/facing" paragraph: `style`'s JSON Schema `enum` is
@@ -751,8 +735,18 @@ def _build_place_furniture_input(style_loader: FurnitureStyleLoader) -> type[Bas
             style_type,
             Field(description="Style id -- must exist in the current style manifest."),
         ),
-        col=(int, Field(description="Tile column to anchor the item at.")),
-        row=(int, Field(description="Tile row to anchor the item at.")),
+        col=(int | None, Field(default=None, description="Tile column. Omit if using touching.")),
+        row=(int | None, Field(default=None, description="Tile row. Omit if using touching.")),
+        touching=(
+            TouchingInput | None,
+            Field(
+                default=None,
+                description=(
+                    "Place flush against an existing item instead of an exact col/row. Give "
+                    "either col+row or touching, not both."
+                ),
+            ),
+        ),
         facing=(
             Literal[_DIRECTION_VALUES] | None,
             Field(default=None, description="Facing direction. Omit to use the style's default."),
@@ -770,17 +764,10 @@ class PlaceFurnitureOutput(BaseModel):
 class PlaceFurnitureTool:
     name = "place_furniture"
     description = (
-        "Place a new piece of furniture at an exact position, anchored on a floor or wall "
-        "tile as its style requires. For a wall-mounted style, the tile that must actually "
-        "touch a wall is the *bottom* row of the footprint (the occupied_cells entries with "
-        "the largest row value for that column), not col/row itself. Use describe_tiles "
-        "first to find a free spot, list_furniture_styles first to learn a style's exact "
-        "footprint dimensions -- describe_office/find_furniture only show the footprint of "
-        "items already placed, so a style with no existing instances has no other way to "
-        "learn its footprint before the first placement attempt -- and find_furniture_anchors "
-        "to get exact valid col/row anchors directly (including flush-adjacent-to-existing-"
-        "item positions for ordinary floor styles) instead of computing the bottom-row-touches-"
-        "wall math by hand or guessing a spacing gap."
+        "Place a new furniture item. Give either col+row (an exact anchor) or touching "
+        "(an existing item's furniture_id/side/offset), not both. Prefer touching whenever "
+        "the goal is adjacency -- seating chairs around a table, lining items against a "
+        "desk -- it computes the correct flush anchor itself instead of you working it out."
     )
 
     def __init__(self, service: OfficeLayoutService, style_loader: FurnitureStyleLoader) -> None:
@@ -797,11 +784,27 @@ class PlaceFurnitureTool:
 
     async def handler(self, raw_input: BaseModel) -> BaseModel:
         facing_raw = getattr(raw_input, "facing", None)
+        col = getattr(raw_input, "col", None)
+        row = getattr(raw_input, "row", None)
+        touching_raw: TouchingInput | None = getattr(raw_input, "touching", None)
         try:
+            position: GridPosition | None = None
+            touching: Touching | None = None
+            if touching_raw is not None:
+                touching = Touching(
+                    furniture_id=touching_raw.furniture_id,
+                    side=Direction(touching_raw.side),
+                    offset=touching_raw.offset,
+                )
+            elif col is not None and row is not None:
+                position = GridPosition(col, row)
+            else:
+                raise OfficeValidationError("place_furniture requires either col+row or touching")
             item = await self._service.place_furniture(
                 kind=FurnitureKind(raw_input.kind),  # type: ignore[attr-defined]
                 style=raw_input.style,  # type: ignore[attr-defined]
-                position=GridPosition(raw_input.col, raw_input.row),  # type: ignore[attr-defined]
+                position=position,
+                touching=touching,
                 facing=Direction(facing_raw) if facing_raw else None,
                 label=getattr(raw_input, "label", None),
             )

@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Awaitable, Callable
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from typing import Any
 
 from ..domain.office_ir import (
@@ -39,6 +39,7 @@ from ..domain.office_ir import (
 )
 from ..infrastructure.color_names import known_names
 from ..infrastructure.furniture_styles import (
+    FurnitureFacing,
     FurnitureStyle,
     FurnitureStyleLoader,
     FurnitureStyleManifest,
@@ -58,6 +59,18 @@ class OfficeValidationError(Exception):
     def __init__(self, reason: str) -> None:
         super().__init__(reason)
         self.reason = reason
+
+
+@dataclass(frozen=True, slots=True)
+class Touching:
+    """An alternative to `place_furniture`'s `position` -- place flush
+    against an existing item's edge instead of naming a coordinate. See
+    `_touching_anchor`'s own docstring for the arithmetic and why the
+    caller never has to reason about background_tiles."""
+
+    furniture_id: str
+    side: Direction
+    offset: int = 0
 
 
 class OfficeLayoutService:
@@ -232,10 +245,24 @@ class OfficeLayoutService:
         *,
         kind: FurnitureKind,
         style: str,
-        position: GridPosition,
+        position: GridPosition | None = None,
+        touching: Touching | None = None,
         facing: Direction | None = None,
         label: str | None = None,
     ) -> FurnitureItem:
+        """Exactly one of `position` (an absolute anchor) or `touching` (an
+        existing item's id/side/offset) must be given -- `touching` is
+        preferred whenever the goal is adjacency (seating around a table,
+        lining chairs against a desk): it computes the flush anchor itself,
+        from the *current* office state at the moment this call runs, so
+        there is no coordinate math to get wrong and no staleness risk from
+        reusing a position computed before an earlier call in the same
+        session changed the layout."""
+
+        if (position is None) == (touching is None):
+            raise OfficeValidationError(
+                "place_furniture requires exactly one of position or touching"
+            )
         office, styles = await self._load()
         style_def = styles.by_style_id(style)
         if style_def is None:
@@ -245,6 +272,28 @@ class OfficeLayoutService:
                 f"style {style!r} is kind {style_def.kind.value!r}, not {kind.value!r}"
             )
         resolved_facing = facing if facing is not None else style_def.default_facing
+        if touching is not None:
+            record = style_def.facing_record(resolved_facing)
+            if record is None:
+                raise OfficeValidationError(
+                    f"style {style!r} has no facing {resolved_facing.value if resolved_facing else None!r}"
+                )
+            target = self._find_furniture(office, touching.furniture_id)
+            target_style = styles.by_style_id(target.style)
+            if target_style is None:
+                raise OfficeValidationError(
+                    f"furniture {touching.furniture_id!r} has unknown style {target.style!r}"
+                )
+            target_record = target_style.facing_record(target.facing)
+            if target_record is None:
+                raise OfficeValidationError(
+                    f"furniture {touching.furniture_id!r}'s style {target.style!r} has no "
+                    f"facing {target.facing.value if target.facing else None!r}"
+                )
+            position = _touching_anchor(
+                target, target_record, touching.side, touching.offset, record
+            )
+        assert position is not None
         occupied = _occupied_cells_by_others(office, styles)
         error = _furniture_placement_error(
             office, styles, style_def, resolved_facing, position, occupied
@@ -513,6 +562,51 @@ def _occupied_cells_by_others(
     return occupied
 
 
+def _touching_anchor(
+    target: FurnitureItem,
+    target_record: FurnitureFacing,
+    side: Direction,
+    offset: int,
+    new_record: FurnitureFacing,
+) -> GridPosition:
+    """The anchor for `new_record`'s footprint so it sits flush against
+    `target`'s `side`, `offset` tiles along that side from `target`'s own
+    anchor corner (0 = aligned with target's anchor col/row). Pure
+    arithmetic on footprint dimensions -- bounds/collision are still
+    validated the normal way afterward, same as any other position.
+
+    occupied_cells() only ever excludes background_tiles *rows* (dr starts
+    at background_tiles, never affects dc) -- so column growth (east/west
+    touching) never has a background asymmetry, and south touching (the
+    side background_tiles never strips) is always the plain "one tile past
+    the target's occupied edge" case. North is the one exception: when
+    target has background rows, its own north-most `background_tiles` rows
+    are walkable (not in its occupied_cells), so the flush position for a
+    new item is target's own anchor row itself, not one tile further out
+    -- that's the exact gap this function exists to stop the caller from
+    getting wrong by hand."""
+
+    if side is Direction.SOUTH:
+        touch_row = target.position.row + target_record.footprint_height
+        return GridPosition(target.position.col + offset, touch_row - new_record.background_tiles)
+    if side is Direction.NORTH:
+        touch_row = (
+            target.position.row + target_record.background_tiles - 1
+            if target_record.background_tiles > 0
+            else target.position.row - 1
+        )
+        return GridPosition(
+            target.position.col + offset, touch_row - new_record.footprint_height + 1
+        )
+    if side is Direction.WEST:
+        return GridPosition(
+            target.position.col - new_record.footprint_width, target.position.row + offset
+        )
+    return GridPosition(  # Direction.EAST
+        target.position.col + target_record.footprint_width, target.position.row + offset
+    )
+
+
 def _furniture_placement_error(
     office: Office,
     styles: FurnitureStyleManifest,
@@ -649,4 +743,4 @@ def _validate_seats(office: Office) -> None:
             seated_occupants.add(seat.occupant_id)
 
 
-__all__ = ["BroadcastCallback", "OfficeLayoutService", "OfficeValidationError"]
+__all__ = ["BroadcastCallback", "OfficeLayoutService", "OfficeValidationError", "Touching"]

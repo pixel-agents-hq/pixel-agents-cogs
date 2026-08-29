@@ -54,6 +54,14 @@ AGENT_DESCRIPTION = (
     "not as a second thing to also do, so list every step you want it to "
     "carry out. It has no memory of past consultations -- each prompt is "
     "answered on its own, so restate any earlier context a follow-up needs."
+    "\n\nIt maintains one persistent office layout (zones, furniture, "
+    "seats) and can already see and query that layout itself -- including "
+    "resolving descriptive or spatial phrases like 'the chair in the "
+    "lower right corner' into exact tiles/ids on its own. Forward such "
+    "requests as an explicit instruction; do not ask the user for a "
+    "screenshot, layout link, or extra positional detail on architect's "
+    "behalf -- architect will ask back if it genuinely can't resolve "
+    "something."
 )
 
 

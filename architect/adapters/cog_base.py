@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Coroutine, Mapping
 from pathlib import Path
 from typing import Any, cast
 
@@ -162,6 +162,15 @@ class CogBase:
         # events, separately from seats/layout.
         self._client_hub = ClientHub(logger=log)
         self._office_service = OfficeService(NullSeatRepository(), self._send)
+        # Tracks the delayed clear tasks PresenceSubscriptionMixin's
+        # AgentReplied handler schedules -- cancelled at cog_unload so a
+        # reload never leaves an asyncio.sleep() dangling against a
+        # discarded OfficeService instance. Same "track, cancel, gather at
+        # shutdown" shape as floorplan's own TaskSupervisor
+        # (floorplan/application/tasks.py), duplicated in miniature rather
+        # than imported for the same "duplicated, not shared" reason noted
+        # throughout this package.
+        self._background_tasks: set[asyncio.Task[object]] = set()
         self._websocket_server = WebSocketServer(
             clients=self._client_hub,
             on_webview_ready=self._on_webview_ready,
@@ -322,9 +331,22 @@ class CogBase:
 
     async def cog_unload(self) -> None:
         await self._websocket_server.stop()
+        tasks = tuple(self._background_tasks)
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
         if self._corridor is not None:
             await self._corridor.unregister_agent_owner("architect")
             self._corridor.unregister_dependent("architect")
+
+    def _create_background_task(
+        self, coroutine: Coroutine[Any, Any, object], *, name: str
+    ) -> asyncio.Task[object]:
+        task = asyncio.create_task(coroutine, name=name)
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+        return task
 
     async def _publish_activity(self, summary: str) -> None:
         """Reports one tool-use or "thinking" step from architect's own

@@ -1,6 +1,7 @@
-"""Feeds architect's own genuine-agent roster (self._office_service's
-_genuine_agents, see pixelagents/application/office.py) from corridor's
-AgentPresenceChanged events -- narrowed from floorplan's own
+"""Feeds architect's own genuine-agent roster and message activity
+(self._office_service's _genuine_agents, see
+pixelagents/application/office.py) from corridor's AgentPresenceChanged
+and AgentReplied events -- narrowed from floorplan's own
 EventSubscriptionsMixin (floorplan/adapters/event_subscriptions.py),
 which this mirrors in spirit but not in scope: architect has no Discord
 member sync of its own (no guild scope at all, see
@@ -20,14 +21,20 @@ through corridor's event bus at all. See docs/office-agent-identity-design.md.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
-from corridor.domain import AgentPresenceChanged, AgentRef
+from corridor.domain import AgentPresenceChanged, AgentRef, AgentReplied
 from pixelagents.domain import GenuineAgentKey
 
 from .cog_base import CogBase
 
 log = logging.getLogger("red.architect")
+
+# Fixed, not configurable -- architect's dashboard has no settings panel
+# equivalent to floorplan's message_tool_clear_delay yet. Same default
+# floorplan/domain/models.py ships (2.0s).
+_MESSAGE_ACTIVITY_CLEAR_DELAY = 2.0
 
 
 def _own_bot_account_key(bot_user_id: int) -> GenuineAgentKey:
@@ -52,6 +59,7 @@ class PresenceSubscriptionMixin(CogBase):
         self._corridor.subscribe_event(
             AgentPresenceChanged, self._on_agent_presence_changed, owner="Architect"
         )
+        self._corridor.subscribe_event(AgentReplied, self._on_agent_replied, owner="Architect")
         await self._reconcile_own_bot_account()
 
     async def _reconcile_own_bot_account(self) -> None:
@@ -93,6 +101,29 @@ class PresenceSubscriptionMixin(CogBase):
         await self._office_service.reconcile_genuine_agent(
             identity, event.display_name, event.status
         )
+
+    async def _on_agent_replied(self, event: AgentReplied) -> None:
+        """Mirrors floorplan's own `_on_agent_replied`
+        (adapters/event_subscriptions.py) genuine-agent branch: both pico
+        (consult_agent_tool.py/reply_tool.py) and architect itself
+        (cog_base.py's `_publish_activity`) already publish this
+        unconditionally onto corridor's shared bus -- only the
+        `is_tracked` gate (an agent must already be on the roster via
+        AgentPresenceChanged before its messages render) is new here,
+        same gate floorplan applies."""
+
+        identity = _genuine_identity(event.agent)
+        if identity is None or not self._office_service.is_tracked(identity):
+            return
+        await self._office_service.send_genuine_agent_activity(identity, event.summary)
+        self._create_background_task(
+            self._clear_genuine_agent_activity_after_delay(identity),
+            name=f"architect-agent-replied-clear-{identity.agent_key}",
+        )
+
+    async def _clear_genuine_agent_activity_after_delay(self, identity: GenuineAgentKey) -> None:
+        await asyncio.sleep(_MESSAGE_ACTIVITY_CLEAR_DELAY)
+        await self._office_service.clear_genuine_agent_activity(identity)
 
 
 __all__ = ["PresenceSubscriptionMixin"]

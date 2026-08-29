@@ -1,17 +1,35 @@
 """PresenceSubscriptionMixin feeds architect's own OfficeService instance
-from corridor's AgentPresenceChanged events -- see
+from corridor's AgentPresenceChanged and AgentReplied events -- see
 adapters/presence_subscription.py's module docstring and
 docs/office-agent-identity-design.md."""
 
 from __future__ import annotations
 
 import unittest
+from typing import Any
 
-from corridor.domain import AgentPresenceChanged, AgentRef
+from corridor.domain import AgentPresenceChanged, AgentRef, AgentReplied
 from pixelagents.domain import GenuineAgentKey
 
+from ..adapters import presence_subscription
 from ..architect import Architect
 from .conftest import FakeBot, FakeUser
+
+
+def _connect(cog: Architect) -> list[dict[str, Any]]:
+    """Captures every message OfficeService would have broadcast to a
+    live webview client, without spinning a real WebSocketServer --
+    OfficeService._send is a plain callback attribute (pixelagents/
+    application/office.py), same swap-in-a-fake approach floorplan's own
+    test conftest (`_connect`) uses for its ClientHub."""
+
+    sent: list[dict[str, Any]] = []
+
+    async def _capture(message: dict[str, Any]) -> None:
+        sent.append(message)
+
+    cog._office_service._send = _capture  # type: ignore[assignment]
+    return sent
 
 
 class TestPresenceSubscription(unittest.IsolatedAsyncioTestCase):
@@ -95,6 +113,71 @@ class TestPresenceSubscription(unittest.IsolatedAsyncioTestCase):
 
         await cog.cog_load()  # must not raise
         self.addAsyncCleanup(cog.cog_unload)
+
+
+class TestOnAgentReplied(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self) -> None:
+        self.bot = FakeBot()
+        self.cog = Architect(bot=self.bot)
+        await self.cog.cog_load()
+        self.addAsyncCleanup(self.cog.cog_unload)
+        self.sent = _connect(self.cog)
+        ref = AgentRef(discord_user_id=None, guild_id=None, is_bot=True, agent_key="pico")
+        await self.cog._on_agent_presence_changed(
+            AgentPresenceChanged(agent=ref, display_name="pico", status="online")
+        )
+        self.sent.clear()
+
+    async def test_a_tracked_genuine_agents_reply_sends_a_message_activity(self) -> None:
+        await self.cog._on_agent_replied(
+            AgentReplied(
+                agent=AgentRef(discord_user_id=None, guild_id=None, is_bot=True, agent_key="pico"),
+                summary="Hello from pico",
+            )
+        )
+
+        sent_types = [message["type"] for message in self.sent]
+        self.assertEqual(sent_types, ["agentToolStart", "agentSelected"])
+
+    async def test_an_untracked_genuine_agents_reply_is_a_noop(self) -> None:
+        await self.cog._on_agent_replied(
+            AgentReplied(
+                agent=AgentRef(
+                    discord_user_id=None, guild_id=None, is_bot=True, agent_key="unknown-agent"
+                ),
+                summary="Hello",
+            )
+        )
+
+        self.assertEqual(self.sent, [])
+
+    async def test_a_discord_account_shaped_reply_is_a_noop(self) -> None:
+        await self.cog._on_agent_replied(  # must not raise
+            AgentReplied(
+                agent=AgentRef(discord_user_id=123, guild_id=456, is_bot=False), summary="Hello"
+            )
+        )
+
+        self.assertEqual(self.sent, [])
+
+    async def test_the_message_activity_clears_itself_after_the_delay(self) -> None:
+        original_delay = presence_subscription._MESSAGE_ACTIVITY_CLEAR_DELAY
+        presence_subscription._MESSAGE_ACTIVITY_CLEAR_DELAY = 0
+        self.addCleanup(
+            setattr, presence_subscription, "_MESSAGE_ACTIVITY_CLEAR_DELAY", original_delay
+        )
+
+        await self.cog._on_agent_replied(
+            AgentReplied(
+                agent=AgentRef(discord_user_id=None, guild_id=None, is_bot=True, agent_key="pico"),
+                summary="Hello from pico",
+            )
+        )
+        (task,) = self.cog._background_tasks
+        await task
+
+        sent_types = [message["type"] for message in self.sent]
+        self.assertEqual(sent_types, ["agentToolStart", "agentSelected", "agentToolsClear"])
 
 
 if __name__ == "__main__":

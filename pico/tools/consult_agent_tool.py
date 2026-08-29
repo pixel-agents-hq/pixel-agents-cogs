@@ -189,7 +189,11 @@ class ConsultAgentTool:
             return ConsultAgentOutput(status="error", error=str(exc))
         await self._announce(
             f"📩 **{self._agent_key}** replied: {result.answer}",
-            fields=_tool_call_fields(result.tool_calls_made),
+            fields=_tool_call_fields(
+                result.tool_calls_made,
+                result.successful_tool_calls,
+                result.failed_tool_calls,
+            ),
         )
         await self._publish_agent_replied(
             agent=AgentRef(
@@ -233,14 +237,24 @@ class ConsultAgentTool:
             )
 
 
-def _tool_call_fields(tool_calls_made: int | None) -> Sequence[ReplyField]:
-    """Omitted entirely when the consulted agent didn't report a count --
-    see `AgentAskResult`'s docstring on why that's a normal case, not an
-    error, for any agent that isn't running a bounded tool-calling loop."""
+def _tool_call_fields(
+    tool_calls_made: int | None,
+    successful_tool_calls: int | None,
+    failed_tool_calls: int | None,
+) -> Sequence[ReplyField]:
+    """Each field is omitted entirely when the consulted agent didn't
+    report that particular count -- see `AgentAskResult`'s docstring on why
+    that's a normal case, not an error, for any agent that isn't running a
+    bounded tool-calling loop, or that reports some counts but not others."""
 
-    if tool_calls_made is None:
-        return ()
-    return (ReplyField("Tool calls", str(tool_calls_made)),)
+    fields: list[ReplyField] = []
+    if tool_calls_made is not None:
+        fields.append(ReplyField("Tool calls", str(tool_calls_made)))
+    if successful_tool_calls is not None:
+        fields.append(ReplyField("Successful tool calls", str(successful_tool_calls)))
+    if failed_tool_calls is not None:
+        fields.append(ReplyField("Failing tool calls", str(failed_tool_calls)))
+    return tuple(fields)
 
 
 __all__ = [

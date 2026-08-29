@@ -175,7 +175,11 @@ class ArchitectAgentExecutor(AgentExecutor):
         await updater.complete(
             updater.new_agent_message(
                 [Part(text=result.text)],
-                metadata={"tool_calls_made": result.tool_calls_made},
+                metadata={
+                    "tool_calls_made": result.tool_calls_made,
+                    "successful_tool_calls": result.successful_tool_calls,
+                    "failed_tool_calls": result.failed_tool_calls,
+                },
             )
         )
 

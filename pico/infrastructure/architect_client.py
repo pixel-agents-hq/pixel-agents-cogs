@@ -9,12 +9,28 @@ every call rather than caching a client keyed to a possibly-stale URL --
 the owner-configurable `[p]pico architect url` can change at runtime, and
 this call is already off pico's message-gate fast path (it only runs
 inside a tool call a triggering LLM turn chose to make).
+
+`ClientConfig(streaming=True, ...)`: `ask()` no longer only waits for one
+aggregated final response -- when the consulted agent (architect) has its
+own debug-logging setting on, it emits intermediate
+`TaskStatusUpdateEvent`s (state `TASK_STATE_WORKING`, carrying a message)
+mid-task, via the same a2a-sdk `TaskUpdater.update_status` its final
+`.complete()` uses. Verified against the installed a2a-sdk
+(`a2a/client/base_client.py: BaseClient.send_message`): the client only
+receives those intermediate events, rather than a single collapsed final
+response, when *both* this `streaming=True` *and* the resolved agent
+card's own `capabilities.streaming` are true -- see
+`architect/infrastructure/a2a_server.py`'s `build_agent_card()`. A
+`TASK_STATE_WORKING` message is never the final answer (only
+`TASK_STATE_COMPLETED`/`TASK_STATE_FAILED` are terminal), so `ask()`
+distinguishes them by `status.state`, not just "has a message".
 """
 
 from __future__ import annotations
 
 import logging
 import uuid
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 import httpx
@@ -60,12 +76,24 @@ class AgentAskResult:
 
 
 class ArchitectClient:
-    async def ask(self, *, base_url: str, text: str) -> AgentAskResult:
+    async def ask(
+        self,
+        *,
+        base_url: str,
+        text: str,
+        on_activity: Callable[[str], Awaitable[None]] | None = None,
+    ) -> AgentAskResult:
+        """`on_activity`, if given, is awaited once per intermediate debug
+        event the consulted agent chooses to emit mid-task (see this
+        module's own docstring) -- optional and never invoked at all for an
+        agent (or an agent with its own debug setting off) that only ever
+        sends the one final response, so existing callers are unaffected."""
+
         httpx_client = httpx.AsyncClient(timeout=_REQUEST_TIMEOUT_SECONDS)
         try:
             client = await create_client(
                 base_url,
-                client_config=ClientConfig(streaming=False, httpx_client=httpx_client),
+                client_config=ClientConfig(streaming=True, httpx_client=httpx_client),
             )
         except Exception as exc:
             await httpx_client.aclose()
@@ -105,14 +133,25 @@ class ArchitectClient:
                 if status is not None and status.HasField("message"):
                     parts = [part.text for part in status.message.parts if part.text]
                     if parts:
-                        final_text = "\n".join(parts)
-                        tool_calls_made = _metadata_int(status.message.metadata, "tool_calls_made")
-                        successful_tool_calls = _metadata_int(
-                            status.message.metadata, "successful_tool_calls"
-                        )
-                        failed_tool_calls = _metadata_int(
-                            status.message.metadata, "failed_tool_calls"
-                        )
+                        joined = "\n".join(parts)
+                        # TASK_STATE_WORKING is never the final answer -- an
+                        # intermediate debug event architect chose to emit
+                        # (see this module's own docstring). Only a terminal
+                        # state's message is the real final_text.
+                        if status.state == TaskState.TASK_STATE_WORKING:
+                            if on_activity is not None:
+                                await on_activity(joined)
+                        else:
+                            final_text = joined
+                            tool_calls_made = _metadata_int(
+                                status.message.metadata, "tool_calls_made"
+                            )
+                            successful_tool_calls = _metadata_int(
+                                status.message.metadata, "successful_tool_calls"
+                            )
+                            failed_tool_calls = _metadata_int(
+                                status.message.metadata, "failed_tool_calls"
+                            )
                 if status is not None and status.state == TaskState.TASK_STATE_FAILED:
                     failed = True
                     break

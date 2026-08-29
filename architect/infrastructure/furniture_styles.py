@@ -166,6 +166,33 @@ class FurnitureStyleManifest:
             for dc in range(record.footprint_width)
         ]
 
+    def background_cells(
+        self, style_id: str, facing: Direction | None, position: GridPosition
+    ) -> list[GridPosition]:
+        """The top `background_tiles` rows `occupied_cells` excludes --
+        every cell of `(style_id, facing)`'s footprint that does *not*
+        block placement when anchored at `position`. Not just informational:
+        since nothing else's placement is rejected for landing here (the
+        whole reason `occupied_cells` excludes it), this is exactly where
+        an adjacent chair belongs to sit flush against that side of the
+        item -- e.g. DESK_FRONT's background row is its north/back edge,
+        so a chair "behind" the desk anchors at the same coordinate as
+        that row, not one tile further north of the full footprint_height
+        bounding box. Empty if the style/facing doesn't exist or has no
+        background rows -- never raises, same contract as `occupied_cells`."""
+
+        style = self._by_style_id.get(style_id)
+        if style is None:
+            return []
+        record = style.facing_record(facing)
+        if record is None:
+            return []
+        return [
+            GridPosition(position.col + dc, position.row + dr)
+            for dr in range(record.background_tiles)
+            for dc in range(record.footprint_width)
+        ]
+
     def style_and_facing_for(self, catalog_id: str) -> tuple[str, Direction | None] | None:
         """The reverse lookup `decode()` needs: a Pixel Agents asset id ->
         `(style_id, facing)`, or `None` if the id isn't in this

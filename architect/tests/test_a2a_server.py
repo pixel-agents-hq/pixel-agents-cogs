@@ -29,12 +29,20 @@ def _settings(max_tool_calls: int = 5, *, debug_logging: bool = False) -> Global
 
 
 class ScriptedToolLoop:
-    def __init__(self, result: ToolLoopResult) -> None:
+    def __init__(self, result: ToolLoopResult, *, debug_events: list[str] | None = None) -> None:
         self.result = result
         self.calls: list[dict[str, object]] = []
+        # If given, run() awaits kwargs["on_debug_event"] with each of these
+        # in turn -- stands in for architect's own tool loop reporting
+        # thinking/tool-call/result text mid-run.
+        self._debug_events = debug_events or []
 
     async def run(self, **kwargs: object) -> ToolLoopResult:
         self.calls.append(kwargs)
+        on_debug_event = kwargs.get("on_debug_event")
+        if on_debug_event is not None:
+            for event in self._debug_events:
+                await on_debug_event(event)  # type: ignore[operator]
         return self.result
 
 
@@ -236,6 +244,71 @@ class TestArchitectAgentExecutor(unittest.IsolatedAsyncioTestCase):
         tool_names = [tool.name for tool in tool_loop.calls[0]["tools"]]  # type: ignore[union-attr]
         self.assertEqual(tool_names, ["review_design"])
 
+    async def test_execute_emits_debug_status_updates_when_the_tool_loop_reports_them(
+        self,
+    ) -> None:
+        tool_loop = ScriptedToolLoop(
+            ToolLoopResult(
+                1, "final_text", "the answer", successful_tool_calls=1, failed_tool_calls=0
+            ),
+            debug_events=["thinking: let me check", "calling echo({})"],
+        )
+        executor = ArchitectAgentExecutor(
+            tool_loop=tool_loop,  # type: ignore[arg-type]
+            tools=[],
+            settings=lambda: _settings_async(debug_logging=True),
+            llm_settings=lambda: _llm_settings_async(),  # type: ignore[arg-type, return-value]
+        )
+        queue = FakeEventQueue()
+        context = FakeRequestContext("please help")
+
+        await executor.execute(context, queue)  # type: ignore[arg-type]
+
+        working_events = [
+            event
+            for event in queue.events
+            if event.status.state == TaskState.TASK_STATE_WORKING
+            and event.status.HasField("message")
+        ]
+        texts = [event.status.message.parts[0].text for event in working_events]
+        self.assertEqual(texts, ["thinking: let me check", "calling echo({})"])
+        # The debug updates land before the final completion, not after.
+        self.assertEqual(queue.events[-1].status.state, TaskState.TASK_STATE_COMPLETED)
+
+    async def test_execute_swallows_a_failure_to_emit_a_debug_status_update(self) -> None:
+        """A transport hiccup while streaming a debug event must never break
+        the tool loop or suppress the real final answer -- same convention
+        CogBase._publish_activity's own best-effort try/except follows."""
+
+        class RaisingEventQueue(FakeEventQueue):
+            async def enqueue_event(self, event: object) -> None:
+                await super().enqueue_event(event)
+                # event 1 = initial Task, event 2 = start_work()'s WORKING
+                # update, event 3 = the debug update itself -- fail exactly
+                # that one.
+                if len(self.events) == 3:
+                    raise RuntimeError("boom")
+
+        tool_loop = ScriptedToolLoop(
+            ToolLoopResult(
+                1, "final_text", "the answer", successful_tool_calls=1, failed_tool_calls=0
+            ),
+            debug_events=["thinking: let me check"],
+        )
+        executor = ArchitectAgentExecutor(
+            tool_loop=tool_loop,  # type: ignore[arg-type]
+            tools=[],
+            settings=lambda: _settings_async(debug_logging=True),
+            llm_settings=lambda: _llm_settings_async(),  # type: ignore[arg-type, return-value]
+        )
+        queue = RaisingEventQueue()
+        context = FakeRequestContext("please help")
+
+        await executor.execute(context, queue)  # type: ignore[arg-type]
+
+        self.assertEqual(queue.events[-1].status.state, TaskState.TASK_STATE_COMPLETED)
+        self.assertEqual(queue.events[-1].status.message.parts[0].text, "the answer")
+
     async def test_execute_fails_the_task_when_the_loop_hits_max_tool_calls(self) -> None:
         tool_loop = ScriptedToolLoop(
             ToolLoopResult(5, "max_tool_calls", None, successful_tool_calls=3, failed_tool_calls=2)
@@ -282,6 +355,11 @@ class TestBuildAgentCard(unittest.TestCase):
         card = build_agent_card(tools=[])
 
         self.assertEqual([skill.id for skill in card.skills], ["chat"])
+
+    def test_advertises_streaming_so_debug_status_updates_can_reach_a_caller(self) -> None:
+        card = build_agent_card(tools=[])
+
+        self.assertTrue(card.capabilities.streaming)
 
     def test_description_warns_that_only_explicit_instructions_are_acted_on(self) -> None:
         """Regression guard for a real incident: a user asked (via pico) for

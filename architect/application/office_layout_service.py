@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Awaitable, Callable
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from typing import Any
 
 from ..domain.office_ir import (
@@ -39,6 +39,7 @@ from ..domain.office_ir import (
 )
 from ..infrastructure.color_names import known_names
 from ..infrastructure.furniture_styles import (
+    FurnitureFacing,
     FurnitureStyle,
     FurnitureStyleLoader,
     FurnitureStyleManifest,
@@ -58,6 +59,18 @@ class OfficeValidationError(Exception):
     def __init__(self, reason: str) -> None:
         super().__init__(reason)
         self.reason = reason
+
+
+@dataclass(frozen=True, slots=True)
+class Touching:
+    """An alternative to `place_furniture`'s `position` -- place flush
+    against an existing item's edge instead of naming a coordinate. See
+    `_touching_anchor`'s own docstring for the arithmetic and why the
+    caller never has to reason about background_tiles."""
+
+    furniture_id: str
+    side: Direction
+    offset: int = 0
 
 
 class OfficeLayoutService:
@@ -93,9 +106,75 @@ class OfficeLayoutService:
             )
         if not _rect_in_bounds(area, office):
             raise OfficeValidationError(
-                f"area extends outside the {office.width}x{office.height} grid"
+                f"area extends outside the {office.width}x{office.height} grid "
+                f"(0-based coordinates, far edge exclusive: {_rect_out_of_bounds_detail(area, office)})"
             )
         return [office.grid.at(position) for position in area.positions()]
+
+    async def find_furniture_anchors(
+        self,
+        *,
+        style: str,
+        facing: Direction | None = None,
+        area: GridRect,
+        limit: int = 20,
+    ) -> list[GridPosition]:
+        """Read-only: every anchor at or near `area` where
+        `place_furniture(style=style, facing=facing, position=...)` would
+        succeed right now, probing the exact same `_furniture_placement_error`
+        place_furniture/move_furniture already validate against -- never
+        reimplements the wall/floor-anchor rule, so it can't drift out of
+        sync with it. Works for any style (this is generic, not restricted
+        to `can_place_on_walls`), but the tool layer (`office_tools.py`'s
+        `FindFurnitureAnchorsTool`) now steers callers toward two specific
+        uses: a `can_place_on_walls` style's row overhang (sized to the
+        style's own `footprint_height`, not a guess -- the anchor a caller
+        can't otherwise find without a failed placement attempt first), and
+        pre-checking an empty region fits a style before its first
+        placement there. Finding a spot *adjacent to an existing item* is
+        `place_furniture`'s `touching` parameter's job now (see `Touching`/
+        `_touching_anchor`) -- it computes the flush anchor directly from
+        live state instead of a caller searching a strip and reusing the
+        result, which can go stale the moment an earlier call in the same
+        session changes the layout. Anchors are returned in scan order,
+        rows top-to-bottom then columns left-to-right within `area`."""
+
+        office, styles = await self._load()
+        if area.width * area.height > _MAX_DESCRIBE_TILES_AREA:
+            raise OfficeValidationError(
+                f"find_furniture_anchors area is too large ({area.width * area.height} tiles, "
+                f"max {_MAX_DESCRIBE_TILES_AREA})"
+            )
+        if not _rect_in_bounds(area, office):
+            raise OfficeValidationError(
+                f"area extends outside the {office.width}x{office.height} grid "
+                f"(0-based coordinates, far edge exclusive: {_rect_out_of_bounds_detail(area, office)})"
+            )
+        style_def = styles.by_style_id(style)
+        if style_def is None:
+            raise OfficeValidationError(f"style {style!r} does not exist")
+        resolved_facing = facing if facing is not None else style_def.default_facing
+        record = style_def.facing_record(resolved_facing)
+        if record is None:
+            return []
+
+        occupied = _occupied_cells_by_others(office, styles)
+        row_start = area.top_left.row - (record.footprint_height - 1)
+        row_end = area.top_left.row + area.height
+        col_end = area.top_left.col + area.width
+
+        anchors: list[GridPosition] = []
+        for row in range(row_start, row_end):
+            for col in range(area.top_left.col, col_end):
+                position = GridPosition(col, row)
+                error = _furniture_placement_error(
+                    office, styles, style_def, resolved_facing, position, occupied
+                )
+                if error is None:
+                    anchors.append(position)
+                    if len(anchors) >= limit:
+                        return anchors
+        return anchors
 
     # -- mutations -----------------------------------------------------
 
@@ -110,7 +189,8 @@ class OfficeLayoutService:
         office, styles = await self._load()
         if not _rect_in_bounds(area, office):
             raise OfficeValidationError(
-                f"area extends outside the {office.width}x{office.height} grid"
+                f"area extends outside the {office.width}x{office.height} grid "
+                f"(0-based coordinates, far edge exclusive: {_rect_out_of_bounds_detail(area, office)})"
             )
         if kind is TileKind.FLOOR:
             if material is None or not (1 <= material <= 9):
@@ -164,10 +244,24 @@ class OfficeLayoutService:
         *,
         kind: FurnitureKind,
         style: str,
-        position: GridPosition,
+        position: GridPosition | None = None,
+        touching: Touching | None = None,
         facing: Direction | None = None,
         label: str | None = None,
     ) -> FurnitureItem:
+        """Exactly one of `position` (an absolute anchor) or `touching` (an
+        existing item's id/side/offset) must be given -- `touching` is
+        preferred whenever the goal is adjacency (seating around a table,
+        lining chairs against a desk): it computes the flush anchor itself,
+        from the *current* office state at the moment this call runs, so
+        there is no coordinate math to get wrong and no staleness risk from
+        reusing a position computed before an earlier call in the same
+        session changed the layout."""
+
+        if (position is None) == (touching is None):
+            raise OfficeValidationError(
+                "place_furniture requires exactly one of position or touching"
+            )
         office, styles = await self._load()
         style_def = styles.by_style_id(style)
         if style_def is None:
@@ -177,6 +271,28 @@ class OfficeLayoutService:
                 f"style {style!r} is kind {style_def.kind.value!r}, not {kind.value!r}"
             )
         resolved_facing = facing if facing is not None else style_def.default_facing
+        if touching is not None:
+            record = style_def.facing_record(resolved_facing)
+            if record is None:
+                raise OfficeValidationError(
+                    f"style {style!r} has no facing {resolved_facing.value if resolved_facing else None!r}"
+                )
+            target = self._find_furniture(office, touching.furniture_id)
+            target_style = styles.by_style_id(target.style)
+            if target_style is None:
+                raise OfficeValidationError(
+                    f"furniture {touching.furniture_id!r} has unknown style {target.style!r}"
+                )
+            target_record = target_style.facing_record(target.facing)
+            if target_record is None:
+                raise OfficeValidationError(
+                    f"furniture {touching.furniture_id!r}'s style {target.style!r} has no "
+                    f"facing {target.facing.value if target.facing else None!r}"
+                )
+            position = _touching_anchor(
+                target, target_record, touching.side, touching.offset, record
+            )
+        assert position is not None
         occupied = _occupied_cells_by_others(office, styles)
         error = _furniture_placement_error(
             office, styles, style_def, resolved_facing, position, occupied
@@ -253,7 +369,8 @@ class OfficeLayoutService:
             raise OfficeValidationError(f"a zone labeled {label!r} already exists")
         if not _rect_in_bounds(tiles, office):
             raise OfficeValidationError(
-                f"zone extends outside the {office.width}x{office.height} grid"
+                f"zone extends outside the {office.width}x{office.height} grid "
+                f"(0-based coordinates, far edge exclusive: {_rect_out_of_bounds_detail(tiles, office)})"
             )
 
         # Matches `_decode_zones`'s own id scheme so a zone created here
@@ -270,7 +387,8 @@ class OfficeLayoutService:
         zone = self._find_zone(office, zone_id)
         if not _rect_in_bounds(tiles, office):
             raise OfficeValidationError(
-                f"zone extends outside the {office.width}x{office.height} grid"
+                f"zone extends outside the {office.width}x{office.height} grid "
+                f"(0-based coordinates, far edge exclusive: {_rect_out_of_bounds_detail(tiles, office)})"
             )
         new_grid = _clear_zone_label(office.grid, zone.label)
         new_grid = _tag_zone_label(new_grid, tiles.positions(), zone.label)
@@ -387,6 +505,29 @@ def _rect_in_bounds(rect: GridRect, office: Office) -> bool:
     )
 
 
+def _rect_out_of_bounds_detail(rect: GridRect, office: Office) -> str:
+    """Spells out exactly which edge of `rect` overshoots, for an
+    `OfficeValidationError` message an LLM can act on without re-guessing
+    -- coordinates are 0-based (`GridPosition`/`GridRect` docstrings), so
+    the actual failure is almost always `col/row + width/height` landing
+    one past the grid's last valid index, not a negative coordinate."""
+
+    problems: list[str] = []
+    if rect.top_left.col < 0:
+        problems.append(f"col {rect.top_left.col} is negative")
+    if rect.top_left.row < 0:
+        problems.append(f"row {rect.top_left.row} is negative")
+    right = rect.top_left.col + rect.width
+    if right > office.width:
+        problems.append(f"col {rect.top_left.col} + width {rect.width} = {right} > {office.width}")
+    bottom = rect.top_left.row + rect.height
+    if bottom > office.height:
+        problems.append(
+            f"row {rect.top_left.row} + height {rect.height} = {bottom} > {office.height}"
+        )
+    return "; ".join(problems)
+
+
 def _all_positions(grid: Grid) -> list[GridPosition]:
     return [GridPosition(col, row) for row in range(grid.height) for col in range(grid.width)]
 
@@ -420,6 +561,62 @@ def _occupied_cells_by_others(
     return occupied
 
 
+def _touching_anchor(
+    target: FurnitureItem,
+    target_record: FurnitureFacing,
+    side: Direction,
+    offset: int,
+    new_record: FurnitureFacing,
+) -> GridPosition:
+    """The anchor for `new_record`'s footprint so it sits flush against
+    `target`'s `side`. Pure arithmetic on footprint dimensions --
+    bounds/collision are still validated the normal way afterward, same as
+    any other position.
+
+    occupied_cells() only ever excludes background_tiles *rows* (dr starts
+    at background_tiles, never affects dc) -- so south touching (the side
+    background_tiles never strips) is always the plain "one tile past the
+    target's occupied edge" case, and column growth itself (footprint_width)
+    never has a background asymmetry. North is the one side where the
+    touch row itself changes: when target has background rows, its own
+    north-most `background_tiles` rows are walkable (not in its
+    occupied_cells), so the flush position for a new item is target's own
+    anchor row itself, not one tile further out.
+
+    `offset`'s own axis has the same asymmetry once more, in the other
+    pair of sides: for west/east, offset runs along target's *occupied*
+    rows, not its full anchor-inclusive footprint -- target's background
+    rows are its decorative back edge, not real surface a side item should
+    align against, so offset=0 starts at target.anchor_row +
+    target.background_tiles, not target.anchor_row itself. For north/south,
+    offset runs along columns, which never have this asymmetry, so it
+    starts at target.anchor_col unmodified."""
+
+    if side is Direction.SOUTH:
+        touch_row = target.position.row + target_record.footprint_height
+        return GridPosition(target.position.col + offset, touch_row - new_record.background_tiles)
+    if side is Direction.NORTH:
+        touch_row = (
+            target.position.row + target_record.background_tiles - 1
+            if target_record.background_tiles > 0
+            else target.position.row - 1
+        )
+        return GridPosition(
+            target.position.col + offset, touch_row - new_record.footprint_height + 1
+        )
+    # West/east: offset runs along target's *occupied* rows, not its full
+    # anchor-inclusive footprint -- target's background rows (if any) are
+    # its decorative back edge, not real table surface a side chair should
+    # align against, so offset 0 starts at target.anchor_row +
+    # background_tiles, same skip north touching already has to make.
+    row_start = target.position.row + target_record.background_tiles
+    if side is Direction.WEST:
+        return GridPosition(target.position.col - new_record.footprint_width, row_start + offset)
+    return GridPosition(  # Direction.EAST
+        target.position.col + target_record.footprint_width, row_start + offset
+    )
+
+
 def _furniture_placement_error(
     office: Office,
     styles: FurnitureStyleManifest,
@@ -435,8 +632,6 @@ def _furniture_placement_error(
     record = style_def.facing_record(facing)
     if record is None:
         return f"style {style_def.style!r} has no facing {facing.value if facing else None!r}"
-    if not office.grid.in_bounds(position):
-        return f"position ({position.col}, {position.row}) is outside the grid"
 
     if style_def.can_place_on_walls:
         # Real Pixel Agents rule (webview-ui's canPlaceFurniture in
@@ -448,29 +643,55 @@ def _furniture_placement_error(
         # its wall row -- checking `position` itself against WALL directly
         # rejected every real multi-row wall fixture (e.g. HANGING_PLANT,
         # footprint_height=2), since its anchor sits one row above the
-        # wall tile it's actually mounted on. Doesn't attempt to support a
-        # wall item's footprint extending above row 0 (upstream allows a
-        # negative row there); `Grid` has no concept of an out-of-bounds
-        # row, so that placement style isn't representable here.
+        # wall tile it's actually mounted on. Column still has to be a
+        # real column -- there's no known case of a wall fixture
+        # overhanging the grid horizontally -- but `position.row` may be
+        # negative: upstream allows this for a fixture hanging off a wall
+        # that's only one tile thick at the grid's own north edge, where
+        # there's no floor/void tile "above" row 0 for `position` to be
+        # in-bounds against in the first place -- only the wall segment
+        # the bottom row actually touches has to be real. (No south-edge
+        # equivalent: the wall row is always the *bottom* of the
+        # footprint by definition, so the rows above it are already
+        # inside the grid whenever the wall itself is the last row.)
+        if not (0 <= position.col < office.grid.width):
+            return f"position ({position.col}, {position.row}) is outside the grid"
         bottom_row = position.row + record.footprint_height - 1
         for dc in range(record.footprint_width):
             wall_cell = GridPosition(position.col + dc, bottom_row)
             if not office.grid.in_bounds(wall_cell):
                 return f"footprint extends outside the grid at ({wall_cell.col}, {wall_cell.row})"
-            if office.grid.at(wall_cell).kind is not TileKind.WALL:
+            actual_kind = office.grid.at(wall_cell).kind
+            if actual_kind is not TileKind.WALL:
                 return (
-                    f"style {style_def.style!r} must have the bottom row of its footprint "
-                    "anchored on a wall tile"
+                    f"style {style_def.style!r} must have the bottom row of its "
+                    f"{record.footprint_width}x{record.footprint_height} footprint anchored on "
+                    f"a wall tile: row {bottom_row} (= anchor row {position.row} + "
+                    f"footprint_height {record.footprint_height} - 1) must be WALL for every "
+                    f"column {position.col}..{position.col + record.footprint_width - 1}, but "
+                    f"({wall_cell.col}, {wall_cell.row}) is {actual_kind.value}, not wall"
                 )
     else:
+        if not office.grid.in_bounds(position):
+            return f"position ({position.col}, {position.row}) is outside the grid"
         for cell in styles.occupied_cells(style_def.style, facing, position):
             if not office.grid.in_bounds(cell):
                 return f"footprint extends outside the grid at ({cell.col}, {cell.row})"
-            if office.grid.at(cell).kind is not TileKind.FLOOR:
-                return f"style {style_def.style!r} must be anchored on a floor tile"
+            actual_kind = office.grid.at(cell).kind
+            if actual_kind is not TileKind.FLOOR:
+                return (
+                    f"style {style_def.style!r} must be anchored on a floor tile: "
+                    f"({cell.col}, {cell.row}) is {actual_kind.value}, not floor"
+                )
 
     for cell in styles.occupied_cells(style_def.style, facing, position):
-        if not office.grid.in_bounds(cell):
+        # A can_place_on_walls style's footprint can legitimately reach a
+        # row that doesn't exist in `Grid` at all (the phantom space above
+        # row 0 the comment above describes) -- nothing real can occupy
+        # that space, but another wall fixture's *own* phantom cells can
+        # still collide with it, so this still has to fall through to the
+        # `occupied` lookup below rather than returning outright.
+        if not office.grid.in_bounds(cell) and not style_def.can_place_on_walls:
             return f"footprint extends outside the grid at ({cell.col}, {cell.row})"
         existing = occupied.get(cell)
         if existing is None:
@@ -532,4 +753,4 @@ def _validate_seats(office: Office) -> None:
             seated_occupants.add(seat.occupant_id)
 
 
-__all__ = ["BroadcastCallback", "OfficeLayoutService", "OfficeValidationError"]
+__all__ = ["BroadcastCallback", "OfficeLayoutService", "OfficeValidationError", "Touching"]

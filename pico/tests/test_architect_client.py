@@ -38,10 +38,15 @@ class _FakeArchitectLLMSettings:
 
 
 class _ScriptedToolLoop:
-    def __init__(self, result: ToolLoopResult) -> None:
+    def __init__(self, result: ToolLoopResult, *, debug_events: list[str] | None = None) -> None:
         self._result = result
+        self._debug_events = debug_events or []
 
     async def run(self, **kwargs: object) -> ToolLoopResult:
+        on_debug_event = kwargs.get("on_debug_event")
+        if on_debug_event is not None:
+            for event in self._debug_events:
+                await on_debug_event(event)  # type: ignore[operator]
         return self._result
 
 
@@ -60,9 +65,11 @@ async def _llm_settings() -> _FakeArchitectLLMSettings:
 
 
 class TestArchitectClientLiveRoundTrip(unittest.IsolatedAsyncioTestCase):
-    async def _start_server(self, result: ToolLoopResult) -> A2AServer:
+    async def _start_server(
+        self, result: ToolLoopResult, *, debug_events: list[str] | None = None
+    ) -> A2AServer:
         executor = ArchitectAgentExecutor(
-            tool_loop=_ScriptedToolLoop(result),
+            tool_loop=_ScriptedToolLoop(result, debug_events=debug_events),
             tools=[],
             settings=_settings,
             llm_settings=_llm_settings,
@@ -127,6 +134,43 @@ class TestArchitectClientLiveRoundTrip(unittest.IsolatedAsyncioTestCase):
                 failed_tool_calls=1,
             ),
         )
+
+    async def test_ask_streams_intermediate_debug_events_via_on_activity(self) -> None:
+        """Real round trip covering the new streaming path: architect emits
+        TASK_STATE_WORKING status updates mid-task (see
+        architect/infrastructure/a2a_server.py's _emit_debug), and this
+        confirms pico's client (a) actually receives them over the real
+        wire now that both sides advertise/request streaming, (b) invokes
+        on_activity with each one in order, and (c) still resolves the true
+        final answer correctly, not one of the intermediate events."""
+
+        await self._start_server(
+            ToolLoopResult(
+                1, "final_text", "moved the table", successful_tool_calls=1, failed_tool_calls=0
+            ),
+            debug_events=["thinking: let me check", "calling move_furniture({...})"],
+        )
+        seen: list[str] = []
+
+        async def on_activity(text: str) -> None:
+            seen.append(text)
+
+        result = await ArchitectClient().ask(base_url=_BASE_URL, text="hi", on_activity=on_activity)
+
+        self.assertEqual(seen, ["thinking: let me check", "calling move_furniture({...})"])
+        self.assertEqual(result.answer, "moved the table")
+
+    async def test_ask_without_on_activity_ignores_intermediate_debug_events(self) -> None:
+        await self._start_server(
+            ToolLoopResult(
+                1, "final_text", "moved the table", successful_tool_calls=1, failed_tool_calls=0
+            ),
+            debug_events=["thinking: let me check"],
+        )
+
+        result = await ArchitectClient().ask(base_url=_BASE_URL, text="hi")
+
+        self.assertEqual(result.answer, "moved the table")
 
     async def test_ask_raises_when_architect_task_fails(self) -> None:
         await self._start_server(

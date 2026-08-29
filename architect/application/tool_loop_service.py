@@ -73,13 +73,25 @@ class ToolLoopService:
         max_tool_calls: int,
         debug: bool = False,
         on_activity: Callable[[str], Awaitable[None]] | None = None,
+        on_debug_event: Callable[[str], Awaitable[None]] | None = None,
     ) -> ToolLoopResult:
         """`on_activity`, if given, is awaited once per "thinking" turn (the
         model's own text alongside a tool-calling turn) and once per tool
         call -- corridor's AgentReplied publish, in architect's case (see
         docs/corridor-pubsub-design.md). Optional and defaults to a no-op
         so tests/callers that don't care about activity reporting are
-        unaffected."""
+        unaffected.
+
+        `on_debug_event` is a separate, independent sink -- do not conflate
+        it with `on_activity` above. It's only ever awaited when `debug` is
+        True, and carries the same full detail `debug`'s own `log.info(...)`
+        calls already do (full thinking prose, each tool call's name *and*
+        raw arguments, then its result or error) rather than `on_activity`'s
+        coarse "thinking: ..."/"using tool X" summaries. Intended for
+        streaming a live trace of this turn to an operator (e.g. architect's
+        A2A executor turning each string into an intermediate task status
+        update) -- `on_activity`'s own consumer (the office webview presence
+        bubble) is unaffected by this parameter."""
 
         tools_by_name = {tool.name: tool for tool in tools}
         wire_tools = [_wire_spec(tool) for tool in tools]
@@ -96,6 +108,8 @@ class ToolLoopService:
                 log.warning(
                     "architect: tool loop hit max_tool_calls (%d), stopping", max_tool_calls
                 )
+                if debug and on_debug_event is not None:
+                    await on_debug_event(f"stopping: hit max_tool_calls ({max_tool_calls})")
                 return ToolLoopResult(
                     calls_made, "max_tool_calls", None, successful_calls, failed_calls
                 )
@@ -134,6 +148,8 @@ class ToolLoopService:
 
             if on_activity is not None and choice_message.content:
                 await on_activity(f"thinking: {choice_message.content}")
+            if debug and on_debug_event is not None and choice_message.content:
+                await on_debug_event(f"thinking: {choice_message.content}")
 
             messages.append(
                 ChatMessage(role="assistant", content=choice_message.content, tool_calls=tool_calls)
@@ -143,12 +159,19 @@ class ToolLoopService:
                     log.warning(
                         "architect: tool loop hit max_tool_calls (%d), stopping", max_tool_calls
                     )
+                    if debug and on_debug_event is not None:
+                        await on_debug_event(f"stopping: hit max_tool_calls ({max_tool_calls})")
                     return ToolLoopResult(
                         calls_made, "max_tool_calls", None, successful_calls, failed_calls
                     )
                 if on_activity is not None:
                     await on_activity(f"using tool {call.function.name}")
+                if debug and on_debug_event is not None:
+                    await on_debug_event(f"calling {call.function.name}({call.function.arguments})")
                 result_text, succeeded = await _execute(tools_by_name, call, debug=debug)
+                if debug and on_debug_event is not None:
+                    status_word = "ok" if succeeded else "error"
+                    await on_debug_event(f"{call.function.name} -> [{status_word}] {result_text}")
                 messages.append(ChatMessage(role="tool", tool_call_id=call.id, content=result_text))
                 calls_made += 1
                 if succeeded:

@@ -19,6 +19,8 @@ from ..tools.office_tools import (
     DescribeTilesTool,
     FindFurnitureInput,
     FindFurnitureTool,
+    ListFurnitureStylesInput,
+    ListFurnitureStylesTool,
     PaintTilesInput,
     PaintTilesTool,
     PlaceFurnitureTool,
@@ -66,6 +68,17 @@ _MANIFEST = {
             "can_place_on_walls": False,
             "can_place_on_surfaces": False,
         },
+        {
+            "style": "whiteboard",
+            "kind": "wall_fixture",
+            "label": "Whiteboard",
+            "catalog_id": "WHITEBOARD",
+            "footprint_width": 2,
+            "footprint_height": 2,
+            "background_tiles": 0,
+            "can_place_on_walls": True,
+            "can_place_on_surfaces": False,
+        },
     ]
 }
 
@@ -105,7 +118,7 @@ class TestBuildOfficeTools(unittest.TestCase):
         tools = build_office_tools(service, loader)
 
         names = {tool.name for tool in tools}  # type: ignore[attr-defined]
-        self.assertEqual(len(names), 12)
+        self.assertEqual(len(names), 13)
 
 
 class TestDescribeOfficeTool(unittest.IsolatedAsyncioTestCase):
@@ -126,14 +139,19 @@ class TestPlaceFurnitureToolDynamicSchema(unittest.IsolatedAsyncioTestCase):
 
         schema = tool.Input.model_json_schema()
 
-        self.assertEqual(set(schema["properties"]["style"]["enum"]), {"desk", "wooden_chair"})
+        self.assertEqual(
+            set(schema["properties"]["style"]["enum"]), {"desk", "wooden_chair", "whiteboard"}
+        )
 
     async def test_style_enum_changes_when_the_manifest_changes(self) -> None:
         fake = FakePixelAgents(furniture_styles=_MANIFEST, built_commit="a" * 40)
         loader = FurnitureStyleLoader(fake)
         tool = PlaceFurnitureTool(_service(), loader)
         first_schema = tool.Input.model_json_schema()
-        self.assertEqual(set(first_schema["properties"]["style"]["enum"]), {"desk", "wooden_chair"})
+        self.assertEqual(
+            set(first_schema["properties"]["style"]["enum"]),
+            {"desk", "wooden_chair", "whiteboard"},
+        )
 
         fake._furniture_styles = {
             "styles": [
@@ -208,6 +226,38 @@ class TestFindFurnitureTool(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(output.status, "ok")
         self.assertEqual(len(output.furniture), 1)
+
+
+class TestListFurnitureStylesTool(unittest.IsolatedAsyncioTestCase):
+    async def test_lists_every_style_with_footprints(self) -> None:
+        output = await ListFurnitureStylesTool(_loader()).handler(ListFurnitureStylesInput())
+
+        by_style = {style.style: style for style in output.styles}
+        self.assertEqual(set(by_style), {"desk", "wooden_chair", "whiteboard"})
+
+        desk = by_style["desk"]
+        self.assertFalse(desk.can_place_on_walls)
+        self.assertEqual(len(desk.facings), 1)
+        self.assertEqual(desk.facings[0].facing, "south")
+        self.assertEqual(desk.facings[0].footprint_width, 3)
+        self.assertEqual(desk.facings[0].footprint_height, 2)
+
+        # Facing-less wall fixture: a single facing=None entry carrying
+        # the style-level footprint, matching a real WHITEBOARD's shape
+        # (see docs/architect-semantic-ir-design.md section 6.4).
+        whiteboard = by_style["whiteboard"]
+        self.assertTrue(whiteboard.can_place_on_walls)
+        self.assertEqual(len(whiteboard.facings), 1)
+        self.assertIsNone(whiteboard.facings[0].facing)
+        self.assertEqual(whiteboard.facings[0].footprint_width, 2)
+        self.assertEqual(whiteboard.facings[0].footprint_height, 2)
+
+    async def test_filters_by_kind(self) -> None:
+        output = await ListFurnitureStylesTool(_loader()).handler(
+            ListFurnitureStylesInput(kind="wall_fixture")
+        )
+
+        self.assertEqual([style.style for style in output.styles], ["whiteboard"])
 
 
 class TestResizeAndRemoveZoneTool(unittest.IsolatedAsyncioTestCase):

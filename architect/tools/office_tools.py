@@ -34,7 +34,11 @@ from ..domain.office_ir import (
     TileKind,
     Zone,
 )
-from ..infrastructure.furniture_styles import FurnitureStyleLoader, FurnitureStyleManifest
+from ..infrastructure.furniture_styles import (
+    FurnitureStyle,
+    FurnitureStyleLoader,
+    FurnitureStyleManifest,
+)
 from .base import ToolSpec
 
 _DIRECTION_VALUES: tuple[str, ...] = tuple(direction.value for direction in Direction)
@@ -282,14 +286,151 @@ class FindFurnitureTool:
         return FindFurnitureOutput(furniture=[_furniture_summary(item, styles) for item in items])
 
 
+# -- list_furniture_styles -----------------------------------------------------
+
+
+class FurnitureStyleFacingSummary(BaseModel):
+    facing: str | None = Field(
+        description="Facing direction this footprint applies to, or null for a facing-less style."
+    )
+    catalog_id: str
+    footprint_width: int
+    footprint_height: int
+    background_tiles: int = Field(
+        description=(
+            "How many rows at the *top* of the footprint are purely decorative and don't "
+            "block placement or count toward the wall-anchor row (section 6.4's "
+            "occupied_cells rule). Doesn't shrink footprint_height itself."
+        )
+    )
+
+
+class FurnitureStyleSummary(BaseModel):
+    style: str
+    kind: str
+    label: str
+    can_place_on_walls: bool = Field(
+        description=(
+            "If true, place_furniture requires the *bottom* row of the footprint -- "
+            "anchor row + footprint_height - 1, for every column in footprint_width -- to be "
+            "a wall tile. The anchor (col/row) itself does not need to be a wall tile."
+        )
+    )
+    can_place_on_surfaces: bool = Field(
+        description="If true, this style may stack onto a desk-kind item instead of the floor."
+    )
+    default_facing: str | None
+    facings: list[FurnitureStyleFacingSummary] = Field(
+        description=(
+            "One entry per supported facing, or a single facing=null entry for a "
+            "facing-less style (most decor/wall fixtures)."
+        )
+    )
+
+
+class ListFurnitureStylesInput(BaseModel):
+    kind: Literal[_KIND_VALUES] | None = Field(  # type: ignore[valid-type]
+        default=None, description="Only return styles of this kind."
+    )
+
+
+class ListFurnitureStylesOutput(BaseModel):
+    styles: list[FurnitureStyleSummary] = Field(default_factory=list)
+
+
+def _furniture_style_summary(style_def: FurnitureStyle) -> FurnitureStyleSummary:
+    if style_def.facings:
+        facings = [
+            FurnitureStyleFacingSummary(
+                facing=facing.value,
+                catalog_id=record.catalog_id,
+                footprint_width=record.footprint_width,
+                footprint_height=record.footprint_height,
+                background_tiles=record.background_tiles,
+            )
+            for facing, record in style_def.facings.items()
+        ]
+    elif style_def.catalog_id is not None:
+        facings = [
+            FurnitureStyleFacingSummary(
+                facing=None,
+                catalog_id=style_def.catalog_id,
+                footprint_width=style_def.footprint_width or 1,
+                footprint_height=style_def.footprint_height or 1,
+                background_tiles=style_def.background_tiles or 0,
+            )
+        ]
+    else:
+        facings = []
+    return FurnitureStyleSummary(
+        style=style_def.style,
+        kind=style_def.kind.value,
+        label=style_def.label,
+        can_place_on_walls=style_def.can_place_on_walls,
+        can_place_on_surfaces=style_def.can_place_on_surfaces,
+        default_facing=style_def.default_facing.value if style_def.default_facing else None,
+        facings=facings,
+    )
+
+
+class ListFurnitureStylesTool:
+    name = "list_furniture_styles"
+    description = (
+        "List every furniture style available to place_furniture, with each facing's exact "
+        "footprint_width/footprint_height/background_tiles and whether the style requires a "
+        "wall or floor anchor (can_place_on_walls/can_place_on_surfaces). Call this before "
+        "your first place_furniture attempt for a style you haven't placed yet -- "
+        "describe_office/find_furniture can only show the footprint of items already placed, "
+        "so a brand-new style has no other way to learn its footprint ahead of time. For a "
+        "can_place_on_walls style, the wall-touching tile is row = anchor_row + "
+        "footprint_height - 1 (not the anchor row itself unless footprint_height is 1), for "
+        "every column anchor_col..anchor_col+footprint_width-1."
+    )
+
+    def __init__(self, style_loader: FurnitureStyleLoader) -> None:
+        self._style_loader = style_loader
+
+    @property
+    def Input(self) -> type[BaseModel]:
+        return ListFurnitureStylesInput
+
+    @property
+    def Output(self) -> type[BaseModel]:
+        return ListFurnitureStylesOutput
+
+    async def handler(self, raw_input: BaseModel) -> BaseModel:
+        assert isinstance(raw_input, ListFurnitureStylesInput)
+        kind_filter = FurnitureKind(raw_input.kind) if raw_input.kind else None
+        styles = [
+            _furniture_style_summary(style_def)
+            for style_def in self._style_loader.styles().styles()
+            if kind_filter is None or style_def.kind is kind_filter
+        ]
+        return ListFurnitureStylesOutput(styles=styles)
+
+
 # -- describe_tiles -----------------------------------------------------
 
 
 class DescribeTilesInput(BaseModel):
-    col: int = Field(description="Top-left column of the region.")
-    row: int = Field(description="Top-left row of the region.")
-    width: int = Field(description="Region width in tiles.")
-    height: int = Field(description="Region height in tiles.")
+    col: int = Field(
+        description="Top-left column of the region. 0-based -- 0 is the office's westmost column."
+    )
+    row: int = Field(
+        description="Top-left row of the region. 0-based -- 0 is the office's northmost row."
+    )
+    width: int = Field(
+        description=(
+            "Region width in tiles. The region covers columns col..col+width-1 inclusive -- "
+            "col+width must not exceed the office's width (describe_office reports it)."
+        )
+    )
+    height: int = Field(
+        description=(
+            "Region height in tiles. The region covers rows row..row+height-1 inclusive -- "
+            "row+height must not exceed the office's height (describe_office reports it)."
+        )
+    )
 
 
 class DescribeTilesOutput(BaseModel):
@@ -303,7 +444,10 @@ class DescribeTilesTool:
     description = (
         "Show the exact per-tile state (kind, material, color, zone, occupying furniture) "
         "of a bounded region, capped at 400 tiles. Use this to check what's actually at a "
-        "position before placing or painting something there."
+        "position before placing or painting something there. Coordinates are 0-based and "
+        "width/height are exclusive of the far edge (col+width and row+height must not exceed "
+        "the office's width/height from describe_office) -- e.g. an office 21 tiles wide has "
+        "valid columns 0..20, so col=0,width=21 is the whole width but col=1,width=21 overshoots."
     )
 
     def __init__(self, service: OfficeLayoutService, style_loader: FurnitureStyleLoader) -> None:
@@ -341,10 +485,28 @@ class DescribeTilesTool:
 
 
 class PaintTilesInput(BaseModel):
-    col: int = Field(description="Top-left column of the region to paint.")
-    row: int = Field(description="Top-left row of the region to paint.")
-    width: int = Field(description="Region width in tiles.")
-    height: int = Field(description="Region height in tiles.")
+    col: int = Field(
+        description=(
+            "Top-left column of the region to paint. 0-based -- 0 is the office's westmost column."
+        )
+    )
+    row: int = Field(
+        description=(
+            "Top-left row of the region to paint. 0-based -- 0 is the office's northmost row."
+        )
+    )
+    width: int = Field(
+        description=(
+            "Region width in tiles. The region covers columns col..col+width-1 inclusive -- "
+            "col+width must not exceed the office's width (describe_office reports it)."
+        )
+    )
+    height: int = Field(
+        description=(
+            "Region height in tiles. The region covers rows row..row+height-1 inclusive -- "
+            "row+height must not exceed the office's height (describe_office reports it)."
+        )
+    )
     kind: Literal[_PAINT_KIND_VALUES] = Field(  # type: ignore[valid-type]
         description="'floor' or 'wall'."
     )
@@ -443,7 +605,10 @@ class PlaceFurnitureTool:
         "tile as its style requires. For a wall-mounted style, the tile that must actually "
         "touch a wall is the *bottom* row of the footprint (the occupied_cells entries with "
         "the largest row value for that column), not col/row itself. Use describe_tiles "
-        "first to find a free spot."
+        "first to find a free spot, and list_furniture_styles first to learn a style's exact "
+        "footprint dimensions -- describe_office/find_furniture only show the footprint of "
+        "items already placed, so a style with no existing instances has no other way to "
+        "learn its footprint before the first placement attempt."
     )
 
     def __init__(self, service: OfficeLayoutService, style_loader: FurnitureStyleLoader) -> None:
@@ -781,6 +946,7 @@ def build_office_tools(
     return [
         DescribeOfficeTool(service, style_loader),
         FindFurnitureTool(service, style_loader),
+        ListFurnitureStylesTool(style_loader),
         DescribeTilesTool(service, style_loader),
         PaintTilesTool(service),
         PlaceFurnitureTool(service, style_loader),

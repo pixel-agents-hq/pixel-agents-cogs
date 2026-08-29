@@ -144,11 +144,17 @@ class TestPlaceFurniture(unittest.IsolatedAsyncioTestCase):
     async def test_place_on_a_wall_tile_fails_for_a_floor_only_style(self) -> None:
         service = _service()
 
-        with self.assertRaises(OfficeValidationError):
+        with self.assertRaises(OfficeValidationError) as ctx:
             # (0,0) is untouched WALL from _empty_layout().
             await service.place_furniture(
                 kind=FurnitureKind.DESK, style="desk", position=GridPosition(0, 0)
             )
+
+        # The failing cell and its actual kind are spelled out so a
+        # caller doesn't have to re-inspect the tile to see what went
+        # wrong -- (0, 1), not the anchor (0, 0), since desk's top row is
+        # its background_tiles row and doesn't need to be floor itself.
+        self.assertIn("(0, 1) is wall, not floor", ctx.exception.reason)
 
     async def test_place_unknown_style_fails(self) -> None:
         service = _service()
@@ -256,10 +262,17 @@ class TestPlaceFurniture(unittest.IsolatedAsyncioTestCase):
         # Both the anchor row and the footprint's bottom row are floor.
         await _paint_floor(service, GridRect(GridPosition(2, 2), 1, 2))
 
-        with self.assertRaises(OfficeValidationError):
+        with self.assertRaises(OfficeValidationError) as ctx:
             await service.place_furniture(
                 kind=FurnitureKind.DECOR, style="hanging_plant", position=GridPosition(2, 2)
             )
+
+        # The computed bottom row and the actual tile kind found there are
+        # spelled out -- enough for a caller to deduce a valid anchor
+        # mathematically instead of guessing row +/- 1 blindly.
+        reason = ctx.exception.reason
+        self.assertIn("row 3 (= anchor row 2 + footprint_height 2 - 1)", reason)
+        self.assertIn("(2, 3) is floor, not wall", reason)
 
     async def test_surface_item_may_stack_onto_a_desk(self) -> None:
         service = _service()
@@ -447,8 +460,27 @@ class TestDescribeTiles(unittest.IsolatedAsyncioTestCase):
     async def test_out_of_bounds_fails(self) -> None:
         service = _service()
 
-        with self.assertRaises(OfficeValidationError):
-            await service.describe_tiles(area=GridRect(GridPosition(0, 0), 99, 99))
+        with self.assertRaises(OfficeValidationError) as ctx:
+            # 10x10 (100 tiles) stays under the 400-tile describe cap, so
+            # this exercises the bounds check, not the size cap.
+            await service.describe_tiles(area=GridRect(GridPosition(0, 0), 10, 10))
+
+        # A 5x5 office (see _empty_layout's default): the exact overshoot
+        # on both edges is spelled out, not just "out of bounds".
+        reason = ctx.exception.reason
+        self.assertIn("col 0 + width 10 = 10 > 5", reason)
+        self.assertIn("row 0 + height 10 = 10 > 5", reason)
+
+    async def test_out_of_bounds_reports_the_specific_overshoot(self) -> None:
+        # Regression case straight from the real failure this message was
+        # written for: a 21-wide office, col=1 width=21 overshoots by
+        # exactly 1 despite looking "inclusive" at a glance.
+        service = _service(_empty_layout(cols=21, rows=22))
+
+        with self.assertRaises(OfficeValidationError) as ctx:
+            await service.describe_tiles(area=GridRect(GridPosition(1, 1), 21, 11))
+
+        self.assertIn("col 1 + width 21 = 22 > 21", ctx.exception.reason)
 
     async def test_returns_one_cell_per_position(self) -> None:
         service = _service()

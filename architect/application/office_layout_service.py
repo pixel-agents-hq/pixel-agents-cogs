@@ -93,7 +93,8 @@ class OfficeLayoutService:
             )
         if not _rect_in_bounds(area, office):
             raise OfficeValidationError(
-                f"area extends outside the {office.width}x{office.height} grid"
+                f"area extends outside the {office.width}x{office.height} grid "
+                f"(0-based coordinates, far edge exclusive: {_rect_out_of_bounds_detail(area, office)})"
             )
         return [office.grid.at(position) for position in area.positions()]
 
@@ -110,7 +111,8 @@ class OfficeLayoutService:
         office, styles = await self._load()
         if not _rect_in_bounds(area, office):
             raise OfficeValidationError(
-                f"area extends outside the {office.width}x{office.height} grid"
+                f"area extends outside the {office.width}x{office.height} grid "
+                f"(0-based coordinates, far edge exclusive: {_rect_out_of_bounds_detail(area, office)})"
             )
         if kind is TileKind.FLOOR:
             if material is None or not (1 <= material <= 9):
@@ -253,7 +255,8 @@ class OfficeLayoutService:
             raise OfficeValidationError(f"a zone labeled {label!r} already exists")
         if not _rect_in_bounds(tiles, office):
             raise OfficeValidationError(
-                f"zone extends outside the {office.width}x{office.height} grid"
+                f"zone extends outside the {office.width}x{office.height} grid "
+                f"(0-based coordinates, far edge exclusive: {_rect_out_of_bounds_detail(tiles, office)})"
             )
 
         # Matches `_decode_zones`'s own id scheme so a zone created here
@@ -270,7 +273,8 @@ class OfficeLayoutService:
         zone = self._find_zone(office, zone_id)
         if not _rect_in_bounds(tiles, office):
             raise OfficeValidationError(
-                f"zone extends outside the {office.width}x{office.height} grid"
+                f"zone extends outside the {office.width}x{office.height} grid "
+                f"(0-based coordinates, far edge exclusive: {_rect_out_of_bounds_detail(tiles, office)})"
             )
         new_grid = _clear_zone_label(office.grid, zone.label)
         new_grid = _tag_zone_label(new_grid, tiles.positions(), zone.label)
@@ -387,6 +391,29 @@ def _rect_in_bounds(rect: GridRect, office: Office) -> bool:
     )
 
 
+def _rect_out_of_bounds_detail(rect: GridRect, office: Office) -> str:
+    """Spells out exactly which edge of `rect` overshoots, for an
+    `OfficeValidationError` message an LLM can act on without re-guessing
+    -- coordinates are 0-based (`GridPosition`/`GridRect` docstrings), so
+    the actual failure is almost always `col/row + width/height` landing
+    one past the grid's last valid index, not a negative coordinate."""
+
+    problems: list[str] = []
+    if rect.top_left.col < 0:
+        problems.append(f"col {rect.top_left.col} is negative")
+    if rect.top_left.row < 0:
+        problems.append(f"row {rect.top_left.row} is negative")
+    right = rect.top_left.col + rect.width
+    if right > office.width:
+        problems.append(f"col {rect.top_left.col} + width {rect.width} = {right} > {office.width}")
+    bottom = rect.top_left.row + rect.height
+    if bottom > office.height:
+        problems.append(
+            f"row {rect.top_left.row} + height {rect.height} = {bottom} > {office.height}"
+        )
+    return "; ".join(problems)
+
+
 def _all_positions(grid: Grid) -> list[GridPosition]:
     return [GridPosition(col, row) for row in range(grid.height) for col in range(grid.width)]
 
@@ -457,17 +484,26 @@ def _furniture_placement_error(
             wall_cell = GridPosition(position.col + dc, bottom_row)
             if not office.grid.in_bounds(wall_cell):
                 return f"footprint extends outside the grid at ({wall_cell.col}, {wall_cell.row})"
-            if office.grid.at(wall_cell).kind is not TileKind.WALL:
+            actual_kind = office.grid.at(wall_cell).kind
+            if actual_kind is not TileKind.WALL:
                 return (
-                    f"style {style_def.style!r} must have the bottom row of its footprint "
-                    "anchored on a wall tile"
+                    f"style {style_def.style!r} must have the bottom row of its "
+                    f"{record.footprint_width}x{record.footprint_height} footprint anchored on "
+                    f"a wall tile: row {bottom_row} (= anchor row {position.row} + "
+                    f"footprint_height {record.footprint_height} - 1) must be WALL for every "
+                    f"column {position.col}..{position.col + record.footprint_width - 1}, but "
+                    f"({wall_cell.col}, {wall_cell.row}) is {actual_kind.value}, not wall"
                 )
     else:
         for cell in styles.occupied_cells(style_def.style, facing, position):
             if not office.grid.in_bounds(cell):
                 return f"footprint extends outside the grid at ({cell.col}, {cell.row})"
-            if office.grid.at(cell).kind is not TileKind.FLOOR:
-                return f"style {style_def.style!r} must be anchored on a floor tile"
+            actual_kind = office.grid.at(cell).kind
+            if actual_kind is not TileKind.FLOOR:
+                return (
+                    f"style {style_def.style!r} must be anchored on a floor tile: "
+                    f"({cell.col}, {cell.row}) is {actual_kind.value}, not floor"
+                )
 
     for cell in styles.occupied_cells(style_def.style, facing, position):
         if not office.grid.in_bounds(cell):

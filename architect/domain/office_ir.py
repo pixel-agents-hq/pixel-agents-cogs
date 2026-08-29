@@ -45,11 +45,18 @@ class GridPosition:
 
 @dataclass(frozen=True, slots=True)
 class GridRect:
-    """Inclusive tile rectangle. Used for a `Zone`'s bounding box and for
-    any tool that paints/queries a bounded region (`paint_tiles`,
-    `describe_tiles`) -- a plain rectangle, not a polygon, since a zone's
-    *exact* per-tile membership always lives on `Grid.cells[i].zone_label`
-    directly; this is just the bounding-box summary."""
+    """A solid tile rectangle -- not a polygon, since a zone's *exact*
+    per-tile membership always lives on `Grid.cells[i].zone_label`
+    directly; this is just the bounding-box summary. `top_left` is
+    0-based, same as `GridPosition` everywhere else in the IR: `(0, 0)`
+    is the office's northwest corner tile. `width`/`height` are tile
+    *counts*, not a second corner -- the rectangle covers columns
+    `top_left.col .. top_left.col + width - 1` and rows
+    `top_left.row .. top_left.row + height - 1`, i.e. the far edge
+    (`top_left.col + width`, `top_left.row + height`) is exclusive, the
+    same half-open convention Python's own `range()` uses. Used for a
+    `Zone`'s bounding box and for any tool that paints/queries a bounded
+    region (`paint_tiles`, `describe_tiles`)."""
 
     top_left: GridPosition
     width: int

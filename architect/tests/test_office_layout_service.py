@@ -274,6 +274,49 @@ class TestPlaceFurniture(unittest.IsolatedAsyncioTestCase):
         self.assertIn("row 3 (= anchor row 2 + footprint_height 2 - 1)", reason)
         self.assertIn("(2, 3) is floor, not wall", reason)
 
+    async def test_wall_fixture_can_anchor_above_row_zero(self) -> None:
+        # A 1-tile-thick north wall (row 0, untouched WALL from
+        # _empty_layout()) leaves no in-bounds row for hanging_plant's
+        # anchor -- its bottom row (= anchor row + footprint_height - 1)
+        # has to land *on* row 0, so the anchor itself sits at row -1.
+        # Upstream Pixel Agents allows this; `Grid` has no cell there, but
+        # the wall-anchor check only ever needs the bottom row in bounds.
+        service = _service()
+
+        item = await service.place_furniture(
+            kind=FurnitureKind.DECOR, style="hanging_plant", position=GridPosition(2, -1)
+        )
+
+        self.assertEqual(item.position, GridPosition(2, -1))
+
+    async def test_wall_fixture_column_still_must_be_in_bounds(self) -> None:
+        # The row relaxation above is deliberately row-only -- there's no
+        # known case of a wall fixture overhanging the grid horizontally.
+        service = _service()
+
+        with self.assertRaises(OfficeValidationError) as ctx:
+            await service.place_furniture(
+                kind=FurnitureKind.DECOR, style="hanging_plant", position=GridPosition(-1, 0)
+            )
+
+        self.assertIn("position (-1, 0) is outside the grid", ctx.exception.reason)
+
+    async def test_two_wall_fixtures_cannot_overlap_above_row_zero(self) -> None:
+        service = _service()
+        await service.place_furniture(
+            kind=FurnitureKind.DECOR, style="hanging_plant", position=GridPosition(2, -1)
+        )
+
+        # hanging_plant is 1 wide -- same column, same anchor row, so its
+        # phantom anchor cell (2, -1) collides even though neither cell
+        # is a real `Grid` tile.
+        with self.assertRaises(OfficeValidationError) as ctx:
+            await service.place_furniture(
+                kind=FurnitureKind.DECOR, style="hanging_plant", position=GridPosition(2, -1)
+            )
+
+        self.assertIn("overlaps furniture", ctx.exception.reason)
+
     async def test_surface_item_may_stack_onto_a_desk(self) -> None:
         service = _service()
         await _paint_floor(service, GridRect(GridPosition(0, 0), 4, 4))
@@ -315,6 +358,35 @@ class TestPlaceFurniture(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(len(broadcasts), 2)  # paint_tiles, then place_furniture
+
+
+class TestPreExistingOutOfBoundsWallFixture(unittest.IsolatedAsyncioTestCase):
+    """Regression coverage for a real production-correctness bug fix 4
+    also closes: `_validate_furniture` re-runs `_furniture_placement_error`
+    against every *existing* item on every mutation (`_validate`, called
+    from every one of place/move/remove furniture, paint_tiles, and the
+    zone mutations). Before fix 4, a real office with a human-placed
+    north-wall fixture at row=-1 (upstream Pixel Agents allows this --
+    see the wall-anchor branch's comment) would fail to persist *any*
+    unrelated mutation architect made, since re-validating that
+    pre-existing item's own position was rejected outright."""
+
+    async def test_unrelated_mutation_still_persists(self) -> None:
+        layout = _empty_layout()
+        layout["furniture"] = [{"type": "HANGING_PLANT", "uid": "preexisting", "col": 2, "row": -1}]
+        service = _service(layout)
+        preexisting = (await service.find_furniture())[0]
+        self.assertEqual(preexisting.position, GridPosition(2, -1))
+
+        # An ordinary, unrelated mutation -- painting a floor tile nowhere
+        # near the wall fixture -- must not be blocked by re-validating
+        # the pre-existing item.
+        await service.paint_tiles(
+            area=GridRect(GridPosition(0, 0), 1, 1), kind=TileKind.FLOOR, material=1
+        )
+
+        found = await service.find_furniture()
+        self.assertEqual(found, [preexisting])
 
 
 class TestMoveAndRemoveFurniture(unittest.IsolatedAsyncioTestCase):

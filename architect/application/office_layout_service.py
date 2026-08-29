@@ -462,8 +462,6 @@ def _furniture_placement_error(
     record = style_def.facing_record(facing)
     if record is None:
         return f"style {style_def.style!r} has no facing {facing.value if facing else None!r}"
-    if not office.grid.in_bounds(position):
-        return f"position ({position.col}, {position.row}) is outside the grid"
 
     if style_def.can_place_on_walls:
         # Real Pixel Agents rule (webview-ui's canPlaceFurniture in
@@ -475,10 +473,19 @@ def _furniture_placement_error(
         # its wall row -- checking `position` itself against WALL directly
         # rejected every real multi-row wall fixture (e.g. HANGING_PLANT,
         # footprint_height=2), since its anchor sits one row above the
-        # wall tile it's actually mounted on. Doesn't attempt to support a
-        # wall item's footprint extending above row 0 (upstream allows a
-        # negative row there); `Grid` has no concept of an out-of-bounds
-        # row, so that placement style isn't representable here.
+        # wall tile it's actually mounted on. Column still has to be a
+        # real column -- there's no known case of a wall fixture
+        # overhanging the grid horizontally -- but `position.row` may be
+        # negative: upstream allows this for a fixture hanging off a wall
+        # that's only one tile thick at the grid's own north edge, where
+        # there's no floor/void tile "above" row 0 for `position` to be
+        # in-bounds against in the first place -- only the wall segment
+        # the bottom row actually touches has to be real. (No south-edge
+        # equivalent: the wall row is always the *bottom* of the
+        # footprint by definition, so the rows above it are already
+        # inside the grid whenever the wall itself is the last row.)
+        if not (0 <= position.col < office.grid.width):
+            return f"position ({position.col}, {position.row}) is outside the grid"
         bottom_row = position.row + record.footprint_height - 1
         for dc in range(record.footprint_width):
             wall_cell = GridPosition(position.col + dc, bottom_row)
@@ -495,6 +502,8 @@ def _furniture_placement_error(
                     f"({wall_cell.col}, {wall_cell.row}) is {actual_kind.value}, not wall"
                 )
     else:
+        if not office.grid.in_bounds(position):
+            return f"position ({position.col}, {position.row}) is outside the grid"
         for cell in styles.occupied_cells(style_def.style, facing, position):
             if not office.grid.in_bounds(cell):
                 return f"footprint extends outside the grid at ({cell.col}, {cell.row})"
@@ -506,7 +515,13 @@ def _furniture_placement_error(
                 )
 
     for cell in styles.occupied_cells(style_def.style, facing, position):
-        if not office.grid.in_bounds(cell):
+        # A can_place_on_walls style's footprint can legitimately reach a
+        # row that doesn't exist in `Grid` at all (the phantom space above
+        # row 0 the comment above describes) -- nothing real can occupy
+        # that space, but another wall fixture's *own* phantom cells can
+        # still collide with it, so this still has to fall through to the
+        # `occupied` lookup below rather than returning outright.
+        if not office.grid.in_bounds(cell) and not style_def.can_place_on_walls:
             return f"footprint extends outside the grid at ({cell.col}, {cell.row})"
         existing = occupied.get(cell)
         if existing is None:

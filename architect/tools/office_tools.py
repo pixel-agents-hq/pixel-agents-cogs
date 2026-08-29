@@ -108,9 +108,17 @@ class FurnitureSummary(BaseModel):
         description=(
             "This item's decorative rows -- not in occupied_cells, so nothing is rejected "
             "for landing here. This is exactly where a chair (or anything else) belongs to "
-            "sit flush against this side of the item, e.g. a south-facing desk's background "
-            "cells are its north/back edge: anchor a chair there directly, not one tile "
-            "further north of the full footprint. Empty for a style with no background rows."
+            "sit flush against this side of the item -- ANCHOR A CHAIR ON THIS ROW DIRECTLY, "
+            "not one tile further out. Applies the same way whether the style has a facing "
+            "(e.g. a south-facing desk's background cells are its north/back edge) or not "
+            "(e.g. a facing-less table_front's background_cells are still its anchor row, the "
+            "one occupied_cells excludes -- seat a chair there, not at anchor_row - 1). This "
+            "row is easy to get wrong specifically because it's the *only* side of a multi-row "
+            "item that works this way: every other side (south/east/west, or wherever "
+            "occupied_cells' own outer edge is) wants a chair one tile *past* occupied_cells "
+            "instead -- do not place all four sides the same number of tiles from the anchor by "
+            "symmetry, they are not the same rule. See find_furniture_anchors for a worked "
+            "example with real numbers. Empty for a style with no background rows."
         ),
     )
 
@@ -592,7 +600,20 @@ class FindFurnitureAnchorsTool:
         "can require (see place_furniture's own description); this saves working out the "
         "correct bottom-row-touches-wall math by hand or discovering it via a failed "
         "place_furniture call. Use this before place_furniture whenever you're unsure a spot "
-        "is valid, or want the closest legal position to something already placed."
+        "is valid, or want the closest legal position to something already placed.\n\n"
+        "Worked example -- seating chairs on all four sides of a table, the case most likely "
+        "to get one side wrong: a table_front anchored at (9, 4) with footprint_width=3, "
+        "footprint_height=4, background_tiles=1 reports occupied_cells starting at row 5 (rows "
+        "5-7) and background_cells at row 4 (its own anchor row) in its place_furniture/"
+        "describe_office/find_furniture summary. South/east/west chairs are simple: search the "
+        "single-tile strip immediately past occupied_cells' outer edge on that side (row 8 for "
+        "south, col 8/col 12 for west/east) -- background_tiles never affects those sides. The "
+        "north side is the one that differs: because row 4 is background (non-blocking, not "
+        "'empty space to also leave clear'), the flush north anchor is row 4 itself, not row 3 "
+        "-- search area col=9, row=4, width=3, height=1 for the chair's style, not "
+        "col=9, row=3. Do not assume all four sides sit the same number of tiles from the "
+        "anchor; call this tool per side rather than computing the north side by symmetry with "
+        "the others."
     )
 
     def __init__(self, service: OfficeLayoutService, style_loader: FurnitureStyleLoader) -> None:

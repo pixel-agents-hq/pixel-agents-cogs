@@ -90,7 +90,14 @@ def build_agent_card(*, tools: Sequence[ToolSpec]) -> AgentCard:
                 url="http://placeholder/", protocol_binding=TransportProtocol.JSONRPC.value
             )
         ],
-        capabilities=AgentCapabilities(),
+        # streaming=True: required for a caller (pico) to receive the
+        # intermediate TASK_STATE_WORKING status updates execute() emits
+        # below when debug_logging is on -- a2a-sdk's own client falls back
+        # to a single aggregated final response otherwise (verified against
+        # the installed a2a-sdk: BaseClient.send_message only calls the
+        # streaming transport when both the client's ClientConfig.streaming
+        # and this card's capabilities.streaming are True).
+        capabilities=AgentCapabilities(streaming=True),
         default_input_modes=["text/plain"],
         default_output_modes=["text/plain"],
         skills=skills,
@@ -156,6 +163,18 @@ class ArchitectAgentExecutor(AgentExecutor):
             )
             return
 
+        async def _emit_debug(text: str) -> None:
+            # Best-effort, same convention CogBase._publish_activity uses
+            # for its own pub/sub publish -- a transport hiccup here must
+            # never break the tool loop or suppress the final answer.
+            try:
+                await updater.update_status(
+                    TaskState.TASK_STATE_WORKING,
+                    message=updater.new_agent_message([Part(text=text)]),
+                )
+            except Exception:
+                log.warning("architect: failed to emit debug status update", exc_info=True)
+
         settings = await self._settings()
         tools = list(self._tools)
         if self._mcp_tools is not None:
@@ -170,6 +189,7 @@ class ArchitectAgentExecutor(AgentExecutor):
             max_tool_calls=settings.max_tool_calls,
             debug=settings.debug_logging,
             on_activity=self._publish_activity,
+            on_debug_event=_emit_debug,
         )
 
         if result.stopped_reason != "final_text" or result.text is None:

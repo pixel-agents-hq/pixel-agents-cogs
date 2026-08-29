@@ -435,3 +435,180 @@ class TestOnActivity(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(result.stopped_reason, "final_text")
+
+
+class TestOnDebugEvent(unittest.IsolatedAsyncioTestCase):
+    """`on_debug_event` is a separate sink from `on_activity` -- richer text
+    (full thinking prose, tool name + raw arguments, then result/error) and
+    only ever fires when `debug=True`. See tool_loop_service.py's own
+    docstring on why the two must not be conflated."""
+
+    async def test_reports_thinking_call_and_result_when_debug_is_on(self) -> None:
+        llm = ScriptedLLM(
+            [
+                _response(content="let me check that", tool_calls=[_tool_call("call-1")]),
+                _response(content="done: hi"),
+            ]
+        )
+        service = ToolLoopService(llm)
+        events: list[str] = []
+
+        async def record(event: str) -> None:
+            events.append(event)
+
+        await service.run(
+            base_url="https://x",
+            api_key="k",
+            model="m",
+            system_prompt="sys",
+            user_input="echo hi",
+            tools=[EchoTool()],
+            max_tool_calls=5,
+            debug=True,
+            on_debug_event=record,
+        )
+
+        self.assertEqual(events[0], "thinking: let me check that")
+        self.assertEqual(events[1], 'calling echo({"text": "hi"})')
+        self.assertEqual(events[2], 'echo -> [ok] {"heard":"hi"}')
+
+    async def test_reports_error_status_word_for_a_failed_call(self) -> None:
+        llm = ScriptedLLM(
+            [_response(tool_calls=[_tool_call("call-1", name="nope")]), _response(content="ok")]
+        )
+        service = ToolLoopService(llm)
+        events: list[str] = []
+
+        async def record(event: str) -> None:
+            events.append(event)
+
+        await service.run(
+            base_url="https://x",
+            api_key="k",
+            model="m",
+            system_prompt="sys",
+            user_input="echo hi",
+            tools=[EchoTool()],
+            max_tool_calls=5,
+            debug=True,
+            on_debug_event=record,
+        )
+
+        self.assertIn("nope -> [error]", events[-1])
+
+    async def test_reports_when_max_tool_calls_is_hit(self) -> None:
+        llm = ScriptedLLM(
+            [
+                _response(tool_calls=[_tool_call("call-1")]),
+                _response(tool_calls=[_tool_call("call-2")]),
+            ]
+        )
+        service = ToolLoopService(llm)
+        events: list[str] = []
+
+        async def record(event: str) -> None:
+            events.append(event)
+
+        await service.run(
+            base_url="https://x",
+            api_key="k",
+            model="m",
+            system_prompt="sys",
+            user_input="echo hi",
+            tools=[EchoTool()],
+            max_tool_calls=1,
+            debug=True,
+            on_debug_event=record,
+        )
+
+        self.assertIn("stopping: hit max_tool_calls (1)", events[-1])
+
+    async def test_no_debug_events_when_debug_is_off(self) -> None:
+        llm = ScriptedLLM(
+            [
+                _response(content="let me check that", tool_calls=[_tool_call("call-1")]),
+                _response(content="done: hi"),
+            ]
+        )
+        service = ToolLoopService(llm)
+        events: list[str] = []
+
+        async def record(event: str) -> None:
+            events.append(event)
+
+        await service.run(
+            base_url="https://x",
+            api_key="k",
+            model="m",
+            system_prompt="sys",
+            user_input="echo hi",
+            tools=[EchoTool()],
+            max_tool_calls=5,
+            debug=False,
+            on_debug_event=record,
+        )
+
+        self.assertEqual(events, [])
+
+    async def test_on_activity_is_unaffected_by_on_debug_event(self) -> None:
+        """Both sinks can be wired at once and each gets its own shape of
+        text -- on_activity's coarse summaries are untouched by
+        on_debug_event's richer ones."""
+
+        llm = ScriptedLLM(
+            [
+                _response(content="let me check that", tool_calls=[_tool_call("call-1")]),
+                _response(content="done: hi"),
+            ]
+        )
+        service = ToolLoopService(llm)
+        activity: list[str] = []
+        debug_events: list[str] = []
+
+        async def record_activity(summary: str) -> None:
+            activity.append(summary)
+
+        async def record_debug(event: str) -> None:
+            debug_events.append(event)
+
+        await service.run(
+            base_url="https://x",
+            api_key="k",
+            model="m",
+            system_prompt="sys",
+            user_input="echo hi",
+            tools=[EchoTool()],
+            max_tool_calls=5,
+            debug=True,
+            on_activity=record_activity,
+            on_debug_event=record_debug,
+        )
+
+        self.assertEqual(activity, ["thinking: let me check that", "using tool echo"])
+        self.assertEqual(
+            debug_events,
+            [
+                "thinking: let me check that",
+                'calling echo({"text": "hi"})',
+                'echo -> [ok] {"heard":"hi"}',
+            ],
+        )
+
+    async def test_omitting_on_debug_event_does_not_raise(self) -> None:
+        llm = ScriptedLLM(
+            [_response(tool_calls=[_tool_call("call-1")]), _response(content="done: hi")]
+        )
+        service = ToolLoopService(llm)
+
+        result = await service.run(
+            base_url="https://x",
+            api_key="k",
+            model="m",
+            system_prompt="sys",
+            user_input="echo hi",
+            tools=[EchoTool()],
+            max_tool_calls=5,
+            debug=True,
+        )
+
+        self.assertEqual(result.stopped_reason, "final_text")

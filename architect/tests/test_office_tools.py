@@ -484,3 +484,81 @@ class TestPaintTilesTool(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(output.status, "ok")
         tiles = await service.describe_tiles(area=GridRect(GridPosition(0, 0), 1, 1))
         self.assertEqual(tiles[0].kind, TileKind.WALL)
+
+    async def test_paint_wall_via_end_col_end_row_matches_width_height(self) -> None:
+        """col=1,end_col=3 (inclusive) must paint the identical 3-column
+        span as col=1,width=3 -- the equivalence the end_col/end_row
+        alternative promises callers who think in start/end tiles rather
+        than start tile + count."""
+
+        by_corner = _service()
+        await PaintTilesTool(by_corner).handler(
+            PaintTilesInput(col=1, row=1, end_col=3, end_row=1, kind="wall")
+        )
+        by_count = _service()
+        await PaintTilesTool(by_count).handler(
+            PaintTilesInput(col=1, row=1, width=3, height=1, kind="wall")
+        )
+
+        area = GridRect(GridPosition(0, 0), 5, 5)
+        self.assertEqual(
+            await by_corner.describe_tiles(area=area), await by_count.describe_tiles(area=area)
+        )
+
+    async def test_paint_wall_end_col_paints_every_intended_tile(self) -> None:
+        """Regression guard for the silent undershoot this alternative
+        exists to prevent: a wall meant to span columns 1 through 3
+        inclusive must come out as exactly 3 wall tiles, not 2 (the
+        off-by-one an LLM computing width from two endpoints could
+        silently produce without failing any bounds check)."""
+
+        service = _service()
+        output = await PaintTilesTool(service).handler(
+            PaintTilesInput(col=1, row=1, end_col=3, end_row=1, kind="wall")
+        )
+
+        self.assertEqual(output.status, "ok")
+        area = GridRect(GridPosition(0, 0), 5, 5)
+        tiles = await service.describe_tiles(area=area)
+        wall_cols = sorted(
+            position.col
+            for position, cell in zip(area.positions(), tiles, strict=True)
+            if position.row == 1 and cell.kind == TileKind.WALL
+        )
+        self.assertEqual(wall_cols, [1, 2, 3])
+
+    async def test_paint_tiles_rejects_both_width_height_and_end_col_end_row(self) -> None:
+        output = await PaintTilesTool(_service()).handler(
+            PaintTilesInput(col=0, row=0, width=1, height=1, end_col=0, end_row=0, kind="wall")
+        )
+
+        self.assertEqual(output.status, "error")
+        assert output.message is not None
+        self.assertIn("exactly one", output.message)
+
+    async def test_paint_tiles_rejects_neither_width_height_nor_end_col_end_row(self) -> None:
+        output = await PaintTilesTool(_service()).handler(
+            PaintTilesInput(col=0, row=0, kind="wall")
+        )
+
+        self.assertEqual(output.status, "error")
+        assert output.message is not None
+        self.assertIn("exactly one", output.message)
+
+    async def test_paint_tiles_rejects_end_col_before_col(self) -> None:
+        output = await PaintTilesTool(_service()).handler(
+            PaintTilesInput(col=3, row=0, end_col=1, end_row=0, kind="wall")
+        )
+
+        self.assertEqual(output.status, "error")
+        assert output.message is not None
+        self.assertIn("end_col", output.message)
+
+    async def test_paint_tiles_end_col_out_of_bounds_reports_the_overshoot(self) -> None:
+        output = await PaintTilesTool(_service()).handler(
+            PaintTilesInput(col=0, row=0, end_col=5, end_row=0, kind="wall")
+        )
+
+        self.assertEqual(output.status, "error")
+        assert output.message is not None
+        self.assertIn("5x5", output.message)

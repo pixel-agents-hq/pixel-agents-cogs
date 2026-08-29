@@ -45,13 +45,27 @@ _PAINT_KIND_VALUES: tuple[str, ...] = (TileKind.FLOOR.value, TileKind.WALL.value
 class OccupiedCellSummary(BaseModel):
     col: int
     row: int
+    is_anchor: bool = Field(
+        description=(
+            "True when this cell is the item's anchor tile (the col/row on the "
+            "parent furniture summary, and the coordinate move_furniture/"
+            "place_furniture take). If no entry in occupied_cells has "
+            "is_anchor=True, the anchor sits outside the blocking footprint -- "
+            "common for a decorative background row (e.g. many desks) or a "
+            "wall-mounted item's rows above its wall-touching tile -- but "
+            "col/row is still the exact destination to pass."
+        )
+    )
 
 
 class FurnitureSummary(BaseModel):
     """`col`/`row` are the anchor tile -- the footprint's top-left corner,
     and the same values `move_furniture`/`place_furniture` take as their
     `col`/`row` input. `occupied_cells` is the item's full derived
-    footprint (section 6.4): a move or placement is rejected if its
+    footprint (section 6.4); each entry's `is_anchor` flags whether that
+    cell is the anchor itself -- when none are, the anchor sits outside the
+    blocking footprint (a decorative background row, or a wall item's row
+    above its wall-touching tile). A move or placement is rejected if its
     destination footprint overlaps another item's `occupied_cells`, except
     a surface item stacking onto a desk (or vice versa)."""
 
@@ -110,7 +124,7 @@ def _furniture_summary(item: FurnitureItem, styles: FurnitureStyleManifest) -> F
         label=item.label,
         color=item.color,
         occupied_cells=[
-            OccupiedCellSummary(col=cell.col, row=cell.row)
+            OccupiedCellSummary(col=cell.col, row=cell.row, is_anchor=cell == item.position)
             for cell in styles.occupied_cells(item.style, item.facing, item.position)
         ],
     )
@@ -188,7 +202,8 @@ class DescribeOfficeTool:
     description = (
         "Describe the current state of architect's office: zones, furniture, and seats. "
         "Each furniture item reports its anchor tile (col/row) and full occupied_cells "
-        "footprint so you can find a free destination without trial and error."
+        "footprint (each cell flagged is_anchor) so you can find a free destination "
+        "without trial and error."
     )
 
     def __init__(self, service: OfficeLayoutService, style_loader: FurnitureStyleLoader) -> None:
@@ -413,7 +428,10 @@ class PlaceFurnitureTool:
     name = "place_furniture"
     description = (
         "Place a new piece of furniture at an exact position, anchored on a floor or wall "
-        "tile as its style requires. Use describe_tiles first to find a free spot."
+        "tile as its style requires. For a wall-mounted style, the tile that must actually "
+        "touch a wall is the *bottom* row of the footprint (the occupied_cells entries with "
+        "the largest row value for that column), not col/row itself. Use describe_tiles "
+        "first to find a free spot."
     )
 
     def __init__(self, service: OfficeLayoutService, style_loader: FurnitureStyleLoader) -> None:
@@ -477,7 +495,11 @@ class MoveFurnitureTool:
         "item stacking onto a desk or vice versa. This is an atomic teleport, not a "
         "swap: moving an item onto a cell another item currently occupies fails, so to "
         "exchange two items' positions, move one to a free tile first, then move the "
-        "other into the vacated space."
+        "other into the vacated space. For a wall-mounted style, the tile that must "
+        "actually touch a wall is the *bottom* row of the destination footprint (the "
+        "occupied_cells entries with the largest row value for that column), not "
+        "col/row itself -- a multi-row wall fixture's anchor sits one or more rows "
+        "above the wall tile it's mounted on."
     )
 
     def __init__(self, service: OfficeLayoutService, style_loader: FurnitureStyleLoader) -> None:

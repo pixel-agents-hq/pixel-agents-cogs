@@ -40,8 +40,8 @@ same exchange as activity bubbles: the outgoing question attributed to
 pico's own Discord bot identity, the raw answer attributed to the
 consulted agent's *genuine* identity (`AgentRef.agent_key` --
 see `docs/office-agent-identity-design.md`, the same identity shape
-`architect/adapters/cog_base.py`'s `ARCHITECT_AGENT_REF` already
-publishes its own presence under). `AgentReplied`, not `AgentToolStarted`,
+corridor's own `register_agent` now auto-publishes presence under, see
+`docs/agent-directory-design.md`). `AgentReplied`, not `AgentToolStarted`,
 per that event's own docstring and `docs/corridor-pubsub-design.md`'s
 mapping table: `AgentReplied` is the one event every subscriber already
 renders as a labeled, auto-clearing activity bubble; `AgentToolStarted`

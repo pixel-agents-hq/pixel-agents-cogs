@@ -4,15 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Coroutine, Mapping
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, cast
 
 from aiohttp import web
 from redbot.core.bot import Red
 
 from corridor.domain import (
-    AgentPresenceChanged,
     AgentRef,
     AgentReplied,
     RegisteredAgent,
@@ -80,7 +79,6 @@ WEBVIEW_BASE_PATH = "/third-party/architect/static/"
 ARCHITECT_AGENT_REF = AgentRef(
     discord_user_id=None, guild_id=None, is_bot=True, agent_key="architect"
 )
-ARCHITECT_DISPLAY_NAME = "architect"
 
 # Conventional path for architect's own bundled avatar image -- passed to
 # both corridor.reply_sender() and RegisteredAgent.avatar_path regardless
@@ -156,12 +154,23 @@ class CogBase:
         self._webview_build_convention_stale = False
         # architect's own office WebSocket -- independent from floorplan's:
         # see docs/architect-design.md on why this webview must never share
-        # a live connection (or its layout) with floorplan's. No agents/
-        # seats are ever tracked here (NullSeatRepository), so
-        # OfficeService's bootstrap always reports an empty office roster;
-        # only the layout itself is ever rendered.
+        # a live connection (or its layout) with floorplan's. NullSeatRepository
+        # means no seat/palette assignment survives a restart -- it does NOT
+        # mean an empty agent roster: PresenceSubscriptionMixin
+        # (adapters/presence_subscription.py) feeds this OfficeService
+        # instance's genuine-agent roster from corridor's AgentPresenceChanged
+        # events, separately from seats/layout.
         self._client_hub = ClientHub(logger=log)
         self._office_service = OfficeService(NullSeatRepository(), self._send)
+        # Tracks the delayed clear tasks PresenceSubscriptionMixin's
+        # AgentReplied handler schedules -- cancelled at cog_unload so a
+        # reload never leaves an asyncio.sleep() dangling against a
+        # discarded OfficeService instance. Same "track, cancel, gather at
+        # shutdown" shape as floorplan's own TaskSupervisor
+        # (floorplan/application/tasks.py), duplicated in miniature rather
+        # than imported for the same "duplicated, not shared" reason noted
+        # throughout this package.
+        self._background_tasks: set[asyncio.Task[object]] = set()
         self._websocket_server = WebSocketServer(
             clients=self._client_hub,
             on_webview_ready=self._on_webview_ready,
@@ -196,7 +205,7 @@ class CogBase:
         self._reply = self._corridor.reply_sender(
             owner="Architect", avatar_path=AVATAR_PATH, category=ReplyCategory.AGENT
         )
-        await self._publish_presence("online")
+        await self._start_presence_tracking()
         await self._register_with_corridor()
         self._pixelagents = await ensure_loaded(self.bot, "pixelagents", "PixelAgents")
         await self._notify_owners_dashboard_missing_if_unloaded()
@@ -225,6 +234,16 @@ class CogBase:
             )
         except Exception:
             log.exception("architect: could not register with corridor's agent directory")
+
+    async def _start_presence_tracking(self) -> None:
+        """Overridden by PresenceSubscriptionMixin -- kept as a no-op stub
+        here so CogBase alone stays usable without that mixin, same
+        pattern as `_start_ws_server`/`_notify_owners_dashboard_missing_if_unloaded`.
+        Must run before `_register_with_corridor()`: that call is what now
+        triggers corridor's own auto-published "online" AgentPresenceChanged
+        for architect's own agent_key (see corridor/adapters/cog_base.py's
+        `register_agent`) -- subscribing any later would miss architect's
+        own self-registration event on every fresh load."""
 
     async def _start_ws_server(self) -> bool:
         """Overridden by OfficeGatewayMixin -- kept as a no-op-failure stub
@@ -312,27 +331,22 @@ class CogBase:
 
     async def cog_unload(self) -> None:
         await self._websocket_server.stop()
+        tasks = tuple(self._background_tasks)
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
         if self._corridor is not None:
-            await self._publish_presence("offline")
-            self._corridor.unregister_agent_owner("architect")
+            await self._corridor.unregister_agent_owner("architect")
             self._corridor.unregister_dependent("architect")
 
-    async def _publish_presence(self, status: Literal["online", "offline"]) -> None:
-        """Announces architect's own presence on corridor's event bus --
-        mirrors floorplan's on_member_join/on_member_remove publishing the
-        same AgentPresenceChanged shape for a Discord member. A publish
-        failure here must never fail cog_load/cog_unload itself."""
-
-        try:
-            await self._corridor.publish_event(
-                AgentPresenceChanged(
-                    agent=ARCHITECT_AGENT_REF,
-                    display_name=ARCHITECT_DISPLAY_NAME,
-                    status=status,
-                )
-            )
-        except Exception:
-            log.exception("architect: failed to publish presence %s", status)
+    def _create_background_task(
+        self, coroutine: Coroutine[Any, Any, object], *, name: str
+    ) -> asyncio.Task[object]:
+        task = asyncio.create_task(coroutine, name=name)
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+        return task
 
     async def _publish_activity(self, summary: str) -> None:
         """Reports one tool-use or "thinking" step from architect's own

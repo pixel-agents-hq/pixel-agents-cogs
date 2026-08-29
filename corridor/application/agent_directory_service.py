@@ -53,5 +53,13 @@ class AgentDirectoryService:
     def list_agents(self) -> tuple[RegisteredAgent, ...]:
         return tuple(agent for _, agent in self._agents.values())
 
+    def list_agents_for_owner(self, owner: str) -> tuple[RegisteredAgent, ...]:
+        """Every agent currently registered under `owner` -- lets a caller
+        snapshot exactly which agents an unregister_owner() call is about
+        to remove, before it removes them, so it can publish one
+        AgentPresenceChanged(status="offline") per agent afterward."""
+
+        return tuple(agent for o, agent in self._agents.values() if o == owner)
+
 
 __all__ = ["AgentDirectoryService"]

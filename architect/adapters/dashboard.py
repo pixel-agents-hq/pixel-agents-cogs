@@ -5,16 +5,21 @@ A deliberate parallel copy of `floorplan/adapters/dashboard.py`'s
 independent consumers of pixelagents' built `webview_dist/`, not a shared
 library.
 
-Only the public page and its static assets are served here -- no
-`/session` ticket endpoint and no WebSocket server, unlike floorplan.
-There is no live-editable office state to authorize an editor into yet;
-that's deferred to the layout-editing tools this webview exists to
-support (see docs/architect-design.md section 8 and the placeholder tools
-in `tools/placeholder_tools.py`). The bundle's own ticket-shim script
+Only the public page and its static assets are served here -- still no
+`/session` ticket endpoint, since architect's layout has no
+editor-authorization concept at all (a deliberate decision, not a gap --
+see `infrastructure/websocket.py`'s module docstring and
+docs/architect-design.md section 5.1). architect's own WebSocket server
+(`infrastructure/websocket.py`, `infrastructure/client_hub.py`) is bound
+directly by `cog_base.py`/`office_gateway.py`, independent of this
+Dashboard-route module -- this file only ever serves the static page and
+its assets. The bundle's own ticket-shim script
 (`WebviewAssetProvider.dashboard_webview_response`, injected
-unconditionally) degrades gracefully without either: its `/session` fetch
-resolves to a null ticket on a 404, and its `WebSocket` patch never fires
-because nothing here ever opens a `/ws` socket for it to intercept.
+unconditionally) degrades gracefully without a `/session` endpoint here:
+its fetch resolves to a null ticket on a 404, and its own `WebSocket`
+patch never intercepts anything, since the real live connection is
+opened against `/architect/ws` by a separate client-side rewrite shim
+(`infrastructure/webview.py`'s `WS_REWRITE_SHIM`), not by this file.
 """
 
 from __future__ import annotations

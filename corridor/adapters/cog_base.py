@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
-from typing import Any, TypeVar, cast
+from typing import Any, Literal, TypeVar, cast
 
 import discord
 from redbot.core import commands
@@ -26,6 +26,8 @@ from ..application import (
 )
 from ..domain import (
     A2ASettings,
+    AgentPresenceChanged,
+    AgentRef,
     FooterOverride,
     GuildSettings,
     IconPreference,
@@ -453,8 +455,11 @@ class CogBase:
         self._event_bus.unsubscribe_owner(cog.qualified_name)
         self._tool_registry.unregister_owner(cog.qualified_name)
         self._tool_registry.unregister_visibility_filter_owner(cog.qualified_name)
+        removed_agents = self._agent_directory.list_agents_for_owner(cog.qualified_name)
         self._agent_directory.unregister_owner(cog.qualified_name)
         self._a2a_server.rebuild_routes(self._agent_directory.list_agents())
+        for agent in removed_agents:
+            await self._publish_agent_presence(agent, status="offline")
         self._agent_tool_servers.unregister_owner(cog.qualified_name)
 
     # --- Cross-cog LLM tool registry -------------------------------------------
@@ -599,22 +604,53 @@ class CogBase:
         )
         self._agent_directory.register(rewritten, owner=owner)
         self._a2a_server.rebuild_routes(self._agent_directory.list_agents())
+        await self._publish_agent_presence(agent, status="online")
 
-    def unregister_agent_owner(self, owner: str) -> None:
+    async def unregister_agent_owner(self, owner: str) -> None:
         """Call from the registering cog's own `cog_unload` -- corridor
         does not track/cascade a registrant's lifecycle the way
         `register_dependent` does the reverse direction for a dependent
         cog."""
 
+        removed = self._agent_directory.list_agents_for_owner(owner)
         self._agent_directory.unregister_owner(owner)
         self._a2a_server.rebuild_routes(self._agent_directory.list_agents())
+        for agent in removed:
+            await self._publish_agent_presence(agent, status="offline")
 
-    def unregister_agent(self, agent_key: str) -> None:
+    async def unregister_agent(self, agent_key: str) -> None:
         """Remove one agent by key, regardless of owner. A no-op if
         `agent_key` isn't registered."""
 
+        existing = next(
+            (a for a in self._agent_directory.list_agents() if a.agent_key == agent_key), None
+        )
         self._agent_directory.unregister(agent_key)
         self._a2a_server.rebuild_routes(self._agent_directory.list_agents())
+        if existing is not None:
+            await self._publish_agent_presence(existing, status="offline")
+
+    async def _publish_agent_presence(
+        self, agent: RegisteredAgent, *, status: Literal["online", "offline"]
+    ) -> None:
+        """A registered A2A agent's directory membership doubles as its
+        office-canvas presence -- registering/unregistering publishes the
+        same `AgentPresenceChanged` shape floorplan's/architect's own
+        subscribers already consume for a genuine agent (see
+        docs/office-agent-identity-design.md), so a registering cog no
+        longer needs to hand-roll its own separate presence-publish calls
+        at `cog_load`/`cog_unload`. `EventBusService.publish` never
+        raises (per-subscriber isolation), so this needs no try/except."""
+
+        await self._event_bus.publish(
+            AgentPresenceChanged(
+                agent=AgentRef(
+                    discord_user_id=None, guild_id=None, is_bot=True, agent_key=agent.agent_key
+                ),
+                display_name=agent.card.name or agent.agent_key,
+                status=status,
+            )
+        )
 
     def list_agents(self) -> tuple[RegisteredAgent, ...]:
         """Every currently registered agent -- pico calls this once per

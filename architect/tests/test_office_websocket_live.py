@@ -16,8 +16,10 @@ from tempfile import TemporaryDirectory
 
 import aiohttp
 
+from pixelagents.application.office import to_genuine_agent_id
+
 from ..architect import Architect
-from .conftest import FakeBot, FakePixelAgents
+from .conftest import FakeBot, FakePixelAgents, FakeUser
 
 _PORT = 8942
 
@@ -184,3 +186,40 @@ class TestOfficeWebSocketLiveRoundTrip(unittest.IsolatedAsyncioTestCase):
 
             assert layout_message is not None
             self.assertEqual(layout_message["layout"], before)
+
+    async def test_bootstrap_includes_architects_own_agent_and_bot_account(self) -> None:
+        """The actual end-to-end proof the reported symptom ("architect's
+        dashboard shows no agents") is fixed: a real browser connection's
+        bootstrap sequence includes architect's own genuine-agent ID (from
+        its self-registration with corridor) and its own Discord bot
+        account's synthetic ID -- not just that the application-layer
+        roster dict has entries."""
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_bundle_with_default_layout(root, tiles=[7, 8, 9])
+            bot = FakeBot(pixelagents=FakePixelAgents(dist_path=root), user=FakeUser(user_id=42))
+            cog = Architect(bot=bot)
+            await cog.cog_load()
+            self.addAsyncCleanup(cog.cog_unload)
+            await cog._sync_webview_assets()  # type: ignore[attr-defined]
+            await cog._websocket_server.stop()  # type: ignore[attr-defined]
+            await cog._websocket_server.start("127.0.0.1", _PORT + 4)  # type: ignore[attr-defined]
+
+            async with (
+                aiohttp.ClientSession() as session,
+                session.ws_connect(f"http://127.0.0.1:{_PORT + 4}/architect/ws") as socket,
+            ):
+                await socket.send_str(json.dumps({"type": "webviewReady"}))
+
+                existing_agents_message = None
+                async for raw in socket:
+                    message = json.loads(raw.data)
+                    if message.get("type") == "existingAgents":
+                        existing_agents_message = message
+                        break
+
+            assert existing_agents_message is not None
+            agent_ids = set(existing_agents_message["agents"])
+            self.assertIn(to_genuine_agent_id("architect"), agent_ids)
+            self.assertIn(to_genuine_agent_id("discord-bot-42"), agent_ids)

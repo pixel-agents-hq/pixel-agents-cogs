@@ -15,7 +15,14 @@ from a2a.types import AgentCapabilities, AgentCard, AgentInterface
 from a2a.utils import TransportProtocol
 
 from ..corridor import Corridor
-from ..domain import RegisteredAgent, RegisteredTool, ReplyField, ReplyMode, llm_tool
+from ..domain import (
+    AgentPresenceChanged,
+    RegisteredAgent,
+    RegisteredTool,
+    ReplyField,
+    ReplyMode,
+    llm_tool,
+)
 from ..infrastructure import LiteLLMClient
 from .conftest import FakeBot, FakeContext, FakeGuild, FakeMember
 
@@ -50,6 +57,13 @@ def _agent(agent_key: str, *, avatar_path: Path | None = None) -> RegisteredAgen
     return RegisteredAgent(
         agent_key=agent_key, card=card, executor=_DummyExecutor(), avatar_path=avatar_path
     )
+
+
+def _recorder(sink: list) -> object:
+    async def handler(event: object) -> None:
+        sink.append(event)
+
+    return handler
 
 
 def _tool(
@@ -542,16 +556,70 @@ class TestCorridorApi(unittest.IsolatedAsyncioTestCase):
         await self.corridor.register_agent(_agent("architect"), owner="Architect")
         await self.corridor.register_agent(_agent("agent-n"), owner="AgentN")
 
-        self.corridor.unregister_agent_owner("Architect")
+        await self.corridor.unregister_agent_owner("Architect")
 
         self.assertEqual([agent.agent_key for agent in self.corridor.list_agents()], ["agent-n"])
 
     async def test_unregister_agent_removes_by_key_regardless_of_owner(self) -> None:
         await self.corridor.register_agent(_agent("architect"), owner="Architect")
 
-        self.corridor.unregister_agent("architect")
+        await self.corridor.unregister_agent("architect")
 
         self.assertEqual(self.corridor.list_agents(), ())
+
+    async def test_register_agent_publishes_online_presence(self) -> None:
+        received: list[object] = []
+        self.corridor.subscribe_event(AgentPresenceChanged, _recorder(received), owner="Test")
+
+        await self.corridor.register_agent(_agent("architect"), owner="Architect")
+
+        self.assertEqual(len(received), 1)
+        event = received[0]
+        assert isinstance(event, AgentPresenceChanged)
+        self.assertEqual(event.status, "online")
+        self.assertEqual(event.display_name, "architect")
+        self.assertEqual(event.agent.agent_key, "architect")
+        self.assertTrue(event.agent.is_bot)
+        self.assertIsNone(event.agent.discord_user_id)
+        self.assertIsNone(event.agent.guild_id)
+
+    async def test_unregister_agent_owner_publishes_offline_presence_for_each_removed_agent(
+        self,
+    ) -> None:
+        await self.corridor.register_agent(_agent("architect"), owner="Architect")
+        await self.corridor.register_agent(_agent("agent-n"), owner="Architect")
+        received: list[object] = []
+        self.corridor.subscribe_event(AgentPresenceChanged, _recorder(received), owner="Test")
+
+        await self.corridor.unregister_agent_owner("Architect")
+
+        offline_keys = {
+            event.agent.agent_key
+            for event in received
+            if isinstance(event, AgentPresenceChanged) and event.status == "offline"
+        }
+        self.assertEqual(offline_keys, {"architect", "agent-n"})
+
+    async def test_unregister_agent_publishes_offline_presence(self) -> None:
+        await self.corridor.register_agent(_agent("architect"), owner="Architect")
+        received: list[object] = []
+        self.corridor.subscribe_event(AgentPresenceChanged, _recorder(received), owner="Test")
+
+        await self.corridor.unregister_agent("architect")
+
+        self.assertEqual(len(received), 1)
+        event = received[0]
+        assert isinstance(event, AgentPresenceChanged)
+        self.assertEqual(event.status, "offline")
+        self.assertEqual(event.agent.agent_key, "architect")
+
+    async def test_unregister_agent_for_unknown_key_publishes_nothing(self) -> None:
+        received: list[object] = []
+        self.corridor.subscribe_event(AgentPresenceChanged, _recorder(received), owner="Test")
+
+        await self.corridor.unregister_agent("nobody")
+
+        self.assertEqual(received, [])
 
     async def test_cog_load_starts_the_shared_a2a_listener(self) -> None:
         await self.corridor.set_a2a_port(8960)

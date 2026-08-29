@@ -48,18 +48,28 @@ class OccupiedCellSummary(BaseModel):
 
 
 class FurnitureSummary(BaseModel):
+    """`col`/`row` are the anchor tile -- the footprint's top-left corner,
+    and the same values `move_furniture`/`place_furniture` take as their
+    `col`/`row` input. `occupied_cells` is the item's full derived
+    footprint (section 6.4): a move or placement is rejected if its
+    destination footprint overlaps another item's `occupied_cells`, except
+    a surface item stacking onto a desk (or vice versa)."""
+
     id: str
     kind: str
     style: str
-    col: int
-    row: int
+    col: int = Field(description="Column of the anchor tile (the footprint's top-left corner).")
+    row: int = Field(description="Row of the anchor tile (the footprint's top-left corner).")
     facing: str | None = None
     label: str | None = None
     color: str | None = None
-    # Full footprint (section 6.4), not just the anchor tile -- lets the
-    # LLM reason about what a placed item actually blocks without a
-    # separate describe_tiles round trip.
-    occupied_cells: list[OccupiedCellSummary] = Field(default_factory=list)
+    occupied_cells: list[OccupiedCellSummary] = Field(
+        default_factory=list,
+        description=(
+            "Every tile this item's footprint currently blocks; overlapping any of "
+            "these blocks a move or placement there (except desk/surface-item stacking)."
+        ),
+    )
 
 
 class ZoneSummary(BaseModel):
@@ -175,7 +185,11 @@ class DescribeOfficeOutput(BaseModel):
 
 class DescribeOfficeTool:
     name = "describe_office"
-    description = "Describe the current state of architect's office: zones, furniture, and seats."
+    description = (
+        "Describe the current state of architect's office: zones, furniture, and seats. "
+        "Each furniture item reports its anchor tile (col/row) and full occupied_cells "
+        "footprint so you can find a free destination without trial and error."
+    )
 
     def __init__(self, service: OfficeLayoutService, style_loader: FurnitureStyleLoader) -> None:
         self._service = service
@@ -433,8 +447,14 @@ def _build_move_furniture_input() -> type[BaseModel]:
     return create_model(
         "MoveFurnitureInput",
         furniture_id=(str, Field(description="Id of the furniture item to move.")),
-        col=(int, Field(description="New tile column.")),
-        row=(int, Field(description="New tile row.")),
+        col=(
+            int,
+            Field(description="New anchor column (top-left corner of the item's footprint)."),
+        ),
+        row=(
+            int,
+            Field(description="New anchor row (top-left corner of the item's footprint)."),
+        ),
         facing=(
             Literal[_DIRECTION_VALUES] | None,
             Field(default=None, description="New facing direction. Omit to keep the current one."),
@@ -450,7 +470,15 @@ class MoveFurnitureOutput(BaseModel):
 
 class MoveFurnitureTool:
     name = "move_furniture"
-    description = "Move (and optionally reorient) an existing piece of furniture."
+    description = (
+        "Move (and optionally reorient) an existing piece of furniture to a new anchor "
+        "tile. The move is rejected if the item's footprint at the destination would "
+        "overlap another item's occupied_cells (see describe_office), except a surface "
+        "item stacking onto a desk or vice versa. This is an atomic teleport, not a "
+        "swap: moving an item onto a cell another item currently occupies fails, so to "
+        "exchange two items' positions, move one to a free tile first, then move the "
+        "other into the vacated space."
+    )
 
     def __init__(self, service: OfficeLayoutService, style_loader: FurnitureStyleLoader) -> None:
         self._service = service

@@ -151,10 +151,43 @@ class TestOnAgentReplied(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(self.sent, [])
 
-    async def test_a_discord_account_shaped_reply_is_a_noop(self) -> None:
+    async def test_a_human_discord_account_shaped_reply_is_a_noop(self) -> None:
         await self.cog._on_agent_replied(  # must not raise
             AgentReplied(
                 agent=AgentRef(discord_user_id=123, guild_id=456, is_bot=False), summary="Hello"
+            )
+        )
+
+        self.assertEqual(self.sent, [])
+
+    async def test_picos_own_discord_account_shaped_reply_sends_a_message_activity(self) -> None:
+        """pico has no agent_key of its own (it only consults agents, never
+        registers as one) -- its Discord replies (reply_tool.py) and its
+        "Asking <agent>" consult announcements (consult_agent_tool.py) both
+        attribute themselves to a Discord-account-shaped AgentRef matching
+        the bot's own account, seeded onto the roster at cog_load as
+        `discord-bot-{bot.user.id}` (FakeBot's default user id is 999)."""
+
+        await self.cog._on_agent_replied(
+            AgentReplied(
+                agent=AgentRef(discord_user_id=999, guild_id=100, is_bot=True),
+                summary="Asking architect: hello",
+            )
+        )
+
+        sent_types = [message["type"] for message in self.sent]
+        self.assertEqual(sent_types, ["agentToolStart", "agentSelected"])
+
+    async def test_a_different_bots_discord_account_shaped_reply_is_a_noop(self) -> None:
+        """Some other Discord bot in a guild floorplan tracks (include_bots
+        enabled) must not spuriously populate architect's dashboard --
+        only the one Discord-account identity architect actually seeded
+        (its own bot's account) is recognized."""
+
+        await self.cog._on_agent_replied(
+            AgentReplied(
+                agent=AgentRef(discord_user_id=555, guild_id=100, is_bot=True),
+                summary="Hello",
             )
         )
 

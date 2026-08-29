@@ -6,8 +6,11 @@ EventSubscriptionsMixin (floorplan/adapters/event_subscriptions.py),
 which this mirrors in spirit but not in scope: architect has no Discord
 member sync of its own (no guild scope at all, see
 docs/architect-design.md section 6), so a Discord-account-shaped AgentRef
-is silently ignored here -- only genuine-agent identities (AgentRef.agent_key
-set) are relevant. Not imported from floorplan directly for the same
+is ignored by presence handling -- only genuine-agent identities
+(AgentRef.agent_key set) are reconciled onto the roster. AgentReplied
+handling is slightly wider (see `_reply_identity`): it also recognizes
+the one Discord-account identity architect does track, its own bot's
+account. Not imported from floorplan directly for the same
 "duplicated, not shared" reason floorplan's own transport classes are
 duplicated rather than imported (docs/architect-design.md section 5).
 
@@ -49,6 +52,38 @@ def _genuine_identity(agent: AgentRef) -> GenuineAgentKey | None:
     if agent.agent_key is None:
         return None
     return GenuineAgentKey(agent_key=agent.agent_key)
+
+
+def _reply_identity(agent: AgentRef, own_bot_user_id: int | None) -> GenuineAgentKey | None:
+    """Wider than `_genuine_identity`: pico's own `AgentReplied` publishes
+    (both its Discord reply_tool and its "Asking <agent>" consult_agent_tool
+    announcement -- see pico/tools/reply_tool.py and
+    pico/tools/consult_agent_tool.py) attribute themselves to a
+    Discord-account-shaped `AgentRef` (discord_user_id+guild_id,
+    `agent_key=None`), the same shape a real Discord human uses -- pico has
+    no `agent_key` of its own, since it never registers as an A2A agent
+    (only *consults* them). That shape can never match a roster entry
+    reconciled through `_genuine_identity`/AgentPresenceChanged, so those
+    replies were silently dropped.
+
+    Narrowly recognize just the one Discord-account identity architect
+    actually tracks: its own bot's account, seeded once at cog_load by
+    `_reconcile_own_bot_account` under the same `discord-bot-{id}` key
+    built here. Matching on the live `own_bot_user_id` (not merely
+    `agent.is_bot`) keeps this from also picking up some other guild's
+    unrelated bot member presence/replies, which architect -- scoped to no
+    guild -- has no roster entry for and must keep ignoring."""
+
+    if agent.agent_key is not None:
+        return GenuineAgentKey(agent_key=agent.agent_key)
+    if (
+        agent.is_bot
+        and agent.discord_user_id is not None
+        and own_bot_user_id is not None
+        and agent.discord_user_id == own_bot_user_id
+    ):
+        return _own_bot_account_key(agent.discord_user_id)
+    return None
 
 
 class PresenceSubscriptionMixin(CogBase):
@@ -110,9 +145,12 @@ class PresenceSubscriptionMixin(CogBase):
         unconditionally onto corridor's shared bus -- only the
         `is_tracked` gate (an agent must already be on the roster via
         AgentPresenceChanged before its messages render) is new here,
-        same gate floorplan applies."""
+        same gate floorplan applies. Uses `_reply_identity`, not
+        `_genuine_identity` -- see that function's docstring for why pico's
+        own replies need the wider match."""
 
-        identity = _genuine_identity(event.agent)
+        own_bot_user_id = self.bot.user.id if self.bot.user is not None else None
+        identity = _reply_identity(event.agent, own_bot_user_id)
         if identity is None or not self._office_service.is_tracked(identity):
             return
         await self._office_service.send_genuine_agent_activity(identity, event.summary)

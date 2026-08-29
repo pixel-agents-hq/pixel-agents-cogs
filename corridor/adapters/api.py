@@ -121,3 +121,19 @@ async def send_rendered_reply(
         reply, avatar_path=avatar_path, footer_icon_path=footer_icon_path
     )
     return await ctx.send(files=files, **kwargs)
+
+
+async def send_rendered_reply_to_channel(
+    channel: discord.abc.Messageable,
+    reply: RenderedReply,
+    *,
+    avatar_path: Path | None = None,
+    footer_icon_path: Path | None = None,
+) -> discord.Message:
+    """`send_rendered_reply`'s twin for a caller with no live `ctx` -- see
+    `CogBase.send_channel_reply`/docs/suggestionbox-design.md §5."""
+
+    kwargs, files = build_reply_payload(
+        reply, avatar_path=avatar_path, footer_icon_path=footer_icon_path
+    )
+    return await channel.send(files=files, **kwargs)

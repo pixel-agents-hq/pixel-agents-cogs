@@ -12,7 +12,8 @@
     },
     "requirements": [
         "aiohttp",
-        "pydantic>=2.11.3,<2.12"
+        "pydantic>=2.11.3,<2.12",
+        "typing-inspection<0.4.3"
     ],
     "tags": [
         "floorplan",

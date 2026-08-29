@@ -13,6 +13,7 @@ on:
       - "testbench/**/*.py"
       - "deskutils/**/*.py"
       - "architect/**/*.py"
+      - "suggestionbox/**/*.py"
       - "contracts/pixel_index/**"
       - "contracts/pixel_agents/**"
       - "contracts/corridor/**"
@@ -32,6 +33,7 @@ on:
       - "testbench/**/*.py"
       - "deskutils/**/*.py"
       - "architect/**/*.py"
+      - "suggestionbox/**/*.py"
       - "contracts/pixel_index/**"
       - "contracts/pixel_agents/**"
       - "contracts/corridor/**"
@@ -73,11 +75,30 @@ jobs:
           # process-wide A2A listener (uvicorn/Starlette on top of a2a-sdk's
           # http-server extra), even for cogs that never start it. Needs the
           # same 'a2a-sdk[http-server]'+uvicorn pair as architect/pico below.
+          # mcp pulls in pydantic-settings, whose own pydantic>=2.7.0 floor
+          # has no upper bound -- Red's real Downloader installs every
+          # loaded cog's requirements into ONE shared directory via `pip
+          # install -U` per cog, so suggestionbox's own pip call (mcp,
+          # uvicorn -- no pydantic pin of its own, originally) was free to
+          # upgrade the shared directory's already-correctly-pinned
+          # pydantic to 2.12+, whose pydantic_core needs a newer
+          # typing_extensions than Red ships, hitting this exact same
+          # Sentinel incident a second, unrelated way. suggestionbox/
+          # info.json now pins pydantic>=2.11.3,<2.12 too, purely to stop
+          # its own install from moving the shared pydantic version, even
+          # though nothing in suggestionbox's own code imports it directly.
+          # 'typing-inspection<0.4.3' (declared alongside mcp everywhere)
+          # is a separate, narrower defensive pin for the same class of
+          # incident (typing-inspection>=0.4.3 itself needs
+          # typing_extensions>=4.15.0), kept even though the pydantic_core
+          # path above is the one actually observed in CI. See
+          # corridor/infrastructure/mcp_client.py's own docstring for the
+          # full incident writeup.
           - cog: corridor
             test_target: "corridor/"
             lint_target: "corridor"
             mypy_target: "corridor"
-            extra_deps: "aiohttp 'pydantic>=2.11.3,<2.12' 'pyyaml>=6.0' 'a2a-sdk[http-server]' uvicorn"
+            extra_deps: "aiohttp 'pydantic>=2.11.3,<2.12' 'pyyaml>=6.0' 'a2a-sdk[http-server]' uvicorn 'mcp>=1.29,<2' 'typing-inspection<0.4.3'"
             pixel_index_contracts: false
           # toolbox's tests import corridor.adapters (tool registration/
           # panel wiring), which pulls in corridor.infrastructure.A2AServer --
@@ -87,7 +108,7 @@ jobs:
             test_target: "toolbox/"
             lint_target: "toolbox"
             mypy_target: "toolbox"
-            extra_deps: "'a2a-sdk[http-server]' uvicorn"
+            extra_deps: "'a2a-sdk[http-server]' uvicorn 'mcp>=1.29,<2' 'typing-inspection<0.4.3'"
             pixel_index_contracts: false
           # testbench's schema comes from corridor.event_catalog.build_contract()
           # in-process (no YAML parsing at runtime) -- no pyyaml needed here,
@@ -102,7 +123,7 @@ jobs:
             test_target: "testbench/"
             lint_target: "testbench"
             mypy_target: "testbench"
-            extra_deps: "'a2a-sdk[http-server]' uvicorn"
+            extra_deps: "'a2a-sdk[http-server]' uvicorn 'mcp>=1.29,<2' 'typing-inspection<0.4.3'"
             pixel_index_contracts: false
           # pixelagents shrank to a vendor+build utility cog (like toolbox) --
           # no aiohttp/pydantic left, and no Pixel Index contracts of its own.
@@ -122,7 +143,7 @@ jobs:
             test_target: "floorplan/tests"
             lint_target: "floorplan"
             mypy_target: "floorplan"
-            extra_deps: "aiohttp 'a2a-sdk[http-server]' uvicorn"
+            extra_deps: "aiohttp 'a2a-sdk[http-server]' uvicorn 'mcp>=1.29,<2' 'typing-inspection<0.4.3'"
             pixel_index_contracts: true
           # pico talks to aiohttp (LiteLLM proxy) and pydantic (wire/tool
           # models) like floorplan, plus httpx and a2a-sdk for its
@@ -136,7 +157,7 @@ jobs:
             test_target: "pico/"
             lint_target: "pico"
             mypy_target: "pico"
-            extra_deps: "aiohttp 'pydantic>=2.11.3,<2.12' httpx 'a2a-sdk[http-server]' uvicorn"
+            extra_deps: "aiohttp 'pydantic>=2.11.3,<2.12' httpx 'a2a-sdk[http-server]' uvicorn 'mcp>=1.29,<2' 'typing-inspection<0.4.3'"
             pixel_index_contracts: false
           # deskutils only reads the system clock and stdlib zoneinfo itself,
           # but its LLM tool metadata tests import corridor.adapters.
@@ -149,7 +170,7 @@ jobs:
             test_target: "deskutils/"
             lint_target: "deskutils"
             mypy_target: "deskutils"
-            extra_deps: "'pydantic>=2.11.3,<2.12' 'a2a-sdk[http-server]' uvicorn"
+            extra_deps: "'pydantic>=2.11.3,<2.12' 'a2a-sdk[http-server]' uvicorn 'mcp>=1.29,<2' 'typing-inspection<0.4.3'"
             pixel_index_contracts: false
           # architect talks to aiohttp/pydantic like pico (the shared
           # corridor-owned LLM connection), plus a2a-sdk (its A2A server --
@@ -159,7 +180,20 @@ jobs:
             test_target: "architect/"
             lint_target: "architect"
             mypy_target: "architect"
-            extra_deps: "aiohttp 'pydantic>=2.11.3,<2.12' 'a2a-sdk[http-server]' uvicorn"
+            extra_deps: "aiohttp 'pydantic>=2.11.3,<2.12' 'a2a-sdk[http-server]' uvicorn 'mcp>=1.29,<2' 'typing-inspection<0.4.3'"
+            pixel_index_contracts: false
+          # suggestionbox runs its own MCP server (mcp>=1.29,<2, pinned below
+          # mcp 2.0's FastMCP->MCPServer rename -- see corridor/infrastructure/
+          # mcp_client.py) and its tests import corridor.infrastructure.
+          # mcp_client directly, which (like corridor.adapters.cog_base
+          # elsewhere in this matrix) pulls in corridor.infrastructure's
+          # whole eager import chain -- A2AServer (a2a-sdk[http-server] +
+          # uvicorn) and LiteLLMClient (aiohttp + pydantic) included.
+          - cog: suggestionbox
+            test_target: "suggestionbox/"
+            lint_target: "suggestionbox"
+            mypy_target: "suggestionbox"
+            extra_deps: "aiohttp 'pydantic>=2.11.3,<2.12' 'a2a-sdk[http-server]' uvicorn 'mcp>=1.29,<2' 'typing-inspection<0.4.3'"
             pixel_index_contracts: false
 
     steps:

@@ -104,12 +104,21 @@ class ArchitectAgentExecutor(AgentExecutor):
         settings: Callable[[], Awaitable[GlobalSettings]],
         llm_settings: Callable[[], Awaitable[LLMSettings]],
         publish_activity: Callable[[str], Awaitable[None]] | None = None,
+        mcp_tools: Callable[[], Awaitable[Sequence[ToolSpec]]] | None = None,
     ) -> None:
         self._tool_loop = tool_loop
         self._tools = tools
         self._settings = settings
         self._llm_settings = llm_settings
         self._publish_activity = publish_activity
+        # Fetched fresh every turn, not cached -- corridor's registered MCP
+        # tool servers (suggestionbox) are gated by a live, owner-toggleable
+        # per-agent Components V2 panel; re-fetching here means a toggle
+        # flip takes effect on architect's very next A2A message, no cog
+        # reload required. `None` (the default) means no corridor bridge is
+        # wired up at all -- every existing caller that never passes this
+        # keeps working unchanged. See docs/suggestionbox-design.md §6.
+        self._mcp_tools = mcp_tools
 
     async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
         task_id = context.task_id or uuid.uuid4().hex
@@ -140,13 +149,16 @@ class ArchitectAgentExecutor(AgentExecutor):
             return
 
         settings = await self._settings()
+        tools = list(self._tools)
+        if self._mcp_tools is not None:
+            tools.extend(await self._mcp_tools())
         result = await self._tool_loop.run(
             base_url=llm_settings.llm_base_url,
             api_key=llm_settings.llm_api_key or "",
             model=llm_settings.llm_model or "",
             system_prompt=settings.system_prompt,
             user_input=user_input,
-            tools=self._tools,
+            tools=tools,
             max_tool_calls=settings.max_tool_calls,
             debug=settings.debug_logging,
             on_activity=self._publish_activity,

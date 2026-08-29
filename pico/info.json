@@ -11,7 +11,8 @@
         "aiohttp",
         "httpx",
         "pydantic>=2.11.3,<2.12",
-        "a2a-sdk"
+        "a2a-sdk",
+        "typing-inspection<0.4.3"
     ],
     "tags": [
         "pico",

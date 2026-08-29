@@ -17,6 +17,7 @@ from redbot.core.bot import Red
 
 from ..application import (
     AgentDirectoryService,
+    AgentToolServerRegistry,
     EventBusService,
     PermissionService,
     ReplyContent,
@@ -31,6 +32,7 @@ from ..domain import (
     LLMSettings,
     PermissionGroupDef,
     RegisteredAgent,
+    RegisteredMcpServer,
     RegisteredTool,
     RenderedReply,
     ReplyCategory,
@@ -40,8 +42,14 @@ from ..domain import (
     ToolVisibilityFilter,
     card_with_url,
 )
-from ..infrastructure import A2AServer, LiteLLMClient, RedCorridorRepository
-from .api import BotIconResolver, BotOwnerRegistry, DiscordMemberRef, send_rendered_reply
+from ..infrastructure import A2AServer, LiteLLMClient, McpClientPool, RedCorridorRepository
+from .api import (
+    BotIconResolver,
+    BotOwnerRegistry,
+    DiscordMemberRef,
+    send_rendered_reply,
+    send_rendered_reply_to_channel,
+)
 from .llm_tool_registration import collect_registered_tools
 from .reply_sender import ReplySender
 
@@ -73,6 +81,8 @@ class CogBase:
         self._tool_registry = ToolRegistryService()
         self._agent_directory = AgentDirectoryService()
         self._a2a_server = A2AServer(logger=log)
+        self._mcp_client_pool = McpClientPool(logger=log)
+        self._agent_tool_servers = AgentToolServerRegistry(self._mcp_client_pool)
         # No eager start() here -- most cog_load sequences never touch the
         # LLM at all, so the session opens lazily on first actual use
         # (matches pico's original lifecycle before this moved here).
@@ -278,6 +288,77 @@ class CogBase:
         )
         return await send_rendered_reply(ctx, rendered)
 
+    async def render_channel_reply(
+        self,
+        guild_id: int,
+        *,
+        title: str | None = None,
+        description: str | None = None,
+        content: str | None = None,
+        fields: Sequence[ReplyField] = (),
+        code: Sequence[str] = (),
+        identity: ReplyIdentity | None = None,
+        footer_override: FooterOverride | None = None,
+        category: ReplyCategory | None = None,
+    ) -> RenderedReply:
+        """`render_reply`'s twin for a caller with no live `ctx` -- an MCP
+        tool call has no invoking Discord command or interaction at all
+        (see docs/suggestionbox-design.md §5). Same `ReplyMode`/identity/
+        category handling, keyed by an explicit `guild_id` instead of
+        `ctx.guild.id`, and `default_prefix()` (not `ctx.clean_prefix`) for
+        any literal `[p]` substitution -- the same "proactive, ctx-less
+        notification" prefix source `substitute_default_prefix`'s own
+        docstring already documents for `Red.send_to_owners` DMs."""
+
+        settings = await self._repository.guild_settings(guild_id)
+        prefix = await self.default_prefix()
+        return await self._reply_service.render(
+            guild_id,
+            settings.reply,
+            ReplyContent(
+                title=title,
+                description=description,
+                content=content,
+                fields=tuple(fields),
+                code=tuple(code),
+            ),
+            prefix=prefix,
+            identity=identity,
+            footer_override=footer_override,
+            category=category,
+        )
+
+    async def send_channel_reply(
+        self,
+        channel: discord.abc.Messageable,
+        guild_id: int,
+        *,
+        title: str | None = None,
+        description: str | None = None,
+        content: str | None = None,
+        fields: Sequence[ReplyField] = (),
+        code: Sequence[str] = (),
+        identity: ReplyIdentity | None = None,
+        footer_override: FooterOverride | None = None,
+        category: ReplyCategory | None = None,
+    ) -> discord.Message:
+        """`send_reply`'s twin: renders via `render_channel_reply`, then
+        sends straight to `channel` (resolved by the caller, e.g. via
+        `bot.get_channel(configured_channel_id)`) instead of `ctx.send`."""
+
+        rendered = await self.render_channel_reply(
+            guild_id,
+            title=title,
+            description=description,
+            content=content,
+            fields=fields,
+            code=code,
+            identity=identity,
+            footer_override=footer_override,
+            category=category,
+        )
+        return await send_rendered_reply_to_channel(channel, rendered)
+
     def reply_sender(
         self,
         *,
@@ -374,6 +455,7 @@ class CogBase:
         self._tool_registry.unregister_visibility_filter_owner(cog.qualified_name)
         self._agent_directory.unregister_owner(cog.qualified_name)
         self._a2a_server.rebuild_routes(self._agent_directory.list_agents())
+        self._agent_tool_servers.unregister_owner(cog.qualified_name)
 
     # --- Cross-cog LLM tool registry -------------------------------------------
 
@@ -540,6 +622,38 @@ class CogBase:
         docs/agent-directory-design.md."""
 
         return self._agent_directory.list_agents()
+
+    # --- MCP tool servers, called through for a registered A2A agent's own tool loop ---
+
+    async def register_mcp_server(self, server: RegisteredMcpServer, *, owner: str) -> str | None:
+        """Register `server` for cross-cog MCP tool discovery -- called
+        from the registering cog's own `cog_load`. `owner` should be that
+        cog's class name, matching `register_tool`'s convention. Connects
+        to `server.base_url` and fetches its current tool list; returns an
+        error string on failure (never raises), `None` on success -- see
+        `AgentToolServerRegistry.register`."""
+
+        return await self._agent_tool_servers.register(server, owner=owner)
+
+    def unregister_mcp_server_owner(self, owner: str) -> None:
+        """Call from the registering cog's own `cog_unload` -- same
+        convention as `unregister_agent_owner`."""
+
+        self._agent_tool_servers.unregister_owner(owner)
+
+    def unregister_mcp_server(self, base_url: str) -> None:
+        """Remove one server by its URL, regardless of owner. A no-op if
+        `base_url` isn't registered."""
+
+        self._agent_tool_servers.unregister(base_url)
+
+    async def list_agent_tools_for(self, agent_key: str) -> tuple[RegisteredTool, ...]:
+        """Every MCP tool `agent_key` is currently allowed to use, from
+        every registered server -- a registered A2A agent's own tool loop
+        (architect's `ArchitectAgentExecutor`) calls this fresh every turn.
+        See docs/suggestionbox-design.md §6."""
+
+        return await self._agent_tool_servers.list_tools_for(agent_key)
 
     # --- settings mutation, used by settings_ui.py and [p]corridor commands ---
 

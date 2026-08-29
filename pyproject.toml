@@ -42,6 +42,7 @@ files = [
     "testbench",
     "deskutils",
     "architect",
+    "suggestionbox",
 ]
 exclude = [
     "^pixelagents/conftest\\.py$",
@@ -61,6 +62,8 @@ exclude = [
     "^deskutils/tests/",
     "^architect/conftest\\.py$",
     "^architect/tests/",
+    "^suggestionbox/conftest\\.py$",
+    "^suggestionbox/tests/",
 ]
 
 [[tool.mypy.overrides]]
@@ -221,4 +224,18 @@ disable_error_code = ["arg-type", "no-any-return", "untyped-decorator", "unused-
 # Same as toolbox.toolbox / corridor.corridor / pico.pico above:
 # `commands.Cog` resolves to Any without Red's real Cog metaclass installed.
 module = ["architect.architect"]
+disable_error_code = ["misc"]
+
+[[tool.mypy.overrides]]
+# Same gap as pico.adapters.commands above, mirrored for suggestionbox: Red
+# is absent from the lightweight CI type environment, so its decorators and
+# untyped Context leak Any.
+module = ["suggestionbox.adapters.commands"]
+disable_error_code = ["arg-type", "no-any-return", "untyped-decorator"]
+
+[[tool.mypy.overrides]]
+# Same as toolbox.toolbox / corridor.corridor / pico.pico / architect.architect
+# above: `commands.Cog` resolves to Any without Red's real Cog metaclass
+# installed.
+module = ["suggestionbox.suggestionbox"]
 disable_error_code = ["misc"]

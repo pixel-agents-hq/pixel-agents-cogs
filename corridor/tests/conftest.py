@@ -99,6 +99,20 @@ class FakeMessage:
         self.deleted = True
 
 
+class FakeChannel:
+    """Stands in for `discord.abc.Messageable` at `send_channel_reply`'s
+    call sites -- same `.send()` recording shape as `FakeContext`, since
+    both ultimately reach `build_reply_payload`'s same kwargs."""
+
+    def __init__(self) -> None:
+        self.sent: list[dict[str, Any]] = []
+
+    async def send(
+        self, content: str | None = None, *, embed: Any = None, **kwargs: object
+    ) -> None:
+        self.sent.append({"content": content, "embed": embed, **kwargs})
+
+
 class FakeContext:
     def __init__(self, author: FakeMember, guild: FakeGuild, clean_prefix: str = ";") -> None:
         self.author = author

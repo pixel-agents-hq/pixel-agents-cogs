@@ -9,6 +9,7 @@ from .llm_client import (
     ToolFunctionSpec,
     ToolSpecWire,
 )
+from .mcp_client import McpClientPool, McpRequestError
 from .settings_repository import DEFAULT_LLM_BASE_URL, RedCorridorRepository
 
 __all__ = [
@@ -18,6 +19,8 @@ __all__ = [
     "ChatMessage",
     "LLMRequestError",
     "LiteLLMClient",
+    "McpClientPool",
+    "McpRequestError",
     "RedCorridorRepository",
     "ToolCall",
     "ToolCallFunction",

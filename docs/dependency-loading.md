@@ -49,7 +49,7 @@ call that replaced it.
 The `.github/workflows/check-cogs.yml` job (`nntin/d-flows/actions/test-red-discordbot-downloader@v1`)
 loads and tests each cog **one at a time, in isolation, alphabetically**
 (`architect` → `corridor` → `deskutils` → `floorplan` → `pico` →
-`pixelagents` → `toolbox`). After
+`pixelagents` → `suggestionbox` → `testbench` → `toolbox`). After
 loading a cog, it checks whether Red reports it under `loaded_packages`
 (fresh load) or `alreadyloaded_packages` (Red already considered it
 loaded) — the latter is treated as a **failure** for that cog's own turn,

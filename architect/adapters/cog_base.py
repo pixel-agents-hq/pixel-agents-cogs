@@ -35,11 +35,39 @@ from ..infrastructure import (
 )
 from ..infrastructure.furniture_styles import FurnitureStyleLoader
 from ..infrastructure.office_layout_repository import OfficeLayoutRepository
+from ..tools.agent_tool_server import AgentToolServerTool
 from ..tools.base import ToolSpec
 from ..tools.office_tools import build_office_tools
 from ..tools.placeholder_tools import BreakDownTaskTool, ReviewDesignTool
 
 log = logging.getLogger("red.architect")
+
+ARCHITECT_AGENT_KEY = "architect"
+
+
+async def _mcp_tools(corridor: Any) -> list[ToolSpec]:
+    """Every MCP tool suggestionbox (or any future agent-tool-server
+    provider) currently makes available to architect, adapted into
+    architect's own `ToolSpec` -- fetched fresh every A2A turn (never
+    cached), so a bot owner flipping suggestionbox's per-agent toggle
+    takes effect on architect's very next message, no cog reload
+    required. Same per-entry try/except-and-skip shape pico's own
+    `_agent_tools`/`_cross_cog_tools` (`pico/adapters/listener.py`) use,
+    so one malformed tool never takes down the whole turn. See
+    docs/suggestionbox-design.md §6."""
+
+    tools: list[ToolSpec] = []
+    for tool in await corridor.list_agent_tools_for(ARCHITECT_AGENT_KEY):
+        try:
+            tools.append(AgentToolServerTool(tool))
+        except Exception:
+            log.warning(
+                "architect: could not adapt MCP tool %r, skipping",
+                getattr(tool, "name", "?"),
+                exc_info=True,
+            )
+    return tools
+
 
 # Injected as a `<base href>` at serve time (WebviewAssetProvider.base_href)
 # -- mirrors floorplan's own WEBVIEW_BASE_PATH constant, one route per cog.
@@ -116,6 +144,7 @@ class CogBase:
             settings=self._repository.global_settings,
             llm_settings=lambda: self._corridor.llm_settings(),
             publish_activity=self._publish_activity,
+            mcp_tools=lambda: _mcp_tools(self._corridor),
         )
         self._pixelagents: Any = None
         # Root is a placeholder until _sync_webview_assets() resolves

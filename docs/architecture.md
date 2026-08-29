@@ -1,11 +1,11 @@
 # Cross-cog architecture
 
-This doc is the one place that shows how this repo's nine packages —
+This doc is the one place that shows how this repo's ten packages —
 [`architect`](../architect), [`corridor`](../corridor),
 [`deskutils`](../deskutils), [`floorplan`](../floorplan), [`pico`](../pico),
-[`pixelagents`](../pixelagents), [`testbench`](../testbench),
-[`toolbox`](../toolbox), and the CI-only [`contracts`](../contracts) —
-relate to and depend on each other. It does
+[`pixelagents`](../pixelagents), [`suggestionbox`](../suggestionbox),
+[`testbench`](../testbench), [`toolbox`](../toolbox), and the CI-only
+[`contracts`](../contracts) — relate to and depend on each other. It does
 not replace any package's own `Architecture.md` (linked throughout below);
 those cover one package's internal layers in depth. This doc's only job is
 the picture across packages: who depends on whom to load, who owns what,
@@ -31,6 +31,7 @@ flowchart BT
     floorplan["floorplan<br/><small>serves the office + presence</small>"]
     pico["pico<br/><small>LLM-backed presence,<br/>sole A2A coordinator</small>"]
     pixelagents["pixelagents<br/><small>vendors + builds the webview</small>"]
+    suggestionbox["suggestionbox<br/><small>MCP feedback server<br/>(report_error/suggest_improvement)</small>"]
     testbench["testbench<br/><small>owner-only: manually publishes<br/>corridor bus events</small>"]
     toolbox["toolbox<br/><small>Node.js/npm on the host<br/>+ LLM tool toggle panel</small>"]
 
@@ -39,12 +40,15 @@ flowchart BT
     floorplan -->|required_cogs| corridor
     pico -->|required_cogs| corridor
     pixelagents -->|required_cogs| corridor
+    suggestionbox -->|required_cogs| corridor
     testbench -->|required_cogs| corridor
     toolbox -->|required_cogs| corridor
     floorplan -->|required_cogs| pixelagents
     architect -->|required_cogs| pixelagents
     architect -.->|"register_agent()<br/>(in-process, via corridor)"| corridor
     pico -.->|"A2A over HTTP, one shared port<br/>(networked, not required_cogs)"| corridor
+    suggestionbox -.->|"register_mcp_server()<br/>(in-process, via corridor)"| corridor
+    corridor -.->|"MCP over HTTP<br/>(networked, not required_cogs)"| suggestionbox
 ```
 
 Notes, all confirmed against each package's `info.json`:
@@ -78,9 +82,17 @@ Notes, all confirmed against each package's `info.json`:
   full design and [`docs/architect-design.md`](architect-design.md)
   section 4 for architect's own A2A executor/tool-loop shape (still
   accurate; only listener *ownership* moved).
-- **No cog depends on floorplan, pico, testbench, toolbox, deskutils, or
-  architect.** They're leaves: things end here, nothing in this repo
-  builds on top of them.
+- **`corridor -> suggestionbox` (MCP) is deliberately not a `required_cogs`
+  edge either, mirroring `pico -> corridor` (A2A) above.** It's a
+  *networked* HTTP call to suggestionbox's own MCP listener; corridor
+  degrades to "no tools from that server" if suggestionbox is unloaded or
+  its listener is down, it does not fail to load. `suggestionbox ->
+  corridor` for registering that server is already covered by
+  suggestionbox's own `required_cogs: corridor` entry. See
+  [`docs/suggestionbox-design.md`](suggestionbox-design.md).
+- **No cog depends on floorplan, pico, testbench, toolbox, deskutils,
+  suggestionbox, or architect.** They're leaves: things end here, nothing
+  in this repo builds on top of them.
 - corridor's `info.json` sets `"type": "COG"` and `"hidden": true`. It is a
   real, loaded Red Cog — not the `SHARED_LIBRARY` type `contracts` uses —
   but it's hidden from end users because its own command surface
@@ -109,7 +121,7 @@ The dependency graph above says nothing about what each package actually
 ```mermaid
 flowchart TB
     subgraph shared["Shared infrastructure"]
-        corridor["corridor<br/><small>permission tiers (role- and Discord-permission-backed)<br/>+ the single reply-rendering chokepoint<br/>(send_reply / render_reply)<br/>+ Discord-vocabulary PubSub event bus<br/>(publish_event / subscribe_event)<br/>+ cross-cog LLM tool registry<br/>(register_tool / list_tools_for)<br/>+ shared LLM connection<br/>(llm_settings / llm_client)<br/>+ shared A2A listener + agent directory<br/>(register_agent / list_agents)</small>"]
+        corridor["corridor<br/><small>permission tiers (role- and Discord-permission-backed)<br/>+ the single reply-rendering chokepoint<br/>(send_reply / render_reply / send_channel_reply)<br/>+ Discord-vocabulary PubSub event bus<br/>(publish_event / subscribe_event)<br/>+ cross-cog LLM tool registry<br/>(register_tool / list_tools_for)<br/>+ shared LLM connection<br/>(llm_settings / llm_client)<br/>+ shared A2A listener + agent directory<br/>(register_agent / list_agents)<br/>+ MCP client + agent-tool-server registry<br/>(register_mcp_server / list_agent_tools_for)</small>"]
     end
 
     subgraph host["Host tooling (bot-owner only)"]
@@ -129,19 +141,22 @@ flowchart TB
 
     subgraph utility["General utilities"]
         deskutils["deskutils<br/><small>[p]deskutils time: current time via<br/>Discord's per-viewer timestamp markup<br/>plus explicit UTC/named-zone formatting.<br/>No config, no bus traffic. Also registers<br/>the same logic as an LLM tool corridor's<br/>registry offers to pico, if loaded.</small>"]
+        suggestionbox["suggestionbox<br/><small>runs its own MCP tools server<br/>(report_error/suggest_improvement),<br/>posts to a configured Discord channel.<br/>Registers with corridor's<br/>AgentToolServerRegistry so a registered<br/>A2A agent's own tool loop can call the<br/>same tools, gated per agent.</small>"]
     end
 
     toolbox -.->|"host prerequisite<br/>(operational, not coded)"| pixelagents
     pixelagents -->|"webview_bundle_status()<br/>via bot.get_cog('PixelAgents')"| floorplan
     pixelagents -->|"webview_bundle_status()<br/>furniture_style_manifest()<br/>via bot.get_cog('PixelAgents')"| architect
     corridor -->|"send_reply / render_reply<br/>require_permission / capabilities_satisfy<br/>publish_event / subscribe_event"| floorplan
-    corridor -->|"send_reply<br/>publish_event<br/>llm_settings / llm_client<br/>list_agents"| pico
-    corridor -->|"llm_settings / llm_client<br/>register_agent / unregister_agent_owner"| architect
+    corridor -->|"send_reply<br/>publish_event<br/>llm_settings / llm_client<br/>list_agents<br/>list_agent_tools_for"| pico
+    corridor -->|"llm_settings / llm_client<br/>register_agent / unregister_agent_owner<br/>list_agent_tools_for (per A2A turn)"| architect
     pico -.->|"A2A message/send, one shared port<br/>(networked, terminates at corridor)"| corridor
     corridor --> pixelagents
     corridor -->|"send_reply<br/>register_tool / unregister_tool<br/>register_tool_visibility_filter"| toolbox
     corridor -->|publish_event| testbench
     corridor -->|send_reply| deskutils
+    corridor -->|"send_channel_reply<br/>register_mcp_server / unregister_mcp_server<br/>list_agents"| suggestionbox
+    corridor -.->|"MCP over HTTP, one dedicated port<br/>(networked, terminates at suggestionbox)"| suggestionbox
 ```
 
 Every arrow into `corridor` in diagram 1 becomes an arrow *out of*
@@ -429,6 +444,7 @@ flowchart LR
         floorplan2["floorplan"]
         pico2["pico"]
         pixelagents2["pixelagents"]
+        suggestionbox2["suggestionbox"]
         testbench2["testbench"]
         toolbox2["toolbox"]
     end
@@ -436,7 +452,7 @@ flowchart LR
     subgraph ci["contracts/ (CI-only, SHARED_LIBRARY)"]
         pa_verify["contracts.pixel_agents.verify<br/><small>imports floorplan.infrastructure.webview<br/>+ pixelagents.infrastructure.webview_build</small>"]
         idx_lint["contracts.pixel_index.*<br/><small>imports floorplan.contracts.pixel_index<br/>(generates + lints contract.yaml)</small>"]
-        reply_lint["contracts.discord_replies.lint_reply_channel<br/><small>AST-scans all eight cog packages</small>"]
+        reply_lint["contracts.discord_replies.lint_reply_channel<br/><small>AST-scans all nine cog packages</small>"]
     end
 
     pa_verify -.->|"import"| floorplan2
@@ -448,6 +464,7 @@ flowchart LR
     reply_lint -.->|"AST scan, no import"| floorplan2
     reply_lint -.->|"AST scan, no import"| pico2
     reply_lint -.->|"AST scan, no import"| pixelagents2
+    reply_lint -.->|"AST scan, no import"| suggestionbox2
     reply_lint -.->|"AST scan, no import"| testbench2
     reply_lint -.->|"AST scan, no import"| toolbox2
 ```
@@ -488,9 +505,9 @@ of pixelagents' own runtime) and repo-root `contracts/` (this CI-only
 package) are two unrelated things that happen to share a name.
 
 Separately, [`.github/workflows/check-cogs.yml`](../.github/workflows/check-cogs.yml)
-load-tests each of the eight real cogs one at a time, alphabetically
+load-tests each of the nine real cogs one at a time, alphabetically
 (`architect` → `corridor` → `deskutils` → `floorplan` → `pico` →
-`pixelagents` → `testbench` → `toolbox`, per
+`pixelagents` → `suggestionbox` → `testbench` → `toolbox`, per
 [`docs/dependency-loading.md`](dependency-loading.md#the-ci-smoke-test-and-the-tradeoff-we-accept)),
 checking each loads cleanly from a clean state rather than being silently
 dragged in by an earlier cog's own dependency loading. That's a different

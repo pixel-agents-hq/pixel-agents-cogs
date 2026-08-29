@@ -71,7 +71,10 @@ class FurnitureSummary(BaseModel):
     blocking footprint (a decorative background row, or a wall item's row
     above its wall-touching tile). A move or placement is rejected if its
     destination footprint overlaps another item's `occupied_cells`, except
-    a surface item stacking onto a desk (or vice versa)."""
+    a surface item stacking onto a desk (or vice versa). `background_cells`
+    is the complementary set -- exactly where an adjacent chair on that
+    side of this item belongs to sit flush, since nothing is rejected for
+    landing there (see `background_cells`'s own description)."""
 
     id: str
     kind: str
@@ -98,6 +101,16 @@ class FurnitureSummary(BaseModel):
         description=(
             "Every tile this item's footprint currently blocks; overlapping any of "
             "these blocks a move or placement there (except desk/surface-item stacking)."
+        ),
+    )
+    background_cells: list[OccupiedCellSummary] = Field(
+        default_factory=list,
+        description=(
+            "This item's decorative rows -- not in occupied_cells, so nothing is rejected "
+            "for landing here. This is exactly where a chair (or anything else) belongs to "
+            "sit flush against this side of the item, e.g. a south-facing desk's background "
+            "cells are its north/back edge: anchor a chair there directly, not one tile "
+            "further north of the full footprint. Empty for a style with no background rows."
         ),
     )
 
@@ -142,6 +155,10 @@ def _furniture_summary(item: FurnitureItem, styles: FurnitureStyleManifest) -> F
         occupied_cells=[
             OccupiedCellSummary(col=cell.col, row=cell.row, is_anchor=cell == item.position)
             for cell in styles.occupied_cells(item.style, item.facing, item.position)
+        ],
+        background_cells=[
+            OccupiedCellSummary(col=cell.col, row=cell.row, is_anchor=cell == item.position)
+            for cell in styles.background_cells(item.style, item.facing, item.position)
         ],
     )
 
@@ -300,7 +317,11 @@ class FurnitureStyleFacingSummary(BaseModel):
         description=(
             "How many rows at the *top* of the footprint are purely decorative and don't "
             "block placement or count toward the wall-anchor row (section 6.4's "
-            "occupied_cells rule). Doesn't shrink footprint_height itself."
+            "occupied_cells rule). Doesn't shrink footprint_height itself. These rows are "
+            "exactly where a chair belongs to sit flush against that side once this style is "
+            "placed -- an already-placed item's background_cells (describe_office/"
+            "find_furniture) gives the exact coordinates directly, rather than computing "
+            "anchor_row + dr for dr < background_tiles by hand."
         )
     )
 

@@ -17,9 +17,9 @@ from ..tools.office_tools import (
     DescribeOfficeTool,
     DescribeTilesInput,
     DescribeTilesTool,
-    FindFurnitureAnchorsTool,
     FindFurnitureInput,
     FindFurnitureTool,
+    FindWallAnchorsTool,
     ListFurnitureStylesInput,
     ListFurnitureStylesTool,
     PaintTilesInput,
@@ -342,12 +342,12 @@ class TestDescribeTilesTool(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(output.blocking_furniture_ids, [chair.id])
 
 
-class TestFindFurnitureAnchorsTool(unittest.IsolatedAsyncioTestCase):
+class TestFindWallAnchorsTool(unittest.IsolatedAsyncioTestCase):
     async def test_finds_anchors_for_a_wall_style(self) -> None:
         service = _service()
         # Row 3 is the only WALL row in an otherwise all-floor 5x5 grid.
         await service.paint_tiles(area=GridRect(GridPosition(0, 3), 5, 1), kind=TileKind.WALL)
-        tool = FindFurnitureAnchorsTool(service, _loader())
+        tool = FindWallAnchorsTool(service, _loader())
 
         output = await tool.handler(
             tool.Input.model_validate(
@@ -365,7 +365,7 @@ class TestFindFurnitureAnchorsTool(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_area_too_large_reports_error_not_exception(self) -> None:
-        tool = FindFurnitureAnchorsTool(_service(), _loader())
+        tool = FindWallAnchorsTool(_service(), _loader())
 
         output = await tool.handler(
             tool.Input.model_validate(

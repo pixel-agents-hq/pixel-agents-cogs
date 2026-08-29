@@ -40,7 +40,11 @@ class ScriptedToolLoop:
 
 class TestArchitectAgentExecutor(unittest.IsolatedAsyncioTestCase):
     async def test_execute_completes_the_task_with_the_final_text(self) -> None:
-        tool_loop = ScriptedToolLoop(ToolLoopResult(1, "final_text", text="the answer"))
+        tool_loop = ScriptedToolLoop(
+            ToolLoopResult(
+                1, "final_text", "the answer", successful_tool_calls=1, failed_tool_calls=0
+            )
+        )
         executor = ArchitectAgentExecutor(
             tool_loop=tool_loop,  # type: ignore[arg-type]
             tools=[ReviewDesignTool()],
@@ -61,11 +65,16 @@ class TestArchitectAgentExecutor(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(tool_loop.calls[0]["debug"], False)
 
     async def test_execute_reports_tool_calls_made_as_message_metadata(self) -> None:
-        """pico's `ArchitectClient` reads this back to surface a "Tool
-        calls" field on the "📩 ... replied" Discord embed -- see
-        pico/infrastructure/architect_client.py's `_tool_calls_made`."""
+        """pico's `ArchitectClient` reads this back to surface "Tool calls"/
+        "Successful tool calls"/"Failing tool calls" fields on the
+        "📩 ... replied" Discord embed -- see
+        pico/infrastructure/architect_client.py's `_metadata_int`."""
 
-        tool_loop = ScriptedToolLoop(ToolLoopResult(4, "final_text", text="the answer"))
+        tool_loop = ScriptedToolLoop(
+            ToolLoopResult(
+                4, "final_text", "the answer", successful_tool_calls=3, failed_tool_calls=1
+            )
+        )
         executor = ArchitectAgentExecutor(
             tool_loop=tool_loop,  # type: ignore[arg-type]
             tools=[],
@@ -79,9 +88,15 @@ class TestArchitectAgentExecutor(unittest.IsolatedAsyncioTestCase):
 
         final_message = queue.events[-1].status.message
         self.assertEqual(final_message.metadata["tool_calls_made"], 4)
+        self.assertEqual(final_message.metadata["successful_tool_calls"], 3)
+        self.assertEqual(final_message.metadata["failed_tool_calls"], 1)
 
     async def test_execute_passes_publish_activity_through_to_the_tool_loop(self) -> None:
-        tool_loop = ScriptedToolLoop(ToolLoopResult(1, "final_text", text="the answer"))
+        tool_loop = ScriptedToolLoop(
+            ToolLoopResult(
+                1, "final_text", "the answer", successful_tool_calls=1, failed_tool_calls=0
+            )
+        )
         reported: list[str] = []
 
         async def publish_activity(summary: str) -> None:
@@ -102,7 +117,11 @@ class TestArchitectAgentExecutor(unittest.IsolatedAsyncioTestCase):
         self.assertIs(tool_loop.calls[0]["on_activity"], publish_activity)
 
     async def test_execute_passes_debug_logging_through_to_the_tool_loop(self) -> None:
-        tool_loop = ScriptedToolLoop(ToolLoopResult(1, "final_text", text="the answer"))
+        tool_loop = ScriptedToolLoop(
+            ToolLoopResult(
+                1, "final_text", "the answer", successful_tool_calls=1, failed_tool_calls=0
+            )
+        )
         executor = ArchitectAgentExecutor(
             tool_loop=tool_loop,  # type: ignore[arg-type]
             tools=[],
@@ -117,7 +136,9 @@ class TestArchitectAgentExecutor(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(tool_loop.calls[0]["debug"], True)
 
     async def test_execute_fails_the_task_when_llm_is_not_configured(self) -> None:
-        tool_loop = ScriptedToolLoop(ToolLoopResult(0, "final_text", text="unused"))
+        tool_loop = ScriptedToolLoop(
+            ToolLoopResult(0, "final_text", "unused", successful_tool_calls=0, failed_tool_calls=0)
+        )
         executor = ArchitectAgentExecutor(
             tool_loop=tool_loop,  # type: ignore[arg-type]
             tools=[],
@@ -134,7 +155,11 @@ class TestArchitectAgentExecutor(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(tool_loop.calls, [])
 
     async def test_execute_appends_mcp_tools_to_the_fixed_tools(self) -> None:
-        tool_loop = ScriptedToolLoop(ToolLoopResult(1, "final_text", text="the answer"))
+        tool_loop = ScriptedToolLoop(
+            ToolLoopResult(
+                1, "final_text", "the answer", successful_tool_calls=1, failed_tool_calls=0
+            )
+        )
         mcp_tool = ReviewDesignTool()
         mcp_tool.name = "report_error"
         calls = 0
@@ -165,7 +190,11 @@ class TestArchitectAgentExecutor(unittest.IsolatedAsyncioTestCase):
         effect on architect's very next A2A message, not require a reload
         -- see docs/suggestionbox-design.md §6."""
 
-        tool_loop = ScriptedToolLoop(ToolLoopResult(1, "final_text", text="the answer"))
+        tool_loop = ScriptedToolLoop(
+            ToolLoopResult(
+                1, "final_text", "the answer", successful_tool_calls=1, failed_tool_calls=0
+            )
+        )
         calls = 0
 
         async def mcp_tools() -> list[object]:
@@ -188,7 +217,11 @@ class TestArchitectAgentExecutor(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(calls, 2)
 
     async def test_execute_with_no_mcp_tools_callable_uses_only_the_fixed_tools(self) -> None:
-        tool_loop = ScriptedToolLoop(ToolLoopResult(1, "final_text", text="the answer"))
+        tool_loop = ScriptedToolLoop(
+            ToolLoopResult(
+                1, "final_text", "the answer", successful_tool_calls=1, failed_tool_calls=0
+            )
+        )
         executor = ArchitectAgentExecutor(
             tool_loop=tool_loop,  # type: ignore[arg-type]
             tools=[ReviewDesignTool()],
@@ -204,7 +237,9 @@ class TestArchitectAgentExecutor(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(tool_names, ["review_design"])
 
     async def test_execute_fails_the_task_when_the_loop_hits_max_tool_calls(self) -> None:
-        tool_loop = ScriptedToolLoop(ToolLoopResult(5, "max_tool_calls", text=None))
+        tool_loop = ScriptedToolLoop(
+            ToolLoopResult(5, "max_tool_calls", None, successful_tool_calls=3, failed_tool_calls=2)
+        )
         executor = ArchitectAgentExecutor(
             tool_loop=tool_loop,  # type: ignore[arg-type]
             tools=[],

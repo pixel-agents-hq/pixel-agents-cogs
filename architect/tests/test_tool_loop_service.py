@@ -45,6 +45,30 @@ class EchoTool:
         return EchoOutput(heard=raw_input.text)
 
 
+class StatusInput(BaseModel):
+    should_fail: bool = False
+
+
+class StatusOutput(BaseModel):
+    """Mirrors the real `status: Literal["ok", "error"]` convention every
+    architect tool's `Output` follows (see office_tools.py) -- unlike
+    `EchoOutput`, which deliberately has no `status` field at all, to cover
+    the "no status field reported" success case too."""
+
+    status: str = "ok"
+
+
+class StatusTool:
+    name = "status_tool"
+    description = "Reports ok or error via its Output's status field."
+    Input = StatusInput
+    Output = StatusOutput
+
+    async def handler(self, raw_input: BaseModel) -> BaseModel:
+        assert isinstance(raw_input, StatusInput)
+        return StatusOutput(status="error" if raw_input.should_fail else "ok")
+
+
 def _tool_call(call_id: str, *, name: str = "echo", arguments: str = '{"text": "hi"}') -> ToolCall:
     return ToolCall(id=call_id, function=ToolCallFunction(name=name, arguments=arguments))
 
@@ -94,6 +118,8 @@ class TestToolLoopService(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.stopped_reason, "final_text")
         self.assertEqual(result.text, "the answer is 42")
         self.assertEqual(result.tool_calls_made, 0)
+        self.assertEqual(result.successful_tool_calls, 0)
+        self.assertEqual(result.failed_tool_calls, 0)
 
     async def test_executes_a_tool_call_and_returns_the_eventual_final_text(self) -> None:
         llm = ScriptedLLM(
@@ -115,6 +141,8 @@ class TestToolLoopService(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.stopped_reason, "final_text")
         self.assertEqual(result.text, "done: hi")
         self.assertEqual(result.tool_calls_made, 1)
+        self.assertEqual(result.successful_tool_calls, 1)
+        self.assertEqual(result.failed_tool_calls, 0)
         self.assertEqual(tool.calls[0].text, "hi")
 
     async def test_stops_at_max_tool_calls_with_no_text(self) -> None:
@@ -140,6 +168,8 @@ class TestToolLoopService(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.stopped_reason, "max_tool_calls")
         self.assertIsNone(result.text)
         self.assertEqual(result.tool_calls_made, 2)
+        self.assertEqual(result.successful_tool_calls, 2)
+        self.assertEqual(result.failed_tool_calls, 0)
         self.assertEqual(len(llm.calls), 2)
 
     async def test_llm_failure_stops_the_loop(self) -> None:
@@ -159,6 +189,8 @@ class TestToolLoopService(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.stopped_reason, "llm_error")
         self.assertIsNone(result.text)
         self.assertEqual(result.tool_calls_made, 0)
+        self.assertEqual(result.successful_tool_calls, 0)
+        self.assertEqual(result.failed_tool_calls, 0)
 
     async def test_unknown_tool_name_reports_an_error_without_crashing_the_loop(self) -> None:
         llm = ScriptedLLM(
@@ -178,6 +210,8 @@ class TestToolLoopService(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(result.tool_calls_made, 1)
+        self.assertEqual(result.successful_tool_calls, 0)
+        self.assertEqual(result.failed_tool_calls, 1)
         self.assertEqual(tool.calls, [])
         tool_messages = [m for m in llm.calls[1]["messages"] if m.role == "tool"]
         self.assertIn("unknown tool", tool_messages[0].content)
@@ -203,9 +237,51 @@ class TestToolLoopService(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(result.tool_calls_made, 1)
+        self.assertEqual(result.successful_tool_calls, 0)
+        self.assertEqual(result.failed_tool_calls, 1)
         self.assertEqual(tool.calls, [])
         tool_messages = [m for m in llm.calls[1]["messages"] if m.role == "tool"]
         self.assertIn("invalid arguments", tool_messages[0].content)
+
+    async def test_classifies_a_mix_of_successful_and_failing_tool_calls(self) -> None:
+        """Covers every classification path `_execute` can hit in one loop
+        run: an unknown-tool call and an invalid-arguments call (both
+        always failures), a `StatusTool` call that reports `status="error"`
+        (a failure), a `StatusTool` call that reports `status="ok"` (a
+        success), and an `EchoTool` call whose `Output` has no `status`
+        field at all (also a success -- nothing signaled a failure)."""
+
+        llm = ScriptedLLM(
+            [
+                _response(
+                    tool_calls=[
+                        _tool_call("call-1", name="nope"),
+                        _tool_call("call-2", arguments="not json"),
+                        _tool_call("call-3", name="status_tool", arguments='{"should_fail": true}'),
+                        _tool_call(
+                            "call-4", name="status_tool", arguments='{"should_fail": false}'
+                        ),
+                        _tool_call("call-5"),
+                    ]
+                ),
+                _response(content="done"),
+            ]
+        )
+        service = ToolLoopService(llm)
+
+        result = await service.run(
+            base_url="https://x",
+            api_key="k",
+            model="m",
+            system_prompt="sys",
+            user_input="go",
+            tools=[EchoTool(), StatusTool()],
+            max_tool_calls=10,
+        )
+
+        self.assertEqual(result.tool_calls_made, 5)
+        self.assertEqual(result.successful_tool_calls, 2)
+        self.assertEqual(result.failed_tool_calls, 3)
 
     async def test_debug_off_emits_no_logs(self) -> None:
         llm = ScriptedLLM(

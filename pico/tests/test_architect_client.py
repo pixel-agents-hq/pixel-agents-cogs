@@ -80,27 +80,58 @@ class TestArchitectClientLiveRoundTrip(unittest.IsolatedAsyncioTestCase):
         return server
 
     async def test_ask_returns_architects_final_text(self) -> None:
-        await self._start_server(ToolLoopResult(0, "final_text", text="hello from architect"))
+        await self._start_server(
+            ToolLoopResult(
+                0,
+                "final_text",
+                "hello from architect",
+                successful_tool_calls=0,
+                failed_tool_calls=0,
+            )
+        )
 
         result = await ArchitectClient().ask(base_url=_BASE_URL, text="hi")
 
-        self.assertEqual(result, AgentAskResult(answer="hello from architect", tool_calls_made=0))
+        self.assertEqual(
+            result,
+            AgentAskResult(
+                answer="hello from architect",
+                tool_calls_made=0,
+                successful_tool_calls=0,
+                failed_tool_calls=0,
+            ),
+        )
 
     async def test_ask_returns_the_tool_calls_architect_actually_made(self) -> None:
         """Real round trip: architect's ArchitectAgentExecutor attaches
-        `tool_calls_made` as metadata on its final message
+        `tool_calls_made`/`successful_tool_calls`/`failed_tool_calls` as
+        metadata on its final message
         (architect/infrastructure/a2a_server.py), and this asserts pico's
-        client reads that back correctly through the real wire format, not
-        a mock -- the field the "📩 ... replied" Discord embed surfaces."""
+        client reads them back correctly through the real wire format, not
+        a mock -- the fields the "📩 ... replied" Discord embed surfaces."""
 
-        await self._start_server(ToolLoopResult(3, "final_text", text="moved the table"))
+        await self._start_server(
+            ToolLoopResult(
+                3, "final_text", "moved the table", successful_tool_calls=2, failed_tool_calls=1
+            )
+        )
 
         result = await ArchitectClient().ask(base_url=_BASE_URL, text="hi")
 
-        self.assertEqual(result, AgentAskResult(answer="moved the table", tool_calls_made=3))
+        self.assertEqual(
+            result,
+            AgentAskResult(
+                answer="moved the table",
+                tool_calls_made=3,
+                successful_tool_calls=2,
+                failed_tool_calls=1,
+            ),
+        )
 
     async def test_ask_raises_when_architect_task_fails(self) -> None:
-        await self._start_server(ToolLoopResult(5, "max_tool_calls", text=None))
+        await self._start_server(
+            ToolLoopResult(5, "max_tool_calls", None, successful_tool_calls=3, failed_tool_calls=2)
+        )
 
         with self.assertRaises(ArchitectRequestError):
             await ArchitectClient().ask(base_url=_BASE_URL, text="hi")
@@ -117,7 +148,15 @@ class TestArchitectClientLiveRoundTrip(unittest.IsolatedAsyncioTestCase):
         returning -- a live deployment saw `consult_architect failed:
         Client Request timed out` exactly 5s after the request went out.
         """
-        await self._start_server(ToolLoopResult(0, "final_text", text="hello from architect"))
+        await self._start_server(
+            ToolLoopResult(
+                0,
+                "final_text",
+                "hello from architect",
+                successful_tool_calls=0,
+                failed_tool_calls=0,
+            )
+        )
 
         real_client = httpx.AsyncClient(timeout=architect_client_module._REQUEST_TIMEOUT_SECONDS)
         self.addAsyncCleanup(real_client.aclose)

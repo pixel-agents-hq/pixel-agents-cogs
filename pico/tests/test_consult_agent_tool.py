@@ -23,10 +23,14 @@ class FakeArchitectAsker:
         *,
         answer: str | None = None,
         tool_calls_made: int | None = None,
+        successful_tool_calls: int | None = None,
+        failed_tool_calls: int | None = None,
         fail_with: Exception | None = None,
     ) -> None:
         self.answer = answer
         self.tool_calls_made = tool_calls_made
+        self.successful_tool_calls = successful_tool_calls
+        self.failed_tool_calls = failed_tool_calls
         self.fail_with = fail_with
         self.calls: list[dict[str, str]] = []
 
@@ -35,7 +39,12 @@ class FakeArchitectAsker:
         if self.fail_with is not None:
             raise self.fail_with
         assert self.answer is not None
-        return AgentAskResult(answer=self.answer, tool_calls_made=self.tool_calls_made)
+        return AgentAskResult(
+            answer=self.answer,
+            tool_calls_made=self.tool_calls_made,
+            successful_tool_calls=self.successful_tool_calls,
+            failed_tool_calls=self.failed_tool_calls,
+        )
 
 
 class FakeReplySender:
@@ -170,22 +179,61 @@ class TestConsultAgentToolAnnouncements(unittest.IsolatedAsyncioTestCase):
 
     async def test_reply_announcement_carries_a_tool_calls_field(self) -> None:
         reply = FakeReplySender()
-        tool = _tool(FakeArchitectAsker(answer="ok", tool_calls_made=3), reply)
+        tool = _tool(
+            FakeArchitectAsker(
+                answer="ok", tool_calls_made=3, successful_tool_calls=2, failed_tool_calls=1
+            ),
+            reply,
+        )
 
         await tool.handler(ConsultAgentInput(prompt="hi"))
 
         self.assertEqual(reply.fields[0], ())  # the outgoing question carries none
-        self.assertEqual(len(reply.fields[1]), 1)
+        self.assertEqual(len(reply.fields[1]), 3)
         self.assertEqual(reply.fields[1][0].name, "Tool calls")
         self.assertEqual(reply.fields[1][0].value, "3")
+        self.assertEqual(reply.fields[1][1].name, "Successful tool calls")
+        self.assertEqual(reply.fields[1][1].value, "2")
+        self.assertEqual(reply.fields[1][2].name, "Failing tool calls")
+        self.assertEqual(reply.fields[1][2].value, "1")
 
-    async def test_reply_announcement_has_no_tool_calls_field_when_unreported(self) -> None:
+    async def test_reply_announcement_has_no_tool_call_fields_when_unreported(self) -> None:
         reply = FakeReplySender()
-        tool = _tool(FakeArchitectAsker(answer="ok", tool_calls_made=None), reply)
+        tool = _tool(
+            FakeArchitectAsker(
+                answer="ok",
+                tool_calls_made=None,
+                successful_tool_calls=None,
+                failed_tool_calls=None,
+            ),
+            reply,
+        )
 
         await tool.handler(ConsultAgentInput(prompt="hi"))
 
         self.assertEqual(reply.fields[1], ())
+
+    async def test_reply_announcement_omits_only_the_unreported_tool_call_fields(self) -> None:
+        """Each field is omitted independently -- an agent may report some
+        counts but not others (e.g. a `tool_calls_made` total with no
+        success/failure breakdown yet)."""
+
+        reply = FakeReplySender()
+        tool = _tool(
+            FakeArchitectAsker(
+                answer="ok",
+                tool_calls_made=3,
+                successful_tool_calls=None,
+                failed_tool_calls=None,
+            ),
+            reply,
+        )
+
+        await tool.handler(ConsultAgentInput(prompt="hi"))
+
+        self.assertEqual(len(reply.fields[1]), 1)
+        self.assertEqual(reply.fields[1][0].name, "Tool calls")
+        self.assertEqual(reply.fields[1][0].value, "3")
 
     async def test_announces_the_question_then_a_failure(self) -> None:
         reply = FakeReplySender()

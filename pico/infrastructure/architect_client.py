@@ -46,14 +46,17 @@ class ArchitectRequestError(RuntimeError):
 @dataclass(frozen=True, slots=True)
 class AgentAskResult:
     """One consulted agent's answer, plus whatever optional operational
-    metadata it chose to report on its final message -- `tool_calls_made`
-    is None whenever that key is absent, since `ask()`'s own contract is
-    generic across any future agent (see `ArchitectAsker`'s docstring in
+    metadata it chose to report on its final message -- `tool_calls_made`,
+    `successful_tool_calls`, `failed_tool_calls` are each None whenever
+    their key is absent, since `ask()`'s own contract is generic across any
+    future agent (see `ArchitectAsker`'s docstring in
     consult_agent_tool.py), not every one of which necessarily runs a
     bounded tool-calling loop or reports one."""
 
     answer: str
     tool_calls_made: int | None = None
+    successful_tool_calls: int | None = None
+    failed_tool_calls: int | None = None
 
 
 class ArchitectClient:
@@ -75,6 +78,8 @@ class ArchitectClient:
             request = SendMessageRequest(message=message)
             final_text: str | None = None
             tool_calls_made: int | None = None
+            successful_tool_calls: int | None = None
+            failed_tool_calls: int | None = None
             failed = False
             async for response in client.send_message(request):
                 status = None
@@ -86,14 +91,28 @@ class ArchitectClient:
                     parts = [part.text for part in response.message.parts if part.text]
                     if parts:
                         final_text = "\n".join(parts)
-                        tool_calls_made = _tool_calls_made(response.message.metadata)
+                        tool_calls_made = _metadata_int(
+                            response.message.metadata, "tool_calls_made"
+                        )
+                        successful_tool_calls = _metadata_int(
+                            response.message.metadata, "successful_tool_calls"
+                        )
+                        failed_tool_calls = _metadata_int(
+                            response.message.metadata, "failed_tool_calls"
+                        )
                     continue
 
                 if status is not None and status.HasField("message"):
                     parts = [part.text for part in status.message.parts if part.text]
                     if parts:
                         final_text = "\n".join(parts)
-                        tool_calls_made = _tool_calls_made(status.message.metadata)
+                        tool_calls_made = _metadata_int(status.message.metadata, "tool_calls_made")
+                        successful_tool_calls = _metadata_int(
+                            status.message.metadata, "successful_tool_calls"
+                        )
+                        failed_tool_calls = _metadata_int(
+                            status.message.metadata, "failed_tool_calls"
+                        )
                 if status is not None and status.state == TaskState.TASK_STATE_FAILED:
                     failed = True
                     break
@@ -106,17 +125,22 @@ class ArchitectClient:
 
         if failed or final_text is None:
             raise ArchitectRequestError(final_text or "architect did not return an answer")
-        return AgentAskResult(answer=final_text, tool_calls_made=tool_calls_made)
+        return AgentAskResult(
+            answer=final_text,
+            tool_calls_made=tool_calls_made,
+            successful_tool_calls=successful_tool_calls,
+            failed_tool_calls=failed_tool_calls,
+        )
 
 
-def _tool_calls_made(metadata: object) -> int | None:
+def _metadata_int(metadata: object, key: str) -> int | None:
     """`metadata` is a protobuf Struct -- membership/indexing work, but not
-    `.get()` -- reporting it is a consulted agent's own choice (see
-    `AgentAskResult`'s docstring), so a missing or non-numeric key is a
+    `.get()` -- reporting any given key is a consulted agent's own choice
+    (see `AgentAskResult`'s docstring), so a missing or non-numeric key is a
     normal case, not an error."""
 
     try:
-        raw = metadata["tool_calls_made"]  # type: ignore[index]
+        raw = metadata[key]  # type: ignore[index]
     except (KeyError, TypeError):
         return None
     return int(raw) if isinstance(raw, (int, float)) else None

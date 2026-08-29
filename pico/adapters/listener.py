@@ -95,7 +95,11 @@ class ListenerMixin:
                 bot_user_id=_bot_user_id(self.bot),
             )
         )
-        tools.extend(await _cross_cog_tools(self._corridor, ctx))
+        tools.extend(
+            await _cross_cog_tools(
+                self._corridor, ctx, guild_id=guild.id, bot_user_id=_bot_user_id(self.bot)
+            )
+        )
         result = await self._tool_loop_service.run(
             base_url=llm_settings.llm_base_url,
             api_key=llm_settings.llm_api_key or "",
@@ -170,7 +174,9 @@ def _agent_tools(
     return tools
 
 
-async def _cross_cog_tools(corridor: Any, ctx: commands.Context) -> list[ToolSpec]:
+async def _cross_cog_tools(
+    corridor: Any, ctx: commands.Context, *, guild_id: int, bot_user_id: int | None
+) -> list[ToolSpec]:
     """Tools other cogs (e.g. deskutils) registered into corridor's shared
     tool registry, filtered to what this `ctx` is allowed to invoke
     (corridor resolves an explicit permission group or the Discord
@@ -179,12 +185,19 @@ async def _cross_cog_tools(corridor: Any, ctx: commands.Context) -> list[ToolSpe
     commands, so calling one invokes the real command callback in this same
     channel, as `ctx.author`. Adapting a misbehaving registration must
     never take down this turn's whole tool loop, so one tool's conversion
-    failure is logged and skipped rather than propagated."""
+    failure is logged and skipped rather than propagated. `guild_id`/
+    `bot_user_id` (same values `ReplyTool` is built with, above) let each
+    adapted tool publish `AgentReplied` after a successful call -- see
+    `tools/cross_cog.py`'s module docstring."""
 
     tools: list[ToolSpec] = []
     for registered in await corridor.list_tools_for(ctx):
         try:
-            tools.append(CrossCogTool(registered, ctx))
+            tools.append(
+                CrossCogTool(
+                    registered, ctx, corridor=corridor, guild_id=guild_id, bot_user_id=bot_user_id
+                )
+            )
         except Exception:
             log.warning(
                 "pico: could not adapt cross-cog tool %r, skipping",

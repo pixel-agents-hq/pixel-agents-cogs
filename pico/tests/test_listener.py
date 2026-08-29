@@ -162,7 +162,7 @@ class TestCrossCogTools(unittest.IsolatedAsyncioTestCase):
         corridor = FakeCorridor()
         corridor.tools_for_member = [_registered_tool("a"), _registered_tool("b")]
 
-        tools = await _cross_cog_tools(corridor, _ctx())
+        tools = await _cross_cog_tools(corridor, _ctx(), guild_id=1, bot_user_id=999)
 
         self.assertEqual({tool.name for tool in tools}, {"a", "b"})
         self.assertTrue(all(isinstance(tool, CrossCogTool) for tool in tools))
@@ -172,7 +172,7 @@ class TestCrossCogTools(unittest.IsolatedAsyncioTestCase):
         member = SimpleNamespace(id=1)
         ctx = _ctx(member)
 
-        await _cross_cog_tools(corridor, ctx)
+        await _cross_cog_tools(corridor, ctx, guild_id=1, bot_user_id=999)
 
         self.assertEqual(corridor.list_tools_for_calls, [ctx])
 
@@ -182,6 +182,6 @@ class TestCrossCogTools(unittest.IsolatedAsyncioTestCase):
         object.__setattr__(broken, "parameters", None)  # malformed: not mapping-shaped
         corridor.tools_for_member = [broken, _registered_tool("healthy")]
 
-        tools = await _cross_cog_tools(corridor, _ctx())
+        tools = await _cross_cog_tools(corridor, _ctx(), guild_id=1, bot_user_id=999)
 
         self.assertEqual([tool.name for tool in tools], ["healthy"])

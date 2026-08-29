@@ -124,21 +124,20 @@ class OfficeLayoutService:
         succeed right now, probing the exact same `_furniture_placement_error`
         place_furniture/move_furniture already validate against -- never
         reimplements the wall/floor-anchor rule, so it can't drift out of
-        sync with it. Works for any style, not just `can_place_on_walls`
-        ones: a floor style (a chair, a second table) is validated the same
-        way, so scanning a thin strip against an existing item's edge finds
-        the exact flush-adjacent anchor instead of leaving an unvalidated
-        guess-gap. For a `can_place_on_walls` style the scan also covers
-        the row overhang above `area` fix 4 introduced (sized to the
-        style's own `footprint_height`, not a guess), since that's exactly
-        the anchor a caller can't otherwise find without a failed
-        placement attempt first. Anchors are returned in scan order, rows
-        top-to-bottom then columns left-to-right within `area` -- point
-        `area` at the strip immediately touching the reference item's edge
-        (not a wider buffer zone) and use the first anchor returned as the
-        flush position, rather than adding an extra tile of margin beyond
-        it "to be safe": every returned anchor is already collision-free,
-        there is no closer-but-hidden option being screened out."""
+        sync with it. Works for any style (this is generic, not restricted
+        to `can_place_on_walls`), but the tool layer (`office_tools.py`'s
+        `FindFurnitureAnchorsTool`) now steers callers toward two specific
+        uses: a `can_place_on_walls` style's row overhang (sized to the
+        style's own `footprint_height`, not a guess -- the anchor a caller
+        can't otherwise find without a failed placement attempt first), and
+        pre-checking an empty region fits a style before its first
+        placement there. Finding a spot *adjacent to an existing item* is
+        `place_furniture`'s `touching` parameter's job now (see `Touching`/
+        `_touching_anchor`) -- it computes the flush anchor directly from
+        live state instead of a caller searching a strip and reusing the
+        result, which can go stale the moment an earlier call in the same
+        session changes the layout. Anchors are returned in scan order,
+        rows top-to-bottom then columns left-to-right within `area`."""
 
         office, styles = await self._load()
         if area.width * area.height > _MAX_DESCRIBE_TILES_AREA:

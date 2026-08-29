@@ -542,14 +542,20 @@ def _build_find_furniture_anchors_input(style_loader: FurnitureStyleLoader) -> t
         "FindFurnitureAnchorsInput",
         style=(
             style_type,
-            Field(description="Style id -- must exist in the current style manifest."),
+            Field(
+                description=(
+                    "Style id -- must exist in the current style manifest. Most useful for a "
+                    "can_place_on_walls style (finds its wall-overhang anchor) or any style "
+                    "you're pre-checking an empty region for."
+                )
+            ),
         ),
         facing=(
             Literal[_DIRECTION_VALUES] | None,
             Field(default=None, description="Facing direction. Omit to use the style's default."),
         ),
-        col=(int, Field(description="Top-left column of the region to search.")),
-        row=(int, Field(description="Top-left row of the region to search.")),
+        col=(int, Field(description="Top-left column of the empty region to check.")),
+        row=(int, Field(description="Top-left row of the empty region to check.")),
         width=(int, Field(description="Region width in tiles.")),
         height=(int, Field(description="Region height in tiles.")),
         limit=(
@@ -580,10 +586,11 @@ class FindFurnitureAnchorsTool:
     name = "find_furniture_anchors"
     description = (
         "Search a region for every anchor place_furniture would currently accept for a given "
-        "style/facing -- read-only, places nothing. To seat something touching an existing "
-        "item, prefer place_furniture's own touching parameter instead of searching here first. "
-        "Use this tool for open-ended placement: checking a region before committing, or "
-        "finding the wall-overhang row a can_place_on_walls style needs."
+        "style/facing -- read-only, places nothing. Two intended uses: (1) for a "
+        "can_place_on_walls style, find the exact wall-overhang anchor a multi-row fixture "
+        "needs; (2) pre-check that an empty region fits a style's full footprint before its "
+        "first placement there. Do NOT use this to find a spot next to an existing item -- "
+        "use place_furniture's own touching parameter for that instead."
     )
 
     def __init__(self, service: OfficeLayoutService, style_loader: FurnitureStyleLoader) -> None:

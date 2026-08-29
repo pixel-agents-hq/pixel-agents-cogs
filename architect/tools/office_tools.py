@@ -72,8 +72,20 @@ class FurnitureSummary(BaseModel):
     id: str
     kind: str
     style: str
-    col: int = Field(description="Column of the anchor tile (the footprint's top-left corner).")
-    row: int = Field(description="Row of the anchor tile (the footprint's top-left corner).")
+    col: int = Field(
+        description=(
+            "Column of the anchor tile (the footprint's top-left corner) -- always the "
+            "correct destination column for move_furniture/place_furniture, even when "
+            "no occupied_cells entry has is_anchor=True for this item."
+        )
+    )
+    row: int = Field(
+        description=(
+            "Row of the anchor tile (the footprint's top-left corner) -- always the "
+            "correct destination row for move_furniture/place_furniture, even when no "
+            "occupied_cells entry has is_anchor=True for this item."
+        )
+    )
     facing: str | None = None
     label: str | None = None
     color: str | None = None
@@ -493,9 +505,12 @@ class MoveFurnitureTool:
         "tile. The move is rejected if the item's footprint at the destination would "
         "overlap another item's occupied_cells (see describe_office), except a surface "
         "item stacking onto a desk or vice versa. This is an atomic teleport, not a "
-        "swap: moving an item onto a cell another item currently occupies fails, so to "
-        "exchange two items' positions, move one to a free tile first, then move the "
-        "other into the vacated space. For a wall-mounted style, the tile that must "
+        "swap: moving an item onto a cell another item currently occupies fails. "
+        "Exchanging two items' positions requires three calls, not two: (1) move item A "
+        "to a temporary free tile that overlaps neither item, (2) move item B into A's "
+        "now-vacant original position, (3) move A from the temporary tile into B's "
+        "now-vacant original position -- skipping step 3 leaves A stranded at the "
+        "temporary tile instead of swapped. For a wall-mounted style, the tile that must "
         "actually touch a wall is the *bottom* row of the destination footprint (the "
         "occupied_cells entries with the largest row value for that column), not "
         "col/row itself -- a multi-row wall fixture's anchor sits one or more rows "

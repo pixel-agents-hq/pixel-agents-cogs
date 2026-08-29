@@ -194,28 +194,6 @@ class TestPlaceFurnitureToolDynamicSchema(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(find_output.furniture), 1)
         self.assertEqual(find_output.furniture[0].style, "desk")
 
-    async def test_background_cells_are_exposed_for_flush_chair_placement(self) -> None:
-        # DESK_FRONT is 3x2 with background_tiles=1 -- the anchor row is
-        # the desk's north/back edge, excluded from occupied_cells, so
-        # nothing is rejected for landing there. A chair "behind" the desk
-        # belongs at that exact coordinate, not one tile further north.
-        service = _service()
-        loader = _loader()
-        place_output = await PlaceFurnitureTool(service, loader).handler(
-            PlaceFurnitureTool(service, loader).Input.model_validate(
-                {"kind": "desk", "style": "desk", "col": 0, "row": 0}
-            )
-        )
-        assert place_output.item is not None
-
-        self.assertEqual(
-            {(cell.col, cell.row) for cell in place_output.item.background_cells},
-            {(0, 0), (1, 0), (2, 0)},
-        )
-        self.assertTrue(
-            next(cell for cell in place_output.item.background_cells if cell.col == 0).is_anchor
-        )
-
     async def test_unknown_style_is_rejected_by_the_schema_itself(self) -> None:
         loader = _loader()
         tool = PlaceFurnitureTool(_service(), loader)

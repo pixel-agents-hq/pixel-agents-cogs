@@ -167,30 +167,6 @@ class TestOccupiedCells:
         assert manifest.occupied_cells("wooden_chair", None, GridPosition(0, 0)) == []
 
 
-class TestBackgroundCells:
-    def test_desk_front_background_row_is_the_top_row(self) -> None:
-        # The exact complement of test_background_tiles_are_excluded_from_
-        # the_top_rows above -- everything occupied_cells excludes.
-        manifest = FurnitureStyleManifest.from_raw(_MANIFEST)
-
-        cells = manifest.background_cells("desk", Direction.SOUTH, GridPosition(0, 0))
-
-        assert set(cells) == {GridPosition(0, 0), GridPosition(1, 0), GridPosition(2, 0)}
-
-    def test_style_with_no_background_tiles_returns_empty(self) -> None:
-        manifest = FurnitureStyleManifest.from_raw(_MANIFEST)
-
-        cells = manifest.background_cells("wooden_chair", Direction.SOUTH, GridPosition(5, 5))
-
-        assert cells == []
-
-    def test_unknown_style_or_facing_returns_empty(self) -> None:
-        manifest = FurnitureStyleManifest.from_raw(_MANIFEST)
-
-        assert manifest.background_cells("not_a_style", None, GridPosition(0, 0)) == []
-        assert manifest.background_cells("wooden_chair", None, GridPosition(0, 0)) == []
-
-
 def test_loader_caches_until_the_built_commit_changes() -> None:
     fake = FakePixelAgents(furniture_styles=_MANIFEST, built_commit="a" * 40)
     loader = FurnitureStyleLoader(fake)

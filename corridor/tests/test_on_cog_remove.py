@@ -20,7 +20,7 @@ from a2a.types import AgentCapabilities, AgentCard, AgentInterface
 from a2a.utils import TransportProtocol
 
 from ..corridor import Corridor
-from ..domain import RegisteredAgent, RegisteredTool
+from ..domain import AgentPresenceChanged, RegisteredAgent, RegisteredTool
 from .conftest import FakeBot
 
 
@@ -137,6 +137,18 @@ class TestOnCogRemove(unittest.IsolatedAsyncioTestCase):
         await self.corridor.on_cog_remove(SimpleNamespace(qualified_name="SomeOtherCog"))
 
         self.assertEqual({agent.agent_key for agent in self.corridor.list_agents()}, {"architect"})
+
+    async def test_removed_owners_agents_get_offline_presence_published(self) -> None:
+        received: list[object] = []
+        await self.corridor.register_agent(_agent("architect"), owner="Architect")
+        self.corridor.subscribe_event(AgentPresenceChanged, _recorder(received), owner="Recorder")
+
+        await self.corridor.on_cog_remove(SimpleNamespace(qualified_name="Architect"))
+
+        self.assertEqual(len(received), 1)
+        assert isinstance(received[0], AgentPresenceChanged)
+        self.assertEqual(received[0].agent.agent_key, "architect")
+        self.assertEqual(received[0].status, "offline")
 
     async def test_does_not_affect_the_dependent_cascade(self) -> None:
         """This is additive to, not a replacement for, register_dependent's

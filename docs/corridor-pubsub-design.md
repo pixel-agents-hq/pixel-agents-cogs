@@ -8,9 +8,9 @@
 > | Cog | Role |
 > |---|---|
 > | floorplan | **subscribes only** — `floorplan/adapters/event_subscriptions.py` |
-> | corridor | **publishes** presence + reply-mirror events from its own Discord listeners — `corridor/adapters/discord_gateway.py` |
+> | corridor | **publishes** presence + reply-mirror events from its own Discord listeners (`corridor/adapters/discord_gateway.py`), and `AgentPresenceChanged` for any A2A agent's directory registration (`register_agent`/`unregister_agent_owner`/`unregister_agent` — `corridor/adapters/cog_base.py`) |
 > | pico | publishes `AgentReplied` — `pico/tools/reply_tool.py` |
-> | architect | publishes `AgentPresenceChanged` (load/unload) and `AgentReplied` (tool use/thinking) — `architect/adapters/cog_base.py` |
+> | architect | publishes `AgentReplied` (tool use/thinking) — `architect/adapters/cog_base.py`. No longer publishes `AgentPresenceChanged` itself; corridor's own `register_agent`/`unregister_agent_owner` do that as a side effect of architect's A2A registration, see `docs/agent-directory-design.md` |
 > | testbench | manual dev/test publisher, any event — unchanged |
 >
 > See "Migration notes" near the end for what changed at each call site.
@@ -61,9 +61,9 @@ flowchart LR
     classDef hub fill:#6b4fa0,stroke:#402f60,color:#fff
 
     subgraph Publishers["Publishers"]
-        Corridor["corridor<br/><small>own Discord gateway listeners:<br/>presence + message mirroring</small>"]
+        Corridor["corridor<br/><small>own Discord gateway listeners:<br/>presence + message mirroring;<br/>AgentPresenceChanged on A2A<br/>agent register/unregister</small>"]
         Pico["pico<br/><small>AgentReplied, after send_reply</small>"]
-        Architect["architect<br/><small>AgentPresenceChanged on load/unload,<br/>AgentReplied on tool use/thinking</small>"]
+        Architect["architect<br/><small>AgentReplied on tool use/thinking</small>"]
         Testbench["testbench<br/><small>manual, dev/test only</small>"]
         PubFuture["(future publisher)<br/><small>any cog -- publish_event() with a<br/>real AgentRef, no bus change needed</small>"]
     end
@@ -254,7 +254,7 @@ Every field above was checked against `core/asyncapi.yaml` in
 | Dataclass | Published by (target) | Wire translation |
 |---|---|---|
 | `AgentReplied` | **corridor** (message mirroring, replacing floorplan's own `on_message`), **pico** (`ReplyTool`, after `send_reply` succeeds), **architect** (tool use/thinking steps, and see "architect" below) | `agentToolStart` (`status=summary`) then `agentSelected`, via `OfficeService.send_message_activity`. After `message_tool_clear_delay`, `OfficeService.clear_message_activity` sends `agentToolsClear` only |
-| `AgentPresenceChanged` | **corridor** (member update/presence update/join/remove listeners, replacing floorplan's own), **architect** (`cog_load` → online, `cog_unload` → offline) | `OfficeService.reconcile()` — spawns/closes/renames the agent, forwards each `AgentActivity` |
+| `AgentPresenceChanged` | **corridor** (member update/presence update/join/remove listeners, replacing floorplan's own; and `register_agent`/`unregister_agent_owner`/`unregister_agent`, for any A2A-registered agent — see "corridor" below) | `OfficeService.reconcile()` — spawns/closes/renames the agent, forwards each `AgentActivity` |
 | `AgentStatusChanged` | manual only (`testbench`) — no automated publisher yet | `agentStatus` via `OfficeService.set_status`, gated on `is_tracked` |
 | `AgentToolStarted` | manual only (`testbench`) — deliberately unused by architect's tool/thinking reporting, see the `AgentReplied` docstring above | `agentToolStart` via `OfficeService.start_tool_activity`, gated on `is_tracked` |
 | `AgentHighlighted` | manual only (`testbench`) | `agentSelected(id)` via `OfficeService.highlight_agent`, gated on `is_tracked` |
@@ -282,6 +282,20 @@ publish unconditionally (no `include_bots`/office-tracking/
 `broadcast_messages` gating) — that filtering moved to the subscriber
 side (see "Migration notes").
 
+Separately, corridor's own `register_agent`/`unregister_agent_owner`/
+`unregister_agent` (`corridor/adapters/cog_base.py`, see
+`docs/agent-directory-design.md`) also publish `AgentPresenceChanged` —
+`status="online"` when an A2A agent registers into
+`AgentDirectoryService`, `status="offline"` when it (or all of one
+owner's agents) unregisters. `AgentRef.agent_key` carries the registered
+`agent_key`, `discord_user_id`/`guild_id` stay `None`, `is_bot=True`
+(same shape architect's own `ARCHITECT_AGENT_REF` used), and
+`display_name` comes from the registered `AgentCard.name`. This means a
+registering cog's directory membership and its presence-broadcast
+lifecycle are the same event, not two separate things it must remember
+to keep in sync — see "architect" below for the cog this replaced a
+hand-rolled publisher for.
+
 ### pico
 
 Unchanged. `pico/tools/reply_tool.py::ReplyTool._publish_agent_replied`
@@ -297,17 +311,21 @@ own replies directly, rather than corridor inferring them from
 Architect is A2A-reachable, not Discord-user-facing, and has no Discord
 account or guild scope of its own — its events use a fixed identity,
 `ARCHITECT_AGENT_REF = AgentRef(discord_user_id=None, guild_id=None,
-is_bot=True)`, a module-level constant in `architect/adapters/cog_base.py`
-reused for every event it publishes.
+is_bot=True, agent_key="architect")`, a module-level constant in
+`architect/adapters/cog_base.py` reused for every event it publishes.
 
-- **Presence, on cog lifecycle.** `CogBase.cog_load` (right after the
-  existing `self._corridor.register_dependent(...)` call) publishes
-  `AgentPresenceChanged(agent=ARCHITECT_AGENT_REF,
-  display_name="architect", status="online")` — the same shape floorplan's
-  former `on_member_join` published for a human joining. `cog_unload`
-  (right before the existing `unregister_dependent(...)` call) publishes
-  the same event with `status="offline"`, mirroring `on_member_remove`.
-- **Tool use / thinking, per step.** `ToolLoopService.run()`
+- **Presence is no longer architect's own publish.** architect used to
+  call `self._corridor.publish_event(AgentPresenceChanged(...))` directly
+  from `cog_load`/`cog_unload` (mirroring floorplan's former
+  `on_member_join`/`on_member_remove`); that hand-rolled publisher is
+  retired. Presence is now a side effect of `_register_with_corridor()`'s
+  `self._corridor.register_agent(...)` call (`cog_load`) and
+  `self._corridor.unregister_agent_owner("architect")` (`cog_unload`) —
+  see "corridor" above and `docs/agent-directory-design.md`. This was a
+  deliberate design choice (not architect-specific): any future
+  A2A-registered agent gets this for free, without hand-rolling its own
+  publish calls the way architect originally had to.
+- **Tool use / thinking, per step — unchanged.** `ToolLoopService.run()`
   (`architect/application/tool_loop_service.py`) takes an optional
   `on_activity` callback, awaited once per tool call
   (`"using tool <name>"`) and once per thinking turn (the model's own text
@@ -321,11 +339,13 @@ reused for every event it publishes.
 ```mermaid
 sequenceDiagram
     participant Arch as architect
+    participant Cor as corridor<br/>(register_agent)
     participant C as corridor<br/>(EventBusService)
     participant FP as floorplan
 
     Note over Arch: cog_load
-    Arch->>C: publish_event(AgentPresenceChanged(ARCHITECT_AGENT_REF, status="online"))
+    Arch->>Cor: register_agent(RegisteredAgent(agent_key="architect", ...))
+    Cor->>C: publish_event(AgentPresenceChanged(agent_key="architect", status="online"))
     C->>FP: dispatch(event)
 
     Note over Arch: A2A task received -- tool loop runs
@@ -335,7 +355,8 @@ sequenceDiagram
     end
 
     Note over Arch: cog_unload
-    Arch->>C: publish_event(AgentPresenceChanged(ARCHITECT_AGENT_REF, status="offline"))
+    Arch->>Cor: unregister_agent_owner("architect")
+    Cor->>C: publish_event(AgentPresenceChanged(agent_key="architect", status="offline"))
     C->>FP: dispatch(event)
 ```
 

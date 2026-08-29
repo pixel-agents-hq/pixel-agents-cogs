@@ -208,6 +208,30 @@ class TestCogLoadSurvivesARegistrationFailure(unittest.IsolatedAsyncioTestCase):
         await cog.cog_load()  # must not raise
         self.addAsyncCleanup(cog.cog_unload)
 
+    async def test_no_presence_published_when_registration_fails(self) -> None:
+        """Presence is now only a side effect of a *successful*
+        registration -- an agent that failed to register isn't reachable,
+        so no online AgentPresenceChanged should be published for it."""
+
+        bot = FakeBot()
+        assert bot.corridor is not None
+
+        async def _broken_register_agent(agent: object, *, owner: str) -> None:
+            raise RuntimeError("simulated corridor failure")
+
+        bot.corridor.register_agent = _broken_register_agent  # type: ignore[method-assign]
+        cog = Architect(bot=bot)
+
+        await cog.cog_load()
+        self.addAsyncCleanup(cog.cog_unload)
+
+        presence_events = [
+            event
+            for event in bot.corridor.published
+            if type(event).__name__ == "AgentPresenceChanged"
+        ]
+        self.assertEqual(presence_events, [])
+
     async def test_the_cog_stays_usable_via_discord_commands(self) -> None:
         bot = FakeBot()
         assert bot.corridor is not None
@@ -327,9 +351,12 @@ class TestAgentRegistration(unittest.IsolatedAsyncioTestCase):
 
 
 class TestPresencePublishing(unittest.IsolatedAsyncioTestCase):
-    """architect announces itself on corridor's event bus the same way
-    floorplan's on_member_join/on_member_remove do for a Discord member --
-    see docs/corridor-pubsub-design.md."""
+    """architect no longer hand-rolls its own presence publish -- corridor's
+    own `register_agent`/`unregister_agent_owner` now publish
+    AgentPresenceChanged as a side effect of architect registering/
+    unregistering its A2A agent (see docs/agent-directory-design.md), the
+    same event shape floorplan's/architect's own subscribers already
+    consume for a genuine agent."""
 
     async def test_cog_load_publishes_online_presence(self) -> None:
         bot = FakeBot()

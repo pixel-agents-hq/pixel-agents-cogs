@@ -104,6 +104,17 @@ class TestAgentDirectoryService(unittest.TestCase):
 
         self.assertEqual(self.directory.list_agents(), ())
 
+    def test_list_agents_for_owner_returns_only_that_owners_agents(self) -> None:
+        a = _agent("architect")
+        b = _agent("agent-n")
+        self.directory.register(a, owner="Architect")
+        self.directory.register(b, owner="AgentN")
+
+        self.assertEqual(self.directory.list_agents_for_owner("Architect"), (a,))
+
+    def test_list_agents_for_owner_with_nothing_registered_is_empty(self) -> None:
+        self.assertEqual(self.directory.list_agents_for_owner("nobody"), ())
+
 
 if __name__ == "__main__":
     unittest.main()

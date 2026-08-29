@@ -8,6 +8,21 @@
 > were Discord-snowflake-shaped by construction and had no representation
 > for an agent that isn't a Discord account at all. Every item in the
 > "Implementation checklist" below has landed.
+>
+> **Extended by architect's own dashboard consuming this too.** Originally
+> this doc only covered floorplan's canvas gaining genuine-agent support.
+> `architect/adapters/presence_subscription.py` now reconciles the same
+> `AgentPresenceChanged` events onto architect's own, separate
+> `OfficeService` instance (`docs/architect-design.md` §5/§9 item 11),
+> plus one entry with no corridor/`AgentDirectoryService` involvement at
+> all: the bot's own Discord account, represented as a synthetic
+> `GenuineAgentKey`, since it was never an A2A agent. `AgentPresenceChanged`
+> is now also published by corridor itself (`register_agent`/
+> `unregister_agent_owner`/`unregister_agent`), not just by architect's own
+> `cog_load`/`cog_unload` — see `docs/agent-directory-design.md`.
+> `reconcile_genuine_agent`'s own signature and folding behavior
+> (described below) are unchanged by this — only a second consumer was
+> added.
 
 ## Motivation
 

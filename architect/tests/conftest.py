@@ -8,7 +8,9 @@ import tempfile
 import types
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
+
+from corridor.domain import AgentPresenceChanged, AgentRef
 
 
 class FakeGuild:
@@ -67,13 +69,32 @@ class FakeCorridor:
     async def register_agent(self, agent: Any, *, owner: str) -> None:
         """Stands in for corridor.register_agent -- records the agent
         without corridor's real URL-rewriting (that behavior belongs to
-        corridor's own test suite, not architect's)."""
+        corridor's own test suite, not architect's). Real corridor now
+        also publishes AgentPresenceChanged("online") as a side effect of
+        registering, so this mirrors that too."""
 
         self._registered_agents[agent.agent_key] = (owner, agent)
+        await self._publish_agent_presence(agent, status="online")
 
-    def unregister_agent_owner(self, owner: str) -> None:
+    async def unregister_agent_owner(self, owner: str) -> None:
+        removed = [agent for _, (o, agent) in self._registered_agents.items() if o == owner]
         for key in [k for k, (o, _) in self._registered_agents.items() if o == owner]:
             del self._registered_agents[key]
+        for agent in removed:
+            await self._publish_agent_presence(agent, status="offline")
+
+    async def _publish_agent_presence(
+        self, agent: Any, *, status: Literal["online", "offline"]
+    ) -> None:
+        await self.publish_event(
+            AgentPresenceChanged(
+                agent=AgentRef(
+                    discord_user_id=None, guild_id=None, is_bot=True, agent_key=agent.agent_key
+                ),
+                display_name=agent.card.name or agent.agent_key,
+                status=status,
+            )
+        )
 
     def list_agents(self) -> tuple[Any, ...]:
         return tuple(agent for _, agent in self._registered_agents.values())
@@ -176,6 +197,15 @@ class FakePixelAgents:
         return self._furniture_styles
 
 
+class FakeUser:
+    """Stands in for `discord.ClientUser` (`bot.user`) -- only `id`/`name`
+    are ever read, by `PresenceSubscriptionMixin._reconcile_own_bot_account`."""
+
+    def __init__(self, user_id: int = 999, name: str = "TestBot") -> None:
+        self.id = user_id
+        self.name = name
+
+
 @dataclass(frozen=True)
 class FakeModuleSpec:
     name: str
@@ -208,7 +238,9 @@ class FakeBot:
         preloaded: bool = True,
         corridor_installable: bool = True,
         pixelagents_installable: bool = True,
+        user: FakeUser | None = None,
     ) -> None:
+        self.user = user if user is not None else FakeUser()
         self._pending_corridor = corridor or FakeCorridor()
         self.corridor: FakeCorridor | None = self._pending_corridor if preloaded else None
         self.corridor_installable = corridor_installable

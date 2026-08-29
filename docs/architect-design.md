@@ -292,7 +292,12 @@ The fix has three parts:
    directly (not duplicated — unlike the transport classes, `OfficeService`
    is pixelagents' own generic, framework-neutral application layer, the
    intended shared surface floorplan itself already builds its own
-   bootstrap from) with an always-empty seat/agent roster (`NullSeatRepository`)
+   bootstrap from) with `NullSeatRepository` for seat/palette persistence
+   (no seat data survives a restart -- this affects palette assignment
+   only, not the agent roster itself: since `docs/office-agent-identity-design.md`,
+   `adapters/presence_subscription.py`'s `PresenceSubscriptionMixin` feeds
+   this `OfficeService` instance's genuine-agent roster from corridor's
+   `AgentPresenceChanged` events, separately from seats)
    and architect's own stored layout; `saveLayout` decodes the whole raw
    layout the browser sends through `OfficeLayoutService.replace_layout`
    (§8's own validation still applies, so a malformed or rule-violating
@@ -411,8 +416,11 @@ fail to load.
   `OfficeLayoutService` mutation surface, the LLM tools
   (`tools/office_tools.py`), and the `[p]architect office ...` Discord
   commands (`adapters/office_commands.py`) that now both write to it.
-- What `architect`'s webview actually displays beyond the raw layout (its
-  own agent's pixel-sprite representation, a status view, …).
+- What `architect`'s webview actually displays beyond the raw layout is
+  **partially resolved**: its own agent's pixel-sprite representation
+  (plus every other registered A2A agent's, plus its own Discord bot
+  account) now renders, see checklist item 11 below. A status view remains
+  deferred.
 - An in-browser editor for architect's office is **no longer** out of
   scope: `saveLayout` is handled (§5, §5.1) with deliberately no `/session`
   ticket endpoint or editor-authorization concept at all — see §5.1 for
@@ -452,8 +460,10 @@ discovered during implementation:
   Downloader only guarantees a cog's own `required_cogs` install
   alongside it, and `floorplan` was never one of architect's
   dependencies. `architect/adapters/dashboard.py` is also narrower than
-  floorplan's: no `/session` ticket endpoint or WebSocket server, since
-  there's no live-editable state to authorize an editor into yet.
+  floorplan's: no `/session` ticket endpoint, since (per §5.1, decided
+  after this note was written) architect's layout has no
+  editor-authorization concept at all by design — the WebSocket server
+  itself lives in `infrastructure/websocket.py`, not `dashboard.py`.
 - A real production incident (§4/§9 territory, not foreseen by the
   design): uvicorn's own `Server.startup()` calls `sys.exit()` on a bind
   failure, and `SystemExit` raised inside an `asyncio.Task` is re-raised
@@ -499,3 +509,12 @@ discovered during implementation:
     external path (`/architect/ws`), and client-side URL-rewrite shim —
     added after discovering item 7's static-only webview silently shared
     floorplan's live layout (see the incident note above).
+11. ✅ Give `architect`'s own dashboard a live agent roster, not just a
+    raw layout: corridor's `register_agent`/`unregister_agent_owner`/
+    `unregister_agent` now auto-publish `AgentPresenceChanged` (moved off
+    architect's own hand-rolled `cog_load`/`cog_unload` calls, which are
+    retired), and `architect/adapters/presence_subscription.py` reconciles
+    that onto architect's own `OfficeService` instance — plus a synthetic,
+    corridor-independent `GenuineAgentKey` entry for the bot's own Discord
+    account, since that account is not an A2A agent. See
+    `docs/office-agent-identity-design.md`.

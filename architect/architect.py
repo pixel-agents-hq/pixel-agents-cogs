@@ -9,10 +9,17 @@ from .adapters.commands import CommandsMixin
 from .adapters.dashboard import DashboardMixin
 from .adapters.office_commands import OfficeCommandsMixin
 from .adapters.office_gateway import OfficeGatewayMixin
+from .adapters.presence_subscription import PresenceSubscriptionMixin
 
 
 class Architect(
-    CommandsMixin, OfficeCommandsMixin, DashboardMixin, OfficeGatewayMixin, CogBase, commands.Cog
+    CommandsMixin,
+    OfficeCommandsMixin,
+    DashboardMixin,
+    OfficeGatewayMixin,
+    PresenceSubscriptionMixin,
+    CogBase,
+    commands.Cog,
 ):
     """A second, independent LLM agent reachable only over A2A -- never
     Discord-user-facing. Shares corridor's LLM connection with pico."""

@@ -163,6 +163,17 @@ table (next section) — the directory and the live listener are kept in
 lock-step by construction, never two separate steps a caller could
 forget to pair.
 
+`register_agent`/`unregister_agent_owner`/`unregister_agent` (and
+`on_cog_remove`'s directory cleanup) also publish `AgentPresenceChanged`
+on corridor's own event bus (`docs/corridor-pubsub-design.md`) —
+`status="online"` on register, `status="offline"` on unregister — so an
+agent's directory membership and its presence-broadcast lifecycle are the
+same event, not two things a registering cog must remember to keep in
+sync separately. `AgentRef.agent_key` carries the registered `agent_key`;
+`display_name` comes from the registered `AgentCard.name`. See
+`docs/office-agent-identity-design.md` for what a subscriber does with a
+genuine-agent-shaped `AgentPresenceChanged`.
+
 ### The shared listener
 
 `corridor/infrastructure/a2a_server.py` is a **relocation** of

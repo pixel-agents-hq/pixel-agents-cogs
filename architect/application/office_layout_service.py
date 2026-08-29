@@ -484,7 +484,10 @@ def _furniture_placement_error(
             and style_def.kind is FurnitureKind.DESK
         )
         if not stacking_allowed:
-            return f"overlaps furniture {existing.id!r}"
+            return (
+                f"overlaps furniture {existing.id!r} -- move it to a free tile first, "
+                "then retry (moves cannot swap through an occupied cell)"
+            )
     return None
 
 

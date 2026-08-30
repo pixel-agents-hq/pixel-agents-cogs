@@ -10,6 +10,16 @@ Bind-probe/uvicorn-lifecycle shape is a straight copy of `corridor.
 infrastructure.a2a_server.A2AServer` (itself relocated from architect's
 former listener, see `docs/architect-design.md` §9's incident writeup for
 why the bind is probed synchronously before handing off to uvicorn).
+
+This listener's `stop()` (`should_exit = True`) can, without
+`corridor.infrastructure.a2a_server`'s module-level
+`AppStatus.disable_automatic_graceful_drain()`, silently kill every
+*other* in-flight SSE stream in this process -- including corridor's own
+A2A traffic -- via a cross-listener signal-handler/shutdown-watcher
+interaction in `uvicorn`/`sse_starlette`. See that module's own comment
+for the full mechanism. Not re-disabled here: it's a process-wide flag,
+and corridor is guaranteed loaded (and that module imported) before this
+listener ever starts, since suggestionbox depends on corridor.
 """
 
 from __future__ import annotations

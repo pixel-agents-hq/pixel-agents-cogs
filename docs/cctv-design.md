@@ -323,6 +323,160 @@ existing model was designed for. Two internal server instances, each a
 straightforward move of what `floorplan`/`architect` already run today,
 is the lower-risk shape.
 
+### 2.5 Diagrams
+
+#### High-level design: the new cog relationships
+
+Scoped to the cogs this refactor actually touches (`pico`/`toolbox`/
+`deskutils`/`suggestionbox`/`testbench` are unaffected and omitted for
+readability — see `docs/architecture.md` for the full repo graph).
+Deliberately drawn with **separate arrows per kind of information**
+rather than one generic edge per pair of cogs, since "corridor" now
+means several different things to different callers (a write target, a
+read target, and a push source, not just one relationship):
+
+```mermaid
+flowchart LR
+    classDef infra fill:#6b4fa0,stroke:#402f60,color:#fff
+    classDef newcog fill:#b5451b,stroke:#7a2e10,color:#fff
+    classDef domain fill:#2f6f4f,stroke:#1c4230,color:#fff
+    classDef build fill:#3a5a9c,stroke:#22355c,color:#fff
+    classDef external fill:#555,stroke:#333,color:#fff
+
+    Discord["Discord Gateway<br/><small>external</small>"]
+    Corridor["corridor<br/><small>PubSub event bus (AgentPresenceChanged,<br/>AgentReplied, ..., + NEW: LayoutChanged)<br/>+ 2 persisted layout stores<br/>(floorplan's own, + the shared office store)<br/>+ A2A agent directory (list_agents)<br/>+ permissions / reply / LLM connection<br/>hidden COG</small>"]
+    Floorplan["floorplan<br/><small>Discord presence + Pixel Index catalogue<br/>writes its OWN layout+seats store<br/>NO dashboard code anymore</small>"]
+    Architect["architect<br/><small>structural layout LLM agent<br/>(paint_tiles, place_furniture, ...)<br/>writes the SHARED office store<br/>NO dashboard code anymore</small>"]
+    Painter["painter<br/><small>color-only LLM agent (recolor_tiles, ...)<br/>investigated, not yet built -- issue #55<br/>writes the SHARED office store</small>"]
+    Pixelagents["pixelagents<br/><small>clones + builds the webview bundle<br/>(webview_dist/, furniture styles)<br/>no dashboard/WebSocket of its own</small>"]
+    Cctv["cctv<br/><small>NEW -- the only dashboard cog<br/>WebSocketServer + ClientHub + TicketStore<br/>+ WebviewAssetProvider + Dashboard routes<br/>/third-party/cctv/discord + /editor</small>"]
+    Browser["Browser<br/><small>external</small>"]
+
+    Discord -->|"presence / message events"| Corridor
+
+    Floorplan -->|"set_layout(floorplan, raw)<br/>-- persist write"| Corridor
+    Architect -->|"set_layout(office, raw)<br/>-- persist write, via paint_tiles etc."| Corridor
+    Architect -->|"register_agent() / unregister_agent_owner()<br/>-- A2A identity (unchanged)"| Corridor
+    Painter -.->|"set_layout(office, raw)<br/>-- persist write (once built)"| Corridor
+    Painter -.->|"register_agent()<br/>-- A2A identity (once built)"| Corridor
+
+    Corridor -->|"publish_event: AgentPresenceChanged,<br/>AgentReplied, LayoutChanged (NEW)<br/>-- live push, bus, zero history"| Cctv
+    Cctv -->|"layout(store) / list_agents()<br/>-- pull, current-state query,<br/>at cog_load + every webviewReady"| Corridor
+
+    Pixelagents -->|"webview_bundle_status()<br/>furniture_style_manifest()<br/>-- static build artifact"| Cctv
+
+    Cctv -->|"/third-party/cctv/discord<br/>/third-party/cctv/editor<br/>(Dashboard pages, HTTP)"| Browser
+    Cctv -->|"/cctv/discord/ws<br/>/cctv/editor/ws<br/>(live WebSocket, 2 distinct ClientHubs)"| Browser
+
+    class Corridor infra
+    class Cctv newcog
+    class Floorplan,Architect,Painter domain
+    class Pixelagents build
+    class Discord,Browser external
+```
+
+Read the two `corridor <-> cctv` arrows together: they are the whole
+answer to §2.2's "how does `cctv` learn state" question — one arrow is
+the **push** (bus dispatch, live deltas, zero history), the other is the
+**pull** (a synchronous current-state query, used exactly at the two
+moments §2.2 names: `cctv`'s own `cog_load`, and every individual
+client's `webviewReady`). Neither arrow alone would be sufficient — §1.4
+is the record of what goes wrong with the push-only arrow alone.
+
+#### Low-level design: `cctv`'s internal structure
+
+Two independent pipelines inside one cog process — §2.4's consequence
+that two different layout stores with two different authorization
+models cannot share one live server without merging them (rejected,
+§2.3):
+
+```mermaid
+flowchart TB
+    subgraph CctvCog["cctv (one Red Cog process)"]
+        direction LR
+        subgraph DiscordPipeline["\"discord\" page pipeline"]
+            WS1["WebSocketServer<br/>external path /cctv/discord/ws"]
+            Hub1["ClientHub #1"]
+            Office1["OfficeService #1<br/>roster: real Discord members"]
+            Ticket["TicketStore<br/>8h tickets, keyholder-gated"]
+            WS1 --> Hub1 --> Office1
+        end
+        subgraph EditorPipeline["\"editor\" page pipeline"]
+            WS2["WebSocketServer<br/>external path /cctv/editor/ws"]
+            Hub2["ClientHub #2"]
+            Office2["OfficeService #2<br/>roster: genuine A2A agents"]
+            WS2 --> Hub2 --> Office2
+        end
+        Assets["WebviewAssetProvider<br/>(shared -- one build, one root)"]
+        Dash["DashboardMixin<br/>routes: /third-party/cctv/discord<br/>/third-party/cctv/editor"]
+        Dash --> Assets
+        Dash -.->|"mint/resolve session ticket"| Ticket
+        Ticket -.->|"authorize upgrade"| WS1
+    end
+```
+
+Note what does **not** cross the dashed line between the two pipelines:
+no shared `ClientHub`, no shared `OfficeService`, no shared auth state —
+`Office1`'s roster is fed from `floorplan`'s store + corridor's
+Discord-presence events, `Office2`'s roster is fed from the shared office
+store + corridor's `AgentPresenceChanged`/`AgentReplied` for genuine
+agents, and only the `discord` pipeline has a `TicketStore` at all.
+
+#### Low-level design: cold-start snapshot pull
+
+The sequence that closes §1.4's gap — shown for the `editor` pipeline;
+the `discord` pipeline is the same shape, one store earlier:
+
+```mermaid
+sequenceDiagram
+    participant B as Browser
+    participant Cctv as cctv<br/>(editor pipeline)
+    participant Cor as corridor
+
+    Note over Cctv: cog_load
+    Cctv->>Cor: layout(store="office")
+    Cor-->>Cctv: raw layout (or None if unseeded)
+    Cctv->>Cor: list_agents()
+    Cor-->>Cctv: current RegisteredAgent roster
+    Cctv->>Cctv: seed OfficeService #2's in-memory<br/>roster + layout from both answers
+    Cctv->>Cor: subscribe_event(AgentPresenceChanged,<br/>AgentReplied, LayoutChanged, owner="Cctv")
+
+    Note over B: later -- a browser opens /third-party/cctv/editor
+    B->>Cctv: open /cctv/editor/ws
+    B->>Cctv: {"type": "webviewReady"}
+    Cctv->>Cor: layout(store="office") -- re-ask, stay fresh
+    Cor-->>Cctv: current raw layout
+    Cctv-->>B: bootstrap_messages(layout, roster)
+```
+
+`cctv` re-asks corridor at every `webviewReady`, not only once at its own
+`cog_load` — a client that connects long after `cog_load` must not see a
+stale snapshot from whenever `cctv` itself started, only from whenever
+that specific socket opened.
+
+#### Low-level design: live update push
+
+Shown for an `architect` write; `floorplan`'s writes into its own store,
+and (once built) `painter`'s writes into the shared store, are the same
+shape:
+
+```mermaid
+sequenceDiagram
+    participant Arch as architect<br/>(OfficeLayoutService)
+    participant Cor as corridor
+    participant Cctv as cctv<br/>(editor pipeline)
+    participant Hub as ClientHub #2
+    participant B as every connected<br/>editor-page browser
+
+    Arch->>Cor: set_layout(store="office", raw) -- e.g. paint_tiles
+    Cor->>Cor: persist to Config (succeeds first, unconditionally)
+    Cor->>Cor: publish_event(LayoutChanged(store="office", raw))
+    Cor->>Cctv: dispatch(LayoutChanged) -- best-effort,<br/>per-subscriber isolated (§ delivery semantics)
+    Cctv->>Hub: broadcast({"type": "layoutLoaded", "layout": raw})
+    Hub->>B: push over open socket
+    Note over Arch: paint_tiles' own tool call already<br/>returned success before any of this dispatch runs --<br/>a cctv failure or cctv being unloaded never fails the write (§1.5, §4)
+```
+
 ## 3. What this means for `floorplan`/`architect`/`painter` concretely
 
 ### 3.1 `floorplan`

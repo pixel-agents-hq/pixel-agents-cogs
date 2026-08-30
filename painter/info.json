@@ -1,0 +1,31 @@
+{
+    "$schema": "https://raw.githubusercontent.com/Cog-Creators/Red-DiscordBot/V3/develop/schema/red_cog.schema.json",
+    "name": "painter",
+    "short": "Recolors architect's office layout -- tiles, walls, and furniture -- without touching its structure.",
+    "description": "painter is a second, A2A-only LLM agent (invoked by pico, like architect) that recolors the shared office layout's floor tiles, walls, and furniture. It never adds, removes, or moves anything -- no structural mutation tools exist in its surface at all. It reads structural/positional data from architect over A2A, and reads/writes color directly against pixelagents' shared office layout store.",
+    "end_user_data_statement": "This cog sends A2A task messages it receives to corridor's configured LLM endpoint. It does not persistently store any data or metadata about Discord users.",
+    "author": ["pixel-agents-hq"],
+    "required_cogs": {
+        "corridor": "https://github.com/pixel-agents-hq/pixel-agents-cogs",
+        "pixelagents": "https://github.com/pixel-agents-hq/pixel-agents-cogs"
+    },
+    "requirements": [
+        "aiohttp",
+        "httpx",
+        "pydantic>=2.11.3,<2.12",
+        "a2a-sdk",
+        "typing-inspection<0.4.3"
+    ],
+    "tags": [
+        "llm",
+        "agent",
+        "a2a",
+        "office",
+        "color"
+    ],
+    "min_bot_version": "3.5.24",
+    "min_python_version": [3, 11, 0],
+    "hidden": false,
+    "disabled": false,
+    "type": "COG"
+}

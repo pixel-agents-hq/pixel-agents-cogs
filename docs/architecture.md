@@ -1,8 +1,9 @@
 # Cross-cog architecture
 
-This doc is the one place that shows how this repo's ten packages —
+This doc is the one place that shows how this repo's eleven packages —
 [`architect`](../architect), [`corridor`](../corridor),
-[`deskutils`](../deskutils), [`floorplan`](../floorplan), [`pico`](../pico),
+[`deskutils`](../deskutils), [`floorplan`](../floorplan),
+[`painter`](../painter), [`pico`](../pico),
 [`pixelagents`](../pixelagents), [`suggestionbox`](../suggestionbox),
 [`testbench`](../testbench), [`toolbox`](../toolbox), and the CI-only
 [`contracts`](../contracts) — relate to and depend on each other. It does
@@ -29,8 +30,9 @@ flowchart BT
     corridor["corridor<br/><small>permissions + reply style<br/>+ PubSub event bus<br/>+ cross-cog tool registry<br/>+ shared LLM connection<br/>+ shared A2A listener/directory</small><br/><small>hidden COG</small>"]
     deskutils["deskutils<br/><small>current-time utility command<br/>+ LLM tool registration</small>"]
     floorplan["floorplan<br/><small>serves the office + presence</small>"]
+    painter["painter<br/><small>third LLM agent, A2A-reachable<br/>via corridor's shared listener<br/>-- color-only, never structural</small>"]
     pico["pico<br/><small>LLM-backed presence,<br/>sole A2A coordinator</small>"]
-    pixelagents["pixelagents<br/><small>vendors + builds the webview</small>"]
+    pixelagents["pixelagents<br/><small>vendors + builds the webview<br/>+ shared office-layout IR/store</small>"]
     suggestionbox["suggestionbox<br/><small>MCP feedback server<br/>(report_error/suggest_improvement)</small>"]
     testbench["testbench<br/><small>owner-only: manually publishes<br/>corridor bus events</small>"]
     toolbox["toolbox<br/><small>Node.js/npm on the host<br/>+ LLM tool toggle panel</small>"]
@@ -38,6 +40,7 @@ flowchart BT
     architect -->|required_cogs| corridor
     deskutils -->|required_cogs| corridor
     floorplan -->|required_cogs| corridor
+    painter -->|required_cogs| corridor
     pico -->|required_cogs| corridor
     pixelagents -->|required_cogs| corridor
     suggestionbox -->|required_cogs| corridor
@@ -45,8 +48,11 @@ flowchart BT
     toolbox -->|required_cogs| corridor
     floorplan -->|required_cogs| pixelagents
     architect -->|required_cogs| pixelagents
+    painter -->|required_cogs| pixelagents
     architect -.->|"register_agent()<br/>(in-process, via corridor)"| corridor
+    painter -.->|"register_agent()<br/>(in-process, via corridor)"| corridor
     pico -.->|"A2A over HTTP, one shared port<br/>(networked, not required_cogs)"| corridor
+    painter -.->|"A2A over HTTP<br/>consult_architect (structural reads only)<br/>(networked, not required_cogs)"| corridor
     suggestionbox -.->|"register_mcp_server()<br/>(in-process, via corridor)"| corridor
     corridor -.->|"MCP over HTTP<br/>(networked, not required_cogs)"| suggestionbox
 ```
@@ -60,13 +66,26 @@ Notes, all confirmed against each package's `info.json`:
   provider migration section) and the one shared A2A listener every
   registered agent is mounted on (moved from architect — see
   [`docs/agent-directory-design.md`](agent-directory-design.md)).
-- **floorplan and architect are the only cogs with two `required_cogs`
-  dependencies** — each declares both `corridor` and `pixelagents`.
-  architect serves pixelagents' built webview bundle under its own
-  Dashboard route (`/third-party/architect`), a second, independent
-  consumer of the same build output floorplan already serves under
-  `/third-party/floorplan` — see
-  [`docs/architect-design.md`](architect-design.md) section 5.
+- **floorplan, architect, and painter are the only cogs with two
+  `required_cogs` dependencies** — each declares both `corridor` and
+  `pixelagents`. architect serves pixelagents' built webview bundle under
+  its own Dashboard route (`/third-party/architect`), a second,
+  independent consumer of the same build output floorplan already serves
+  under `/third-party/floorplan` — see
+  [`docs/architect-design.md`](architect-design.md) section 5. painter's
+  reason is different: it depends on `pixelagents` purely to reach the
+  Semantic IR codec and shared office-layout Config store architect's own
+  layout was extracted into, not to serve any webview of its own — see
+  [`docs/painter-design.md`](painter-design.md) part A.
+- **`painter -> architect` (A2A) is deliberately not a `required_cogs`
+  edge either, mirroring `pico -> corridor` (A2A) below** — a *networked*
+  call painter makes to ask architect what tiles/walls/furniture exist
+  and where (never color; architect stays "colorblind", see
+  [`docs/painter-design.md`](painter-design.md) §4). painter degrades to
+  "the `consult_architect` tool errors" if architect is
+  unloaded/unreachable, it does not fail to load — and painter's own
+  color reads/writes against the shared `pixelagents`-owned layout store
+  work regardless, independent of whether architect is loaded at all.
 - **`pico -> corridor` (A2A) is deliberately not a `required_cogs` edge,
   even though pico already depends on corridor for everything else.**
   It's a *networked* HTTP call to corridor's shared A2A listener, the same
@@ -91,8 +110,8 @@ Notes, all confirmed against each package's `info.json`:
   suggestionbox's own `required_cogs: corridor` entry. See
   [`docs/suggestionbox-design.md`](suggestionbox-design.md).
 - **No cog depends on floorplan, pico, testbench, toolbox, deskutils,
-  suggestionbox, or architect.** They're leaves: things end here, nothing
-  in this repo builds on top of them.
+  suggestionbox, architect, or painter.** They're leaves: things end here,
+  nothing in this repo builds on top of them.
 - corridor's `info.json` sets `"type": "COG"` and `"hidden": true`. It is a
   real, loaded Red Cog — not the `SHARED_LIBRARY` type `contracts` uses —
   but it's hidden from end users because its own command surface

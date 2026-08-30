@@ -14,6 +14,7 @@ on:
       - "deskutils/**/*.py"
       - "architect/**/*.py"
       - "suggestionbox/**/*.py"
+      - "painter/**/*.py"
       - "contracts/pixel_index/**"
       - "contracts/pixel_agents/**"
       - "contracts/corridor/**"
@@ -34,6 +35,7 @@ on:
       - "deskutils/**/*.py"
       - "architect/**/*.py"
       - "suggestionbox/**/*.py"
+      - "painter/**/*.py"
       - "contracts/pixel_index/**"
       - "contracts/pixel_agents/**"
       - "contracts/corridor/**"
@@ -194,6 +196,20 @@ jobs:
             lint_target: "suggestionbox"
             mypy_target: "suggestionbox"
             extra_deps: "aiohttp 'pydantic>=2.11.3,<2.12' 'a2a-sdk[http-server]' uvicorn 'mcp>=1.29,<2' 'typing-inspection<0.4.3'"
+            pixel_index_contracts: false
+          # painter is both an A2A server (its own AgentExecutor, like
+          # architect -- needs a2a-sdk[http-server]+uvicorn) and an A2A
+          # client to architect (painter/infrastructure/architect_client.py,
+          # httpx + a2a.client, same shape as pico's own architect_client.py)
+          # -- so it needs the union of architect's and pico's extra_deps.
+          # Reads/writes the shared office layout via pixelagents'
+          # infrastructure modules (docs/painter-design.md), no extra deps
+          # of its own beyond that.
+          - cog: painter
+            test_target: "painter/"
+            lint_target: "painter"
+            mypy_target: "painter"
+            extra_deps: "aiohttp 'pydantic>=2.11.3,<2.12' httpx 'a2a-sdk[http-server]' uvicorn 'mcp>=1.29,<2' 'typing-inspection<0.4.3'"
             pixel_index_contracts: false
 
     steps:

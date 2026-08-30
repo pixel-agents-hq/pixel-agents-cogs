@@ -83,6 +83,7 @@ COG_PACKAGES = (
     "corridor",
     "deskutils",
     "floorplan",
+    "painter",
     "pico",
     "pixelagents",
     "suggestionbox",

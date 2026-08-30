@@ -441,15 +441,21 @@ themselves having no such fields, not just by prompt instruction.
 - [ ] Manual check against `~/pixel-agents` webview that a repainted wall actually renders the new color
 
 ### Part C — painter cog
-- [ ] Scaffold via `.cookiecutter/cog-cookiecutter`
-- [ ] `painter/infrastructure/architect_client.py` (`AgentAsker`, mirrors pico's)
-- [ ] `painter/application/painter_layout_service.py` (color-only mutation surface)
-- [ ] `painter/tools/painter_tools.py`: `describe_colors`, `recolor_tiles`, `recolor_furniture`, `recolor_furniture_by_style`
-- [ ] `painter/infrastructure/a2a_server.py` (`PainterAgentExecutor`)
-- [ ] `painter/adapters/cog_base.py`: registers `agent_key="painter"` with corridor
-- [ ] Painter's system prompt: use `consult_architect` for structure, own tools for color, never invent colors outside `known_names()`
-- [ ] Verify `consult_painter` appears in pico automatically once painter registers (no pico code changes expected)
-- [ ] `contracts/pixel-agents-consumer-contract.yaml` / corridor's agent-directory contract updated if painter's registration changes what's contract-tested
-- [ ] `docs/architecture.md`, `docs/AGENTS.md`, `docs/agent-directory-design.md` updated to list painter as a third A2A agent
-- [ ] New `painter/README.md`, `painter/Architecture.md` (cookiecutter-generated, filled in)
-- [ ] Full test suite for painter (cookiecutter starter suite extended)
+- [x] Scaffold via `.cookiecutter/cog-cookiecutter`
+- [x] `painter/infrastructure/architect_client.py` (`ArchitectClient`, parallel copy of pico's own, generic by design)
+- [x] `painter/tools/consult_architect_tool.py` (`ConsultArchitectTool` -- resolves architect's URL from `corridor.list_agents()` fresh every call, since painter only ever consults this one known agent, unlike pico's one-tool-per-registered-agent shape)
+- [x] `painter/infrastructure/office_layout_repository.py` (painter's own copy, reads/writes pixelagents' shared store)
+- [x] `painter/application/painter_layout_service.py` (color-only mutation surface: `describe_tile_colors`/`describe_furniture_colors`/`recolor_tiles`/`recolor_furniture`/`recolor_furniture_by_style` -- split `describe_colors` into two tools rather than one combined one, a minor refinement of this table's original shape)
+- [x] `painter/tools/painter_tools.py`: five tools, `RecolorTilesTool` mirrors `paint_tiles`'s width/height-or-end_col/end_row convention
+- [x] `painter/infrastructure/a2a_server.py` (`PainterAgentExecutor`), `painter/application/tool_loop_service.py`, `painter/infrastructure/corridor_llm.py`, `painter/tools/base.py`, `painter/tools/agent_tool_server.py` -- all parallel copies of architect's own equivalents
+- [x] `painter/adapters/cog_base.py`: registers `agent_key="painter"` with corridor; no WebSocket server, webview, Dashboard route, or presence-tracking mixin (painter serves no browser-facing surface of its own)
+- [x] Painter's system prompt: use `consult_architect` for structure, own tools for color, never invent colors outside `known_names()`
+- [x] `pyproject.toml`'s `[tool.mypy]` `files`/`exclude` lists and per-module overrides gained a `painter` entry -- found only by running the full-repo quality gate, not by static review; easy to miss when adding a new cog
+- [x] `contracts/discord_replies/lint_reply_channel.py`'s `COG_PACKAGES` gained `"painter"` -- its own comment says "add a new cog here when it's created"
+- [x] `.github/workflows/cogs-quality.yml` gained a `painter` matrix leg (`extra_deps` is the union of architect's, an A2A server, and pico's, an A2A client) and `"painter/**/*.py"` in both trigger path lists
+- [x] `painter/info.json`'s `requirements` gained the same union (`aiohttp`, `httpx`, `pydantic` pin, `a2a-sdk`, `typing-inspection` pin)
+- [x] `contracts/pixel-agents-consumer-contract.yaml` / corridor's agent-directory contract -- checked, neither references agent names statically (`register_agent` is a runtime call), nothing to update
+- [x] `docs/architecture.md`, `docs/AGENTS.md`, `.claude/CLAUDE.md` updated to list painter as a third A2A agent and add it to every per-cog command list; `docs/agent-directory-design.md` not touched (its own design is already generic across "any future agent," painter needed no new content there)
+- [x] New `painter/README.md`, `painter/Architecture.md` (real content, not cookiecutter placeholders)
+- [x] Full test suite for painter: 103 tests (settings repository, tool loop service and A2A server as parallel copies of architect's own test suites, plus new tests for the layout repository, layout service, tool wrappers, and consult_architect tool)
+- [x] Verify `consult_painter` appears in pico automatically once painter registers -- confirmed by code inspection (`pico/adapters/listener.py`'s `_agent_tools` builds one `ConsultAgentTool` per `corridor.list_agents()` entry, no pico-side code touched), not exercised by a live integration test in this PR

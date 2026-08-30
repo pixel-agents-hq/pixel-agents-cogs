@@ -5,21 +5,37 @@
 [Pixel Agents](https://github.com/pixel-agents-hq/pixel-agents) webview so
 any cog that wants to serve it can —
 [`floorplan`](../floorplan) today, potentially others later. It owns
-nothing runtime-facing — no dashboard routes, no Discord presence
-mirroring, no WebSocket protocol, no Pixel Index integration. Those all
-moved to `floorplan` in
+nothing runtime-facing of its own — no dashboard routes, no Discord
+presence mirroring, no WebSocket protocol, no Pixel Index integration.
+Those all moved to `floorplan` in
 [issue #21](https://github.com/pixel-agents-hq/pixel-agents-cogs/issues/21),
 which split the original combined cog along exactly this line: "owns the
 vendor and the build" vs. "owns everything that consumes the result." See
 [README.md](README.md#why-a-separate-cog-just-for-this) for why that split
 is more than tidiness.
 
+**One deliberate exception to that split**, added later: this cog also
+owns the Semantic IR domain model, the Pixel Agents JSON codec, the
+semantic color palette, and the one Config-backed store for the office
+layout [`architect`](../architect) and [`painter`](../painter) share --
+see [`docs/painter-design.md`](../docs/painter-design.md) part A. That
+layout is a distinct, independent, agent-internal thing from floorplan's
+own guild-scoped, presence-mirroring office; #21's own `layout` Config
+key (removed from this cog then) named a genuinely different concept.
+This was a discussed, deliberate repeat of that same key name on this
+same cog, not an oversight — see that doc's own §2 for the reasoning.
+
 ## Internal structure
 
 | File | Responsibility |
 |---|---|
 | `domain/settings.py` | `parse_commit_ref` — validates a user-supplied commit hash/link |
-| `infrastructure/settings.py` | `RedSettingsRepository` — the one Config key this cog owns, `webview_commit_override` |
+| `domain/office_ir.py` | The Semantic IR (`Office`/`TileCell`/`FurnitureItem`/`Zone`/...) `architect` and `painter` both build their own mutation services on top of. Moved here from `architect/domain/` — see `docs/painter-design.md` part A. Zero framework or codec imports of its own (enforced by `test_office_ir.py`'s contract test). |
+| `infrastructure/settings.py` | `RedSettingsRepository` — this cog's own `webview_commit_override` Config store |
+| `infrastructure/office_layout_settings.py` | `RedOfficeLayoutSettings` — the *other* Config store this cog owns: the shared office layout blob, under its own distinct identifier. `create()` takes no live cog instance — reachable by `architect`/`painter` independently via identifier + `cog_name` alone. |
+| `infrastructure/pixel_agents_adapter.py` | `decode`/`encode` — the only module that knows Pixel Agents' raw layout JSON shape. Moved here from `architect/infrastructure/`. |
+| `infrastructure/color_names.py` | The semantic color name ⟷ HSB/hex palette `pixel_agents_adapter.py` and every color-mutating tool validate against. |
+| `infrastructure/furniture_styles.py` | `FurnitureStyleManifest`/`FurnitureStyleLoader` — typed view over the generated furniture-style manifest, plus a cache keyed off any `webview_bundle_status()`-shaped object. Moved here (not originally planned) once `architect` and `painter` both turned out to need it, and it had zero architect-specific coupling to begin with. |
 | `infrastructure/webview_build.py` | Clone-and-build orchestration: `ensure_webview_built`, `build_webview`, `built_commit` |
 | `infrastructure/webview_build_scripts/` | Upstream's own PNG-decoder script, invoked against the runtime clone |
 | `adapters/cog_base.py` | Composition root: wires the repository, runs the build at `cog_load`, exposes `webview_bundle_status()` |
@@ -221,7 +237,7 @@ Red-downloader load smoke test and does not run any of this.
 | Rule (in `pixelagents/tests/test_architecture.py`) | Checks |
 |---|---|
 | `test_composition_entrypoint_is_genuinely_thin` | `pixelagents.py` stays under 200 lines |
-| `test_framework_resources_have_one_owner` | `Config.get_conf(` is constructed in exactly one file |
+| `test_framework_resources_have_one_owner_each` | `Config.get_conf(` is constructed in exactly two files -- `settings.py` and `office_layout_settings.py`, one call site per independent resource, never a third way to reach either |
 | `test_pascalcase_and_lowercase_public_classes_are_identical` | `PixelAgents`/`pixelagents` aliases are the same object |
 | `test_command_root_is_inherited_once` | `pixelagents_group` is owned exactly once across the mixin MRO |
 | `test_production_config_access_does_not_bypass_repository` | no file outside `infrastructure/settings.py` calls `something.config.xxx(...)` directly |

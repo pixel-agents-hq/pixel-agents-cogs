@@ -1,22 +1,26 @@
-# Extracting dashboard-hosting into a new `cctv` cog: options
+# Extracting dashboard-hosting into a new `cctv` cog
 
-**Status: investigation only.** No decision has been made and no code has
-changed. This doc lists options for a future refactor that would pull
-`WebSocketServer`/`ClientHub`/`TicketStore`/`WebviewAssetProvider`/Red
-Dashboard route registration out of `floorplan` and `architect` into a new
-cog, `cctv`, such that: loading `cctv` gives one unified dashboard; not
-loading it means no dashboard/webview presence at all; and `floorplan`,
-`architect`, and (once built, see issue #55) `painter` keep working fully
-— presence sync, LLM tool-driven layout mutation — with zero dashboard
-code of their own. Every claim below was checked directly against
-`develop` on 2026-08-30, not assumed from `docs/architect-design.md` or
-`docs/painter-design.md` alone, though both are cited throughout since
-they document the two dashboards' history and current shape in depth.
+**Status: decided, not yet implemented.** §1 is the verified factual
+basis (checked directly against `develop` on 2026-08-30). §2 records the
+repo owner's decisions on the four open axes that basis raised. No code
+has changed — this remains a design doc for a future implementation
+pass, not an implementation itself. An earlier revision of this doc
+listed each axis as open options; that framing is superseded below, but
+the surrounding investigation (§1) is left largely intact since it still
+describes today's code accurately and is exactly what motivates each
+decision in §2.
+
+The refactor: pull `WebSocketServer`/`ClientHub`/`TicketStore`/
+`WebviewAssetProvider`/Red Dashboard route registration out of
+`floorplan` and `architect` into a new cog, `cctv`, such that loading
+`cctv` gives one unified dashboard, not loading it means no dashboard/
+webview presence at all, and `floorplan`, `architect`, and (once built,
+see issue #55) `painter` keep working fully — presence sync, LLM
+tool-driven layout mutation — with zero dashboard code of their own.
 
 ## 1. Current state (verified)
 
-This section is the shared factual basis every option below reasons
-from.
+This section is the shared factual basis §2's decisions reason from.
 
 ### 1.1 Two dashboards, two independent everything
 
@@ -44,9 +48,10 @@ independent," and this shows up as real code duplication today (the
 `WebviewAssetProvider` pair being the clearest example — same
 `WEBVIEW_CACHE_CONTROL`, same `FURNITURE_KEYS`, same `resolve()`/
 `content_type()`/`dashboard_static_response()` bodies, character for
-character in most methods).
+character in most methods). §2.1 below removes this duplication by
+retiring both copies outright, not by sharing a library between them.
 
-### 1.2 The one genuinely shared artifact, and why "just share the class" already failed once
+### 1.2 The one genuinely shared artifact, and a real precedent for what "unify the live pages" costs
 
 `pixelagents/infrastructure/webview_build.py` clones+builds the upstream
 `pixel-agents` webview at a pinned commit into pixelagents' own
@@ -55,39 +60,31 @@ bundled `default-layout-1.json`. This *is* shared — both floorplan and
 architect read it via the identical cross-cog surface,
 `pixelagents.webview_bundle_status()` (`bot.get_cog("PixelAgents")`,
 `docs/architecture.md` §2) — but it's a **read-only, static build
-artifact**, not a live service. Nothing about `cctv` hosting a dashboard
-changes this axis; `pixelagents` keeps building it regardless of whether
-`cctv` is loaded.
+artifact**, not a live service. `cctv` keeps reading it exactly the same
+way; nothing about this axis changes.
 
-The real cautionary precedent for "can floorplan and architect share
-live infrastructure" is `docs/architect-design.md` §5/§9's own incident:
-the vendored bundle computes its live WebSocket URL from
-`window.location.host` alone (`wss://<host>/ws`), **not the page path**.
-Serving the identical static page under two different Dashboard routes
-was not enough to keep the two live dashboards independent — both
-browser tabs silently connected to whichever cog answered the one
-shared `/ws` path (floorplan's). The fix (still in place today) was
-architect binding its own WebSocket server on a distinct external path
+The precedent worth carrying forward into §2.4: `docs/architect-design.md`
+§5/§9's own incident. The vendored bundle computes its live WebSocket URL
+from `window.location.host` alone (`wss://<host>/ws`), **not the page
+path**. Serving the identical static page under two different Dashboard
+routes was not enough to keep two live dashboards independent — both
+browser tabs silently connected to whichever cog answered the one shared
+`/ws` path (floorplan's). The fix (still in place today) was architect
+binding its own WebSocket server on a distinct external path
 (`/architect/ws`) plus a client-side `WS_REWRITE_SHIM` patching
-`window.WebSocket` before the real connection opens. **Any option below
-that unifies the two dashboards under one `cctv`-owned WebSocket server
-does not need this workaround at all** — a single server naturally
-answers a single `/ws` path for both layouts' clients, since which
-layout renders becomes a page-routing question, not a
-transport-collision one. But an option that keeps the servers separate
-inherits this exact hazard and must keep the rewrite-shim mechanism (or
-equivalent) working.
+`window.WebSocket` before the real connection opens. **This hazard
+survives the move into one `cctv` cog** — §2.4 gives `cctv` two pages
+under one cog, and the bundle's host-only URL derivation doesn't know or
+care that both pages now share a process; each page still needs its own
+rewrite shim pointed at its own distinct `/ws` path, or the second page
+to load will silently hijack the first's live connection exactly the way
+architect's page once silently hijacked floorplan's.
 
-### 1.3 The layout stores are already, unrecoverably, two different things
+### 1.3 The layout stores were already, and remain, two different things
 
-This is the fact most likely to be missed by anyone assuming "one
-dashboard cog" implies "one layout." It doesn't, today:
-
-- **floorplan's layout** is live, presence-mirrored, guild-scoped in
-  spirit (though the Config key itself is global — `docs/architecture.md`
-  and floorplan's own settings module), editable by any bot-owner/
-  keyholder through the in-browser editor, and is the thing the Pixel
-  Index catalogue (`[p]floorplan layout load`) reads/writes.
+- **floorplan's layout** is live, presence-mirrored, editable by any
+  bot-owner/keyholder through the in-browser editor, and is the thing the
+  Pixel Index catalogue (`[p]floorplan layout load`) reads/writes.
 - **architect's (and, once built, painter's) layout** is a *different*,
   independent Config blob (`pixelagents.infrastructure.office_layout_settings`),
   seeded once from pixelagents' bundled default
@@ -98,16 +95,11 @@ dashboard cog" implies "one layout." It doesn't, today:
 **Verified consequence:** a wall architect adds via `paint_tiles` never
 appears in floorplan's live view, and a layout edit made through
 floorplan's in-browser editor is invisible to architect's LLM tools —
-they are reading and writing two different Config identifiers with two
-different seed histories. This is not a bug introduced by dashboard
-duplication; it's a deliberate, documented design choice
-(`docs/painter-design.md` §2's note: architect's/painter's shared office
-is "a distinct, independent, global (not per-guild) layout with no
-presence-mirroring concerns," explicitly not the same thing floorplan's
-office is). **Any cctv design must decide, explicitly, whether unifying
-dashboard *hosting* also means unifying the *data* it renders** — see
-Axis 3 below; this is a major fork with real product consequences, not
-a footnote.
+they read and write two different Config identifiers with two different
+seed histories. **Decision (§2.3): this stays true.** The two stores do
+not merge; `cctv` renders both, as two distinct pages (§2.4), and the two
+different authorization models (keyholder-gated vs. wide open) travel
+with their respective pages unchanged.
 
 ### 1.4 Presence roster reconstruction today has a real, confirmed cold-start gap
 
@@ -119,35 +111,26 @@ exactly two things: subscribe to corridor's `AgentPresenceChanged`/
 agents that registered *before* architect's own `cog_load` ran. Corridor's
 `AgentPresenceChanged` publish happens once, synchronously, at the moment
 each agent's `register_agent()` call lands (`corridor/adapters/cog_base.py`,
-`docs/corridor-pubsub-design.md`) — there is no replay buffer. So:
-reload architect alone while painter is already registered and running,
-and architect's own dashboard's agent roster silently omits painter
-until painter itself reloads (or corridor is reloaded, unregistering and
-re-registering everyone). This is a real, present-day gap in the
-existing two-dashboard design, not a hypothetical cctv would introduce —
-it directly answers "is the bus alone sufficient for a subscriber to
-reconstruct full current state on its own `cog_load`": **no, not for the
-agent-presence half**, at least not the way the two existing dashboards
-already do it.
+`docs/corridor-pubsub-design.md`) — there is no replay buffer. So: reload
+architect alone while painter is already registered and running, and
+architect's own dashboard's agent roster silently omits painter until
+painter itself reloads. This is a real, present-day gap, not a
+hypothetical — and it is exactly what motivates §2.2's decision to give
+corridor a queryable current-state surface, not a bus-only one, for
+`cctv` to pull from at its own `cog_load` (and at every new client's
+`webviewReady`, per §2.2).
 
-The *layout* half is not subject to this gap: both dashboards' bootstrap
-sequences (`_send_bootstrap`/`webviewReady` handling,
+The *layout* half of this gap is addressed the same way, but for a
+different underlying reason: layout was never carried on the bus at all
+— it was pure Config, read fresh from storage at every bootstrap
+(`_send_bootstrap`/`webviewReady` handling,
 `floorplan/adapters/office_gateway.py:142-150`,
 `architect/adapters/office_gateway.py:50-56`, both calling
-`OfficeService.bootstrap_messages(...)`) build a fresh snapshot by
-**reading the persisted Config store directly** at handshake time, not
-from anything the bus ever carried — the bus only ever carried
-"something happened" agent-activity events (`docs/corridor-pubsub-design.md`'s
-own "Discord-vocabulary… never the exact webview message" scoping), never
-a layout diff or snapshot. So layout state was never bus-dependent to
-begin with, and floorplan's own live Discord-member roster is
-independently reconstructible too: `floorplan/adapters/discord_gateway.py:45`
-builds `snapshots = tuple(self._member_snapshot(member) for member in
-guild.members)` — a direct Discord API pull, not a bus replay — for its
-own bootstrap. **The gap is specifically "an A2A-registered genuine
-agent's presence, as currently implemented by architect's subscriber,"**
-not "presence in general" or "layout." See Axis 2 for what this means for
-cctv's own cold start.
+`OfficeService.bootstrap_messages(...)` after reading their own Config
+directly, never from anything the bus carried). §2.2 folds this into the
+same corridor-owned query surface as the agent-presence half, so `cctv`
+has one mechanism for both, instead of two different cold-start
+strategies for two different kinds of state.
 
 ### 1.5 Write-tools have zero hard dependency on dashboard/broadcast succeeding — confirmed
 
@@ -163,402 +146,286 @@ async def _persist(self, office: Office, styles: FurnitureStyleManifest) -> None
 `self._repository.save(...)` (the real Config write) happens
 unconditionally, first. `self._broadcast` (wired to
 `CogBase._broadcast_layout`, `architect/adapters/cog_base.py:192-198`) is
-a best-effort push to `ClientHub` (`self._send` → `self._client_hub.broadcast(...)`),
-called only *after* the persist already succeeded, with no `try/except`
-around it visible at this call site — but `ClientHub.broadcast` itself
-does per-socket error isolation (`corridor-pubsub-design.md`'s own
-comparison: "mirroring `ClientHub`'s per-socket isolation" — one bad
-socket never breaks the broadcast to the others, and there is no
-network listener to fail against if zero sockets are connected, which is
-exactly the "no dashboard loaded" case). `painter`'s equivalent
+a best-effort push to `ClientHub`, called only *after* the persist
+already succeeded. `painter`'s equivalent
 (`painter/application/painter_layout_service.py:197-200`) is the same
 shape: persist first, then an optional `on_layout_changed` callback
 (wired through `bot.get_cog("Architect")`, `painter/adapters/cog_base.py:170-184`,
 already a *best-effort, may-be-`None`* cross-cog lookup). **Conclusion:
 paint_tiles/recolor_tiles/place_furniture/etc. already tolerate "no
-dashboard, no connected client, no architect cog even loaded" today** —
-this invariant does not need to be built for cctv, it needs to be
-*preserved* by whichever option is chosen (see Axis 4).
+dashboard, no connected client, no architect cog even loaded" today.**
+§2.2's decision to move layout persistence into corridor and have
+corridor auto-publish on every write (mirroring how `register_agent`
+already auto-publishes `AgentPresenceChanged`, precedent below) actually
+**retires** painter's bespoke `bot.get_cog("Architect")` notify hook
+entirely — see §3.3.
 
-### 1.6 The `WebviewAssetProvider` pair is the actual reuse opportunity, not the `WebSocketServer` pair
+### 1.6 The `WebviewAssetProvider` pair was the actual reuse opportunity
 
-Worth separating explicitly, since "share the dashboard code" sounds
-like one problem but is really two very differently-shaped ones:
+`WebviewAssetProvider` (`resolve`/`content_type`/`dashboard_webview_response`/
+`dashboard_static_response`/`load_assets`/`default_layout`) is pure,
+stateless-per-request, framework-agnostic file-serving logic over one
+immutable root directory. Under §2.1's decision, this class exists
+exactly once, inside `cctv` — no duplication, no shared-library
+indirection needed for it either, since there is now only one consumer.
 
-- `WebviewAssetProvider` (`resolve`/`content_type`/`dashboard_webview_response`/
-  `dashboard_static_response`/`load_assets`/`default_layout`) is **pure,
-  stateless-per-request, framework-agnostic** file-serving logic over one
-  immutable root directory — it has no notion of "whose layout" at all
-  until `base_href`/the injected shim strings are set. This is the
-  cleanest candidate for consolidation under any option.
-- `WebSocketServer`/`ClientHub` are **stateful, per-cog-instance, live
-  connection managers** married to one specific `OfficeService` instance
-  and one specific persisted layout. Consolidating these means deciding
-  *which* `OfficeService`/layout a unified server multiplexes across
-  (Axis 3), not just deduplicating code.
+## 2. Decisions
 
-## 2. Options
-
-### Axis 1 — where the dashboard-hosting *code* lives after the refactor
-
-**Option 1A: Fully inside `cctv`, `floorplan`/`architect`/`painter` keep nothing.**
+### 2.1 Where the dashboard-hosting code lives: fully in `cctv`
 
 `cctv` owns `WebSocketServer`, `ClientHub`, `TicketStore`,
 `WebviewAssetProvider`, and all Dashboard route registration
 (`on_dashboard_cog_add`, `dashboard_page`-decorated methods). `floorplan`
 loses `floorplan/infrastructure/{websocket,client_hub,tickets,webview}.py`
 and `floorplan/adapters/dashboard.py` outright; `architect` loses the
-equivalent five files. `cctv` depends on `pixelagents` (for
+equivalent five files. Neither cog keeps a parallel copy, a shared
+library, or a thin re-export — this is a full extraction, not a
+refactor-in-place. `cctv` depends on `pixelagents` (for
 `webview_bundle_status()`/`furniture_style_manifest()`) exactly as
-floorplan/architect already do, and gains a way to reach whichever
-domain cogs are loaded (Axis 2) to get presence/layout state to render.
+floorplan/architect already do today, and on `corridor` (§2.2) for
+everything else it needs to render.
 
-- *Pro:* Cleanest separation — "no cctv, no dashboard" becomes literally
-  true because there is no dashboard-hosting code left anywhere else to
-  half-run. Matches the goal statement exactly.
-- *Pro:* Eliminates the `WebviewAssetProvider` duplication (§1.6) for
-  real — one class, one place.
-- *Con:* Every domain cog must now expose *something* cctv can pull
-  state from (Axis 2) — this option has no in-between; it forces that
-  decision immediately rather than letting it be deferred.
-- *Con:* The floorplan-editor-vs-architect-no-editor asymmetry (§1.1's
-  auth row) becomes cctv's problem to model per-layout, not each
-  domain cog's own concern to enforce close to its data.
+This also resolves the `WebviewAssetProvider` duplication (§1.6) for
+real — one class, one place — without needing the "does this belong in
+`pixelagents` instead" charter question a shared-library approach would
+have raised. `pixelagents` keeps its existing, narrower charter ("builds
+the bundle," no dashboard/WebSocket/Discord-presence surface of its
+own, `docs/architecture.md` §2); `cctv` is a new, dedicated consumer of
+that build output, the same relationship floorplan and architect each
+had individually before.
 
-**Option 1B: A thin shared library (in `pixelagents`, or a new
-`SHARED_LIBRARY`-typed package like `contracts`) that `cctv` *and* the
-domain cogs still depend on, each still running their own instance.**
+### 2.2 Corridor gains a persisted, queryable layout store — plus this as a new bus event
 
-Only `WebviewAssetProvider` (and maybe `TicketStore`, which has zero
-cog-specific state — see `floorplan/infrastructure/tickets.py`) actually
-move to the shared location; each of `floorplan`/`architect`/`painter`
-keeps constructing and owning its own `WebSocketServer`/`ClientHub`/
-Dashboard routes exactly as today, just importing the deduplicated
-pieces instead of hand-copying them. `cctv` in this option isn't "the
-one dashboard cog" at all — there would still be three (or however
-many) separate `/third-party/*` routes; `cctv` would just be a fourth,
-new, *unified* page that happens to reuse the same library.
+Corridor already has two pieces of exactly the shape this needs, each
+already precedent for the other half:
 
-- *Pro:* Lowest-risk, incremental — doesn't touch the WebSocket/broadcast
-  lifecycle at all, so §1.5's already-verified invariant needs zero new
-  reasoning.
-- *Con:* **This does not satisfy the stated goal.** The goal is "when
-  cctv is loaded, a single unified dashboard is available; when not
-  loaded, there is no dashboard at all." Option 1B leaves floorplan's and
-  architect's own dashboards running independently of whether cctv is
-  loaded — cctv becomes an *additional* dashboard, not *the* dashboard.
-  Listed here mainly to be explicit about why it's rejected by the goal
-  as stated, and as the fallback if a full extraction turns out
-  infeasible for reasons found during implementation.
-- *Con:* Doesn't remove the `WebSocketServer` cost of running three live
-  socket servers/three sets of connected-client state simultaneously
-  memory/connection-wise, since each domain cog still runs its own.
+- **`EventBusService`** (`corridor/application/event_bus_service.py`) —
+  push-only, no history, no replay (`docs/corridor-pubsub-design.md`).
+  Good for "something changed just now," useless alone for cold start
+  (§1.4).
+- **`AgentDirectoryService.list_agents()`** (`corridor/application/agent_directory_service.py`) —
+  a synchronous, in-memory **current-state query**, not an event. This is
+  exactly the shape §1.4's gap was missing for the agent-presence half;
+  architect's own subscriber simply never called it.
 
-**Option 1C: Hybrid — thin shared library for the stateless pieces
-(`WebviewAssetProvider`, ticket minting), but the live `WebSocketServer`/
-`ClientHub`/Dashboard-route layer moves fully into `cctv`, same as 1A.**
+**Decision:** corridor gains the same current-state-query shape for
+layout, and the corresponding write path publishes a new bus event as a
+side effect — the union of both existing shapes, applied to layout
+specifically:
 
-This is really "1A, but `WebviewAssetProvider` itself is factored as an
-importable shared class rather than hand-rewritten inside `cctv`" — the
-distinction from 1A is purely about *where the file lives*
-(`pixelagents/infrastructure/webview.py` vs. `cctv/infrastructure/webview.py`),
-not about runtime behavior; 1A could just as well end up here once
-implemented, if whoever builds it decides the class belongs in
-`pixelagents` (which already owns the build output it serves) rather
-than duplicated a third time inside `cctv`.
+1. **Two new Config-backed stores, owned by corridor** — not merged (see
+   §2.3), but both physically relocated into corridor's own Config
+   identifier, the same way the LLM connection moved from `pico` into
+   `corridor` once `architect` needed it too
+   (`docs/architect-design.md` §2 — "the shared, provider-facing piece
+   lives in corridor once two dependents need the same thing"). Here the
+   two dependents are `cctv` (needs to *read* both, to render both pages)
+   and each store's existing owner (`floorplan` for its own layout+seats,
+   `architect`/`painter` for the shared office layout) which keeps
+   *writing* to it, just through corridor's surface instead of its own
+   private repository:
+   - the store that used to live in `floorplan/infrastructure/settings.py`'s
+     `layout`/`seats` keys,
+   - the store that used to live in `pixelagents.infrastructure.office_layout_settings`
+     (itself already shared between `architect` and `painter`, per
+     `docs/painter-design.md` part A).
+2. **A synchronous query method per store**, mirroring `list_agents()`'s
+   shape (`async def layout(self, store: ...) -> RawLayout | None`, or
+   one typed method per store — naming/typing is an implementation
+   detail this doc doesn't fix). `cctv` calls this both at its own
+   `cog_load` (to seed each page's `OfficeService` roster/layout before
+   any browser has connected) and to answer each new client's
+   `webviewReady` handshake directly — this is the "persistence state new
+   connected clients ask and receive to get the initial snapshot" the
+   decision calls for: the snapshot is asked of *corridor*, not
+   reconstructed from bus history, and not asked of `floorplan`/
+   `architect`/`painter` directly via `bot.get_cog` either. This closes
+   §1.4's gap structurally: it no longer matters whether `cctv` loaded
+   before or after the cog that last wrote the layout, because the
+   answer lives in corridor's own Config, not in any one cog's in-memory
+   state.
+3. **A new bus event, published automatically by the write path**, the
+   same way `register_agent`/`unregister_agent_owner` already publish
+   `AgentPresenceChanged` as a side effect of directory mutation rather
+   than requiring the caller to remember to publish it separately
+   (`docs/corridor-pubsub-design.md`'s "presence is no longer
+   architect's own publish" migration). Whichever cog calls corridor's
+   `set_layout(store, raw)`-shaped write method gets that write persisted
+   *and* broadcast on the bus in one call — `cctv`, if loaded, is just
+   another subscriber reacting to it, the same shape floorplan already
+   reacts to `AgentPresenceChanged` today.
 
-- *Pro:* Satisfies the stated goal (single dashboard, gone entirely
-  without cctv) while still fixing the concrete duplication in §1.6.
-- *Con:* Slightly muddies `pixelagents`' own charter — it would now own
-  not just "build the bundle" but "know how to serve it as a Dashboard
-  page," which today is deliberately *not* pixelagents' job (`docs/architecture.md`
-  §2: "No dashboard route, no WebSocket, no Discord presence surface of
-  its own" is stated as a `pixelagents` property). This is the same kind
-  of charter-expansion tension `docs/painter-design.md` §2 already
-  flagged and consciously accepted once for the layout Config move —
-  worth a similar explicit sign-off rather than assuming it's fine by
-  precedent.
+**This is a deliberate reversal of `docs/painter-design.md` §8's earlier
+call**, which rejected a `LayoutChanged`-shaped event specifically
+because corridor's event catalog (`corridor/event_catalog.py::build_contract()`)
+auto-discovers its pub/sub domain model by a hardcoded filter — *"every
+corridor.domain name starting with `Agent` is part of the pub/sub domain
+model"* — and a data-mutation event forced into that naming convention
+was judged a worse fit than the narrow `notify_shared_layout_changed()`
+hook that shipped instead (§1.5). That hook is retired by this decision
+(§3.3) — the concrete follow-up this reversal requires, not yet done in
+this design doc, is deciding how the new event(s) fit the catalog: either
+widen `build_contract()`'s filter beyond the `Agent`-prefix convention,
+or give the event(s) an `Agent`-shaped name despite not being
+agent-activity-shaped, or split the catalog into two reflected sets. Any
+of these is a small, mechanical change — flagged here as required, not
+worked out, since it's a `corridor/event_catalog.py` implementation
+detail rather than a cross-cog design question.
 
-**Recommendation shape (not a decision):** 1A/1C are the two live
-options; 1B doesn't meet the stated goal and exists here mainly to
-document why it was considered and set aside.
+### 2.3 The two layout stores stay separate
 
-### Axis 2 — how `cctv` learns state
+**Decision: no unification.** floorplan's layout+seats store and
+architect's/painter's shared office-layout store remain two distinct
+schemas with two distinct semantics — separately seeded, separately
+validated, separately authorized (§1.3, §2.4) — exactly as they are
+today. What moves is *where* they're physically persisted (into
+corridor, §2.2), not *what* they are or how many of them there are. A
+wall `architect` adds still does not appear on floorplan's presence
+canvas, and this refactor does not change that; it was explicitly out of
+scope. `cctv` renders both stores because it now hosts both pages
+(§2.4), not because they've become one canonical layout.
 
-This is the axis §1.4's cold-start finding bears on most directly.
+### 2.4 `cctv`'s two Dashboard pages
 
-**Option 2A: Direct in-process access via `bot.get_cog(...)`.**
+`cctv` registers one Dashboard route namespace with two named pages,
+the same `dashboard_page(name=..., ...)` mechanism floorplan's own
+`dashboard_session`/`dashboard_static` already use for sub-pages under
+one cog:
 
-`cctv` looks up `bot.get_cog("Floorplan")`/`bot.get_cog("Architect")`/
-`bot.get_cog("Painter")` (whichever are loaded) and calls narrow,
-purpose-built methods each domain cog exposes — the same
-`dependency_loader.ensure_loaded`/`bot.get_cog` pattern already used for
-`pixelagents.webview_bundle_status()` (`docs/architecture.md` §2) and for
-painter's `notify_shared_layout_changed()` cross-cog hook
-(`docs/painter-design.md` §8, `painter/adapters/cog_base.py:170-184`).
+| Page | Route | Mirrors | Layout store | Auth |
+|---|---|---|---|---|
+| `discord` | `/third-party/cctv/discord` | floorplan's current dashboard | floorplan's layout+seats store | Ticket-gated editing (`TicketStore`, keyholder/bot-owner capability) — unchanged from floorplan's model today |
+| `editor` | `/third-party/cctv/editor` | architect's current dashboard | architect's/painter's shared office layout | No authorization concept at all — unchanged from architect's model today (`docs/architect-design.md` §5.1) |
 
-- *Pro:* No cold-start gap at all — `cctv`'s own `cog_load()` can pull a
-  full, current snapshot synchronously the moment it loads, regardless
-  of load order relative to the domain cogs. This directly closes §1.4's
-  gap rather than inheriting it.
-- *Pro:* Precedented pattern already used for exactly this kind of
-  cross-cog reach in this repo (pixelagents↔floorplan/architect,
-  painter↔architect).
-- *Con:* Couples `cctv` to each domain cog's Python surface (even if only
-  a narrow Protocol-shaped method), meaning a domain cog *can't* be
-  developed or reloaded fully independently of cctv's expectations of it
-  — every existing precedent for this pattern in the repo is already
-  "one narrow method, best-effort, `None`-checked," so this is a
-  continuation of an established shape, not a new kind of coupling.
-- *Con:* `cctv` needs one such surface per domain cog (floorplan's
-  members+activities, architect's/painter's shared layout + genuine
-  agents) — not a single uniform interface, since floorplan's presence
-  model (real Discord members) and architect's (genuine A2A agents) are
-  different shapes today (`GenuineAgentKey` vs. Discord snowflakes,
-  `docs/office-agent-identity-design.md`).
+Static assets (`WebviewAssetProvider`) are shared between both pages —
+one build, one root, one `dashboard_static`-equivalent route — only the
+two entry-page handlers and their `base_href`/injected-shim strings
+differ. Each page needs its **own** live WebSocket path (e.g.
+`/cctv/discord/ws` and `/cctv/editor/ws`) and its **own** rewrite shim,
+per §1.2's precedent: both pages load the identical vendored bundle,
+which derives its WebSocket URL from `window.location.host` alone, with
+no awareness that two different pages on that host want two different
+live backends. Without two distinct shims, the second page loaded in a
+browser session would silently reconnect to whichever `ClientHub` the
+first page's shim already pointed at — the exact failure mode
+`docs/architect-design.md` §9's incident note describes, just now
+happening *inside* one cog's two pages instead of *between* two cogs'
+one page each.
 
-**Option 2B: Corridor pubsub only, accepting the cold-start gap.**
+`cctv` therefore still runs two independent `WebSocketServer`/
+`ClientHub`/`OfficeService` instances internally — one per page — even
+though both are hosted by the same cog process. This is a direct
+consequence of §2.3: two separate layout stores with two separate
+authorization models cannot share one live connection's state without
+either merging them (rejected) or multiplexing per-connection
+authorization state through a single server in a way neither store's
+existing model was designed for. Two internal server instances, each a
+straightforward move of what `floorplan`/`architect` already run today,
+is the lower-risk shape.
 
-`cctv` subscribes to all six `AgentActivityEvent` types at `cog_load`
-(`corridor.subscribe_event`, exactly `floorplan/adapters/event_subscriptions.py`'s
-shape) and renders whatever arrives from that point forward. No
-in-process cog lookups.
+## 3. What this means for `floorplan`/`architect`/`painter` concretely
 
-- *Pro:* Cleanest dependency shape — `cctv` only depends on `corridor`
-  (for the bus) and `pixelagents` (for the build artifact), genuinely
-  zero coupling to floorplan/architect/painter's own Python surfaces.
-  This is the "decoupled producer/consumer" ideal the bus was built for
-  (`docs/corridor-pubsub-design.md`'s own motivation section).
-- *Con:* **Inherits §1.4's gap, and makes it worse.** Today the gap only
-  affects architect's own dashboard missing agents that registered
-  before architect's `cog_load`. Under this option, `cctv` starts with
-  a **completely empty** roster and a **completely empty** layout view
-  after every `[p]reload cctv` — not just missing one late registrant,
-  missing *everything* — until either the corresponding cogs are
-  reloaded (re-publishing their presence) or some other bootstrap
-  mechanism runs. Given `cctv` is meant to be the operator-facing "the
-  dashboard cog" — plausibly reloaded far more often than
-  floorplan/architect/painter individually — this is a real, likely
-  user-visible regression versus what floorplan/architect each already
-  do for their own bootstrap (§1.4: both already read layout fresh from
-  Config directly, not from the bus).
-- *Con:* Layout state was **never** carried on the bus at all (§1.4) — this
-  option would need a *new* mechanism regardless (a new event type, or a
-  pull), so "pubsub only" isn't actually achievable for the layout half
-  without Option 2C's addition anyway. This option is only really viable
-  for the *presence* half, and even there with the empty-cold-start
-  caveat above.
+### 3.1 `floorplan`
 
-**Option 2C: Pubsub for live updates, plus each domain cog also exposes
-a pull/query method for cctv to call once at its own `cog_load` (and
-whenever it needs a resync, e.g. after `on_cog_add` for a domain cog
-that loads *after* cctv already did).**
+Loses: `infrastructure/{websocket,client_hub,tickets,webview}.py`,
+`adapters/dashboard.py`, and its own `layout`/`seats` Config keys
+(`infrastructure/settings.py`) — the read/write calls that used to hit
+its own `Config` object now call corridor's new layout-store surface
+(§2.2) instead. Keeps: everything Discord-command-driven and
+presence-publishing — `admin_commands.py`, `catalogue_commands.py`,
+`layout_tools.py`, `layout_views.py`, `replies.py`, Pixel Index browsing
+(`pixel_index.py`, `[p]floorplan layout load`). `[p]floorplan layout
+load <name>` now writes through corridor's store-write method instead of
+floorplan's own `set_layout`; corridor's own auto-publish (§2.2 point 3)
+means floorplan needs no broadcast-awareness at all, matching the
+existing invariant (§1.5) that write-tools never needed to know whether
+anything was listening.
 
-This is genuinely the union of 2A and 2B, not a third independent shape:
-subscribe to the bus for the steady-state "something changed" stream
-(cheap, already-built, matches how floorplan/architect already consume
-it), and additionally call a narrow pull method on each domain cog *at
-minimum once at cctv's own `cog_load`* to seed the roster/layout, mirroring
-what corridor's own `list_agents()` already does for the A2A directory
-(`corridor/adapters/cog_base.py`'s `list_agents()` — itself already a
-pull-style "current state" query, not something reconstructed from bus
-history) and what floorplan's own `guild.members` iteration already does
-for Discord presence (§1.4) — extending that same "pull once, then
-subscribe for deltas" shape to genuine-agent presence and to layout,
-neither of which corridor's *event bus specifically* was ever designed to
-carry as a queryable-on-demand snapshot.
+### 3.2 `architect`
 
-- *Pro:* Closes §1.4's gap in general (not just for architect's specific
-  case), for both cctv and, as a side effect, would fix architect's own
-  existing gap if architect's presence-subscription code were updated to
-  the same shape.
-- *Pro:* No new corridor bus event types needed — `corridor.list_agents()`
-  already exists and already gives the genuine-agent-registration half of
-  this pull for free; only the "current layout" pull and "current
-  Discord-guild-member presence" pull are net-new surfaces domain cogs
-  would need to add (floorplan already has the Discord-member half
-  in-process via `guild.members`, so this is really just "expose what it
-  already computes for its own bootstrap, to cctv too").
-- *Con:* Most implementation work of the three options — it's 2A's
-  per-domain-cog surface *and* 2B's subscription wiring, not a shortcut
-  past either.
-- *Con:* Still needs a resync trigger for "domain cog loads after cctv
-  already did" (Red's `on_cog_add`-equivalent, or cctv re-pulling
-  periodically, or the domain cog announcing itself the way A2A agent
-  registration already does via `AgentPresenceChanged`) — a real design
-  detail the investigation didn't fully resolve and a future design pass
-  would need to pick concretely.
+Loses: `infrastructure/{websocket,client_hub,webview}.py`,
+`adapters/dashboard.py`, `adapters/presence_subscription.py`'s dashboard-
+rendering half (subscribing to corridor's bus to feed a *local*
+`OfficeService` — that rendering now happens inside `cctv`, not
+architect). `architect`'s own genuine-agent presence *publishing*
+(via `register_agent`, already corridor's job per
+`docs/corridor-pubsub-design.md`) is unaffected — only the *consuming*
+side (rendering it onto a locally-owned canvas) moves. `OfficeLayoutRepository`'s
+`load`/`save` now delegate to corridor's new store surface instead of
+`pixelagents.infrastructure.office_layout_settings` directly; `application/office_layout_service.py`'s
+own validation/mutation logic (`paint_tiles`, `place_furniture`, ...) is
+untouched — same shape as the pixelagents extraction in
+`docs/painter-design.md` part A, which already proved this repository
+swap needs zero changes to the service layer above it.
 
-**Recommendation shape:** 2B alone is the weakest fit given the layout
-half is bus-incompatible by construction and the presence half's
-cold-start regression is a real, verifiable step backward from what
-floorplan/architect already guarantee themselves today. 2A and 2C are
-both viable; 2C is closer to "the bus's original intent, extended
-correctly" but costs more to build than 2A's "just ask directly, no bus
-involvement for this at all."
+### 3.3 `painter`
 
-### Axis 3 — do the two layout stores get unified?
+Loses nothing structural — painter never had a dashboard of its own
+(`docs/painter-design.md` §7.1: "no WebSocket server, webview, Dashboard
+route... painter serves no browser-facing surface of its own"). What
+*does* change: `PainterLayoutService`'s `on_layout_changed` callback and
+`painter/adapters/cog_base.py`'s `bot.get_cog("Architect")` →
+`notify_shared_layout_changed()` hook (`docs/painter-design.md` §8's
+"real usage finding" fix) are **retired**. They existed only to solve
+"a painter write doesn't tell any browser to refetch," and §2.2's
+corridor-side auto-publish-on-write now solves that generically, for
+every writer of the shared store, without any writer needing a
+cross-cog notify hook of its own. This is a net simplification painter
+gets for free from this refactor, not something painter's own design
+needs to change to receive.
 
-This is the fork flagged in the task and in §1.3 — real product
-consequences either way, not a mechanical implementation detail.
+## 4. Consequences for existing invariants
 
-**Option 3-separate: Layouts stay separate; `cctv` renders whichever
-store it's told, per page/route, unchanged.**
+- **§1.5's "write-tools tolerate no dashboard" invariant still holds,
+  more simply.** Persisting is now "call corridor's write method,"
+  broadcasting is now corridor's own automatic side effect (§2.2 point
+  3) — no cog-local `ClientHub`/ `bot.get_cog` best-effort plumbing
+  needed anywhere outside corridor and `cctv` itself. If `cctv` isn't
+  loaded, corridor still publishes the event; it simply has zero
+  subscribers, the same "zero recipients, not an error" shape
+  `ClientHub.broadcast` already guarantees today for zero connected
+  sockets.
+- **§1.4's cold-start gap is closed, structurally, not just for `cctv`.**
+  Because the fix is "ask corridor for current state," not "give `cctv`
+  a bespoke pull method," any *future* subscriber of either layout store
+  gets the same correctness for free — the same generality
+  `AgentDirectoryService.list_agents()` already gives any future
+  A2A-agent-roster consumer.
+- **New risk, not present today:** corridor's event catalog naming
+  convention (§2.2's reversal note) needs a concrete follow-up decision
+  before implementation, or `corridor/corridor.yaml`'s generated contract
+  and `contracts/corridor/lint_corridor_contract.py`'s cross-reference
+  check will not know what to do with the new event type(s).
+- **New risk, not present today:** a migration path for existing
+  installations' `floorplan`-owned and `pixelagents`-owned layout Config
+  data into corridor's new store. `docs/architect-design.md` §2's
+  LLM-connection move ("no migration path, reconfigure once") and
+  `docs/painter-design.md` part A's `CogBase._migrate_legacy_layout`
+  (self-guarding-by-state, copy-once) are the two precedents on file for
+  this kind of move; picking between them is implementation-pass work,
+  not resolved here.
 
-`cctv` would serve (at minimum) two distinct dashboard views — one over
-floorplan's Config-backed layout+seats, one over the
-pixelagents-owned/architect-and-painter-shared layout — the same two
-views that exist today, just hosted from one cog instead of two. No
-change to `floorplan/infrastructure/settings.py`'s Config identifier,
-no change to `pixelagents.infrastructure.office_layout_settings`, no
-data migration.
+## 5. What this doc still does not decide
 
-- *Pro:* Zero data-model risk — this is purely a hosting-layer
-  refactor, exactly matching "cctv only unifies dashboard *hosting*"
-  from the task's own framing. Confirming this is in scope means the
-  refactor's blast radius stays contained to the four listed
-  files/classes per cog (§1.1's table), nothing in `pixelagents/domain/office_ir.py`
-  or either settings repository needs to move or change shape.
-  Least effort, least regression risk, ships fastest.
-- *Con:* Doesn't fix §1.3's actually-confusing user experience (a wall
-  architect added still doesn't show up in "the" office view a Discord
-  admin might reasonably expect to be singular) — it inherits the split
-  brain, just makes it *one cog's* problem to route between two views
-  instead of two cogs' problem to each serve their own.
-- *Con:* "Unified dashboard" in the goal statement becomes true only in
-  the hosting sense (one cog, one Dashboard entry point), not in the
-  data sense (still two independent canvases underneath, reachable via
-  two different pages/tabs within that one entry point).
+- The exact method names/signatures on corridor's new layout-store
+  surface, and the exact new event dataclass name(s)/fields.
+- How `corridor/event_catalog.py::build_contract()`'s `Agent`-prefix
+  filter accommodates the new event type(s) (§2.2, §4).
+- The Config migration strategy for existing installations (§4).
+- `cctv`'s own `info.json`/`required_cogs` shape and command surface
+  (`[p]cctv ...`, if any) — likely just `corridor` and `pixelagents`,
+  mirroring floorplan's/architect's existing dependency shape, but not
+  fixed here.
+- Whether `painter`'s own recolor tools (still only investigated per
+  issue #55, not implemented) change at all — nothing here found a
+  reason they would; painter still has no dashboard of its own (§3.3),
+  it only stops needing its one bespoke cross-cog notify hook.
 
-**Option 3-unify: Migrate onto one canonical layout store,
-`pixelagents.infrastructure.office_layout_settings` (already the newer,
-more general design, already shared between architect and painter)
-becoming the *only* office layout, with floorplan's own
-`layout`/`seats` Config keys retired in favor of it.**
+## 6. Summary table
 
-- *Pro:* Actually resolves §1.3 — one office, one set of walls/furniture/
-  colors, visible identically whether it was changed via floorplan's
-  in-browser editor, architect's `paint_tiles`, or painter's
-  `recolor_tiles`. This is the more ambitious, more genuinely "unified"
-  outcome the word in the goal statement could be read to imply.
-- *Con:* **Major scope expansion, a second big design decision layered
-  onto the hosting refactor.** Floorplan's layout is guild-scoped in UX
-  (though not, per §1.3, actually partitioned that way at the Config
-  level today) and its editor has real authorization
-  (`TicketStore`/keyholder gating); architect's/painter's has none by
-  design (`docs/architect-design.md` §5.1's explicit "anyone who can
-  reach `/third-party/architect` should be able to freely edit it"
-  decision). Unifying the stores means unifying — or explicitly
-  reconciling — these two very different authorization models, not just
-  the JSON blob underneath them. `docs/architect-semantic-ir-design.md`'s
-  codec and floorplan's own raw layout format
-  (`floorplan.contracts.layout.RawOfficeLayout`) would also need to be
-  confirmed byte-compatible or bridged — not verified as part of this
-  investigation, since it's out of scope for a hosting-only pass.
-- *Con:* A real migration of live installations' layout data, the kind
-  of breaking change `docs/architect-design.md` §2's LLM-provider move
-  and `docs/painter-design.md`'s own precedent both treat as
-  "no migration path, reconfigure once" *or* a careful one-time copy
-  (`CogBase._migrate_legacy_layout`'s self-guarding-by-state pattern is
-  the precedent to reuse if this is ever attempted) — either way, a
-  decision a hosting refactor alone shouldn't have to make as a side
-  effect.
-- *Con:* Widens the pixelagents-charter-expansion tension already noted
-  once in `docs/painter-design.md` §2 (floorplan's own settings module
-  docstring: issue #21 deliberately moved a `layout` key *out* of
-  pixelagents once already) — unifying onto pixelagents' store a second
-  time, now absorbing floorplan's presence-linked layout too, is a
-  bigger version of a move this repo has already reversed once.
-
-**Recommendation shape:** Treat these as two separate design questions
-with two separate PRs if both are ever pursued — 3-separate is the
-option that actually matches "cctv unifies *hosting*, not data," is far
-lower-risk, and can ship the goal as stated without waiting on a
-data-model decision; 3-unify is a legitimate, larger follow-up worth its
-own design doc (probably its own GitHub issue) rather than something
-this refactor should bundle in.
-
-### Axis 4 — how "still works without cctv" is structurally guaranteed
-
-**Confirmed today (§1.5): write-tools already have zero hard dependency
-on dashboard/broadcast success.** `paint_tiles`, `place_furniture`,
-`recolor_tiles`, etc. all persist to Config first, unconditionally, and
-only *then* attempt a best-effort broadcast to whatever `ClientHub`
-happens to be running — which, with zero connected sockets (i.e. no
-dashboard loaded at all), is simply zero recipients, not an error.
-`painter`'s equivalent cross-cog notify hook
-(`notify_shared_layout_changed()`) is likewise a `bot.get_cog(...)`
-lookup that already tolerates the target cog being absent. **This
-invariant does not need new code for any option above — it already
-holds.** What each option changes is *who* owns the `ClientHub`/
-`WebSocketServer` the broadcast targets:
-
-- Under **1A/1C**, the broadcast callback each domain cog's
-  `OfficeLayoutService`/`PainterLayoutService` is constructed with
-  (`broadcast=self._broadcast_layout` in architect's `CogBase.__init__`,
-  `on_layout_changed=self._notify_architect_layout_changed` in
-  painter's) would need to become a **cross-cog, best-effort call into
-  `cctv`** (`bot.get_cog("Cctv")`, `None`-checked, matching the existing
-  painter→architect precedent exactly) instead of a call into a
-  same-cog `ClientHub` instance. This is a bigger structural change than
-  it first sounds: today `architect`'s own `_broadcast_layout` is
-  guaranteed to exist (it's the same cog), so `self._broadcast is not
-  None` in `OfficeLayoutService._persist` is really "was a callback
-  provided at construction," never "is the target cog even loaded." Once
-  the target is `cctv` — a cog that may not be loaded — the callback
-  itself must become the kind of defensive, try/except-wrapped,
-  never-fails-the-caller lookup `painter/adapters/cog_base.py:170-184`
-  already demonstrates, not a plain method reference. **The precedent
-  for exactly this shape already exists in this codebase and already
-  ships (painter→architect) — this is "do it again, one more time, for
-  cctv" rather than a new pattern.**
-- Under **1B**, no change needed on this axis at all — each domain cog's
-  broadcast callback keeps targeting its own, still-locally-owned
-  `ClientHub`, since it never gave that ownership up.
-
-Either way, the one thing worth flagging as a **new** risk (not present
-today): under 1A/1C, if `cctv` is loaded, unloaded, and reloaded while a
-domain cog is mid-mutation, the `bot.get_cog("Cctv")` lookup needs the
-same "stale cog reference" defensiveness `dependency_loader.ensure_loaded`
-callers already apply elsewhere in this repo — not because this is hard,
-but because it's a new call site that must remember to apply an existing
-convention, the same kind of easy-to-miss detail
-`docs/painter-design.md`'s own implementation checklist flagged more
-than once (mypy config, lint config, workflow matrix entries all needed
-manual updates that were "found only by running the full-repo quality
-gate, not by static review").
-
-## 3. Summary table
-
-| Axis | Options | This doc's read |
-|---|---|---|
-| 1. Where hosting code lives | 1A (fully in cctv) / 1B (shared lib, cogs keep own dashboards) / 1C (hybrid: stateless lib + cctv owns live state) | 1B doesn't meet the stated goal; 1A vs 1C is a "where does the file live" call, not a behavioral one |
-| 2. How cctv learns state | 2A (direct `bot.get_cog`) / 2B (pubsub only) / 2C (pubsub + pull-on-load) | 2B alone regresses the cold-start behavior floorplan/architect already have today; 2A is simplest, 2C is more bus-native but costs more to build |
-| 3. Unify the two layout stores? | 3-separate (cctv renders whichever store it's told) / 3-unify (one canonical store) | 3-separate matches "cctv unifies hosting, not data" and ships independently; 3-unify is a legitimate but much larger follow-up deserving its own design doc |
-| 4. No-cctv guarantee | Already true for persistence (verified, §1.5); broadcast callback needs to become a `bot.get_cog("Cctv")`-shaped best-effort hook under 1A/1C, unchanged under 1B | Precedented by painter→architect's existing `notify_shared_layout_changed()` hook — replicate that shape, don't invent a new one |
-
-## 4. What this doc deliberately does not decide
-
-Per the task, no option above is chosen. Also explicitly not addressed,
-left for whichever design doc follows a decision on the axes above:
-
-- The exact shape of any new domain-cog-exposed pull method (Option 2A/2C)
-  — return types, where it lives in each cog's layering.
-- Whether `cctv` needs its own `required_cogs` on `floorplan`/`architect`/
-  `painter` (probably not, if Axis 2 goes with pubsub-plus-`bot.get_cog`
-  duck-typed lookups the way `pixelagents`→floorplan/architect already
-  are today — `bot.get_cog` returning `None` for an unloaded cog is
-  already the whole mechanism `docs/architecture.md` §1 documents as
-  "operational, not coded" for the `toolbox`↔`pixelagents` edge).
-- Whether painter's own recolor tools (still only investigated per issue
-  #55, not implemented) change at all under any option here — nothing in
-  this investigation found a reason they would; painter has no dashboard
-  of its own today (`docs/painter-design.md` §7.1's checklist: "no
-  WebSocket server, webview, Dashboard route... painter serves no
-  browser-facing surface of its own") and none of the options above give
-  it one, they only change who serves the *shared* office layout painter
-  already reads/writes into.
-- Command-surface changes (`[p]cctv ...`), `info.json` shape, or a
-  migration/rollout plan for existing installations currently running
-  floorplan's and/or architect's dashboards — all downstream of picking
-  an option on Axis 1 and Axis 3 first.
+| Axis | Decision |
+|---|---|
+| 1. Where hosting code lives | Fully in `cctv` (§2.1) — `floorplan` and `architect` each lose their five dashboard-stack files outright, no shared library, no residual copy |
+| 2. How `cctv` learns state | Corridor gains a persisted, queryable layout store per existing store (mirroring `list_agents()`'s current-state-query shape) plus a new bus event published automatically on every write (mirroring `register_agent`'s auto-publish of `AgentPresenceChanged`) — `cctv` pulls the snapshot from corridor at `cog_load`/`webviewReady` and subscribes to the bus for live deltas thereafter (§2.2) |
+| 3. Unify the two layout stores? | No — they stay two distinct schemas/stores, just both physically relocated into corridor (§2.3) |
+| 4. `cctv`'s page shape | Two named Dashboard pages under one cog — `/third-party/cctv/discord` (floorplan-style, ticket-gated) and `/third-party/cctv/editor` (architect-style, open) — sharing static assets but each with its own live WebSocket path/rewrite shim/`ClientHub` instance (§2.4) |

@@ -106,8 +106,8 @@ flowchart TB
     Discord --> Human["(a) Discord user account<br/><small>is_bot=False</small>"]
     Discord --> Bot["(b) Discord bot account<br/><small>is_bot=True, headless</small>"]
 
-    Genuine --> Architect["architect<br/><small>agent_key=\"architect\"</small>"]
-    Genuine --> More["(future A2A agents)<br/><small>agent_key=\"...\"</small>"]
+    Genuine --> Architect["architect<br/><small>agent_key=&quot;architect&quot;</small>"]
+    Genuine --> More["(future A2A agents)<br/><small>agent_key=&quot;...&quot;</small>"]
 
     class Human,Bot discordish
     class Architect,More genuine

@@ -1,0 +1,59 @@
+name: "Mermaid"
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "**/*.md"
+      - ".github/workflows/mermaid.yml"
+  pull_request:
+    paths:
+      - "**/*.md"
+      - ".github/workflows/mermaid.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mermaid-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  render:
+    name: Render Markdown diagrams
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Mermaid CLI
+        run: npm install --global @mermaid-js/mermaid-cli@11.16.0
+
+      - name: Render Mermaid diagrams
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          chrome_path="$(command -v google-chrome-stable || command -v google-chrome || command -v chromium)"
+          puppeteer_config="${RUNNER_TEMP}/mermaid-puppeteer.json"
+          render_root="${RUNNER_TEMP}/mermaid-rendered"
+
+          jq -n \
+            --arg executable_path "${chrome_path}" \
+            '{executablePath: $executable_path}' > "${puppeteer_config}"
+
+          while IFS= read -r -d '' markdown_file; do
+            output_file="${render_root}/${markdown_file}"
+            mkdir -p "$(dirname "${output_file}")"
+            echo "Rendering ${markdown_file}"
+            mmdc \
+              --puppeteerConfigFile "${puppeteer_config}" \
+              --input "${markdown_file}" \
+              --output "${output_file}"
+          done < <(git ls-files -z -- '*.md')

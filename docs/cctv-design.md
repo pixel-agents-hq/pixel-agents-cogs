@@ -394,14 +394,14 @@ models cannot share one live server without merging them (rejected,
 flowchart TB
     subgraph CctvCog["cctv (one Red Cog process)"]
         direction LR
-        subgraph DiscordPipeline["\"discord\" page pipeline"]
+        subgraph DiscordPipeline["&quot;discord&quot; page pipeline"]
             WS1["WebSocketServer<br/>external path /cctv/discord/ws"]
             Hub1["ClientHub #1"]
             Office1["OfficeService #1<br/>roster: real Discord members"]
             Ticket["TicketStore<br/>8h tickets, keyholder-gated"]
             WS1 --> Hub1 --> Office1
         end
-        subgraph EditorPipeline["\"editor\" page pipeline"]
+        subgraph EditorPipeline["&quot;editor&quot; page pipeline"]
             WS2["WebSocketServer<br/>external path /cctv/editor/ws"]
             Hub2["ClientHub #2"]
             Office2["OfficeService #2<br/>roster: genuine A2A agents"]

@@ -399,7 +399,7 @@ sequenceDiagram
     participant A as architect<br/>(registered AgentExecutor)
 
     U->>P: message gates pico in
-    P->>C: list_agents() -- build one consult_&lt;agent_key&gt; tool per entry
+    P->>C: list_agents() -- build one consult_AGENT_KEY tool per entry
     P->>P: LLM call, tools include consult_architect
     P->>CA: consult_architect(prompt="...")
     CA->>C: a2a-sdk client: message/send to corridor:PORT/architect/

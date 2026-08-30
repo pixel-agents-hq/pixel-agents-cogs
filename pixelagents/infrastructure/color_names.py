@@ -1,17 +1,38 @@
-"""A small, fixed HSB <-> semantic color name palette.
+"""Color representations shared by architect and painter.
 
-Deliberately coarse (docs/architect-semantic-ir-design.md section 6.3):
-an LLM should say "make the lounge floor warm and beige," not compute an
-HSB tuple. `{h,s,b,c}` here matches Pixel Agents' own HSB-shift color
-representation exactly (`webview-ui/src/components/ui/types.py`'s
-`ColorValue` shape, as seen in the bundled layout JSON) -- this module
-only maps that representation to/from a closed set of names, it never
-invents a new color model.
+Two independent things live here, deliberately not unified:
+
+1. A small, fixed HSB <-> semantic-name palette (`_PALETTE`/`nearest_name`/
+   `hsb_for`/`known_names`, `_HEX_PALETTE`/`nearest_hex_name`/`hex_for`) --
+   what architect's own `paint_tiles`/`create_zone` still validate
+   against (docs/architect-semantic-ir-design.md section 6.3): "make the
+   lounge floor warm and beige," not a computed HSB tuple. Unchanged by
+   painter's own color model below.
+2. General hex <-> HSB conversion (`hex_to_hsb`/`hsb_to_hex`), free of any
+   fixed name set -- what painter uses (docs/painter-design.md's color
+   model revision): painter has full control over hue/saturation/
+   brightness/contrast and reasons about natural-language color requests
+   ("blue," "a lighter shade," "#3b5a7a") itself, entirely in its own LLM,
+   never constrained to the 12-name palette above. The math mirrors the
+   reference webview's own `colorize.ts` (`rgbToHsl`/`hslToHex`) exactly,
+   so a given hex/HSB value renders the way painter's reasoning expects.
+
+`{h,s,b,c}` matches Pixel Agents' own HSB-shift color representation
+exactly (`webview-ui/src/components/ui/types.ts`'s `ColorValue` shape, as
+seen in the bundled layout JSON): `h` 0-360, `s` 0-100, `b`/`c` -100-100,
+always in "colorize" mode (an absolute target color, not a relative
+adjustment to the sprite's own original pixels) -- see `hsb_to_hex`'s own
+docstring for what that means for the derived hex approximation.
 """
 
 from __future__ import annotations
 
 from typing import TypedDict
+
+HUE_MIN, HUE_MAX = 0, 360
+SATURATION_MIN, SATURATION_MAX = 0, 100
+BRIGHTNESS_MIN, BRIGHTNESS_MAX = -100, 100
+CONTRAST_MIN, CONTRAST_MAX = -100, 100
 
 
 class HsbColor(TypedDict):
@@ -118,10 +139,116 @@ def hex_for(name: str) -> str:
     return _HEX_PALETTE[name]
 
 
+def _rgb_to_hsl(r: int, g: int, b: int) -> tuple[float, float, float]:
+    """`h` 0-360, `s`/`l` 0-1 -- mirrors the reference webview's own
+    `colorize.ts` `rgbToHsl` exactly (same algorithm, same rounding
+    behavior), so `hex_to_hsb`'s result renders the way it looks."""
+
+    rf, gf, bf = r / 255, g / 255, b / 255
+    mx, mn = max(rf, gf, bf), min(rf, gf, bf)
+    lightness = (mx + mn) / 2
+    if mx == mn:
+        return 0.0, 0.0, lightness
+    d = mx - mn
+    saturation = d / (2 - mx - mn) if lightness > 0.5 else d / (mx + mn)
+    if mx == rf:
+        hue = ((gf - bf) / d + (6 if gf < bf else 0)) * 60
+    elif mx == gf:
+        hue = ((bf - rf) / d + 2) * 60
+    else:
+        hue = ((rf - gf) / d + 4) * 60
+    return hue, saturation, lightness
+
+
+def _hsl_to_hex(h: float, s: float, l: float) -> str:  # noqa: E741 -- mirrors colorize.ts's own h/s/l names
+    """`h` 0-360, `s`/`l` 0-1 -> `#RRGGBB`. Mirrors `colorize.ts`'s own
+    `hslToHex` exactly."""
+
+    c = (1 - abs(2 * l - 1)) * s
+    hp = (h % 360) / 60
+    x = c * (1 - abs((hp % 2) - 1))
+    if hp < 1:
+        r1, g1, b1 = c, x, 0.0
+    elif hp < 2:
+        r1, g1, b1 = x, c, 0.0
+    elif hp < 3:
+        r1, g1, b1 = 0.0, c, x
+    elif hp < 4:
+        r1, g1, b1 = 0.0, x, c
+    elif hp < 5:
+        r1, g1, b1 = x, 0.0, c
+    else:
+        r1, g1, b1 = c, 0.0, x
+    m = l - c / 2
+    r = max(0, min(255, round((r1 + m) * 255)))
+    g = max(0, min(255, round((g1 + m) * 255)))
+    b = max(0, min(255, round((b1 + m) * 255)))
+    return f"#{r:02X}{g:02X}{b:02X}"
+
+
+def hex_to_hsb(hex_color: str) -> HsbColor:
+    """A target hex color, expressed as a colorize-mode `HsbColor` --
+    `brightness`/`contrast` chosen so the *flat-fill* rendering of the
+    result (a zone, a carpet, or any single-color surface -- see
+    `colorize.ts`'s `flatColorizeSprite`) reproduces `hex_color` exactly.
+    On a textured sprite (a floor/wall/furniture pattern, via
+    `colorizeSprite`/`adjustSprite`), the result approximates `hex_color`
+    at the sprite's own neutral tone rather than reproducing it
+    pixel-for-pixel -- the same approximation this module's fixed-palette
+    `hsb_for`/`hex_for` pair already accepts for named colors, not a new
+    gap painter introduces."""
+
+    r, g, b = _hex_to_rgb(hex_color)
+    hue, saturation, lightness = _rgb_to_hsl(r, g, b)
+    brightness = round((lightness - 0.5) * 200)
+    return {
+        "h": round(hue) % 360,
+        "s": round(saturation * 100),
+        "b": max(BRIGHTNESS_MIN, min(BRIGHTNESS_MAX, brightness)),
+        "c": 0,
+    }
+
+
+def hsb_to_hex(color: HsbColor) -> str:
+    """The flat-fill hex a colorize-mode `HsbColor` renders as -- the
+    exact inverse of `hex_to_hsb` for any color it produced, and a
+    reasonable, human-readable approximation for any other `HsbColor`
+    (e.g. one read back off a tile/furniture item) even though the real
+    per-pixel render may vary slightly by sprite texture, same caveat
+    `hex_to_hsb`'s own docstring covers.
+
+    `contrast` never changes this function's result, for any hue/
+    saturation/brightness combination -- not a bug, verified against the
+    reference webview's own `flatColorizeSprite`: lightness starts at
+    0.5, contrast stretches *away from* that same 0.5 midpoint (always a
+    no-op multiplying a zero deviation), and only brightness shifts it
+    afterward. Contrast only visibly matters on a real textured sprite
+    render, where the starting lightness is the sprite's own per-pixel
+    value, not a fixed 0.5 -- a caller comparing two `describe_*` reads
+    that differ only in `contrast` should not expect their `hex` fields
+    to differ."""
+
+    lightness = 0.5
+    if color["c"]:
+        lightness = 0.5 + (lightness - 0.5) * ((100 + color["c"]) / 100)
+    lightness = max(0.0, min(1.0, lightness + color["b"] / 200))
+    return _hsl_to_hex(color["h"], color["s"] / 100, lightness)
+
+
 __all__ = [
+    "BRIGHTNESS_MAX",
+    "BRIGHTNESS_MIN",
+    "CONTRAST_MAX",
+    "CONTRAST_MIN",
+    "HUE_MAX",
+    "HUE_MIN",
+    "SATURATION_MAX",
+    "SATURATION_MIN",
     "HsbColor",
     "hex_for",
+    "hex_to_hsb",
     "hsb_for",
+    "hsb_to_hex",
     "known_names",
     "nearest_hex_name",
     "nearest_name",

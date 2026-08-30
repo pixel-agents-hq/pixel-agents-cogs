@@ -34,6 +34,24 @@ not silently reconciled:
   `consult_painter` tool exactly the way `consult_architect` already
   works. Pico still composes the Discord-facing reply.
 
+**Post-ship revision, found from a real Discord failure (not a design
+error caught in review — the v1 ship above validated against
+architect's own fixed-palette convention, which turned out to be the
+wrong model for painter specifically):** a user asked pico to recolor two
+tables "blue"; painter reported failure because "blue" wasn't an exact
+name in architect's dozen-entry palette. That palette (`known_names()`/
+`_PALETTE` in `pixelagents/infrastructure/color_names.py`) is right for
+architect's own `paint_tiles`/`create_zone` (deliberately coarse per
+`docs/architect-semantic-ir-design.md` §6.3) but wrong for painter, whose
+entire purpose is translating open-ended natural language into color.
+Painter's write tools no longer take a `color: str` name at all — see §7.3's
+revision below for the replacement `ColorSpec` (hex, or hue+saturation
+plus a brightness/contrast adjustment) model, and
+`pixelagents/infrastructure/color_names.py`'s `hex_to_hsb`/`hsb_to_hex`
+for the general (non-palette) conversion this required. architect's own
+tools are unaffected — they still validate against the same fixed
+palette as before.
+
 ## 1. Scope for v1
 
 In scope:
@@ -369,19 +387,51 @@ and where," never for color (architect has none to give, §4).
 
 ### 7.3 Read/write tools (color, direct via pixelagents)
 
-New tools, painter-owned, no architect equivalent:
+New tools, painter-owned, no architect equivalent. `describe_colors`
+from the original table split into two (one for tiles, one for
+furniture) once actually implemented — an unremarkable refinement. The
+`color` shape below is the **post-ship revision** (§0's addendum) — the
+original table here specified `color: str` validated against
+`known_names()`, matching architect's own fixed palette; that turned out
+to be the wrong model for painter (a real Discord failure: "make it
+blue" isn't an exact name in a dozen-entry list) and was replaced before
+ever being the shipped behavior for more than the initial PR:
 
 | Tool | Shape | Notes |
 |---|---|---|
-| `describe_colors` | Input: optional area/furniture filter. Output: per-tile and per-furniture `color` (semantic name), mirroring `DescribeTilesOutput`/`FindFurnitureOutput`'s existing `color` field shape. | Painter's structured, no-vision color read — the direct replacement for the issue's image-based color judgment. |
-| `recolor_tiles` | Input: area (col/row + width/height or end_col/end_row, same shape as `PaintTilesInput` minus `kind`/`material`), `color: str`. | Refuses if any cell in the area isn't already the kind it currently is meant to stay (floor stays floor, wall stays wall) — no structural conversion possible, by construction (no `kind` param exists). |
-| `recolor_furniture` | Input: `furniture_id: str`, `color: str`. | New service method — `FurnitureItem.color` has no writer anywhere today (§ investigation finding); this is genuinely new capability, not a narrowed existing one. |
-| `recolor_furniture_by_style` | Input: `kind`, `style`, `color: str`. | Bulk recolor, from the issue comment's tool ideas — every placed item of that kind+style at once. |
+| `describe_tile_colors` | Input: a bounded region (col/row/width/height). Output: per-tile `color` as a structured `{hex, hue, saturation, brightness, contrast, closest_named_color}`, not a name. | Painter's structured, no-vision color read — the direct replacement for the issue's image-based color judgment. `closest_named_color` is informational only (nearest of architect's fixed palette, for a human-readable label), never the actual stored value. |
+| `describe_furniture_colors` | Input: optional kind/style filter. Output: per-item color, same structured shape as above. | |
+| `recolor_tiles` | Input: area (col/row + width/height or end_col/end_row, same shape as `PaintTilesInput` minus `kind`/`material`), `color: ColorSpec`. | Refuses if any cell in the area isn't already the kind it currently is meant to stay (floor stays floor, wall stays wall) — no structural conversion possible, by construction (no `kind` param exists). |
+| `recolor_furniture` | Input: `furniture_id: str`, `color: ColorSpec`. | New service method — `FurnitureItem.color` has no writer anywhere today (§ investigation finding); this is genuinely new capability, not a narrowed existing one. |
+| `recolor_furniture_by_style` | Input: `kind`, `style`, `color: ColorSpec`. | Bulk recolor, from the issue comment's tool ideas — every placed item of that kind+style at once. |
 
-All four validate `color` against the same `known_names()` palette
-architect's `paint_tiles`/`create_zone` already validate against
-(moved to `pixelagents/infrastructure/color_names.py`, §5.1) — painter
-never invents colors outside that palette.
+`ColorSpec` (`painter/tools/painter_tools.py`) is `{hex}` OR
+`{hue, saturation}` — give exactly one, same "give exactly one of these
+two shapes" convention `recolor_tiles`' own width/height-vs-end_col/
+end_row already uses — plus an always-available `brightness`/`contrast`
+adjustment (0 by default) applied on top of whichever base that resolves
+to. There is no fixed palette check anywhere in this path: painter's own
+LLM is expected to reason about hue/saturation/brightness/contrast (or
+recall an approximate hex for a named/described color) itself, reading
+the *current* exact color first via `describe_tile_colors`/
+`describe_furniture_colors` to reason about "lighter"/"darker"/other
+relative requests. Every write stores the color as an **exact**
+`raw_color` tuple (`pixelagents/infrastructure/pixel_agents_adapter.py`
+already prefers `raw_color` over the semantic name on encode, see
+`docs/architect-semantic-ir-design.md` §6.3's "untouched cell round-trips
+exactly" contract) — an arbitrary painter-chosen color round-trips
+losslessly rather than snapping to the nearest of architect's dozen named
+colors. `color` (the semantic-name field) is still set, via
+`nearest_name()`, purely as a best-effort human-readable label.
+
+**Bug fixed in the same change**: `_encode_furniture` never emitted
+Pixel Agents' own `colorize` flag at all, silently defaulting the
+renderer to "adjust" mode (shift the sprite's *original* pixel colors)
+rather than the absolute-target "colorize" mode every color this system
+authors actually intends (verified against the reference webview's own
+`ColorValue`/`colorize.ts`) — harmless while nothing ever wrote furniture
+color, live now that painter does. Fixed by always emitting
+`"colorize": true` for any furniture color this codec encodes.
 
 ### 7.4 What painter's tool surface deliberately excludes
 
@@ -449,7 +499,8 @@ themselves having no such fields, not just by prompt instruction.
 - [x] `painter/tools/painter_tools.py`: five tools, `RecolorTilesTool` mirrors `paint_tiles`'s width/height-or-end_col/end_row convention
 - [x] `painter/infrastructure/a2a_server.py` (`PainterAgentExecutor`), `painter/application/tool_loop_service.py`, `painter/infrastructure/corridor_llm.py`, `painter/tools/base.py`, `painter/tools/agent_tool_server.py` -- all parallel copies of architect's own equivalents
 - [x] `painter/adapters/cog_base.py`: registers `agent_key="painter"` with corridor; no WebSocket server, webview, Dashboard route, or presence-tracking mixin (painter serves no browser-facing surface of its own)
-- [x] Painter's system prompt: use `consult_architect` for structure, own tools for color, never invent colors outside `known_names()`
+- [x] Painter's system prompt: use `consult_architect` for structure, own tools for color, reason about hue/saturation/brightness/contrast (or hex) itself -- no fixed palette (revised post-ship, §0/§7.3's addendum; superseded the original "never invent colors outside `known_names()`" line)
+- [x] Post-ship color model revision: `pixelagents/infrastructure/color_names.py` gained `hex_to_hsb`/`hsb_to_hex` (general conversion, not palette-bound); `painter/tools/painter_tools.py`'s `ColorSpec`/`ColorSummary` replace bare `color: str`; `PainterLayoutService`'s three recolor methods take an `HsbColor` and store it as an exact `raw_color`, never `known_names()`-validated; `_encode_furniture` now always emits `"colorize": true` (real pre-existing gap, fixed in the same change, architect's own round-trip test updated)
 - [x] `pyproject.toml`'s `[tool.mypy]` `files`/`exclude` lists and per-module overrides gained a `painter` entry -- found only by running the full-repo quality gate, not by static review; easy to miss when adding a new cog
 - [x] `contracts/discord_replies/lint_reply_channel.py`'s `COG_PACKAGES` gained `"painter"` -- its own comment says "add a new cog here when it's created"
 - [x] `.github/workflows/cogs-quality.yml` gained a `painter` matrix leg (`extra_deps` is the union of architect's, an A2A server, and pico's, an A2A client) and `"painter/**/*.py"` in both trigger path lists
@@ -457,5 +508,5 @@ themselves having no such fields, not just by prompt instruction.
 - [x] `contracts/pixel-agents-consumer-contract.yaml` / corridor's agent-directory contract -- checked, neither references agent names statically (`register_agent` is a runtime call), nothing to update
 - [x] `docs/architecture.md`, `docs/AGENTS.md`, `.claude/CLAUDE.md` updated to list painter as a third A2A agent and add it to every per-cog command list; `docs/agent-directory-design.md` not touched (its own design is already generic across "any future agent," painter needed no new content there)
 - [x] New `painter/README.md`, `painter/Architecture.md` (real content, not cookiecutter placeholders)
-- [x] Full test suite for painter: 103 tests (settings repository, tool loop service and A2A server as parallel copies of architect's own test suites, plus new tests for the layout repository, layout service, tool wrappers, and consult_architect tool)
+- [x] Full test suite for painter: 109 tests (settings repository, tool loop service and A2A server as parallel copies of architect's own test suites, plus new tests for the layout repository, layout service, tool wrappers, and consult_architect tool -- including the post-ship color model revision's hex/hue-saturation/brightness/contrast coverage)
 - [x] Verify `consult_painter` appears in pico automatically once painter registers -- confirmed by code inspection (`pico/adapters/listener.py`'s `_agent_tools` builds one `ConsultAgentTool` per `corridor.list_agents()` entry, no pico-side code touched), not exercised by a live integration test in this PR

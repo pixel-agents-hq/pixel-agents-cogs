@@ -328,9 +328,16 @@ def _encode_furniture(office: Office, styles: FurnitureStyleManifest) -> list[di
             "row": item.position.row,
         }
         if item.color is not None:
-            entry["color"] = (
-                _raw_to_hsb(item.raw_color) if item.raw_color is not None else hsb_for(item.color)
-            )
+            hsb = _raw_to_hsb(item.raw_color) if item.raw_color is not None else hsb_for(item.color)
+            # "colorize": True -- an absolute target color, not upstream's
+            # own default "adjust" mode (shift the sprite's original pixel
+            # colors) -- see pixelagents/infrastructure/color_names.py's
+            # module docstring and docs/painter-design.md's color model.
+            # Every color this system itself ever authors (architect's
+            # paint_tiles/create_zone, painter's recolor_*) is colorize-mode
+            # by construction; previously omitted here entirely, silently
+            # defaulting the renderer to adjust mode against that intent.
+            entry["color"] = {**hsb, "colorize": True}
         encoded.append(entry)
 
     return encoded

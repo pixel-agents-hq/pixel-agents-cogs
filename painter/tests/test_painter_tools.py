@@ -14,6 +14,7 @@ from pixelagents.infrastructure.furniture_styles import FurnitureStyleLoader
 from ..application.painter_layout_service import PainterLayoutService
 from ..infrastructure.office_layout_repository import OfficeLayoutRepository
 from ..tools.painter_tools import (
+    ColorSpec,
     DescribeFurnitureColorsInput,
     DescribeFurnitureColorsTool,
     DescribeTileColorsInput,
@@ -26,6 +27,9 @@ from ..tools.painter_tools import (
     RecolorTilesTool,
     build_painter_tools,
 )
+
+_BLUE = ColorSpec(hue=220, saturation=80)
+_BEIGE = ColorSpec(hue=35, saturation=30, brightness=15)
 
 _MANIFEST = {
     "styles": [
@@ -96,24 +100,22 @@ class TestRecolorTilesRegionResolution(unittest.IsolatedAsyncioTestCase):
         by_corner = RecolorTilesTool(service)
 
         out_a = await by_width.handler(
-            RecolorTilesInput(col=1, row=0, width=3, height=1, color="cool_blue")
+            RecolorTilesInput(col=1, row=0, width=3, height=1, color=_BLUE)
         )
         out_b = await by_corner.handler(
-            RecolorTilesInput(col=1, row=0, end_col=3, end_row=0, color="warm_beige")
+            RecolorTilesInput(col=1, row=0, end_col=3, end_row=0, color=_BEIGE)
         )
 
         self.assertEqual(out_a.status, "ok")  # type: ignore[attr-defined]
         self.assertEqual(out_b.status, "ok")  # type: ignore[attr-defined]
         cells = await service.describe_tile_colors(area=GridRect(GridPosition(1, 0), 3, 1))
-        self.assertEqual({c.color for c in cells}, {"warm_beige"})
+        self.assertEqual({c.raw_color for c in cells}, {(35, 30, 15, 0)})
 
     async def test_rejects_both_width_height_and_end_col_end_row(self) -> None:
         tool = RecolorTilesTool(_service())
 
         output = await tool.handler(
-            RecolorTilesInput(
-                col=0, row=0, width=1, height=1, end_col=0, end_row=0, color="cool_blue"
-            )
+            RecolorTilesInput(col=0, row=0, width=1, height=1, end_col=0, end_row=0, color=_BLUE)
         )
 
         self.assertEqual(output.status, "error")  # type: ignore[attr-defined]
@@ -121,7 +123,7 @@ class TestRecolorTilesRegionResolution(unittest.IsolatedAsyncioTestCase):
     async def test_rejects_neither_width_height_nor_end_col_end_row(self) -> None:
         tool = RecolorTilesTool(_service())
 
-        output = await tool.handler(RecolorTilesInput(col=0, row=0, color="cool_blue"))
+        output = await tool.handler(RecolorTilesInput(col=0, row=0, color=_BLUE))
 
         self.assertEqual(output.status, "error")  # type: ignore[attr-defined]
 
@@ -129,35 +131,78 @@ class TestRecolorTilesRegionResolution(unittest.IsolatedAsyncioTestCase):
         tool = RecolorTilesTool(_service())
 
         output = await tool.handler(
-            RecolorTilesInput(col=3, row=0, end_col=1, end_row=0, color="cool_blue")
+            RecolorTilesInput(col=3, row=0, end_col=1, end_row=0, color=_BLUE)
         )
 
         self.assertEqual(output.status, "error")  # type: ignore[attr-defined]
         self.assertIn("end_col", output.message)  # type: ignore[attr-defined]
 
+    async def test_hex_color_is_accepted(self) -> None:
+        tool = RecolorTilesTool(_service())
+
+        output = await tool.handler(
+            RecolorTilesInput(col=0, row=0, width=1, height=1, color=ColorSpec(hex="#3b5a7a"))
+        )
+
+        self.assertEqual(output.status, "ok")  # type: ignore[attr-defined]
+
+    async def test_rejects_both_hex_and_hue_saturation(self) -> None:
+        tool = RecolorTilesTool(_service())
+
+        output = await tool.handler(
+            RecolorTilesInput(
+                col=0,
+                row=0,
+                width=1,
+                height=1,
+                color=ColorSpec(hex="#3b5a7a", hue=200, saturation=50),
+            )
+        )
+
+        self.assertEqual(output.status, "error")  # type: ignore[attr-defined]
+
+    async def test_rejects_neither_hex_nor_hue_saturation(self) -> None:
+        tool = RecolorTilesTool(_service())
+
+        output = await tool.handler(
+            RecolorTilesInput(col=0, row=0, width=1, height=1, color=ColorSpec())
+        )
+
+        self.assertEqual(output.status, "error")  # type: ignore[attr-defined]
+
+    async def test_rejects_a_malformed_hex_string(self) -> None:
+        tool = RecolorTilesTool(_service())
+
+        output = await tool.handler(
+            RecolorTilesInput(col=0, row=0, width=1, height=1, color=ColorSpec(hex="not-a-color"))
+        )
+
+        self.assertEqual(output.status, "error")  # type: ignore[attr-defined]
+        self.assertIn("not-a-color", output.message or "")  # type: ignore[attr-defined]
+
     async def test_service_validation_error_becomes_an_error_output(self) -> None:
         tool = RecolorTilesTool(_service())
 
         output = await tool.handler(
-            RecolorTilesInput(col=0, row=0, width=1, height=1, color="paisley")
+            RecolorTilesInput(col=0, row=0, width=99, height=1, color=_BLUE)
         )
 
         self.assertEqual(output.status, "error")  # type: ignore[attr-defined]
-        self.assertIn("paisley", output.message or "")  # type: ignore[attr-defined]
+        self.assertIn("outside", output.message or "")  # type: ignore[attr-defined]
 
 
 class TestRecolorFurnitureTool(unittest.IsolatedAsyncioTestCase):
     async def test_recolors_a_known_item(self) -> None:
         tool = RecolorFurnitureTool(_service())
 
-        output = await tool.handler(RecolorFurnitureInput(furniture_id="f-1", color="cool_blue"))
+        output = await tool.handler(RecolorFurnitureInput(furniture_id="f-1", color=_BLUE))
 
         self.assertEqual(output.status, "ok")  # type: ignore[attr-defined]
 
     async def test_unknown_id_reports_an_error(self) -> None:
         tool = RecolorFurnitureTool(_service())
 
-        output = await tool.handler(RecolorFurnitureInput(furniture_id="nope", color="cool_blue"))
+        output = await tool.handler(RecolorFurnitureInput(furniture_id="nope", color=_BLUE))
 
         self.assertEqual(output.status, "error")  # type: ignore[attr-defined]
 
@@ -167,7 +212,7 @@ class TestRecolorFurnitureByStyleTool(unittest.IsolatedAsyncioTestCase):
         tool = RecolorFurnitureByStyleTool(_service())
 
         output = await tool.handler(
-            RecolorFurnitureByStyleInput(kind="seating", style="wooden_chair", color="cool_blue")
+            RecolorFurnitureByStyleInput(kind="seating", style="wooden_chair", color=_BLUE)
         )
 
         self.assertEqual(output.status, "ok")  # type: ignore[attr-defined]
@@ -177,7 +222,7 @@ class TestRecolorFurnitureByStyleTool(unittest.IsolatedAsyncioTestCase):
         tool = RecolorFurnitureByStyleTool(_service())
 
         output = await tool.handler(
-            RecolorFurnitureByStyleInput(kind="desk", style="standing_desk", color="cool_blue")
+            RecolorFurnitureByStyleInput(kind="desk", style="standing_desk", color=_BLUE)
         )
 
         self.assertEqual(output.status, "ok")  # type: ignore[attr-defined]
@@ -192,6 +237,22 @@ class TestDescribeTools(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(output.status, "ok")  # type: ignore[attr-defined]
         self.assertEqual(len(output.tiles), 2)  # type: ignore[attr-defined]
+
+    async def test_describe_tile_colors_reports_hex_and_hsb_not_a_bare_name(self) -> None:
+        service = _service()
+        await RecolorTilesTool(service).handler(
+            RecolorTilesInput(col=0, row=0, width=1, height=1, color=_BLUE)
+        )
+        tool = DescribeTileColorsTool(service)
+
+        output = await tool.handler(DescribeTileColorsInput(col=0, row=0, width=1, height=1))
+
+        color = output.tiles[0].color  # type: ignore[attr-defined]
+        assert color is not None
+        self.assertEqual(color.hue, 220)
+        self.assertEqual(color.saturation, 80)
+        self.assertTrue(color.hex.startswith("#"))
+        self.assertTrue(color.closest_named_color)
 
     async def test_describe_furniture_colors_reports_matches(self) -> None:
         tool = DescribeFurnitureColorsTool(_service())

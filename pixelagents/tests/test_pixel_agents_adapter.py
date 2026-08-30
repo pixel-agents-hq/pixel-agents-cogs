@@ -559,7 +559,13 @@ class TestRoundTrip:
         office = decode(raw, _styles())
         encoded = encode(office, _styles())
 
-        assert encoded["furniture"][0]["color"] == {"h": 123, "s": 17, "b": -8, "c": 42}
+        assert encoded["furniture"][0]["color"] == {
+            "h": 123,
+            "s": 17,
+            "b": -8,
+            "c": 42,
+            "colorize": True,
+        }
 
     def test_untouched_zone_hex_color_not_matching_any_palette_entry_survives_encode_exactly(
         self,

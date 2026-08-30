@@ -146,28 +146,36 @@ class TestDescribeFurnitureColors(unittest.IsolatedAsyncioTestCase):
         self.assertEqual({item.id for item in items}, {"f-2", "f-3"})
 
 
+_BLUE = {"h": 220, "s": 80, "b": 0, "c": 0}
+_GREEN = {"h": 120, "s": 60, "b": 10, "c": 0}
+_YELLOW = {"h": 50, "s": 90, "b": 5, "c": 0}
+_PURPLE = {"h": 280, "s": 70, "b": -10, "c": 0}
+_GRAY = {"h": 0, "s": 0, "b": 0, "c": 0}
+
+
 class TestRecolorTiles(unittest.IsolatedAsyncioTestCase):
     async def test_recolors_a_floor_cell_keeping_its_material(self) -> None:
         settings = FakeSettingsRepository(_layout())
         service = _service(settings)
 
-        await service.recolor_tiles(area=GridRect(GridPosition(0, 0), 1, 1), color="cool_blue")
+        await service.recolor_tiles(area=GridRect(GridPosition(0, 0), 1, 1), color=_BLUE)
 
         cells = await service.describe_tile_colors(area=GridRect(GridPosition(0, 0), 1, 1))
-        self.assertEqual(cells[0].color, "cool_blue")
+        self.assertEqual(cells[0].raw_color, (220, 80, 0, 0))
         persisted = await settings.layout()
         assert persisted is not None
         self.assertEqual(persisted["tiles"][0], 1)  # material unchanged
+        self.assertEqual(persisted["tileColors"][0], {"h": 220, "s": 80, "b": 0, "c": 0})
 
     async def test_recolors_a_wall_cell(self) -> None:
         settings = FakeSettingsRepository(_layout())
         service = _service(settings)
 
-        await service.recolor_tiles(area=GridRect(GridPosition(1, 0), 1, 1), color="forest_green")
+        await service.recolor_tiles(area=GridRect(GridPosition(1, 0), 1, 1), color=_GREEN)
 
         cells = await service.describe_tile_colors(area=GridRect(GridPosition(1, 0), 1, 1))
         self.assertEqual(cells[0].kind.value, "wall")
-        self.assertEqual(cells[0].color, "forest_green")
+        self.assertEqual(cells[0].raw_color, (120, 60, 10, 0))
         persisted = await settings.layout()
         assert persisted is not None
         self.assertEqual(persisted["tiles"][1], 0)  # still a wall, not converted
@@ -176,29 +184,47 @@ class TestRecolorTiles(unittest.IsolatedAsyncioTestCase):
         settings = FakeSettingsRepository(_layout())
         service = _service(settings)
 
-        await service.recolor_tiles(area=GridRect(GridPosition(0, 0), 2, 1), color="sunny_yellow")
+        await service.recolor_tiles(area=GridRect(GridPosition(0, 0), 2, 1), color=_YELLOW)
 
         cells = await service.describe_tile_colors(area=GridRect(GridPosition(0, 0), 2, 1))
         self.assertEqual([c.kind.value for c in cells], ["floor", "wall"])
-        self.assertEqual([c.color for c in cells], ["sunny_yellow", "sunny_yellow"])
+        self.assertEqual([c.raw_color for c in cells], [(50, 90, 5, 0), (50, 90, 5, 0)])
+
+    async def test_an_arbitrary_color_survives_a_reload_exactly(self) -> None:
+        """The whole point of storing `raw_color` instead of a semantic
+        name: an arbitrary painter-chosen color (not one of architect's
+        dozen fixed palette entries) must round-trip losslessly, not snap
+        to the nearest named color on the next load."""
+
+        off_palette = {"h": 199, "s": 12, "b": -37, "c": 63}
+        settings = FakeSettingsRepository(_layout())
+        service = _service(settings)
+
+        await service.recolor_tiles(area=GridRect(GridPosition(0, 0), 1, 1), color=off_palette)
+
+        cells = await service.describe_tile_colors(area=GridRect(GridPosition(0, 0), 1, 1))
+        self.assertEqual(cells[0].raw_color, (199, 12, -37, 63))
 
     async def test_refuses_to_recolor_void(self) -> None:
         service = _service(FakeSettingsRepository(_layout()))
 
         with self.assertRaises(PainterValidationError):
-            await service.recolor_tiles(area=GridRect(GridPosition(2, 0), 1, 1), color="cool_blue")
+            await service.recolor_tiles(area=GridRect(GridPosition(2, 0), 1, 1), color=_BLUE)
 
-    async def test_rejects_an_unknown_color(self) -> None:
+    async def test_rejects_an_out_of_range_hue(self) -> None:
         service = _service(FakeSettingsRepository(_layout()))
 
         with self.assertRaises(PainterValidationError):
-            await service.recolor_tiles(area=GridRect(GridPosition(0, 0), 1, 1), color="paisley")
+            await service.recolor_tiles(
+                area=GridRect(GridPosition(0, 0), 1, 1),
+                color={"h": 999, "s": 50, "b": 0, "c": 0},
+            )
 
     async def test_rejects_an_out_of_bounds_area(self) -> None:
         service = _service(FakeSettingsRepository(_layout()))
 
         with self.assertRaises(PainterValidationError):
-            await service.recolor_tiles(area=GridRect(GridPosition(0, 0), 99, 1), color="cool_blue")
+            await service.recolor_tiles(area=GridRect(GridPosition(0, 0), 99, 1), color=_BLUE)
 
 
 class TestRecolorFurniture(unittest.IsolatedAsyncioTestCase):
@@ -206,12 +232,12 @@ class TestRecolorFurniture(unittest.IsolatedAsyncioTestCase):
         settings = FakeSettingsRepository(_layout())
         service = _service(settings)
 
-        updated = await service.recolor_furniture(furniture_id="f-2", color="royal_purple")
+        updated = await service.recolor_furniture(furniture_id="f-2", color=_PURPLE)
 
-        self.assertEqual(updated.color, "royal_purple")
+        self.assertEqual(updated.raw_color, (280, 70, -10, 0))
         items = await service.describe_furniture_colors()
         recolored = next(item for item in items if item.id == "f-2")
-        self.assertEqual(recolored.color, "royal_purple")
+        self.assertEqual(recolored.raw_color, (280, 70, -10, 0))
         untouched = next(item for item in items if item.id == "f-3")
         self.assertIsNotNone(untouched.color)  # f-3's own original color survives
 
@@ -219,13 +245,15 @@ class TestRecolorFurniture(unittest.IsolatedAsyncioTestCase):
         service = _service(FakeSettingsRepository(_layout()))
 
         with self.assertRaises(PainterValidationError):
-            await service.recolor_furniture(furniture_id="does-not-exist", color="cool_blue")
+            await service.recolor_furniture(furniture_id="does-not-exist", color=_BLUE)
 
-    async def test_unknown_color_raises(self) -> None:
+    async def test_out_of_range_saturation_raises(self) -> None:
         service = _service(FakeSettingsRepository(_layout()))
 
         with self.assertRaises(PainterValidationError):
-            await service.recolor_furniture(furniture_id="f-2", color="paisley")
+            await service.recolor_furniture(
+                furniture_id="f-2", color={"h": 200, "s": 500, "b": 0, "c": 0}
+            )
 
 
 class TestRecolorFurnitureByStyle(unittest.IsolatedAsyncioTestCase):
@@ -233,28 +261,30 @@ class TestRecolorFurnitureByStyle(unittest.IsolatedAsyncioTestCase):
         service = _service(FakeSettingsRepository(_layout()))
 
         count = await service.recolor_furniture_by_style(
-            kind=FurnitureKind.SEATING, style="wooden_chair", color="slate_gray"
+            kind=FurnitureKind.SEATING, style="wooden_chair", color=_GRAY
         )
 
         self.assertEqual(count, 2)
         items = await service.describe_furniture_colors(
             kind=FurnitureKind.SEATING, style="wooden_chair"
         )
-        self.assertTrue(all(item.color == "slate_gray" for item in items))
+        self.assertTrue(all(item.raw_color == (0, 0, 0, 0) for item in items))
 
     async def test_no_matches_returns_zero_not_an_error(self) -> None:
         service = _service(FakeSettingsRepository(_layout()))
 
         count = await service.recolor_furniture_by_style(
-            kind=FurnitureKind.STORAGE, style="bookshelf", color="cool_blue"
+            kind=FurnitureKind.STORAGE, style="bookshelf", color=_BLUE
         )
 
         self.assertEqual(count, 0)
 
-    async def test_unknown_color_raises(self) -> None:
+    async def test_out_of_range_contrast_raises(self) -> None:
         service = _service(FakeSettingsRepository(_layout()))
 
         with self.assertRaises(PainterValidationError):
             await service.recolor_furniture_by_style(
-                kind=FurnitureKind.SEATING, style="wooden_chair", color="paisley"
+                kind=FurnitureKind.SEATING,
+                style="wooden_chair",
+                color={"h": 200, "s": 50, "b": 0, "c": -500},
             )

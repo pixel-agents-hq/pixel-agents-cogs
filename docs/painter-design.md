@@ -462,6 +462,37 @@ themselves having no such fields, not just by prompt instruction.
   reflecting its new IR/storage ownership (§2's charter note) — tracked
   as a checklist item below, not done in this design doc.
 
+**Fixed post-ship (another real-usage finding, not caught in review):** a
+painter recolor was persisted immediately but didn't appear in an
+already-open browser until it was manually reloaded, while an
+architect-made change (e.g. placing furniture) showed up live. Root
+cause: architect's `OfficeLayoutService` pushes a `layoutLoaded` message
+to its own connected WebSocket clients as part of every mutation
+(`_persist` -> `CogBase._broadcast_layout`) — the *only* live-update path
+that exists for the shared layout, since only architect owns a WebSocket
+server at all. `PainterLayoutService` had no equivalent, so a painter
+write changed the persisted store but never told any browser to refetch
+it. Fixed with a narrow, best-effort cross-cog hook rather than a new
+corridor Pub/Sub event: `architect/adapters/cog_base.py` gained a public
+`notify_shared_layout_changed()` that re-reads the current shared layout
+and re-broadcasts it; `PainterLayoutService` gained an optional
+`on_layout_changed` callback, invoked after every successful mutation
+(mirroring architect's own `_persist`/`broadcast` shape), wired in
+`painter/adapters/cog_base.py` to a `bot.get_cog("Architect")` lookup —
+same lazy, optional cross-cog reference shape used throughout this repo
+(`dependency_loader.py`'s `ensure_loaded`), silently doing nothing if
+architect isn't loaded or the call fails, never failing the recolor that
+already succeeded and persisted before this runs. Corridor's own
+Pub/Sub bus was considered and rejected for this: its event catalog
+(`corridor/event_catalog.py`) auto-discovers events by a hard "every
+`corridor.domain` name starting with `Agent` is part of the pub/sub
+domain model" convention (enforced by `corridor.yaml`'s generated
+contract, not just documentation) — a `LayoutChanged`-shaped event is a
+data-mutation notification, not an agent-activity event the bus's own
+"Discord-vocabulary" scope (`docs/corridor-pubsub-design.md`) is meant
+to carry, and forcing an `Agent`-prefixed name onto it purely to satisfy
+the reflection filter would have been a worse fit than the direct hook.
+
 ## 9. Implementation checklist
 
 ### Part A — extract Semantic IR into pixelagents

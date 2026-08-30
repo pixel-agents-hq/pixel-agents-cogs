@@ -197,6 +197,26 @@ class CogBase:
 
         await self._send({"type": "layoutLoaded", "layout": raw})
 
+    async def notify_shared_layout_changed(self) -> None:
+        """Re-broadcasts the *current* shared office layout to every
+        connected webview client -- the public hook `painter` calls
+        (`bot.get_cog("Architect")`, best-effort) after its own recolor
+        mutations, since painter has no WebSocket server of its own to
+        push a live update through the way architect's own writes already
+        do synchronously as part of the same mutation
+        (`OfficeLayoutService._persist` -> `_broadcast_layout` above).
+        Without this, a painter-made change is real and persisted
+        immediately, but a browser already showing the office only picks
+        it up on its next manual reload -- see docs/painter-design.md's
+        open risks. Re-reads from `_office_layout_settings` rather than
+        trusting any caller-supplied payload, so it's correct regardless
+        of who mutated the shared store or when. A no-op (never raises)
+        if nothing has been seeded yet."""
+
+        raw = await self._office_layout_settings.layout()
+        if raw is not None:
+            await self._broadcast_layout(raw)
+
     async def cog_load(self) -> None:
         """required_cogs in info.json is only a Downloader install hint --
         Red does not auto-load a dependency at runtime just because it's

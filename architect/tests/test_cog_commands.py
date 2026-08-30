@@ -414,3 +414,89 @@ class TestPresencePublishing(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(event.agent.guild_id)
         self.assertTrue(event.agent.is_bot)
         self.assertEqual(event.agent.agent_key, "architect")
+
+
+class TestNotifySharedLayoutChanged(unittest.IsolatedAsyncioTestCase):
+    """The public hook `painter` calls (`bot.get_cog("Architect")`,
+    best-effort) after its own recolor mutations -- painter has no
+    WebSocket clients of its own to push a live update through directly,
+    so it reaches architect's instead. See docs/painter-design.md's open
+    risks and painter/adapters/cog_base.py's
+    `_notify_architect_layout_changed`."""
+
+    async def test_rebroadcasts_the_current_layout(self) -> None:
+        bot = FakeBot()
+        cog = Architect(bot=bot)
+        await cog.cog_load()
+        self.addAsyncCleanup(cog.cog_unload)
+        await cog._office_layout_settings.set_layout(
+            {"version": 1, "cols": 3, "rows": 3, "tiles": [1] * 9, "furniture": []}
+        )
+        broadcasts: list[dict[str, object]] = []
+
+        async def fake_broadcast(message: dict[str, object], **kwargs: object) -> None:
+            broadcasts.append(message)
+
+        cog._client_hub.broadcast = fake_broadcast  # type: ignore[method-assign]
+
+        await cog.notify_shared_layout_changed()
+
+        self.assertEqual(len(broadcasts), 1)
+        self.assertEqual(broadcasts[0]["type"], "layoutLoaded")
+        assert isinstance(broadcasts[0]["layout"], dict)
+        self.assertEqual(broadcasts[0]["layout"]["cols"], 3)
+
+    async def test_reflects_a_change_painter_made_directly_to_the_shared_store(self) -> None:
+        """The whole point: this doesn't just re-send architect's own
+        last-known copy -- it re-reads the shared store, so a mutation
+        architect never itself made (painter's own recolor) is picked up
+        too."""
+
+        bot = FakeBot()
+        cog = Architect(bot=bot)
+        await cog.cog_load()
+        self.addAsyncCleanup(cog.cog_unload)
+        await cog._office_layout_settings.set_layout(
+            {"version": 1, "cols": 3, "rows": 3, "tiles": [1] * 9, "furniture": []}
+        )
+        # Simulate painter recoloring directly against the shared store,
+        # entirely outside architect's own OfficeLayoutService.
+        await cog._office_layout_settings.set_layout(
+            {
+                "version": 1,
+                "cols": 3,
+                "rows": 3,
+                "tiles": [1] * 9,
+                "tileColors": [{"h": 220, "s": 80, "b": 0, "c": 0}] + [None] * 8,
+                "furniture": [],
+            }
+        )
+        broadcasts: list[dict[str, object]] = []
+
+        async def fake_broadcast(message: dict[str, object], **kwargs: object) -> None:
+            broadcasts.append(message)
+
+        cog._client_hub.broadcast = fake_broadcast  # type: ignore[method-assign]
+
+        await cog.notify_shared_layout_changed()
+
+        assert isinstance(broadcasts[0]["layout"], dict)
+        self.assertEqual(
+            broadcasts[0]["layout"]["tileColors"][0], {"h": 220, "s": 80, "b": 0, "c": 0}
+        )
+
+    async def test_no_op_when_nothing_has_been_seeded_yet(self) -> None:
+        bot = FakeBot()
+        cog = Architect(bot=bot)
+        await cog.cog_load()
+        self.addAsyncCleanup(cog.cog_unload)
+        broadcasts: list[dict[str, object]] = []
+
+        async def fake_broadcast(message: dict[str, object], **kwargs: object) -> None:
+            broadcasts.append(message)
+
+        cog._client_hub.broadcast = fake_broadcast  # type: ignore[method-assign]
+
+        await cog.notify_shared_layout_changed()  # must not raise
+
+        self.assertEqual(broadcasts, [])

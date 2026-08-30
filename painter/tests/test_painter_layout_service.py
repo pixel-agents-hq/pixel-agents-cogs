@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import types
 import unittest
+from collections.abc import Awaitable, Callable
 
 from pixelagents.domain import FurnitureKind, GridPosition, GridRect
 from pixelagents.infrastructure.furniture_styles import FurnitureStyleLoader
@@ -101,10 +102,14 @@ def _layout() -> dict[str, object]:
     }
 
 
-def _service(settings: FakeSettingsRepository) -> PainterLayoutService:
+def _service(
+    settings: FakeSettingsRepository,
+    *,
+    on_layout_changed: Callable[[], Awaitable[None]] | None = None,
+) -> PainterLayoutService:
     repository = OfficeLayoutRepository(settings)
     loader = FurnitureStyleLoader(FakePixelAgents(_MANIFEST))
-    return PainterLayoutService(repository, loader)
+    return PainterLayoutService(repository, loader, on_layout_changed=on_layout_changed)
 
 
 class TestDescribeTileColors(unittest.IsolatedAsyncioTestCase):
@@ -288,3 +293,92 @@ class TestRecolorFurnitureByStyle(unittest.IsolatedAsyncioTestCase):
                 style="wooden_chair",
                 color={"h": 200, "s": 50, "b": 0, "c": -500},
             )
+
+
+class TestOnLayoutChangedNotification(unittest.IsolatedAsyncioTestCase):
+    """Painter has no WebSocket clients of its own -- `on_layout_changed`
+    is how a successful mutation still reaches a live browser rather than
+    only showing up on its next manual reload. Wired in production to
+    `painter/adapters/cog_base.py`'s `_notify_architect_layout_changed`,
+    not exercised here (that's `test_cog_commands.py`'s job) -- this only
+    verifies the service calls it at the right times."""
+
+    async def test_recolor_tiles_notifies_after_a_successful_save(self) -> None:
+        calls = 0
+
+        async def on_changed() -> None:
+            nonlocal calls
+            calls += 1
+
+        service = _service(FakeSettingsRepository(_layout()), on_layout_changed=on_changed)
+
+        await service.recolor_tiles(area=GridRect(GridPosition(0, 0), 1, 1), color=_BLUE)
+
+        self.assertEqual(calls, 1)
+
+    async def test_recolor_furniture_notifies_after_a_successful_save(self) -> None:
+        calls = 0
+
+        async def on_changed() -> None:
+            nonlocal calls
+            calls += 1
+
+        service = _service(FakeSettingsRepository(_layout()), on_layout_changed=on_changed)
+
+        await service.recolor_furniture(furniture_id="f-2", color=_BLUE)
+
+        self.assertEqual(calls, 1)
+
+    async def test_recolor_furniture_by_style_notifies_after_a_successful_save(self) -> None:
+        calls = 0
+
+        async def on_changed() -> None:
+            nonlocal calls
+            calls += 1
+
+        service = _service(FakeSettingsRepository(_layout()), on_layout_changed=on_changed)
+
+        await service.recolor_furniture_by_style(
+            kind=FurnitureKind.SEATING, style="wooden_chair", color=_BLUE
+        )
+
+        self.assertEqual(calls, 1)
+
+    async def test_not_called_when_a_zero_match_bulk_recolor_makes_no_change(self) -> None:
+        """recolor_furniture_by_style returns early (no save at all) when
+        nothing matches -- nothing changed, so nothing to notify about."""
+
+        calls = 0
+
+        async def on_changed() -> None:
+            nonlocal calls
+            calls += 1
+
+        service = _service(FakeSettingsRepository(_layout()), on_layout_changed=on_changed)
+
+        await service.recolor_furniture_by_style(
+            kind=FurnitureKind.STORAGE, style="bookshelf", color=_BLUE
+        )
+
+        self.assertEqual(calls, 0)
+
+    async def test_not_called_when_a_mutation_raises(self) -> None:
+        calls = 0
+
+        async def on_changed() -> None:
+            nonlocal calls
+            calls += 1
+
+        service = _service(FakeSettingsRepository(_layout()), on_layout_changed=on_changed)
+
+        with self.assertRaises(PainterValidationError):
+            await service.recolor_tiles(area=GridRect(GridPosition(2, 0), 1, 1), color=_BLUE)
+
+        self.assertEqual(calls, 0)
+
+    async def test_no_callback_given_is_a_silent_no_op(self) -> None:
+        service = _service(FakeSettingsRepository(_layout()))  # on_layout_changed defaults to None
+
+        await service.recolor_tiles(
+            area=GridRect(GridPosition(0, 0), 1, 1), color=_BLUE
+        )  # must not raise

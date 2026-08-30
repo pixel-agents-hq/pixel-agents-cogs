@@ -16,10 +16,12 @@ import unittest
 
 from redbot.core.errors import CogLoadError
 
+from pixelagents.domain import GridPosition, GridRect
+
 from .. import setup
 from ..infrastructure.settings_repository import DEFAULT_SYSTEM_PROMPT
 from ..painter import Painter
-from .conftest import FakeBot, FakeContext
+from .conftest import FakeArchitectCog, FakeBot, FakeContext
 
 
 def _descriptions(bot: FakeBot) -> list[str | None]:
@@ -311,3 +313,62 @@ class TestPresencePublishing(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(event.agent.discord_user_id)
         self.assertIsNone(event.agent.guild_id)
         self.assertTrue(event.agent.is_bot)
+
+
+class TestNotifyArchitectLayoutChanged(unittest.IsolatedAsyncioTestCase):
+    """Painter has no WebSocket clients of its own to push a live update
+    through -- `_notify_architect_layout_changed` is the best-effort
+    `bot.get_cog("Architect")` hook that asks architect to re-broadcast
+    the shared layout to its own connected clients instead, so a painter
+    recolor shows up live rather than only on a browser's next reload."""
+
+    async def test_calls_architects_notify_hook_when_loaded(self) -> None:
+        fake_architect = FakeArchitectCog()
+        bot = FakeBot(architect=fake_architect)
+        cog = Painter(bot=bot)
+        await cog.cog_load()
+        self.addAsyncCleanup(cog.cog_unload)
+
+        await cog._notify_architect_layout_changed()
+
+        self.assertEqual(fake_architect.notify_calls, 1)
+
+    async def test_does_nothing_when_architect_is_not_loaded(self) -> None:
+        bot = FakeBot(architect=None)
+        cog = Painter(bot=bot)
+        await cog.cog_load()
+        self.addAsyncCleanup(cog.cog_unload)
+
+        await cog._notify_architect_layout_changed()  # must not raise
+
+    async def test_swallows_a_failure_from_architects_notify_hook(self) -> None:
+        fake_architect = FakeArchitectCog(fail_with=RuntimeError("boom"))
+        bot = FakeBot(architect=fake_architect)
+        cog = Painter(bot=bot)
+        await cog.cog_load()
+        self.addAsyncCleanup(cog.cog_unload)
+
+        await cog._notify_architect_layout_changed()  # must not raise
+
+        self.assertEqual(fake_architect.notify_calls, 1)
+
+    async def test_a_successful_recolor_notifies_architect(self) -> None:
+        """End-to-end through the real wiring: PainterLayoutService's
+        on_layout_changed callback, as constructed in CogBase.__init__,
+        actually reaches bot.get_cog("Architect")."""
+
+        fake_architect = FakeArchitectCog()
+        bot = FakeBot(architect=fake_architect)
+        cog = Painter(bot=bot)
+        await cog.cog_load()
+        self.addAsyncCleanup(cog.cog_unload)
+
+        await cog._office_layout_settings.set_layout(
+            {"version": 1, "cols": 1, "rows": 1, "tiles": [1], "furniture": []}
+        )
+
+        await cog._painter_layout_service.recolor_tiles(
+            area=GridRect(GridPosition(0, 0), 1, 1), color={"h": 200, "s": 50, "b": 0, "c": 0}
+        )
+
+        self.assertEqual(fake_architect.notify_calls, 1)

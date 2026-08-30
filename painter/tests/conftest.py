@@ -180,6 +180,20 @@ class FakePixelAgents:
         return self._furniture_styles
 
 
+class FakeArchitectCog:
+    """Test double for `bot.get_cog("Architect")` -- the only slice
+    `_notify_architect_layout_changed` actually calls."""
+
+    def __init__(self, *, fail_with: Exception | None = None) -> None:
+        self._fail_with = fail_with
+        self.notify_calls = 0
+
+    async def notify_shared_layout_changed(self) -> None:
+        self.notify_calls += 1
+        if self._fail_with is not None:
+            raise self._fail_with
+
+
 @dataclass(frozen=True)
 class FakeModuleSpec:
     name: str
@@ -203,12 +217,16 @@ class FakeBot:
     """`preloaded=True` (the default) simulates corridor and pixelagents
     already being loaded on the bot. Pass `preloaded=False` to simulate
     both having been unloaded, exercising CogBase.cog_load()'s
-    auto-load-via-ensure_loaded path instead."""
+    auto-load-via-ensure_loaded path instead. `architect=...` stands in
+    for `bot.get_cog("Architect")` -- `None` (the default) simulates
+    architect not currently being loaded, exercising
+    `_notify_architect_layout_changed`'s best-effort degrade."""
 
     def __init__(
         self,
         corridor: FakeCorridor | None = None,
         pixelagents: FakePixelAgents | None = None,
+        architect: Any = None,
         preloaded: bool = True,
         corridor_installable: bool = True,
         pixelagents_installable: bool = True,
@@ -219,6 +237,7 @@ class FakeBot:
         self._pending_pixelagents = pixelagents or FakePixelAgents()
         self.pixelagents: FakePixelAgents | None = self._pending_pixelagents if preloaded else None
         self.pixelagents_installable = pixelagents_installable
+        self.architect: Any = architect
         self._cog_mgr = FakeCogManager(self)
         self.load_extension_calls: list[str] = []
         self.loaded_packages: list[str] = []
@@ -229,6 +248,8 @@ class FakeBot:
             return self.corridor
         if name == "PixelAgents":
             return self.pixelagents
+        if name == "Architect":
+            return self.architect
         return None
 
     async def load_extension(self, spec: FakeModuleSpec) -> None:

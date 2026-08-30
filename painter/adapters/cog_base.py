@@ -90,7 +90,9 @@ class CogBase:
         self._office_layout_settings = RedOfficeLayoutSettings.create()
         self._office_layout_repository = OfficeLayoutRepository(self._office_layout_settings)
         self._painter_layout_service = PainterLayoutService(
-            self._office_layout_repository, self._style_loader
+            self._office_layout_repository,
+            self._style_loader,
+            on_layout_changed=self._notify_architect_layout_changed,
         )
         self._architect_client = ArchitectClient()
         self._tools: list[ToolSpec] = [
@@ -160,6 +162,28 @@ class CogBase:
             )
         except Exception:
             log.exception("painter: failed to publish tool/thinking activity")
+
+    async def _notify_architect_layout_changed(self) -> None:
+        """Best-effort: painter has no WebSocket server of its own to push
+        a live update through the way architect's own writes already do
+        synchronously as part of the same mutation
+        (`OfficeLayoutService._persist`) -- without this, a painter-made
+        recolor is real and persisted immediately, but a browser already
+        showing the office only picks it up on its next manual reload.
+        `bot.get_cog("Architect")` is the same lazy, optional cross-cog
+        lookup shape used throughout this repo (e.g.
+        `dependency_loader.py`'s `ensure_loaded`) -- if architect isn't
+        currently loaded, or the lookup/call fails for any other reason,
+        this silently does nothing rather than failing the recolor that
+        already succeeded and persisted before this callback ever runs."""
+
+        try:
+            architect = self.bot.get_cog("Architect")
+            if architect is None:
+                return
+            await architect.notify_shared_layout_changed()
+        except Exception:
+            log.exception("painter: could not notify architect to refresh its webview clients")
 
 
 class _LazyPixelAgents:

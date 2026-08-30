@@ -149,7 +149,7 @@ class TestOfficeWebSocketLiveRoundTrip(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(editor_saw["cols"], 2)
             self.assertEqual(editor_saw["tiles"], [1, 1])
             self.assertEqual(editor_saw, viewer_saw)
-            persisted = await cog._repository.layout()  # type: ignore[attr-defined]
+            persisted = await cog._office_layout_settings.layout()  # type: ignore[attr-defined]
             self.assertEqual(persisted, editor_saw)
 
     async def test_invalid_save_layout_is_dropped_without_persisting_or_crashing(self) -> None:
@@ -164,7 +164,7 @@ class TestOfficeWebSocketLiveRoundTrip(unittest.IsolatedAsyncioTestCase):
             await cog._websocket_server.stop()  # type: ignore[attr-defined]
             await cog._websocket_server.start("127.0.0.1", _PORT + 3)  # type: ignore[attr-defined]
 
-            before = await cog._repository.layout()  # type: ignore[attr-defined]
+            before = await cog._office_layout_settings.layout()  # type: ignore[attr-defined]
 
             async with (
                 aiohttp.ClientSession() as session,

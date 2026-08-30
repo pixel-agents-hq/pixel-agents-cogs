@@ -30,11 +30,22 @@ def test_composition_entrypoint_is_genuinely_thin() -> None:
     assert len(lines) < 200
 
 
-def test_framework_resources_have_one_owner() -> None:
+def test_framework_resources_have_one_owner_each() -> None:
+    """Two `Config.get_conf(` call sites now, deliberately -- one per
+    independent Config resource this cog owns, not two ways to reach the
+    same one (docs/painter-design.md part A): `settings.py` still owns
+    `webview_commit_override` alone; `office_layout_settings.py` owns the
+    shared architect/painter office layout, under its own distinct
+    identifier. Every other production module must still go through one
+    of these two, never call `Config.get_conf` itself."""
+
     sources = {path: path.read_text(encoding="utf-8") for path in production_modules()}
     config_factories = [path for path, source in sources.items() if "Config.get_conf(" in source]
 
-    assert config_factories == [PACKAGE_ROOT / "infrastructure" / "settings.py"]
+    assert config_factories == [
+        PACKAGE_ROOT / "infrastructure" / "office_layout_settings.py",
+        PACKAGE_ROOT / "infrastructure" / "settings.py",
+    ]
 
 
 def test_pascalcase_and_lowercase_public_classes_are_identical() -> None:

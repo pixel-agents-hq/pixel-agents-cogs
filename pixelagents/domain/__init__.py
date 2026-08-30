@@ -12,6 +12,20 @@ from .office import (
     PresenceStatus,
     SnowflakeId,
 )
+from .office_ir import (
+    Direction,
+    FurnitureItem,
+    FurnitureKind,
+    Grid,
+    GridPosition,
+    GridRect,
+    Occupant,
+    Office,
+    Seat,
+    TileCell,
+    TileKind,
+    Zone,
+)
 from .settings import parse_commit_ref
 
 __all__ = [
@@ -20,10 +34,22 @@ __all__ = [
     "AgentId",
     "AgentKey",
     "AgentSnapshot",
+    "Direction",
+    "FurnitureItem",
+    "FurnitureKind",
     "GenuineAgentKey",
+    "Grid",
+    "GridPosition",
+    "GridRect",
     "MessageSnapshot",
+    "Occupant",
+    "Office",
     "OfficeIdentity",
     "PresenceStatus",
+    "Seat",
     "SnowflakeId",
+    "TileCell",
+    "TileKind",
+    "Zone",
     "parse_commit_ref",
 ]

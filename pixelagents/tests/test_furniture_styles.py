@@ -1,8 +1,33 @@
 from __future__ import annotations
 
+import types
+from typing import Any
+
 from ..domain.office_ir import Direction, FurnitureKind, GridPosition
 from ..infrastructure.furniture_styles import FurnitureStyleLoader, FurnitureStyleManifest
-from .conftest import FakePixelAgents
+
+
+class _FakePixelAgents:
+    """Minimal `SupportsFurnitureStyles` double -- just the two methods
+    `FurnitureStyleLoader` actually calls."""
+
+    def __init__(
+        self,
+        *,
+        ready: bool = True,
+        built_commit: str = "a" * 40,
+        furniture_styles: dict[str, Any] | None = None,
+    ) -> None:
+        self.ready = ready
+        self.built_commit = built_commit if ready else None
+        self._furniture_styles = furniture_styles
+
+    def webview_bundle_status(self) -> Any:
+        return types.SimpleNamespace(ready=self.ready, built_commit=self.built_commit)
+
+    def furniture_style_manifest(self) -> dict[str, Any] | None:
+        return self._furniture_styles
+
 
 _MANIFEST = {
     "styles": [
@@ -192,7 +217,7 @@ class TestBackgroundCells:
 
 
 def test_loader_caches_until_the_built_commit_changes() -> None:
-    fake = FakePixelAgents(furniture_styles=_MANIFEST, built_commit="a" * 40)
+    fake = _FakePixelAgents(furniture_styles=_MANIFEST, built_commit="a" * 40)
     loader = FurnitureStyleLoader(fake)
 
     first = loader.styles()
@@ -209,7 +234,7 @@ def test_loader_caches_until_the_built_commit_changes() -> None:
 
 
 def test_loader_returns_empty_manifest_when_pixelagents_has_no_webview_yet() -> None:
-    fake = FakePixelAgents(ready=False, furniture_styles=None)
+    fake = _FakePixelAgents(ready=False, furniture_styles=None)
     loader = FurnitureStyleLoader(fake)
 
     assert loader.styles().style_ids() == []

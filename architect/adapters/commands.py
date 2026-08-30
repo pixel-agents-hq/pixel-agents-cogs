@@ -25,7 +25,8 @@ _MASKED_KEY = "•" * 8
 
 
 class CommandsMixin:
-    """Requires `self._repository: RedArchitectRepository`, `self._corridor`,
+    """Requires `self._repository: RedArchitectRepository`,
+    `self._office_layout_settings: RedOfficeLayoutSettings`, `self._corridor`,
     and `self._websocket_server` (all provided by CogBase). Unlike
     corridor's shared A2A listener, the office WebSocket server is not
     live-restarted on a host/port change -- same "reload the cog to
@@ -149,7 +150,7 @@ class CommandsMixin:
         settings = await self._repository.global_settings()
         llm_settings: Any = await self._corridor.llm_settings()
         await self._sync_webview_assets()  # type: ignore[attr-defined]
-        layout = await self._repository.layout()
+        layout = await self._office_layout_settings.layout()  # type: ignore[attr-defined]
         fields = [
             ReplyField("LLM Endpoint", llm_settings.llm_base_url, False),
             ReplyField("LLM Model", llm_settings.llm_model or "*(not set)*"),
@@ -172,7 +173,9 @@ class CommandsMixin:
             ReplyField("Webview", self._webview_assets_status(), False),  # type: ignore[attr-defined]
             ReplyField(
                 "Layout",
-                "✅ seeded (own copy, independent of floorplan)" if layout else "⚠️ not seeded yet",
+                "✅ seeded (shared with painter, independent of floorplan)"
+                if layout
+                else "⚠️ not seeded yet",
                 False,
             ),
         ]

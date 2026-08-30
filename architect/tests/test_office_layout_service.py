@@ -3,9 +3,10 @@ from __future__ import annotations
 import unittest
 from typing import Any
 
+from pixelagents.infrastructure.furniture_styles import FurnitureStyleLoader
+
 from ..application.office_layout_service import OfficeLayoutService, OfficeValidationError, Touching
-from ..domain.office_ir import Direction, FurnitureKind, GridPosition, GridRect, TileKind
-from ..infrastructure.furniture_styles import FurnitureStyleLoader
+from ..domain import Direction, FurnitureKind, GridPosition, GridRect, TileKind
 from ..infrastructure.office_layout_repository import OfficeLayoutRepository
 from .conftest import FakePixelAgents
 

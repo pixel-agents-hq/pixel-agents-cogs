@@ -8,9 +8,10 @@ import unittest
 
 from pydantic import ValidationError
 
+from pixelagents.infrastructure.furniture_styles import FurnitureStyleLoader
+
 from ..application.office_layout_service import OfficeLayoutService
-from ..domain.office_ir import FurnitureKind, GridPosition, GridRect, TileKind
-from ..infrastructure.furniture_styles import FurnitureStyleLoader
+from ..domain import FurnitureKind, GridPosition, GridRect, TileKind
 from ..infrastructure.office_layout_repository import OfficeLayoutRepository
 from ..tools.office_tools import (
     DescribeOfficeInput,

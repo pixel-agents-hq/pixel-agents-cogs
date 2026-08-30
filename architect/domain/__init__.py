@@ -1,5 +1,4 @@
-from .models import GlobalSettings
-from .office_ir import (
+from pixelagents.domain.office_ir import (
     Direction,
     FurnitureItem,
     FurnitureKind,
@@ -13,6 +12,8 @@ from .office_ir import (
     TileKind,
     Zone,
 )
+
+from .models import GlobalSettings
 
 __all__ = [
     "Direction",

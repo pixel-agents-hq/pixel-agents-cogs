@@ -436,6 +436,51 @@ class TestRoundTrip:
 
         assert encoded["tiles"] == [1, 0, 1]
 
+    def test_wall_color_survives_a_round_trip_untouched(self) -> None:
+        """docs/painter-design.md part B: walls carry a real tileColors[i]
+        entry too, same shape/palette as floor tiles -- the decoder must
+        stop discarding it, and an untouched wall's exact off-palette
+        color must survive encode()'s "prefer raw_color" contract exactly
+        like a floor cell's does (test_untouched_tile_color_not_matching_
+        any_palette_entry_survives_encode_exactly below)."""
+
+        off_palette = {"h": 199, "s": 12, "b": -3, "c": 7}
+        raw = {
+            "version": 1,
+            "cols": 2,
+            "rows": 1,
+            "tiles": [0, 1],
+            "tileColors": [off_palette, {"h": 35, "s": 30, "b": 15, "c": 0}],
+            "furniture": [],
+        }
+
+        office = decode(raw, _styles())
+        wall = office.grid.at(GridPosition(0, 0))
+        assert wall.kind is TileKind.WALL
+        assert wall.color is not None  # nearest-name still assigned, same as any tile
+        assert wall.raw_color == (199, 12, -3, 7)
+
+        encoded = encode(office, _styles())
+        assert encoded["tileColors"][0] == off_palette
+
+    def test_freshly_walled_cell_has_no_color(self) -> None:
+        raw = {
+            "version": 1,
+            "cols": 1,
+            "rows": 1,
+            "tiles": [0],
+            "tileColors": [None],
+            "furniture": [],
+        }
+
+        office = decode(raw, _styles())
+        wall = office.grid.at(GridPosition(0, 0))
+
+        assert wall.color is None
+        assert wall.raw_color is None
+        encoded = encode(office, _styles())
+        assert encoded["tileColors"][0] is None
+
     def test_empty_layout_round_trips(self) -> None:
         raw = {
             "version": 1,

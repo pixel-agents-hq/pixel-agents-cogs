@@ -59,10 +59,21 @@ class TestRedArchitectRepository(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(settings.debug_logging)
 
-    async def test_layout_defaults_to_none(self) -> None:
-        self.assertIsNone(await self.repository.layout())
+    async def test_legacy_layout_defaults_to_none(self) -> None:
+        self.assertIsNone(await self.repository.legacy_layout())
 
-    async def test_set_layout_persists(self) -> None:
-        await self.repository.set_layout({"tiles": [1, 2, 3]})
+    async def test_legacy_layout_reads_whatever_the_raw_config_still_holds(self) -> None:
+        # Nothing writes the old key anymore (docs/painter-design.md part
+        # A) -- simulate a pre-migration install through the raw Config
+        # escape hatch, the same way test_layout_seeding.py's migration
+        # tests do.
+        await self.repository.config.layout.set({"tiles": [1, 2, 3]})
 
-        self.assertEqual(await self.repository.layout(), {"tiles": [1, 2, 3]})
+        self.assertEqual(await self.repository.legacy_layout(), {"tiles": [1, 2, 3]})
+
+    async def test_clear_legacy_layout(self) -> None:
+        await self.repository.config.layout.set({"tiles": [1, 2, 3]})
+
+        await self.repository.clear_legacy_layout()
+
+        self.assertIsNone(await self.repository.legacy_layout())

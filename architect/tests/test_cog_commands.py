@@ -176,7 +176,7 @@ class TestArchitectCommands(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(layout_field.value, "⚠️ not seeded yet")
 
     async def test_status_shows_layout_seeded_once_set(self) -> None:
-        await self.cog._repository.set_layout({"tiles": [1]})
+        await self.cog._office_layout_settings.set_layout({"tiles": [1]})
 
         await self.cog.status.callback(self.cog, self.ctx)
 

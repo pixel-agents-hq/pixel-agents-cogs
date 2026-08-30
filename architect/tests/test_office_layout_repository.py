@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import unittest
 
-from ..domain.office_ir import Office
-from ..infrastructure.furniture_styles import FurnitureStyleManifest
+from pixelagents.infrastructure.furniture_styles import FurnitureStyleManifest
+
+from ..domain import Office
 from ..infrastructure.office_layout_repository import (
     OfficeLayoutNotSeededError,
     OfficeLayoutRepository,

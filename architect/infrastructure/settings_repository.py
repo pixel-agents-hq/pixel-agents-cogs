@@ -56,13 +56,12 @@ GLOBAL_DEFAULTS: dict[str, object] = {
     "ws_host": DEFAULT_WS_HOST,
     "ws_port": DEFAULT_WS_PORT,
     "debug_logging": DEFAULT_DEBUG_LOGGING,
-    # None until CogBase._ensure_layout_seeded() seeds it from pixelagents'
-    # bundled default layout on first successful webview sync. Deliberately
-    # its own global (process-scoped, not per-guild) store, entirely
-    # separate from floorplan's own per-guild office layout Config -- see
-    # docs/architect-design.md's note on why loading a Pixel Index layout
-    # into floorplan's office must never affect this one. No command
-    # writes to it yet; only the future layout-editing tools will.
+    # Legacy location only -- the live layout store moved to
+    # `pixelagents.infrastructure.office_layout_settings` (docs/painter-design.md
+    # part A) so `painter` can reach it too. Kept registered here, with
+    # `layout()` still readable below, purely so `CogBase`'s one-time
+    # migration can read whatever an existing install still has under this
+    # old key and copy it across; nothing writes here anymore.
     "layout": None,
 }
 
@@ -116,8 +115,12 @@ class RedArchitectRepository:
     async def set_debug_logging(self, value: bool) -> None:
         await self._config.debug_logging.set(bool(value))
 
-    async def layout(self) -> dict[str, object] | None:
+    async def legacy_layout(self) -> dict[str, object] | None:
+        """Whatever this install last stored under the old, architect-owned
+        `layout` key -- migration-only, see `CogBase._migrate_legacy_layout`.
+        `None` for a fresh install, or one already migrated."""
+
         return cast("dict[str, object] | None", await self._config.layout())
 
-    async def set_layout(self, layout: dict[str, object]) -> None:
-        await self._config.layout.set(layout)
+    async def clear_legacy_layout(self) -> None:
+        await self._config.layout.set(None)

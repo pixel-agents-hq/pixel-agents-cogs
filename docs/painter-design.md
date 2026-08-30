@@ -95,15 +95,23 @@ Notes:
   `pico -> architect` already is (`docs/architect-design.md` §7):
   painter degrades to "the `consult_architect` tool errors" if architect
   is unloaded/unreachable, it does not fail to load.
-- This is a real (small) expansion of `pixelagents`' documented charter.
-  Its own `Architecture.md` says it "owns nothing runtime-facing... those
-  all moved to `floorplan`" (issue #21's split: vendor+build vs.
-  consume). This doc's plan gives it a genuine runtime Config store and
-  domain model. That's a deliberate choice, confirmed with the repo
-  owner, made because: (a) it's already the one cog both `architect` and
-  `painter` need as a dependency regardless, (b) unlike floorplan's
-  office (which mirrors Discord presence and is fed by the pixel index
-  API), architect's/painter's shared office is a distinct, independent
+- This is a real expansion of `pixelagents`' documented charter — more
+  than a general "it says it owns nothing runtime-facing" tension: issue
+  #21 already tried a `layout` Config key on this exact cog once and
+  deliberately moved it *out*, to `floorplan`
+  (`pixelagents/infrastructure/settings.py`'s own docstring: "the runtime
+  settings that used to share this identifier (ws_port, **layout**,
+  seats, guild enabled/include_bots, pixel_index urls, ...) now live in
+  floorplan's own Config store"). This plan revives that same key name on
+  the same cog. Confirmed explicitly with the repo owner after surfacing
+  this precedent directly — not overlooked, a deliberate choice made
+  because: (a) it's already the one cog both `architect` and `painter`
+  need as a dependency regardless, (b) unlike floorplan's office (which
+  mirrors Discord presence and is fed by the pixel index API, and is
+  guild-scoped), architect's/painter's shared office is a distinct,
+  independent, global (not per-guild) layout with no presence-mirroring
+  concerns — narrower and more mechanical than the guild-scoped bundle
+  #21 reacted against, even though it reuses the same key name. (c) the
   layout with no presence-mirroring concerns, and (c) the alternative
   (painter reaching into architect's private Config identifier directly,
   or a new fourth package) was explicitly rejected in review.
@@ -174,44 +182,86 @@ tools, no system-prompt changes, no new A2A behavior.
 itself), architect's own non-layout settings (`max_tool_calls`,
 `system_prompt`, `ws_host`/`ws_port`, `debug_logging`).
 
-### 5.2 New pixelagents layering
-
-Following this repo's standard `domain/`/`application/`/`infrastructure/`/`adapters/`
-split (`pixelagents` currently has no `application/` layer of its own for
-this — it's added here):
+### 5.2 New pixelagents layering (as implemented)
 
 - `pixelagents/domain/office_ir.py` — moved as-is (plus the wall-color
-  field, §6).
+  field, §6), re-exported through `pixelagents/domain/__init__.py`
+  alongside its existing `office.py`/`settings.py` exports.
 - `pixelagents/infrastructure/pixel_agents_adapter.py` — moved as-is
-  (plus the wall-color decode/encode fix, §6).
+  (plus the wall-color decode/encode fix, §6). Its own relative imports
+  of the domain/palette/style-manifest modules needed no changes — they
+  already resolve correctly once everything sits under the same package.
 - `pixelagents/infrastructure/color_names.py` — moved as-is.
-- `pixelagents/infrastructure/office_layout_settings.py` — new. Owns the
-  Config identifier for the one office layout blob (`layout()`/`set_layout()`,
-  same shape architect's today), rolled fresh per the cookiecutter's
-  identifier convention.
-- `pixelagents/application/office_repository.py` — new. The
-  cog-agnostic equivalent of architect's current `OfficeLayoutRepository`:
-  `load()`/`save()`/`decode_raw()` against the moved codec + the new
-  settings module. Both architect's and painter's own repositories
-  compose this rather than duplicating Config access.
+- `pixelagents/infrastructure/furniture_styles.py` — moved as-is, **not
+  originally planned** (§0's investigation-time addendum below covers
+  why). `FurnitureStyleManifest`/`FurnitureFacing`/`FurnitureStyle`
+  (pure data) and `FurnitureStyleLoader`/`SupportsFurnitureStyles` (a
+  generic cache keyed off any `webview_bundle_status()`/
+  `furniture_style_manifest()`-shaped object — no architect-specific
+  state at all) turned out to have zero architect coupling either.
+- `pixelagents/infrastructure/office_layout_settings.py` — new.
+  `RedOfficeLayoutSettings`, owning a freshly-rolled Config identifier
+  (distinct from `settings.py`'s own) for the one shared office layout
+  blob. `create()` takes no cog instance — `Config.get_conf(None,
+  identifier=..., cog_name="pixelagents")` — so architect's and
+  painter's independently-constructed instances resolve to the same
+  on-disk store without either needing a live reference to the other or
+  to a loaded `PixelAgents` Cog.
+- No separate `pixelagents/application/office_repository.py` ended up
+  necessary — `RedOfficeLayoutSettings` alone already satisfies the
+  `SupportsLayoutStorage` Protocol (`layout()`/`set_layout()`)
+  `architect/infrastructure/office_layout_repository.py` already defined
+  and depended on, so that existing class needed no restructuring at
+  all, only an import-path fix (§5.3) and a different settings object
+  handed to its constructor.
+- `pixelagents/tests/test_architecture.py`'s
+  `test_framework_resources_have_one_owner_each` contract test (renamed
+  from `..._have_one_owner`) now allows exactly these two
+  `Config.get_conf(` call sites, not one — updated deliberately, not
+  loosened by accident.
+
+**Addendum found during implementation, not anticipated in review:**
+`pixel_agents_adapter.py`'s `decode()`/`encode()` take a
+`FurnitureStyleManifest` as a required argument — so *any* caller of the
+shared codec, painter's own repository included, needs one, contradicting
+this doc's original "painter only needs style names from architect's A2A
+reads, not the manifest itself." Since `FurnitureStyleManifest`/
+`FurnitureStyleLoader` had zero architect-specific coupling to begin
+with, moving the whole file was the natural fix, not a competing design
+worth a design-review stop — flagged here for the record rather than
+silently done.
 
 ### 5.3 Architect's side after extraction
 
-`architect/infrastructure/office_layout_repository.py` keeps its current
-public shape (`OfficeLayoutRepository.load`/`save`/`decode_raw`,
-`OfficeLayoutNotSeededError`) so `application/office_layout_service.py`
-needs **zero changes** — it becomes a thin delegate to
-`pixelagents.application.office_repository`. `architect/infrastructure/settings_repository.py`
-drops its `layout()`/`set_layout()` methods (moved out) and keeps
-everything else (`max_tool_calls`, `system_prompt`, `ws_host`/`ws_port`,
-`debug_logging`).
+`architect/infrastructure/office_layout_repository.py`'s public shape
+(`OfficeLayoutRepository.load`/`save`/`decode_raw`,
+`OfficeLayoutNotSeededError`) is **completely unchanged** — only its
+imports of `Office`/`FurnitureStyleManifest`/`decode`/`encode` now point
+at `pixelagents` instead of local sibling modules — so
+`application/office_layout_service.py` needed **zero changes** at all, as
+planned. What changed is one layer up, in `adapters/cog_base.py`'s
+composition: it now constructs `RedOfficeLayoutSettings.create()` and
+hands *that* to `OfficeLayoutRepository(...)` instead of architect's own
+`RedArchitectRepository`. `architect/infrastructure/settings_repository.py`
+dropped `layout()`/`set_layout()` (replaced with migration-only
+`legacy_layout()`/`clear_legacy_layout()`, see below) and kept everything
+else (`max_tool_calls`, `system_prompt`, `ws_host`/`ws_port`,
+`debug_logging`) — its `"layout"` Config key stays registered, read-only,
+purely so migration can still reach it.
 
-**Migration**: existing installs have their office layout stored under
-architect's `CONFIG_IDENTIFIER`. This PR includes a one-time migration
-(on `architect`'s `cog_load`, guarded so it only runs once) that reads
-any existing layout blob from architect's old Config location, writes it
-into pixelagents' new one, and clears the old key — so upgrading doesn't
-lose an already-built office.
+**Migration**: `CogBase._migrate_legacy_layout()`, called once per
+`cog_load()`. Self-guarding by state, not a separate flag: it only copies
+`legacy_layout()` across when the *new* store is still empty and the
+*old* one has something, so a second `cog_load()` (or a second `Architect`
+instance) is a no-op — no dedicated "already migrated" marker needed. A
+migration failure is caught and logged, never blocks `cog_load()`.
+Two other call sites also read/wrote architect's old `layout` key
+directly and needed the same fix: `adapters/commands.py`'s `[p]architect
+status` (now reads `self._office_layout_settings.layout()`) and
+`adapters/office_gateway.py`'s `_current_layout()` (same) — both found by
+running the full test suite, not by static review, so worth a second
+read-through of anything else touching `self._repository.layout`-shaped
+calls if this doc is used as a checklist for a similar future move.
 
 ### 5.4 Painter's side
 
@@ -365,26 +415,29 @@ themselves having no such fields, not just by prompt instruction.
 ## 9. Implementation checklist
 
 ### Part A — extract Semantic IR into pixelagents
-- [ ] Move `office_ir.py` to `pixelagents/domain/`
-- [ ] Move `pixel_agents_adapter.py` to `pixelagents/infrastructure/`
-- [ ] Move `color_names.py` to `pixelagents/infrastructure/`
-- [ ] New `pixelagents/infrastructure/office_layout_settings.py` (Config identifier + `layout()`/`set_layout()`)
-- [ ] New `pixelagents/application/office_repository.py`
-- [ ] `architect/infrastructure/office_layout_repository.py` becomes a thin delegate; `application/office_layout_service.py` unchanged
-- [ ] `architect/infrastructure/settings_repository.py` drops layout keys, keeps the rest
-- [ ] One-time migration on architect `cog_load` (old Config key → new, guarded to run once)
-- [ ] `architect`'s `required_cogs` gains nothing new (already depends on pixelagents); update `dependency_loader` call sites if the pixelagents surface used changes
+- [x] Move `office_ir.py` to `pixelagents/domain/`
+- [x] Move `pixel_agents_adapter.py` to `pixelagents/infrastructure/`
+- [x] Move `color_names.py` to `pixelagents/infrastructure/`
+- [x] Move `furniture_styles.py` to `pixelagents/infrastructure/` (not originally planned — §5.2 addendum)
+- [x] New `pixelagents/infrastructure/office_layout_settings.py` (Config identifier + `layout()`/`set_layout()`)
+- [x] ~~New `pixelagents/application/office_repository.py`~~ — turned out unnecessary, `RedOfficeLayoutSettings` alone satisfies `SupportsLayoutStorage` (§5.2)
+- [x] `architect/infrastructure/office_layout_repository.py` import paths updated (its own logic untouched); `application/office_layout_service.py` unchanged
+- [x] `architect/infrastructure/settings_repository.py` drops `layout()`/`set_layout()` (kept `legacy_layout()`/`clear_legacy_layout()` for migration), keeps the rest
+- [x] One-time migration on architect `cog_load` (`_migrate_legacy_layout`, self-guarding by state)
+- [x] `architect`'s `required_cogs` gains nothing new (already depends on pixelagents)
 - [ ] Update `pixelagents/Architecture.md` and `README.md` for the new IR/storage ownership
 - [ ] Update `docs/architecture.md` and `docs/AGENTS.md` dependency graph/descriptions
-- [ ] All existing architect tests (`test_office_ir.py`, `test_office_tools.py`, `test_office_layout_service.py`, `test_office_layout_repository.py`, `test_lossless_round_trip.py`, `test_pixel_agents_adapter.py`) pass unmodified against the moved code (import paths updated only)
-- [ ] New pixelagents-side tests for the moved codec/repository
+- [x] All existing architect tests pass (import paths updated; `test_office_ir.py`/`test_pixel_agents_adapter.py`/`test_color_names.py`/`test_furniture_styles.py` moved to `pixelagents/tests/` since they test code that physically moved)
+- [x] New/updated pixelagents-side tests: moved suites above, plus `test_architecture.py`'s `test_framework_resources_have_one_owner_each`
+- [x] New architect-side tests: `TestLegacyLayoutMigration` (`test_layout_seeding.py`), updated `test_settings_repository.py`
+- [x] `ruff format`/`ruff check`/`mypy` clean, full `architect`+`pixelagents` suites green (265 + 183 passed)
 
 ### Part B — wall color
-- [ ] `TileCell.wall()` accepts optional `color`/`raw_color`
-- [ ] `_build_grid()` reads `tile_colors[i]` for `WALL` cells
-- [ ] Encode direction writes wall `color`/`raw_color` back into `tileColors[i]`
-- [ ] `docs/architect-semantic-ir-design.md` §6.3's "FLOOR only" note corrected
-- [ ] `test_lossless_round_trip.py` gains a colored-wall fixture
+- [x] `TileCell.wall()` accepts optional `color`/`raw_color`
+- [x] `_build_grid()` reads `tile_colors[i]` for `WALL` cells
+- [x] Encode direction writes wall `color`/`raw_color` back into `tileColors[i]`
+- [x] `docs/architect-semantic-ir-design.md` §6.3's "FLOOR only" note corrected
+- [x] `test_pixel_agents_adapter.py` gains wall-color decode/encode/round-trip tests; `test_lossless_round_trip.py` gains a colored-wall fixture through the full service stack
 - [ ] Manual check against `~/pixel-agents` webview that a repainted wall actually renders the new color
 
 ### Part C — painter cog

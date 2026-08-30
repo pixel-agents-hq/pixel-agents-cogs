@@ -28,9 +28,10 @@ from .cog_base import CogBase
 
 
 class OfficeGatewayMixin(CogBase):
-    """Requires `self._repository`, `self._websocket_server`,
-    `self._client_hub`, `self._office_service`, `self._webview_assets`,
-    `self._office_layout_service` (all provided by CogBase)."""
+    """Requires `self._repository`, `self._office_layout_settings`,
+    `self._websocket_server`, `self._client_hub`, `self._office_service`,
+    `self._webview_assets`, `self._office_layout_service` (all provided
+    by CogBase)."""
 
     async def _start_ws_server(self) -> bool:
         settings = await self._repository.global_settings()
@@ -44,7 +45,7 @@ class OfficeGatewayMixin(CogBase):
         }
 
     async def _current_layout(self) -> dict[str, Any] | None:
-        return await self._repository.layout()
+        return await self._office_layout_settings.layout()
 
     async def _on_webview_ready(self, socket: web.WebSocketResponse) -> None:
         """Send this one connecting client the full bootstrap sequence --

@@ -12,9 +12,10 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
-from ..domain.office_ir import Office
-from .furniture_styles import FurnitureStyleManifest
-from .pixel_agents_adapter import decode, encode
+from pixelagents.infrastructure.furniture_styles import FurnitureStyleManifest
+from pixelagents.infrastructure.pixel_agents_adapter import decode, encode
+
+from ..domain import Office
 
 
 class SupportsLayoutStorage(Protocol):

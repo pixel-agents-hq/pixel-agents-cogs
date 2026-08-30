@@ -153,6 +153,31 @@ class ArchitectAgentExecutor(AgentExecutor):
         updater = TaskUpdater(event_queue, task_id, context_id)
         await updater.start_work()
 
+        try:
+            await self._run_turn(context, updater)
+        except Exception:
+            # Anything past this point streams over a2a-sdk's SSE
+            # transport, which silently drops the connection on an
+            # uncaught exception -- neither the a2a-sdk layer nor uvicorn
+            # logs a traceback for it (verified against the installed
+            # a2a-sdk: `on_message_send_stream`'s except only catches
+            # `CancelledError`/`GeneratorExit`, `_wrap_stream`'s only
+            # catches `A2AError`), so a real bug here previously surfaced
+            # to a caller only as an opaque "peer closed connection
+            # without sending complete message body" with zero trace in
+            # this container's logs. `log.exception` here is the only
+            # place this failure mode gets a traceback at all -- keep it
+            # noisy. The Discord/A2A-facing message stays generic: no
+            # exception text, since that could echo secrets (API keys,
+            # internal paths) into a channel or another agent's context.
+            log.exception("architect: tool loop crashed for task %s", task_id)
+            await self._fail_safely(
+                updater,
+                f"Architect hit an internal error and could not produce an answer "
+                f"(task {task_id} -- check the bot's container logs).",
+            )
+
+    async def _run_turn(self, context: RequestContext, updater: TaskUpdater) -> None:
         user_input = context.get_user_input()
         llm_settings = await self._llm_settings()
         if not llm_settings.ready:
@@ -210,6 +235,21 @@ class ArchitectAgentExecutor(AgentExecutor):
                 },
             )
         )
+
+    @staticmethod
+    async def _fail_safely(updater: TaskUpdater, text: str) -> None:
+        """Best-effort: the task may already be in a terminal state (e.g.
+        `_run_turn` crashed after its own `updater.failed`/`.complete`
+        already ran), and `TaskUpdater.update_status` raises
+        `RuntimeError` for that -- this must never mask the original
+        crash with a second, unrelated traceback."""
+
+        try:
+            await updater.failed(updater.new_agent_message([Part(text=text)]))
+        except Exception:
+            log.warning(
+                "architect: could not report task failure back to the caller", exc_info=True
+            )
 
     async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
         raise UnsupportedOperationError(

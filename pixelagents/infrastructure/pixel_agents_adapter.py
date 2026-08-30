@@ -107,7 +107,15 @@ def _build_grid(
         value = tiles[i]
         zone_label = area_tiles[i] if area_tiles is not None else None
         if value == _WALL:
-            cells.append(TileCell.wall(zone_label=zone_label))
+            # Walls carry a real, rendered tileColors[i] entry too -- same
+            # {h,s,b,c} shape/palette as floor tiles (upstream's
+            # wallTiles.ts/renderer.ts colorize wall sprites from it, see
+            # docs/painter-design.md part B) -- read it exactly like the
+            # floor branch below, not discarded.
+            color_raw = tile_colors[i] if tile_colors is not None else None
+            color = nearest_name(color_raw) if color_raw is not None else None
+            raw_color = _hsb_to_raw(color_raw) if color_raw is not None else None
+            cells.append(TileCell.wall(color=color, raw_color=raw_color, zone_label=zone_label))
         elif value == _VOID:
             cells.append(TileCell.void(zone_label=zone_label))
         else:
@@ -279,7 +287,12 @@ def _encode_grid(grid: Grid) -> tuple[list[int], list[HsbColor | None], list[str
     for cell in grid.cells:
         if cell.kind is TileKind.WALL:
             tiles.append(_WALL)
-            tile_colors.append(None)
+            if cell.color is None:
+                tile_colors.append(None)
+            elif cell.raw_color is not None:
+                tile_colors.append(_raw_to_hsb(cell.raw_color))
+            else:
+                tile_colors.append(hsb_for(cell.color))
         elif cell.kind is TileKind.VOID:
             tiles.append(_VOID)
             tile_colors.append(None)
@@ -315,9 +328,16 @@ def _encode_furniture(office: Office, styles: FurnitureStyleManifest) -> list[di
             "row": item.position.row,
         }
         if item.color is not None:
-            entry["color"] = (
-                _raw_to_hsb(item.raw_color) if item.raw_color is not None else hsb_for(item.color)
-            )
+            hsb = _raw_to_hsb(item.raw_color) if item.raw_color is not None else hsb_for(item.color)
+            # "colorize": True -- an absolute target color, not upstream's
+            # own default "adjust" mode (shift the sprite's original pixel
+            # colors) -- see pixelagents/infrastructure/color_names.py's
+            # module docstring and docs/painter-design.md's color model.
+            # Every color this system itself ever authors (architect's
+            # paint_tiles/create_zone, painter's recolor_*) is colorize-mode
+            # by construction; previously omitted here entirely, silently
+            # defaulting the renderer to adjust mode against that intent.
+            entry["color"] = {**hsb, "colorize": True}
         encoded.append(entry)
 
     return encoded

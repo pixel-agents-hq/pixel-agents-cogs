@@ -21,8 +21,14 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, create_model
 
+from pixelagents.infrastructure.furniture_styles import (
+    FurnitureStyle,
+    FurnitureStyleLoader,
+    FurnitureStyleManifest,
+)
+
 from ..application.office_layout_service import OfficeLayoutService, OfficeValidationError, Touching
-from ..domain.office_ir import (
+from ..domain import (
     Direction,
     FurnitureItem,
     FurnitureKind,
@@ -33,11 +39,6 @@ from ..domain.office_ir import (
     TileCell,
     TileKind,
     Zone,
-)
-from ..infrastructure.furniture_styles import (
-    FurnitureStyle,
-    FurnitureStyleLoader,
-    FurnitureStyleManifest,
 )
 from .base import ToolSpec
 

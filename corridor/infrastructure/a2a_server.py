@@ -25,6 +25,7 @@ import uvicorn
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.routes import create_agent_card_routes, create_jsonrpc_routes
 from a2a.server.tasks.inmemory_task_store import InMemoryTaskStore
+from sse_starlette.sse import AppStatus
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import FileResponse, Response
@@ -33,6 +34,44 @@ from starlette.routing import BaseRoute, Mount, Route
 from ..domain.agent_directory import RegisteredAgent
 
 log = logging.getLogger("red.corridor")
+
+# This process runs more than one `uvicorn.Server` as a concurrent asyncio
+# task (this listener, plus suggestionbox's own MCP listener) -- and, as of
+# the installed uvicorn (0.52.4), `Server.serve()` itself unconditionally
+# wraps its body in `capture_signals()`, which calls `signal.signal(sig,
+# self.handle_exit)` for SIGINT/SIGTERM. That's a change from older uvicorn,
+# where only `Server.run()` installed signal handlers -- this class's own
+# `start()` docstring below still describes that now-stale assumption.
+# Every `server.serve()` call here therefore silently steals the process's
+# SIGTERM/SIGINT handler from whichever listener held it before.
+# `sse_starlette` additionally patches `uvicorn.main.Server.handle_exit` at
+# import time and runs a background watcher that finds "the" uvicorn server
+# via `signal.getsignal(SIGTERM)` and polls *that one instance's*
+# `should_exit` -- treating it as authoritative for every SSE stream in the
+# whole process. Net effect, verified by direct reproduction with two
+# trivial, otherwise-unrelated uvicorn servers: stopping *any* listener in
+# this process (`self._server.should_exit = True` below, or suggestionbox's
+# own `McpListener.stop()`) can be picked up by that watcher as "the process
+# is shutting down" and silently kill every *other* in-flight SSE stream,
+# including this listener's own -- surfacing to a caller only as "peer
+# closed connection without sending complete message body". Each listener
+# here already manages its own shutdown explicitly; sse_starlette's
+# automatic cross-process drain-on-signal behavior is not needed and is
+# actively unsafe with multiple independent listeners, so it's disabled
+# once, process-wide, here.
+#
+# `disable_automatic_graceful_drain()` alone only stops *future* poisoning
+# -- `_shutdown_watcher`'s very first check is a bare `if AppStatus.should_exit:
+# break`, unconditional on the drain-enabled flag, so a process that already
+# tripped `should_exit` (any earlier listener restart before this fix was
+# loaded) stays permanently poisoned across cog reloads: `AppStatus` lives in
+# `sse_starlette`'s own module, which office-cogs' hot-reload never touches,
+# so that class attribute survives every reload of this file. Force it back
+# to False here too, every time this module (re)loads, so a hot-reload of
+# this fix actually clears an already-poisoned process instead of only
+# preventing the next poisoning.
+AppStatus.disable_automatic_graceful_drain()  # type: ignore[no-untyped-call]
+AppStatus.should_exit = False
 
 
 def _avatar_route(agent: RegisteredAgent) -> Route:
@@ -153,9 +192,14 @@ class A2AServer:
         app = _build_app(agents)
         config = uvicorn.Config(app, host=host, port=port, log_level="warning")
         server = uvicorn.Server(config)
-        # No install_signal_handlers here -- that's uvicorn.Server.run()'s
-        # job; serve() alone is safe to run as a task inside Red's own
-        # event loop.
+        # `server.run()` is NOT called here (that installs signal handlers
+        # meant for owning the whole process) -- but `serve()` itself, as
+        # of the installed uvicorn, installs its own SIGINT/SIGTERM handler
+        # too, via `capture_signals()`. Running this (and suggestionbox's
+        # own MCP listener) as tasks in Red's event loop means each one
+        # steals that signal slot from the other -- see the module-level
+        # `AppStatus.disable_automatic_graceful_drain()` call above for why
+        # that's neutralized rather than avoided outright.
         task = asyncio.create_task(server.serve(), name="corridor-a2a-server")
         # serve() reaches `server.started = True` only after the socket is
         # actually (re-)bound and accepting connections -- wait for that

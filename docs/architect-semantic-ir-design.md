@@ -59,7 +59,7 @@ Read directly from `pixel-agents` (`webview-ui/src/office/types.ts`,
 |---|---|---|
 | `cols`, `rows` | `int` | Grid dimensions (default 21×22) |
 | `tiles` | `number[cols*rows]`, row-major | Per-tile floor pattern index (`0`=wall, `1`-`9`=floor patterns, `255`=void/outside) |
-| `tileColors` | `Array<{h,s,b,c} \| null>`, parallel to `tiles` | Per-tile HSB color-shift applied to the floor sprite; `null` on walls/void |
+| `tileColors` | `Array<{h,s,b,c} \| null>`, parallel to `tiles` | Per-tile HSB color-shift, applied to the floor *or wall* sprite (upstream's `wallTiles.ts`/`renderer.ts` colorize wall sprites from it exactly like floor ones — see docs/painter-design.md part B); `null` on void, or on a wall/floor tile with no color set |
 | `furniture` | `{uid, type, col, row, color?}[]` | Placed furniture: `type` is a catalog asset ID (e.g. `DESK_FRONT`, `PC_FRONT_OFF`, `WOODEN_CHAIR_SIDE:left`), `col`/`row` is its top-left footprint tile, `color` is an optional HSB override |
 | `pets` | `{id, petType}[]` | Decorative pets; `petType` is an index into a loaded sprite array |
 | `carpetTiles` | `Array<{variant, color?, accentColor?, order?} \| null>` | Decorative overlay layer, walkable |
@@ -327,7 +327,8 @@ class TileCell:
     material: int | None     # 1-9 for FLOOR, always None otherwise -- opaque,
                               # no semantic meaning (§1), constrained 1-9 by
                               # Field(ge=1, le=9) wherever a tool accepts it
-    color: str | None        # semantic color name (§6.3), FLOOR only
+    color: str | None        # semantic color name (§6.3), FLOOR or WALL
+                              # (not VOID -- see docs/painter-design.md part B)
     zone_label: str | None   # which Zone owns this cell, if any
 
     @classmethod

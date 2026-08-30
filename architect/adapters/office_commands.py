@@ -13,7 +13,7 @@ from typing import Any
 from redbot.core import commands
 
 from ..application.office_layout_service import OfficeLayoutService, OfficeValidationError
-from ..domain.office_ir import FurnitureKind, GridPosition, GridRect, TileKind
+from ..domain import FurnitureKind, GridPosition, GridRect, TileKind
 from .commands import CommandsMixin
 
 

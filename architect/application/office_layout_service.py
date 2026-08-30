@@ -24,7 +24,15 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 from typing import Any
 
-from ..domain.office_ir import (
+from pixelagents.infrastructure.color_names import known_names
+from pixelagents.infrastructure.furniture_styles import (
+    FurnitureFacing,
+    FurnitureStyle,
+    FurnitureStyleLoader,
+    FurnitureStyleManifest,
+)
+
+from ..domain import (
     Direction,
     FurnitureItem,
     FurnitureKind,
@@ -36,13 +44,6 @@ from ..domain.office_ir import (
     TileCell,
     TileKind,
     Zone,
-)
-from ..infrastructure.color_names import known_names
-from ..infrastructure.furniture_styles import (
-    FurnitureFacing,
-    FurnitureStyle,
-    FurnitureStyleLoader,
-    FurnitureStyleManifest,
 )
 from ..infrastructure.office_layout_repository import OfficeLayoutRepository
 

@@ -1,8 +1,9 @@
 """office_ir needs no mocking, no stubs, nothing framework-related -- same
-"trivially unit-testable" convention test_domain_models.py already
-exercises for GlobalSettings, plus a contract test asserting the module
-stays free of Pixel-Agents-specific imports (docs/architect-semantic-ir-design.md
-section 9)."""
+"trivially unit-testable" convention architect's own domain/models.py
+tests already exercise for GlobalSettings, plus a contract test asserting
+the module stays free of Pixel-Agents-*format*-specific imports
+(docs/architect-semantic-ir-design.md section 9). Moved here from
+architect/tests/ -- see docs/painter-design.md part A."""
 
 from __future__ import annotations
 
@@ -30,19 +31,32 @@ def _flat_grid(width: int, height: int) -> Grid:
     return Grid(width, height, tuple(TileCell.wall() for _ in range(width * height)))
 
 
-def test_office_ir_has_zero_pixel_agents_or_framework_imports() -> None:
+def test_office_ir_has_zero_pixel_agents_format_or_framework_imports() -> None:
+    """office_ir.py must never import Pixel-Agents-*format*-specific logic
+    (the codec, the color palette) or any framework -- only stdlib. Checks
+    both absolute imports (pydantic/redbot/discord) and *any* relative
+    import at all (there is no sibling module in this package office_ir.py
+    should ever need -- a relative import here would mean the codec/
+    palette leaking back into the domain layer, exactly what section 9's
+    "a format change should only touch the adapter" guarantee forbids)."""
+
     source_path = Path(__file__).parent.parent / "domain" / "office_ir.py"
     tree = ast.parse(source_path.read_text(encoding="utf-8"))
-    forbidden = {"pixelagents", "pydantic", "redbot", "discord"}
+    forbidden = {"pydantic", "redbot", "discord"}
 
     imported_roots: set[str] = set()
+    has_relative_import = False
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             imported_roots.update(alias.name.split(".")[0] for alias in node.names)
-        elif isinstance(node, ast.ImportFrom) and node.module:
-            imported_roots.add(node.module.split(".")[0])
+        elif isinstance(node, ast.ImportFrom):
+            if node.level > 0:
+                has_relative_import = True
+            elif node.module:
+                imported_roots.add(node.module.split(".")[0])
 
     assert imported_roots & forbidden == set()
+    assert not has_relative_import
 
 
 def test_grid_rect_contains_and_overlaps() -> None:

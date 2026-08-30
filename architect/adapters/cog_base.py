@@ -18,6 +18,8 @@ from corridor.domain import (
     ReplyCategory,
 )
 from pixelagents.application.office import OfficeService
+from pixelagents.infrastructure.furniture_styles import FurnitureStyleLoader
+from pixelagents.infrastructure.office_layout_settings import RedOfficeLayoutSettings
 
 from ..application import ToolLoopService
 from ..application.office_layout_service import OfficeLayoutService
@@ -32,7 +34,6 @@ from ..infrastructure import (
     WebviewAssetProvider,
     build_agent_card,
 )
-from ..infrastructure.furniture_styles import FurnitureStyleLoader
 from ..infrastructure.office_layout_repository import OfficeLayoutRepository
 from ..tools.agent_tool_server import AgentToolServerTool
 from ..tools.base import ToolSpec
@@ -127,7 +128,13 @@ class CogBase:
         # duplicate set of office tools on a second run), but the actual
         # `pixelagents` reference isn't resolved until cog_load().
         self._style_loader = FurnitureStyleLoader(_LazyPixelAgents(lambda: self._pixelagents))
-        self._office_layout_repository = OfficeLayoutRepository(self._repository)
+        # The layout itself lives in pixelagents' own Config store now, not
+        # architect's -- see docs/painter-design.md part A. No live
+        # `pixelagents` Cog needed to construct this (same as `_repository`
+        # above needs no live `corridor`/`pixelagents` Cog either), only
+        # `redbot.core.Config` -- always available.
+        self._office_layout_settings = RedOfficeLayoutSettings.create()
+        self._office_layout_repository = OfficeLayoutRepository(self._office_layout_settings)
         self._office_layout_service = OfficeLayoutService(
             self._office_layout_repository, self._style_loader, broadcast=self._broadcast_layout
         )
@@ -190,6 +197,26 @@ class CogBase:
 
         await self._send({"type": "layoutLoaded", "layout": raw})
 
+    async def notify_shared_layout_changed(self) -> None:
+        """Re-broadcasts the *current* shared office layout to every
+        connected webview client -- the public hook `painter` calls
+        (`bot.get_cog("Architect")`, best-effort) after its own recolor
+        mutations, since painter has no WebSocket server of its own to
+        push a live update through the way architect's own writes already
+        do synchronously as part of the same mutation
+        (`OfficeLayoutService._persist` -> `_broadcast_layout` above).
+        Without this, a painter-made change is real and persisted
+        immediately, but a browser already showing the office only picks
+        it up on its next manual reload -- see docs/painter-design.md's
+        open risks. Re-reads from `_office_layout_settings` rather than
+        trusting any caller-supplied payload, so it's correct regardless
+        of who mutated the shared store or when. A no-op (never raises)
+        if nothing has been seeded yet."""
+
+        raw = await self._office_layout_settings.layout()
+        if raw is not None:
+            await self._broadcast_layout(raw)
+
     async def cog_load(self) -> None:
         """required_cogs in info.json is only a Downloader install hint --
         Red does not auto-load a dependency at runtime just because it's
@@ -205,12 +232,36 @@ class CogBase:
         self._reply = self._corridor.reply_sender(
             owner="Architect", avatar_path=AVATAR_PATH, category=ReplyCategory.AGENT
         )
+        await self._migrate_legacy_layout()
         await self._start_presence_tracking()
         await self._register_with_corridor()
         self._pixelagents = await ensure_loaded(self.bot, "pixelagents", "PixelAgents")
         await self._notify_owners_dashboard_missing_if_unloaded()
         if not await self._start_ws_server():
             await self._notify_owners_ws_failed()
+
+    async def _migrate_legacy_layout(self) -> None:
+        """One-time migration: an existing install's office layout may
+        still sit under architect's own old `layout` Config key
+        (`RedArchitectRepository.legacy_layout`) from before this moved to
+        pixelagents' shared store (docs/painter-design.md part A).
+        Self-guarding, not a separate flag -- only copies across when the
+        new store is still empty *and* the old one has something, so a
+        second `cog_load()` (or a second cog instance) is a no-op. Must
+        never raise: a failed migration should not block architect from
+        loading, just leave the old data in place for next time."""
+
+        try:
+            if await self._office_layout_settings.layout() is not None:
+                return
+            legacy = await self._repository.legacy_layout()
+            if legacy is None:
+                return
+            await self._office_layout_settings.set_layout(legacy)
+            await self._repository.clear_legacy_layout()
+            log.info("architect: migrated its office layout to pixelagents' shared store")
+        except Exception:
+            log.exception("architect: could not migrate its legacy office layout")
 
     async def _register_with_corridor(self) -> None:
         """Hands corridor architect's AgentCard + AgentExecutor so it can
@@ -287,24 +338,27 @@ class CogBase:
             await self._ensure_layout_seeded()
 
     async def _ensure_layout_seeded(self) -> None:
-        """Seed architect's own layout store from pixelagents' bundled
+        """Seed the shared office layout store from pixelagents' bundled
         default layout, once -- only if nothing is stored yet.
 
-        This is architect's own, independent layout, entirely separate
-        from floorplan's per-guild office Config: loading a Pixel Index
-        layout into floorplan's office (`[p]floorplan layout view ...` ->
-        "Load into office") writes only to floorplan's own storage and
-        never touches this one. There is no command to edit this yet --
-        only the future layout-editing tools will (see
-        docs/architect-design.md)."""
+        This is architect's (and painter's) own, independent layout,
+        entirely separate from floorplan's per-guild office Config:
+        loading a Pixel Index layout into floorplan's office
+        (`[p]floorplan layout view ...` -> "Load into office") writes only
+        to floorplan's own storage and never touches this one. There is no
+        command to edit this yet -- only the future layout-editing tools
+        will (see docs/architect-design.md)."""
 
-        if await self._repository.layout() is not None:
+        if await self._office_layout_settings.layout() is not None:
             return
         default_layout = self._webview_assets.default_layout()
         if default_layout is None:
             return
-        await self._repository.set_layout(default_layout)
-        log.info("architect: seeded its own layout store from pixelagents' bundled default layout")
+        await self._office_layout_settings.set_layout(default_layout)
+        log.info(
+            "architect: seeded the shared office layout store from pixelagents' bundled default "
+            "layout"
+        )
 
     def _check_webview_build_convention(self, built_base_path: str | None) -> None:
         # "./" is pixelagents' own RELATIVE_BASE_PATH build convention --

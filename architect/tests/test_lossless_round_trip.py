@@ -13,10 +13,11 @@ from __future__ import annotations
 import unittest
 from typing import cast
 
+from pixelagents.infrastructure.color_names import hsb_for
+from pixelagents.infrastructure.furniture_styles import FurnitureStyleLoader
+
 from ..application.office_layout_service import OfficeLayoutService
-from ..domain.office_ir import FurnitureKind, GridPosition, GridRect, TileKind
-from ..infrastructure.color_names import hsb_for
-from ..infrastructure.furniture_styles import FurnitureStyleLoader
+from ..domain import FurnitureKind, GridPosition, GridRect, TileKind
 from ..infrastructure.office_layout_repository import OfficeLayoutRepository
 from .conftest import FakePixelAgents
 
@@ -246,6 +247,40 @@ class TestEndToEndLosslessRoundTrip(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(persisted_tile_colors[i], original_tile_colors[i], (col, row))
 
         self.assertEqual(persisted_tile_colors[_pos(4, 4)], hsb_for("cool_blue"))
+
+    async def test_wall_color_survives_untouched_through_the_full_stack(self) -> None:
+        """docs/painter-design.md part B: a wall's tileColors[i] entry is
+        no longer discarded on decode, and an untouched wall's exact color
+        must survive a describe()/reload cycle exactly like a floor
+        cell's does above -- proven through the whole service stack, not
+        just decode()/encode() in isolation (test_pixel_agents_adapter.py's
+        own TestRoundTrip covers that layer)."""
+
+        off_palette = {"h": 199, "s": 12, "b": -3, "c": 7}
+        layout = {
+            "version": 1,
+            "cols": 2,
+            "rows": 1,
+            "tiles": [0, 1],
+            "tileColors": [off_palette, None],
+            "furniture": [],
+        }
+        settings = FakeSettingsRepository(layout)
+        service = _service(settings)
+
+        office = await service.describe()
+        wall = office.grid.at(GridPosition(0, 0))
+        self.assertEqual(wall.kind, TileKind.WALL)
+        self.assertEqual(wall.raw_color, (199, 12, -3, 7))
+
+        # Force a save + reload through the full repository, untouched by
+        # any mutation -- the wall's exact raw color must still be there.
+        await service.paint_tiles(
+            area=GridRect(GridPosition(1, 0), 1, 1), kind=TileKind.FLOOR, material=1
+        )
+        persisted = cast("dict[str, object]", await settings.layout())
+        persisted_tile_colors = cast("list[object]", persisted["tileColors"])
+        self.assertEqual(persisted_tile_colors[0], off_palette)
 
     async def test_paint_floor_preserves_zone_tag_on_repaint(self) -> None:
         settings = FakeSettingsRepository(_irregular_layout())

@@ -76,7 +76,7 @@ class TestOfficeCommandsFunctional(unittest.IsolatedAsyncioTestCase):
 
     async def asyncSetUp(self) -> None:
         await self.cog.cog_load()
-        await self.cog._repository.set_layout(dict(_EMPTY_LAYOUT))
+        await self.cog._office_layout_settings.set_layout(dict(_EMPTY_LAYOUT))
 
     async def test_describe_reports_an_empty_office(self) -> None:
         await self.cog.office_describe.callback(self.cog, self.ctx)

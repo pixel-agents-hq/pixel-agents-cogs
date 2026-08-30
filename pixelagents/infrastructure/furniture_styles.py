@@ -21,7 +21,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from ..domain.office_ir import Direction, FurnitureKind, GridPosition
+from ..domain import Direction, FurnitureKind, GridPosition
 
 _KIND_BY_NAME: dict[str, FurnitureKind] = {kind.value: kind for kind in FurnitureKind}
 _DIRECTION_BY_NAME: dict[str, Direction] = {d.value: d for d in Direction}

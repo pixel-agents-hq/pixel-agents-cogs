@@ -147,6 +147,14 @@ jobs:
             mypy_target: "floorplan"
             extra_deps: "aiohttp 'a2a-sdk[http-server]' uvicorn 'mcp>=1.29,<2' 'typing-inspection<0.4.3'"
             pixel_index_contracts: true
+          # cctv owns both live webviews and their aiohttp listener. Its
+          # schema boundary comes from pixelagents' pydantic layout model.
+          - cog: cctv
+            test_target: "cctv/tests"
+            lint_target: "cctv"
+            mypy_target: "cctv"
+            extra_deps: "aiohttp 'pydantic>=2.11.3,<2.12'"
+            pixel_index_contracts: false
           # pico talks to aiohttp (LiteLLM proxy) and pydantic (wire/tool
           # models) like floorplan, plus httpx and a2a-sdk for its
           # consult_architect A2A client tool (pico/infrastructure/

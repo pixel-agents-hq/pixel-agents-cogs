@@ -1,0 +1,34 @@
+{
+    "$schema": "https://raw.githubusercontent.com/Cog-Creators/Red-DiscordBot/V3/develop/schema/red_cog.schema.json",
+    "name": "cctv",
+    "short": "Two live Pixel Agents office pages on one listener.",
+    "description": "Owns the Discord guild projection, registered-agent editor projection, WebSocket listener, Dashboard pages, display policy, and activity clear timing for both CCTV views.",
+    "end_user_data_statement": "This cog stores per-guild display settings. Through corridor's office-state store, it also persists Discord user IDs and registered agent IDs that have avatar appearance or seat assignments.",
+    "install_msg": "Requires corridor and pixelagents (auto-loaded). Configure the reverse proxy for /cctv/discord/ws and /cctv/editor/ws; Dashboard pages are /third-party/cctv/discord and /third-party/cctv/editor.",
+    "author": [
+        "Tin Nguyen"
+    ],
+    "required_cogs": {
+        "corridor": "https://github.com/pixel-agents-hq/pixel-agents-cogs",
+        "pixelagents": "https://github.com/pixel-agents-hq/pixel-agents-cogs"
+    },
+    "requirements": [
+        "aiohttp",
+        "pydantic>=2.11.3,<2.14"
+    ],
+    "tags": [
+        "cctv",
+        "dashboard",
+        "websocket",
+        "pixelagents"
+    ],
+    "min_bot_version": "3.5.24",
+    "min_python_version": [
+        3,
+        11,
+        0
+    ],
+    "hidden": false,
+    "disabled": false,
+    "type": "COG"
+}

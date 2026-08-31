@@ -44,6 +44,7 @@ files = [
     "architect",
     "suggestionbox",
     "painter",
+    "cctv",
 ]
 exclude = [
     "^pixelagents/conftest\\.py$",
@@ -67,6 +68,8 @@ exclude = [
     "^suggestionbox/tests/",
     "^painter/conftest\\.py$",
     "^painter/tests/",
+    "^cctv/conftest\\.py$",
+    "^cctv/tests/",
 ]
 
 [[tool.mypy.overrides]]
@@ -255,4 +258,16 @@ disable_error_code = ["arg-type", "no-any-return", "untyped-decorator"]
 # above: `commands.Cog` resolves to Any without Red's real Cog metaclass
 # installed.
 module = ["painter.painter"]
+disable_error_code = ["misc"]
+
+[[tool.mypy.overrides]]
+module = ["cctv.adapters.commands"]
+disable_error_code = ["no-any-return", "untyped-decorator"]
+
+[[tool.mypy.overrides]]
+module = ["cctv.adapters.dashboard"]
+disable_error_code = ["untyped-decorator"]
+
+[[tool.mypy.overrides]]
+module = ["cctv.cctv"]
 disable_error_code = ["misc"]

@@ -12,7 +12,7 @@ __all__ = ["PixelAgents", "WebviewBundleStatus", "pixelagents"]
 
 
 class PixelAgents(CommandsMixin, ReplyMixin, PixelAgentsBase, commands.Cog):
-    """Vendor and build the Pixel Agents webview for floorplan to serve."""
+    """Own the Pixel Agents bundle and validated office-state facade."""
 
 
 # Red historically loaded and exported this lowercase class name.

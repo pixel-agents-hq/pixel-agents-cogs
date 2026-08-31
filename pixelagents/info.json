@@ -1,10 +1,10 @@
 {
     "$schema": "https://raw.githubusercontent.com/Cog-Creators/Red-DiscordBot/V3/develop/schema/red_cog.schema.json",
     "name": "pixelagents",
-    "short": "Vendor and build the Pixel Agents webview for floorplan to serve",
-    "description": "Clones and builds the pinned pixel-agents-hq/pixel-agents webview commit into Red's per-cog data directory, so floorplan (and any other dependent cog) can serve the result without running its own build. Owns the vendor pin and the build pipeline only -- no dashboard, presence mirroring, or WebSocket protocol; see floorplan for those.",
+    "short": "Pixel Agents webview bundle and office-state schema boundary",
+    "description": "Builds the pinned Pixel Agents webview and provides the validated, lazy-initialized office-state facade used by cctv, floorplan, architect, and painter. Corridor owns the opaque persisted aggregates; this cog owns their Pixel Agents schema interpretation.",
     "end_user_data_statement": "This cog does not persistently store any data or metadata about users.",
-    "install_msg": "Requires corridor (auto-loaded). Bot owner only: `[p]pixelagents webview commit` to see the pinned commit, `[p]pixelagents webview rebuild` to force a rebuild. floorplan depends on this cog to serve the built webview.",
+    "install_msg": "Requires corridor (auto-loaded). Bot owner only: `[p]pixelagents webview commit` to see the pinned commit, `[p]pixelagents webview rebuild` to force a rebuild. cctv serves the built webview.",
     "author": [
         "Pixel Agents HQ Contributors"
     ],

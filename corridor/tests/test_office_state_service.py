@@ -79,6 +79,19 @@ class TestOfficeStateService(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(received[-1].state.layout, {"version": 1})
         self.assertEqual(received[-1].state.seats, {"agent": {"seatId": "x"}})
 
+    async def test_seat_mutation_is_persisted_with_its_result(self) -> None:
+        await self.service.initialize(OfficeStateKind.DISCORD, {"version": 1})
+
+        def assign(seats: dict[str, dict[str, object]]) -> str:
+            seats["-1"] = {"palette": 4}
+            return "assigned"
+
+        state, result = await self.service.mutate_seats(OfficeStateKind.DISCORD, assign)
+
+        self.assertEqual(result, "assigned")
+        self.assertEqual(state.seats, {"-1": {"palette": 4}})
+        self.assertEqual(state.revision, 2)
+
     async def test_watch_has_no_write_gap(self) -> None:
         storage = _BlockingStorage()
         events = EventBusService()

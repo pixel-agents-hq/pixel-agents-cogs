@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 from copy import deepcopy
-from typing import Protocol
+from typing import Protocol, TypeVar
 
 from ..domain import (
     OfficeState,
@@ -19,6 +19,7 @@ from .event_bus_service import EventBusService
 
 OFFICE_STATE_SUBSCRIBER_TIMEOUT = 5.0
 OfficeStateHandler = Callable[[OfficeStateChanged], Awaitable[None]]
+MutationResult = TypeVar("MutationResult")
 
 
 class OfficeStateStorage(Protocol):
@@ -88,6 +89,26 @@ class OfficeStateService:
             result = copy_office_state(updated)
         await self._publish(updated)
         return result
+
+    async def mutate_seats(
+        self,
+        kind: OfficeStateKind,
+        mutation: Callable[[SeatRecords], MutationResult],
+    ) -> tuple[OfficeState, MutationResult]:
+        async with self._lock:
+            current = await self._required(kind)
+            seats = deepcopy(current.seats)
+            mutation_result = mutation(seats)
+            updated = OfficeState(
+                kind=kind,
+                layout=deepcopy(current.layout),
+                seats=seats,
+                revision=current.revision + 1,
+            )
+            await self._storage.save(updated)
+            result = copy_office_state(updated)
+        await self._publish(updated)
+        return result, mutation_result
 
     async def watch(
         self,

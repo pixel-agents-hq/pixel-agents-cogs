@@ -68,6 +68,7 @@ from .reply_sender import ReplySender
 log = logging.getLogger("red.corridor")
 
 _EventT = TypeVar("_EventT")
+_MutationT = TypeVar("_MutationT")
 
 # Conventional path for corridor's own bundled avatar image -- passed to
 # reply_sender() below regardless of whether a real file exists here yet;
@@ -472,6 +473,13 @@ class CogBase:
         seats: dict[str, dict[str, Any]],
     ) -> OfficeState:
         return await self._office_states.set_seats(kind, seats)
+
+    async def mutate_office_seats(
+        self,
+        kind: OfficeStateKind,
+        mutation: Callable[[dict[str, dict[str, Any]]], _MutationT],
+    ) -> tuple[OfficeState, _MutationT]:
+        return await self._office_states.mutate_seats(kind, mutation)
 
     async def watch_office_state(
         self,

@@ -78,9 +78,9 @@ def merge_seat_patch(
     palette = patch.get("palette")
     hue_shift = patch.get("hueShift")
     seat_id = patch.get("seatId")
-    if isinstance(palette, int) and 0 <= palette < palette_count:
+    if type(palette) is int and 0 <= palette < palette_count:
         record["palette"] = palette
-    if isinstance(hue_shift, int) and 0 <= hue_shift <= 360:
+    if type(hue_shift) is int and 0 <= hue_shift <= 360:
         record["hueShift"] = hue_shift
     if isinstance(seat_id, str):
         record["seatId"] = seat_id

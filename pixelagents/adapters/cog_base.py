@@ -11,14 +11,19 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, TypeVar, cast
 
 from redbot.core import commands, data_manager
 from redbot.core.bot import Red
 
+from corridor.domain import OfficeState, OfficeStateChanged, OfficeStateKind, SeatRecords
+
+from ..application.office_state import OfficeStateFacade, OfficeStateSeatRepository
 from ..dependency_loader import ensure_corridor_loaded
+from ..infrastructure.furniture_styles import FurnitureStyleLoader
 from ..infrastructure.settings import RedSettingsRepository
 from ..infrastructure.webview_build import (
     BuildOutcome,
@@ -29,6 +34,7 @@ from ..infrastructure.webview_build import (
 )
 
 log = logging.getLogger("red.d_cogs.pixelagents")
+MutationResult = TypeVar("MutationResult")
 
 
 @dataclass(frozen=True)
@@ -68,6 +74,8 @@ class PixelAgentsBase:
         # time cog_load runs. See infrastructure/webview_build.py.
         self._cog_data_dir: Path = data_manager.cog_data_path(self)
         self._webview_build_outcome: BuildOutcome | None = None
+        self._style_loader = FurnitureStyleLoader(self)
+        self._office_state: OfficeStateFacade | None = None
 
     def _webview_dist_path(self) -> Path:
         return self._cog_data_dir / "webview_dist"
@@ -129,6 +137,73 @@ class PixelAgentsBase:
         except (OSError, ValueError):
             return None
 
+    def bundled_default_layout(self) -> dict[str, Any] | None:
+        """Load the default selected by the generated asset index."""
+
+        assets = self._webview_dist_path() / "assets"
+        try:
+            index = json.loads((assets / "asset-index.json").read_text("utf-8"))
+            name = index.get("defaultLayout")
+            if not isinstance(name, str) or not name:
+                raise ValueError("asset index has no defaultLayout")
+            candidate = (assets / name).resolve()
+            if candidate.parent != assets.resolve():
+                raise ValueError("defaultLayout resolves outside the assets directory")
+            raw = json.loads(candidate.read_text("utf-8"))
+            if not isinstance(raw, dict):
+                raise ValueError("bundled default layout is not an object")
+            return cast("dict[str, Any]", raw)
+        except (OSError, TypeError, ValueError) as exc:
+            log.warning("pixelagents: bundled default layout unavailable: %s", exc)
+            return None
+
+    def _states(self) -> OfficeStateFacade:
+        if self._office_state is None:
+            raise RuntimeError("pixelagents office-state facade is not loaded")
+        return self._office_state
+
+    async def office_state(self, kind: OfficeStateKind) -> OfficeState:
+        return await self._states().state(kind)
+
+    async def set_office_layout(
+        self, kind: OfficeStateKind, layout: Mapping[str, object]
+    ) -> OfficeState:
+        return await self._states().set_layout(kind, layout)
+
+    async def set_office_seats(self, kind: OfficeStateKind, seats: object) -> OfficeState:
+        return await self._states().set_seats(kind, seats)
+
+    async def mutate_office_seats(
+        self,
+        kind: OfficeStateKind,
+        mutation: Callable[[SeatRecords], MutationResult],
+    ) -> tuple[OfficeState, MutationResult]:
+        return await self._states().mutate_seats(kind, mutation)
+
+    async def merge_office_seat_patch(
+        self,
+        kind: OfficeStateKind,
+        agent_id: str,
+        patch: Mapping[str, object],
+        *,
+        palette_count: int,
+    ) -> OfficeState:
+        return await self._states().merge_seat_patch(
+            kind, agent_id, patch, palette_count=palette_count
+        )
+
+    async def watch_office_state(
+        self,
+        kind: OfficeStateKind,
+        handler: Callable[[OfficeStateChanged], Awaitable[None]],
+        *,
+        owner: str,
+    ) -> OfficeState:
+        return await self._states().watch(kind, handler, owner=owner)
+
+    def office_seat_repository(self, kind: OfficeStateKind) -> OfficeStateSeatRepository:
+        return OfficeStateSeatRepository(self._states(), kind)
+
     async def _notify_owners_webview_build_failed(self) -> None:
         outcome = self._webview_build_outcome
         if outcome is None or outcome.ok:
@@ -145,10 +220,16 @@ class PixelAgentsBase:
         self._corridor = await ensure_corridor_loaded(self.bot)
         self._corridor.register_dependent("pixelagents")
         log.info("pixelagents: %s", await self._rebuild_webview(force=False))
+        self._office_state = OfficeStateFacade(
+            self._corridor,
+            self.bundled_default_layout,
+            self._style_loader.styles,
+        )
         if self._webview_build_outcome is not None and not self._webview_build_outcome.ok:
             await self._notify_owners_webview_build_failed()
 
     async def cog_unload(self) -> None:
+        self._office_state = None
         if self._corridor is not None:
             self._corridor.unregister_dependent("pixelagents")
 

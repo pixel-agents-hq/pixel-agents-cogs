@@ -19,6 +19,8 @@ from ..application import (
     AgentDirectoryService,
     AgentToolServerRegistry,
     EventBusService,
+    OfficeStateHandler,
+    OfficeStateService,
     PermissionService,
     ReplyContent,
     ReplyService,
@@ -32,6 +34,8 @@ from ..domain import (
     GuildSettings,
     IconPreference,
     LLMSettings,
+    OfficeState,
+    OfficeStateKind,
     PermissionGroupDef,
     RegisteredAgent,
     RegisteredMcpServer,
@@ -44,7 +48,13 @@ from ..domain import (
     ToolVisibilityFilter,
     card_with_url,
 )
-from ..infrastructure import A2AServer, LiteLLMClient, McpClientPool, RedCorridorRepository
+from ..infrastructure import (
+    A2AServer,
+    LiteLLMClient,
+    McpClientPool,
+    RedCorridorRepository,
+    RedOfficeStateRepository,
+)
 from .api import (
     BotIconResolver,
     BotOwnerRegistry,
@@ -80,6 +90,8 @@ class CogBase:
         self._permission_service = PermissionService(BotOwnerRegistry(bot))
         self._reply_service = ReplyService(BotIconResolver(bot))
         self._event_bus = EventBusService()
+        self._office_state_repository = RedOfficeStateRepository.create(self)
+        self._office_states = OfficeStateService(self._office_state_repository, self._event_bus)
         self._tool_registry = ToolRegistryService()
         self._agent_directory = AgentDirectoryService()
         self._a2a_server = A2AServer(logger=log)
@@ -440,6 +452,47 @@ class CogBase:
         does the reverse direction for a dependent cog."""
 
         self._event_bus.unsubscribe_owner(owner)
+
+    # --- Revisioned office state ----------------------------------------------
+
+    async def office_state(self, kind: OfficeStateKind) -> OfficeState | None:
+        return await self._office_states.state(kind)
+
+    async def initialize_office_state(
+        self, kind: OfficeStateKind, layout: dict[str, Any]
+    ) -> OfficeState:
+        return await self._office_states.initialize(kind, layout)
+
+    async def set_office_layout(self, kind: OfficeStateKind, layout: dict[str, Any]) -> OfficeState:
+        return await self._office_states.set_layout(kind, layout)
+
+    async def set_office_seats(
+        self,
+        kind: OfficeStateKind,
+        seats: dict[str, dict[str, Any]],
+    ) -> OfficeState:
+        return await self._office_states.set_seats(kind, seats)
+
+    async def watch_office_state(
+        self,
+        kind: OfficeStateKind,
+        handler: OfficeStateHandler,
+        *,
+        owner: str,
+    ) -> OfficeState | None:
+        return await self._office_states.watch(kind, handler, owner=owner)
+
+    def watch_agent_events(
+        self,
+        subscriptions: Sequence[tuple[type[Any], Callable[[Any], Awaitable[None]]]],
+        *,
+        owner: str,
+    ) -> tuple[RegisteredAgent, ...]:
+        """Subscribe and snapshot the directory in one event-loop turn."""
+
+        for event_type, handler in subscriptions:
+            self._event_bus.subscribe(event_type, handler, owner=owner)
+        return self._agent_directory.list_agents()
 
     @commands.Cog.listener()
     async def on_cog_remove(self, cog: commands.Cog) -> None:

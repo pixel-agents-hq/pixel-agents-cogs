@@ -305,6 +305,10 @@ jobs:
         if: matrix.cog == 'corridor'
         run: python -m contracts.corridor.generate_corridor_contract --check
 
+      - name: Check office_state.yaml is up to date
+        if: matrix.cog == 'corridor'
+        run: python -m contracts.corridor.generate_office_state_contract --check
+
       - name: Check corridor.yaml matches the design doc
         if: matrix.cog == 'corridor'
         run: python -m contracts.corridor.lint_corridor_contract

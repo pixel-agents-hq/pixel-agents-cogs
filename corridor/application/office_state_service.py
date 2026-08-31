@@ -1,0 +1,129 @@
+"""Atomic persistence, watch, and notification for office aggregates."""
+
+from __future__ import annotations
+
+import asyncio
+from collections.abc import Awaitable, Callable
+from copy import deepcopy
+from typing import Protocol
+
+from ..domain import (
+    OfficeState,
+    OfficeStateChanged,
+    OfficeStateKind,
+    RawLayout,
+    SeatRecords,
+    copy_office_state,
+)
+from .event_bus_service import EventBusService
+
+OFFICE_STATE_SUBSCRIBER_TIMEOUT = 5.0
+OfficeStateHandler = Callable[[OfficeStateChanged], Awaitable[None]]
+
+
+class OfficeStateStorage(Protocol):
+    async def state(self, kind: OfficeStateKind) -> OfficeState | None: ...
+    async def save(self, state: OfficeState) -> None: ...
+
+
+class OfficeStateNotInitializedError(RuntimeError):
+    pass
+
+
+class OfficeStateService:
+    """One lock makes subscribe+snapshot and every field write atomic."""
+
+    def __init__(self, storage: OfficeStateStorage, events: EventBusService) -> None:
+        self._storage = storage
+        self._events = events
+        self._lock = asyncio.Lock()
+
+    async def state(self, kind: OfficeStateKind) -> OfficeState | None:
+        async with self._lock:
+            state = await self._storage.state(kind)
+            return copy_office_state(state) if state is not None else None
+
+    async def initialize(self, kind: OfficeStateKind, layout: RawLayout) -> OfficeState:
+        changed: OfficeState | None = None
+        async with self._lock:
+            current = await self._storage.state(kind)
+            if current is None:
+                current = OfficeState(
+                    kind=kind,
+                    layout=deepcopy(layout),
+                    seats={},
+                    revision=1,
+                )
+                await self._storage.save(current)
+                changed = current
+            result = copy_office_state(current)
+        if changed is not None:
+            await self._publish(changed)
+        return result
+
+    async def set_layout(self, kind: OfficeStateKind, layout: RawLayout) -> OfficeState:
+        async with self._lock:
+            current = await self._required(kind)
+            updated = OfficeState(
+                kind=kind,
+                layout=deepcopy(layout),
+                seats=deepcopy(current.seats),
+                revision=current.revision + 1,
+            )
+            await self._storage.save(updated)
+            result = copy_office_state(updated)
+        await self._publish(updated)
+        return result
+
+    async def set_seats(self, kind: OfficeStateKind, seats: SeatRecords) -> OfficeState:
+        async with self._lock:
+            current = await self._required(kind)
+            updated = OfficeState(
+                kind=kind,
+                layout=deepcopy(current.layout),
+                seats=deepcopy(seats),
+                revision=current.revision + 1,
+            )
+            await self._storage.save(updated)
+            result = copy_office_state(updated)
+        await self._publish(updated)
+        return result
+
+    async def watch(
+        self,
+        kind: OfficeStateKind,
+        handler: OfficeStateHandler,
+        *,
+        owner: str,
+    ) -> OfficeState | None:
+        async def filtered(event: OfficeStateChanged) -> None:
+            if event.state.kind == kind:
+                await handler(OfficeStateChanged(state=copy_office_state(event.state)))
+
+        async with self._lock:
+            self._events.subscribe(OfficeStateChanged, filtered, owner=owner)
+            state = await self._storage.state(kind)
+            return copy_office_state(state) if state is not None else None
+
+    async def _required(self, kind: OfficeStateKind) -> OfficeState:
+        state = await self._storage.state(kind)
+        if state is None:
+            raise OfficeStateNotInitializedError(
+                f"{kind.value} office state has not been initialized"
+            )
+        return state
+
+    async def _publish(self, state: OfficeState) -> None:
+        await self._events.publish(
+            OfficeStateChanged(state=copy_office_state(state)),
+            subscriber_timeout=OFFICE_STATE_SUBSCRIBER_TIMEOUT,
+        )
+
+
+__all__ = [
+    "OFFICE_STATE_SUBSCRIBER_TIMEOUT",
+    "OfficeStateHandler",
+    "OfficeStateNotInitializedError",
+    "OfficeStateService",
+    "OfficeStateStorage",
+]

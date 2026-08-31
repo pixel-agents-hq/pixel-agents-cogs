@@ -25,19 +25,26 @@ what changes how you should act.
 
 Packages: `corridor` (shared permissions/reply-rendering/LLM
 connection/A2A listener/MCP client bridging a registered agent-tool server
-into a registered A2A agent's own tool loop — hidden but load-bearing),
-`pixelagents` (vendors + builds the webview; also owns the Semantic IR
-domain model, Pixel Agents JSON codec, color palette, and the shared
-office-layout Config store `architect`/`painter` both read/write —
-see `docs/painter-design.md` part A), `floorplan` (serves it,
-mirrors Discord presence), `toolbox` (host Node.js install + LLM tool
-toggle panel), `pico` (LLM Discord presence, sole A2A coordinator),
-`architect` (second LLM agent, A2A-only, owns every structural layout
-mutation), `painter` (third LLM agent, A2A-only, owns every color
-mutation on the same shared layout — never structural), `suggestionbox`
-(MCP feedback server: report_error/suggest_improvement, per-agent gated),
-`testbench` (owner-only bus-event publisher for testing), `deskutils`
-(small utilities), `contracts` (CI-only, not a runtime cog).
+into a registered A2A agent's own tool loop/two opaque, revisioned
+`OfficeState` aggregates (`kind="discord"`/`"editor"`) with atomic
+watch-and-snapshot and an `OfficeStateChanged` event — hidden but
+load-bearing), `pixelagents` (vendors + builds the webview; also owns the
+Semantic IR domain model, Pixel Agents JSON codec, color palette, and the
+`OfficeStateFacade` — the one validated choke point every consumer
+reads/writes office layout/seats through, see `docs/cctv-design.md`),
+`floorplan` (mid-refactor: Pixel Index browsing/catalogue loading;
+dashboard/WebSocket hosting is moving to `cctv`, see `docs/cctv-design.md`),
+`cctv` (the only dashboard-hosting cog: one aiohttp listener, two
+independent Pixel Agents pages — a live Discord-presence view and an open
+structural/color editor view — over Red Dashboard), `toolbox` (host
+Node.js install + LLM tool toggle panel), `pico` (LLM Discord presence,
+sole A2A coordinator), `architect` (second LLM agent, A2A-only, owns
+every structural layout mutation), `painter` (third LLM agent, A2A-only,
+owns every color mutation on the same shared layout — never structural),
+`suggestionbox` (MCP feedback server: report_error/suggest_improvement,
+per-agent gated), `testbench` (owner-only bus-event publisher for
+testing), `deskutils` (small utilities), `contracts` (CI-only, not a
+runtime cog).
 
 ## Commands
 
@@ -61,11 +68,12 @@ python -m pytest -q painter/
 python -m pytest -q suggestionbox/
 python -m pytest -q testbench/
 python -m pytest -q deskutils/
+python -m pytest -q cctv/tests
 
 # lint/format/types run fine across all cogs at once:
-python -m ruff format --check corridor floorplan pixelagents toolbox pico architect painter suggestionbox testbench deskutils
-python -m ruff check corridor floorplan pixelagents toolbox pico architect painter suggestionbox testbench deskutils
-python -m mypy corridor floorplan pixelagents toolbox pico architect painter suggestionbox testbench deskutils
+python -m ruff format --check corridor floorplan pixelagents toolbox pico architect painter suggestionbox testbench deskutils cctv
+python -m ruff check corridor floorplan pixelagents toolbox pico architect painter suggestionbox testbench deskutils cctv
+python -m mypy corridor floorplan pixelagents toolbox pico architect painter suggestionbox testbench deskutils cctv
 
 # CI-only contract/lint checks:
 python -m unittest discover -s contracts/tests

@@ -11,7 +11,8 @@ together in one place.
 |---|---|---|
 | [`corridor`](../corridor) | Shared per-guild permissions, reply-style formatting, the one LLM connection pico and architect both read (`[p]corridor llm ...`), and the one shared A2A listener every registered agent is mounted on (`[p]corridor a2a ...`). Every other cog depends on it instead of reinventing any of that. | [corridor/README.md](../corridor/README.md) |
 | [`pixelagents`](../pixelagents) | Vendors and builds the Pixel Agents webview (clone + `npm`/`vite`) for other cogs to serve. No runtime/Discord surface of its own, but does own the Semantic IR domain model, Pixel Agents JSON codec, color palette, and the one Config-backed store for the office layout `architect` and `painter` share (`docs/painter-design.md` part A) — a deliberate exception to "owns nothing runtime-facing," not an oversight. | [pixelagents/README.md](../pixelagents/README.md) |
-| [`floorplan`](../floorplan) | Serves the built webview as a Red Dashboard page, mirrors Discord presence into it, and browses the Pixel Index layout catalogue. | [floorplan/README.md](../floorplan/README.md) |
+| [`floorplan`](../floorplan) | Serves the built webview as a Red Dashboard page, mirrors Discord presence into it, and browses the Pixel Index layout catalogue. **Mid-refactor:** `cctv` (below) is taking over the dashboard/WebSocket half of this; see `docs/cctv-design.md`. | [floorplan/README.md](../floorplan/README.md) |
+| [`cctv`](../cctv) | The only dashboard-hosting cog: one aiohttp listener serving two independent Pixel Agents pages over Red Dashboard — a live Discord-presence view (`/third-party/cctv/discord`, ticket-gated editing) and an open structural/color editor view (`/third-party/cctv/editor`, no auth at all) — backed by corridor's `OfficeState` store via pixelagents' facade. Loading it is the only way either page exists; `floorplan`/`architect`/`painter` keep working (presence sync, LLM tool-driven layout mutation) with zero dashboard code of their own. See `docs/cctv-design.md`. | [cctv/README.md](../cctv/README.md) |
 | [`toolbox`](../toolbox) | Bot-owner Node.js/npm installation on the host, plus a Components v2 panel (`[p]toolbox tools`) for turning any `[p]help`-listed command into an LLM tool corridor's registry offers to pico. | [toolbox/README.md](../toolbox/README.md) |
 | [`pico`](../pico) | An LLM-backed Discord presence: decides whether to react to a message, then acts only via a bounded tool-calling loop (never a raw LLM text send). The sole A2A coordinator -- delegates a sub-task to whichever agents (`architect`, or any future one) are currently registered in corridor's agent directory, via one `consult_<agent_key>` tool per entry. | [pico/README.md](../pico/README.md) |
 | [`architect`](../architect) | A second, independent LLM agent -- never Discord-user-facing -- reachable only over the [A2A protocol](https://a2a-protocol.org/) on corridor's own shared listener (`docs/agent-directory-design.md`). Shares corridor's LLM connection with pico. Serves pixelagents' built webview bundle under its own Dashboard route (`/third-party/architect`), and edits that layout through a Semantic IR (`docs/architect-semantic-ir-design.md`) via LLM tools and `[p]architect office ...` commands. | [architect/README.md](../architect/README.md) |
@@ -98,10 +99,11 @@ python -m pytest -q painter/
 python -m pytest -q suggestionbox/
 python -m pytest -q testbench/
 python -m pytest -q deskutils/
+python -m pytest -q cctv/tests
 
-python -m ruff format --check corridor floorplan pixelagents toolbox pico architect painter suggestionbox testbench deskutils
-python -m ruff check corridor floorplan pixelagents toolbox pico architect painter suggestionbox testbench deskutils
-python -m mypy corridor floorplan pixelagents toolbox pico architect painter suggestionbox testbench deskutils
+python -m ruff format --check corridor floorplan pixelagents toolbox pico architect painter suggestionbox testbench deskutils cctv
+python -m ruff check corridor floorplan pixelagents toolbox pico architect painter suggestionbox testbench deskutils cctv
+python -m mypy corridor floorplan pixelagents toolbox pico architect painter suggestionbox testbench deskutils cctv
 python -m unittest discover -s contracts/tests
 python -m contracts.discord_replies.lint_reply_channel
 ```

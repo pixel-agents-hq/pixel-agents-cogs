@@ -44,6 +44,7 @@ files = [
     "architect",
     "suggestionbox",
     "painter",
+    "cctv",
 ]
 exclude = [
     "^pixelagents/conftest\\.py$",
@@ -67,6 +68,8 @@ exclude = [
     "^suggestionbox/tests/",
     "^painter/conftest\\.py$",
     "^painter/tests/",
+    "^cctv/conftest\\.py$",
+    "^cctv/tests/",
 ]
 
 [[tool.mypy.overrides]]
@@ -255,4 +258,26 @@ disable_error_code = ["arg-type", "no-any-return", "untyped-decorator"]
 # above: `commands.Cog` resolves to Any without Red's real Cog metaclass
 # installed.
 module = ["painter.painter"]
+disable_error_code = ["misc"]
+
+[[tool.mypy.overrides]]
+# Same gap as architect.adapters.commands above, mirrored for cctv: Red is
+# absent from the lightweight CI type environment, so its decorators and
+# untyped Context leak Any.
+module = ["cctv.adapters.commands"]
+disable_error_code = ["arg-type", "no-any-return", "untyped-decorator"]
+
+[[tool.mypy.overrides]]
+# Same gap as floorplan.adapters.dashboard / architect.adapters.dashboard
+# above, mirrored for cctv: Red is absent from the lightweight CI type
+# environment, so @commands.Cog.listener() (on_dashboard_cog_add) is
+# dynamically typed.
+module = ["cctv.adapters.dashboard"]
+disable_error_code = ["untyped-decorator"]
+
+[[tool.mypy.overrides]]
+# Same as toolbox.toolbox / corridor.corridor / pico.pico / architect.architect
+# above: `commands.Cog` resolves to Any without Red's real Cog metaclass
+# installed.
+module = ["cctv.cctv"]
 disable_error_code = ["misc"]

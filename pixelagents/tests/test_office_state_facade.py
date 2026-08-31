@@ -194,8 +194,8 @@ class TestSeatShapeParityAcrossBothKinds(unittest.IsolatedAsyncioTestCase):
         facade = OfficeStateFacade(FakeOfficeStateBackend(), default_layout=lambda: None)
         patch = {"palette": 2, "hueShift": 90, "seatId": "desk-1"}
 
-        discord_state = await facade.mutate_seats("discord", "-1", patch)
-        editor_state = await facade.mutate_seats("editor", "-1", patch)
+        discord_state = await facade.apply_seat_patch("discord", "-1", patch)
+        editor_state = await facade.apply_seat_patch("editor", "-1", patch)
 
         self.assertEqual(discord_state.seats, editor_state.seats)
         self.assertEqual(
@@ -206,11 +206,25 @@ class TestSeatShapeParityAcrossBothKinds(unittest.IsolatedAsyncioTestCase):
         facade = OfficeStateFacade(FakeOfficeStateBackend(), default_layout=lambda: None)
         patch = {"palette": 999}
 
-        discord_state = await facade.mutate_seats("discord", "-1", patch, palette_count=6)
-        editor_state = await facade.mutate_seats("editor", "-1", patch, palette_count=6)
+        discord_state = await facade.apply_seat_patch("discord", "-1", patch, palette_count=6)
+        editor_state = await facade.apply_seat_patch("editor", "-1", patch, palette_count=6)
 
         self.assertEqual(discord_state.seats["-1"], {})
         self.assertEqual(editor_state.seats["-1"], {})
+
+    async def test_seat_repository_satisfies_officeservices_protocol(self) -> None:
+        facade = OfficeStateFacade(FakeOfficeStateBackend(), default_layout=lambda: None)
+        repository = facade.seat_repository("editor")
+
+        def mutation(seats: dict) -> str:
+            seats["-1"] = {"palette": 3}
+            return "done"
+
+        result = await repository.mutate_seats(mutation)
+        seats = await repository.seats()
+
+        self.assertEqual(result, "done")
+        self.assertEqual(seats, {"-1": {"palette": 3}})
 
 
 if __name__ == "__main__":

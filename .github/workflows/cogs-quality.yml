@@ -15,11 +15,14 @@ on:
       - "architect/**/*.py"
       - "suggestionbox/**/*.py"
       - "painter/**/*.py"
+      - "cctv/**/*.py"
       - "contracts/pixel_index/**"
       - "contracts/pixel_agents/**"
       - "contracts/corridor/**"
       - "corridor/corridor.yaml"
+      - "corridor/office_state.yaml"
       - "docs/corridor-pubsub-design.md"
+      - "docs/cctv-design.md"
       - "pyproject.toml"
       - ".github/workflows/cogs-quality.yml"
   pull_request:
@@ -36,11 +39,14 @@ on:
       - "architect/**/*.py"
       - "suggestionbox/**/*.py"
       - "painter/**/*.py"
+      - "cctv/**/*.py"
       - "contracts/pixel_index/**"
       - "contracts/pixel_agents/**"
       - "contracts/corridor/**"
       - "corridor/corridor.yaml"
+      - "corridor/office_state.yaml"
       - "docs/corridor-pubsub-design.md"
+      - "docs/cctv-design.md"
       - "pyproject.toml"
       - ".github/workflows/cogs-quality.yml"
 
@@ -211,6 +217,16 @@ jobs:
             mypy_target: "painter"
             extra_deps: "aiohttp 'pydantic>=2.11.3,<2.12' httpx 'a2a-sdk[http-server]' uvicorn 'mcp>=1.29,<2' 'typing-inspection<0.4.3'"
             pixel_index_contracts: false
+          # cctv only talks to corridor (its own office-state API, no A2A of
+          # its own) and pixelagents (webview build status + the office-state
+          # facade) -- aiohttp for its own Dashboard/WebSocket listener, no
+          # pydantic/a2a-sdk needed at all (docs/cctv-design.md).
+          - cog: cctv
+            test_target: "cctv/tests"
+            lint_target: "cctv"
+            mypy_target: "cctv"
+            extra_deps: "aiohttp"
+            pixel_index_contracts: false
 
     steps:
       - name: Checkout
@@ -308,6 +324,14 @@ jobs:
       - name: Check corridor.yaml matches the design doc
         if: matrix.cog == 'corridor'
         run: python -m contracts.corridor.lint_corridor_contract
+
+      - name: Check office_state.yaml is up to date
+        if: matrix.cog == 'corridor'
+        run: python -m contracts.corridor.generate_office_contract --check
+
+      - name: Check office_state.yaml matches the design doc
+        if: matrix.cog == 'corridor'
+        run: python -m contracts.corridor.lint_office_contract
 
       - name: Test corridor contract tooling
         if: matrix.cog == 'corridor'

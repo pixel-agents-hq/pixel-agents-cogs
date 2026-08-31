@@ -1,7 +1,7 @@
 # Cross-cog architecture
 
-This doc is the one place that shows how this repo's eleven packages —
-[`architect`](../architect), [`corridor`](../corridor),
+This doc is the one place that shows how this repo's twelve packages —
+[`architect`](../architect), [`cctv`](../cctv), [`corridor`](../corridor),
 [`deskutils`](../deskutils), [`floorplan`](../floorplan),
 [`painter`](../painter), [`pico`](../pico),
 [`pixelagents`](../pixelagents), [`suggestionbox`](../suggestionbox),
@@ -11,6 +11,14 @@ not replace any package's own `Architecture.md` (linked throughout below);
 those cover one package's internal layers in depth. This doc's only job is
 the picture across packages: who depends on whom to load, who owns what,
 and how a request actually crosses package boundaries at runtime.
+
+**Mid-refactor note:** `cctv` (docs/cctv-design.md) is taking over
+dashboard/WebSocket hosting from `floorplan` and `architect`. This doc's
+§2/§3 below still describe `floorplan`'s/`architect`'s own dashboards as
+the current reality because, as of this revision, both still run in
+parallel with `cctv`'s new pages during the transition — see
+`docs/cctv-design.md` for the target end state and §1's dependency graph
+below for `cctv`'s own edges, added ahead of that full rewrite.
 
 If you're new to this repo, read [`docs/AGENTS.md`](AGENTS.md) first for
 the one-paragraph purpose of each package, then come back here for the
@@ -27,17 +35,19 @@ picture — see [`docs/dependency-loading.md`](dependency-loading.md) for
 ```mermaid
 flowchart BT
     architect["architect<br/><small>second LLM agent, A2A-reachable<br/>via corridor's shared listener</small>"]
-    corridor["corridor<br/><small>permissions + reply style<br/>+ PubSub event bus<br/>+ cross-cog tool registry<br/>+ shared LLM connection<br/>+ shared A2A listener/directory</small><br/><small>hidden COG</small>"]
+    cctv["cctv<br/><small>NEW -- the only dashboard-hosting cog<br/>two pages: Discord presence + editor</small>"]
+    corridor["corridor<br/><small>permissions + reply style<br/>+ PubSub event bus<br/>+ cross-cog tool registry<br/>+ shared LLM connection<br/>+ shared A2A listener/directory<br/>+ OfficeState store + OfficeStateChanged</small><br/><small>hidden COG</small>"]
     deskutils["deskutils<br/><small>current-time utility command<br/>+ LLM tool registration</small>"]
-    floorplan["floorplan<br/><small>serves the office + presence</small>"]
+    floorplan["floorplan<br/><small>serves the office + presence<br/>(mid-refactor, see docs/cctv-design.md)</small>"]
     painter["painter<br/><small>third LLM agent, A2A-reachable<br/>via corridor's shared listener<br/>-- color-only, never structural</small>"]
     pico["pico<br/><small>LLM-backed presence,<br/>sole A2A coordinator</small>"]
-    pixelagents["pixelagents<br/><small>vendors + builds the webview<br/>+ shared office-layout IR/store</small>"]
+    pixelagents["pixelagents<br/><small>vendors + builds the webview<br/>+ Semantic IR + OfficeStateFacade</small>"]
     suggestionbox["suggestionbox<br/><small>MCP feedback server<br/>(report_error/suggest_improvement)</small>"]
     testbench["testbench<br/><small>owner-only: manually publishes<br/>corridor bus events</small>"]
     toolbox["toolbox<br/><small>Node.js/npm on the host<br/>+ LLM tool toggle panel</small>"]
 
     architect -->|required_cogs| corridor
+    cctv -->|required_cogs| corridor
     deskutils -->|required_cogs| corridor
     floorplan -->|required_cogs| corridor
     painter -->|required_cogs| corridor
@@ -49,6 +59,7 @@ flowchart BT
     floorplan -->|required_cogs| pixelagents
     architect -->|required_cogs| pixelagents
     painter -->|required_cogs| pixelagents
+    cctv -->|required_cogs| pixelagents
     architect -.->|"register_agent()<br/>(in-process, via corridor)"| corridor
     painter -.->|"register_agent()<br/>(in-process, via corridor)"| corridor
     pico -.->|"A2A over HTTP, one shared port<br/>(networked, not required_cogs)"| corridor

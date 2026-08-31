@@ -1,0 +1,24 @@
+{
+    "$schema": "https://raw.githubusercontent.com/Cog-Creators/Red-DiscordBot/V3/develop/schema/red_cog.schema.json",
+    "name": "cctv",
+    "short": "Host the unified Pixel Agents dashboard",
+    "description": "The only dashboard-hosting cog: one aiohttp listener serving two independent Pixel Agents pages (a live Discord-presence view and an open structural/color editor view) over Red Dashboard, backed by corridor's office-state store.",
+    "end_user_data_statement": "This cog transmits Discord user IDs, guild IDs, display names, presence status, and short message activity snippets to browsers connected to its dashboard pages. It stores no data of its own -- office layout/seat state lives in corridor.",
+    "install_msg": "Requires corridor and pixelagents (both auto-loaded). Configure the listener and Discord-page settings via [p]cctv.",
+    "author": ["Pixel Agents HQ Contributors"],
+    "required_cogs": {
+        "corridor": "https://github.com/pixel-agents-hq/pixel-agents-cogs",
+        "pixelagents": "https://github.com/pixel-agents-hq/pixel-agents-cogs"
+    },
+    "requirements": ["aiohttp"],
+    "tags": [
+        "cctv",
+        "dashboard",
+        "office"
+    ],
+    "min_bot_version": "3.5.24",
+    "min_python_version": [3, 11, 0],
+    "hidden": false,
+    "disabled": false,
+    "type": "COG"
+}

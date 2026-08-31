@@ -21,7 +21,7 @@ from corridor.domain import OfficeState, OfficeStateChanged, OfficeStateKind
 from ..domain.office_ir import Office
 from ..infrastructure.furniture_styles import FurnitureStyleManifest
 from ..infrastructure.pixel_agents_adapter import decode, encode
-from .office import DEFAULT_PALETTE_COUNT, SeatRecords, merge_seat_patch
+from .office import DEFAULT_PALETTE_COUNT, SeatRecords, SeatRepository, merge_seat_patch
 
 log = logging.getLogger("red.d_cogs.pixelagents")
 
@@ -142,15 +142,24 @@ class OfficeStateFacade:
         self._backend.unwatch_office_state_owner(owner)
 
     async def _ensure_seeded(self, kind: OfficeStateKind, state: OfficeState) -> OfficeState:
-        """A blank aggregate (revision 0, empty layout) hasn't been given
-        the real bundled default yet -- corridor's own repository stays
-        schema-neutral by design (docs/cctv-design.md's lazy-init split),
-        so this is the one place that recognizes "still blank" and seeds
-        it. Two callers racing this concurrently both write the same
-        bundled content -- harmless, the same last-write-wins tone every
-        other office-state write already accepts."""
+        """An aggregate with no `layout` yet hasn't been given the real
+        bundled default -- corridor's own repository stays schema-neutral
+        by design (docs/cctv-design.md's lazy-init split), so this is the
+        one place that recognizes "still unseeded" and seeds it. Checked
+        on `layout` alone, never `revision`: a seat-only mutation (e.g.
+        reconciling a genuine agent's avatar during presence bootstrap)
+        already bumps `revision` off zero on its own, with `layout` still
+        empty -- a revision-based check would wrongly treat that as
+        "already seeded" and never actually seed the layout at all (a
+        real bug caught by cctv's own live WebSocket tests: the editor
+        aggregate's `revision` reached 1 from
+        `EventSubscriptionsEditorMixin`'s own-bot-account seat
+        reconciliation before any layout read ever ran). Two callers
+        racing this concurrently both write the same bundled content --
+        harmless, the same last-write-wins tone every other office-state
+        write already accepts."""
 
-        if state.revision != 0 or state.layout:
+        if state.layout:
             return state
         default = self._default_layout()
         if default is None:
@@ -181,6 +190,20 @@ class OfficeStateFacade:
     # --- avatar seats: shared, byte-identical shape for both kinds -------
 
     async def mutate_seats(
+        self, kind: OfficeStateKind, mutation: Callable[[SeatRecords], MutationResult]
+    ) -> MutationResult:
+        """Raw read-modify-write passthrough over `kind`'s `seats`,
+        matching `pixelagents.application.office.SeatRepository`'s own
+        `mutate_seats` shape exactly -- this is what lets
+        `seat_repository(kind)` satisfy that Protocol for `OfficeService`
+        (`assign_palette` and friends need arbitrary mutations, not just
+        one agent's patch). Prefer `apply_seat_patch` for the common "one
+        agent's palette/hue/seat patch" case."""
+
+        _, result = await self._backend.mutate_office_seats(kind, mutation)
+        return result
+
+    async def apply_seat_patch(
         self,
         kind: OfficeStateKind,
         agent_id: str,
@@ -192,13 +215,45 @@ class OfficeStateFacade:
         same `merge_seat_patch` validation/shape floorplan's own seat
         writes already used, now shared by both aggregates so an editor-
         page avatar assignment round-trips identically to a Discord-page
-        one (docs/cctv-design.md's "same wire-shaped record" requirement)."""
+        one (docs/cctv-design.md's "same wire-shaped record" requirement).
+        The convenience most callers (a `saveAgentSeats` WS message) want;
+        `mutate_seats` is the lower-level primitive this is built on."""
 
         def apply(seats: SeatRecords) -> None:
             merge_seat_patch(seats, agent_id, palette_count, patch)
 
         updated, _ = await self._backend.mutate_office_seats(kind, apply)
         return updated
+
+    def seat_repository(self, kind: OfficeStateKind) -> SeatRepository:
+        """A `pixelagents.application.office.SeatRepository` bound to one
+        aggregate kind -- what `OfficeService` is constructed with for
+        each of cctv's two pipelines, in place of a Config-backed
+        repository or the old `NullSeatRepository`. Every read/write it
+        makes still goes through this facade (and therefore corridor),
+        never a private store of its own."""
+
+        return _KindScopedSeatRepository(self, kind)
+
+
+class _KindScopedSeatRepository:
+    """Binds one `OfficeStateKind` to the plain `seats()`/`mutate_seats()`
+    shape `pixelagents.application.office.SeatRepository` (and therefore
+    `OfficeService`) expects, without exposing `layout`/`revision` or a
+    `kind` parameter to that generic caller."""
+
+    def __init__(self, facade: OfficeStateFacade, kind: OfficeStateKind) -> None:
+        self._facade = facade
+        self._kind = kind
+
+    async def seats(self) -> SeatRecords:
+        state = await self._facade.read(self._kind)
+        return dict(state.seats)
+
+    async def mutate_seats(
+        self, mutation: Callable[[SeatRecords], MutationResult]
+    ) -> MutationResult:
+        return await self._facade.mutate_seats(self._kind, mutation)
 
 
 __all__ = [

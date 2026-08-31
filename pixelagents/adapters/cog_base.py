@@ -18,6 +18,7 @@ from typing import Any, cast
 from redbot.core import commands, data_manager
 from redbot.core.bot import Red
 
+from ..application.office_state import OfficeStateFacade
 from ..dependency_loader import ensure_corridor_loaded
 from ..infrastructure.settings import RedSettingsRepository
 from ..infrastructure.webview_build import (
@@ -25,6 +26,7 @@ from ..infrastructure.webview_build import (
     build_webview,
     built_base_path,
     built_commit,
+    bundled_default_layout,
     owner_notification_for,
 )
 
@@ -68,6 +70,9 @@ class PixelAgentsBase:
         # time cog_load runs. See infrastructure/webview_build.py.
         self._cog_data_dir: Path = data_manager.cog_data_path(self)
         self._webview_build_outcome: BuildOutcome | None = None
+        # Constructed once cog_load() resolves corridor -- see
+        # office_state()'s own docstring.
+        self._office_state_facade: OfficeStateFacade | None = None
 
     def _webview_dist_path(self) -> Path:
         return self._cog_data_dir / "webview_dist"
@@ -129,6 +134,21 @@ class PixelAgentsBase:
         except (OSError, ValueError):
             return None
 
+    def office_state(self) -> OfficeStateFacade:
+        """Public, cross-cog surface: the one validated office-state
+        facade every consumer (cctv, floorplan, architect, painter)
+        reaches through `bot.get_cog("PixelAgents").office_state()` --
+        docs/cctv-design.md §2.6, "no consumer bypasses this facade for
+        office-state writes." Mirrors `webview_bundle_status()`/
+        `furniture_style_manifest()`'s own "read whatever's current"
+        cross-cog contract. Constructed once `cog_load()` resolves
+        corridor; calling this before a successful `cog_load()` is a
+        programming error, not a runtime condition callers should handle.
+        """
+
+        assert self._office_state_facade is not None, "office_state() called before cog_load()"
+        return self._office_state_facade
+
     async def _notify_owners_webview_build_failed(self) -> None:
         outcome = self._webview_build_outcome
         if outcome is None or outcome.ok:
@@ -144,6 +164,11 @@ class PixelAgentsBase:
     async def cog_load(self) -> None:
         self._corridor = await ensure_corridor_loaded(self.bot)
         self._corridor.register_dependent("pixelagents")
+        self._office_state_facade = OfficeStateFacade(
+            self._corridor,
+            default_layout=lambda: bundled_default_layout(self._webview_dist_path()),
+            logger=log,
+        )
         log.info("pixelagents: %s", await self._rebuild_webview(force=False))
         if self._webview_build_outcome is not None and not self._webview_build_outcome.ok:
             await self._notify_owners_webview_build_failed()

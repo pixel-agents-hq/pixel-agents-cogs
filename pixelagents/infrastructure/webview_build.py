@@ -212,6 +212,37 @@ def built_manifest_version(webview_dist: Path) -> int | None:
         return None
 
 
+def bundled_default_layout(webview_dist: Path) -> dict[str, object] | None:
+    """The bundle's own default layout, selected by `assets/asset-index.json`'s
+    `defaultLayout` pointer -- `None` on any missing/malformed step
+    (no bundle built yet, no index, no pointer, no file, malformed JSON).
+
+    Ported from floorplan's/architect's former per-cog
+    `WebviewAssetProvider.default_layout()` (now retired along with the
+    rest of that class, see docs/cctv-design.md) -- this is the one place
+    the bundled default is read from, since `OfficeStateFacade`
+    (`pixelagents/application/office_state.py`) is now the only thing
+    that seeds a blank office-state aggregate with it.
+    """
+
+    index_path = webview_dist / "assets" / "asset-index.json"
+    try:
+        index = json.loads(index_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(index, dict):
+        return None
+    name = index.get("defaultLayout")
+    if not isinstance(name, str) or not name:
+        return None
+    layout_path = webview_dist / "assets" / name
+    try:
+        layout = json.loads(layout_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return None
+    return layout if isinstance(layout, dict) else None
+
+
 def _read_marker(marker: Path) -> str | None:
     try:
         return marker.read_text(encoding="utf-8").strip() or None

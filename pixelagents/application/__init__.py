@@ -11,6 +11,13 @@ from .office import (
     merge_seat_patch,
     to_agent_id,
 )
+from .office_state import (
+    InvalidDiscordLayoutError,
+    OfficeLayoutNotSeededError,
+    OfficeStateBackend,
+    OfficeStateFacade,
+    validate_discord_layout,
+)
 from .presence import PresenceService
 
 __all__ = [
@@ -18,10 +25,15 @@ __all__ = [
     "JS_MAX_SAFE",
     "READING_TOOLS",
     "SUBAGENT_TOOL_NAMES",
+    "InvalidDiscordLayoutError",
+    "OfficeLayoutNotSeededError",
     "OfficeService",
+    "OfficeStateBackend",
+    "OfficeStateFacade",
     "PresenceService",
     "SeatRecords",
     "SeatRepository",
     "merge_seat_patch",
     "to_agent_id",
+    "validate_discord_layout",
 ]

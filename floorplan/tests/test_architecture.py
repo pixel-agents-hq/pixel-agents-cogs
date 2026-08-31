@@ -1,6 +1,6 @@
-"""Architecture constraints for the Floorplan Cog (the runtime half of the
-pre-issue-#21 combined pixelagents Cog -- see pixelagents/tests/test_architecture.py
-for the vendor+build half's own, much smaller boundary set)."""
+"""Architecture constraints for the Floorplan Cog -- now Pixel Index
+browsing/catalogue loading only; dashboard/WebSocket hosting and Discord
+presence mirroring moved to `cctv` (docs/cctv-design.md)."""
 
 from __future__ import annotations
 
@@ -17,9 +17,6 @@ COMPOSED_ADAPTERS = (
     "admin_commands.py",
     "catalogue_commands.py",
     "cog_base.py",
-    "dashboard.py",
-    "discord_gateway.py",
-    "office_gateway.py",
     "replies.py",
 )
 
@@ -52,11 +49,15 @@ def test_framework_resources_have_one_owner() -> None:
     session_factories = [
         path for path, source in sources.items() if "aiohttp.ClientSession" in source
     ]
+    # No asyncio.create_task factory anywhere in floorplan anymore --
+    # TaskSupervisor (and everything that scheduled background tasks
+    # through it) moved to cctv along with the WebSocket surface it
+    # supported.
     task_factories = [path for path, source in sources.items() if "asyncio.create_task(" in source]
 
     assert config_factories == [PACKAGE_ROOT / "infrastructure" / "settings.py"]
     assert session_factories == [PACKAGE_ROOT / "infrastructure" / "pixel_index.py"]
-    assert task_factories == [PACKAGE_ROOT / "application" / "tasks.py"]
+    assert task_factories == []
 
 
 def test_cog_class_is_the_sole_public_export() -> None:
@@ -67,8 +68,13 @@ def test_cog_class_is_the_sole_public_export() -> None:
     assert issubclass(Floorplan, commands.Cog)
 
 
-def test_discord_cogmeta_reverse_mro_scan_finds_each_listener_once() -> None:
-    """Mirror discord.py 2.7 CogMeta's reversed-MRO listener discovery."""
+def test_discord_cogmeta_reverse_mro_scan_finds_no_listeners() -> None:
+    """Mirror discord.py 2.7 CogMeta's reversed-MRO listener discovery.
+
+    floorplan no longer defines any `@commands.Cog.listener()` at all --
+    `on_dashboard_cog_add` moved to `cctv` along with the Dashboard route
+    registration it served; presence gateway listeners already lived in
+    corridor, not floorplan, before this refactor."""
 
     discovered: dict[str, object] = {}
     for base in reversed(Floorplan.__mro__):
@@ -82,24 +88,13 @@ def test_discord_cogmeta_reverse_mro_scan_finds_each_listener_once() -> None:
         for value in discovered.values()
         for listener_name in value.__cog_listener_names__
     ]
-    # on_member_join/on_member_remove/on_member_update/on_message/
-    # on_presence_update moved to corridor's own DiscordGatewayMixin --
-    # floorplan is a pure subscriber now, see docs/corridor-pubsub-design.md.
-    expected = {"on_dashboard_cog_add"}
-    assert set(listener_names) == expected
+    assert listener_names == []
     assert all(count == 1 for count in Counter(listener_names).values())
 
 
-def test_command_root_and_dashboard_routes_are_inherited_once() -> None:
+def test_command_root_is_inherited_once() -> None:
     root_owners = [base for base in Floorplan.__mro__ if "floorplan_group" in base.__dict__]
     assert len(root_owners) == 1
-
-    dashboard_names = {"dashboard_webview", "dashboard_session", "dashboard_static"}
-    for name in dashboard_names:
-        owners = [base for base in Floorplan.__mro__ if name in base.__dict__]
-        assert len(owners) == 1
-        method = getattr(Floorplan, name)
-        assert hasattr(method, "__dashboard_decorator_params__")
 
 
 def test_production_config_access_does_not_bypass_repository() -> None:

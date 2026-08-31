@@ -83,15 +83,22 @@ class CatalogueRepository(Protocol):
 
     async def pixel_index_web_url(self) -> str: ...
 
-    async def set_layout(self, layout: RawOfficeLayout | None) -> None: ...
-
 
 CanEditLayout = Callable[[int], Awaitable[bool]]
-PublishLayout = Callable[[RawOfficeLayout], Awaitable[None]]
+SetLayout = Callable[[RawOfficeLayout], Awaitable[None]]
 
 
 class CatalogueService:
-    """Coordinate catalogue browsing and loading without Discord or HTTP details."""
+    """Coordinate catalogue browsing and loading without Discord or HTTP details.
+
+    `set_layout` persists (and, transitively, live-broadcasts) the loaded
+    layout -- a plain callable, not a repository method, since the
+    catalogue's own repository no longer owns layout storage at all (see
+    docs/cctv-design.md: layout lives in corridor, reached through
+    pixelagents' `OfficeStateFacade`). There is no separate publish step
+    anymore either -- corridor's own `OfficeStateChanged` publish on that
+    write is what reaches any connected `cctv` dashboard page live.
+    """
 
     def __init__(
         self,
@@ -99,12 +106,12 @@ class CatalogueService:
         gateway: PixelIndexGateway,
         *,
         can_edit_layout: CanEditLayout,
-        publish_layout: PublishLayout,
+        set_layout: SetLayout,
     ) -> None:
         self._repository = repository
         self._gateway = gateway
         self._can_edit_layout = can_edit_layout
-        self._publish_layout = publish_layout
+        self._set_layout = set_layout
 
     async def bases(self) -> CatalogueBases:
         return CatalogueBases(
@@ -173,8 +180,7 @@ class CatalogueService:
                 )
             )
 
-        await self._repository.set_layout(layout)
-        await self._publish_layout(layout)
+        await self._set_layout(layout)
         return CatalogueResult(value=f"Loaded `{detail.title or slug}` into the office.")
 
 

@@ -225,7 +225,10 @@ jobs:
             test_target: "cctv/tests"
             lint_target: "cctv"
             mypy_target: "cctv"
-            extra_deps: "aiohttp"
+            # pyyaml/jsonschema: contracts/pixel_agents/tests' own needs
+            # (verify_outbound.py), run on this leg -- see that step's
+            # own comment below.
+            extra_deps: "aiohttp 'pyyaml>=6.0' 'jsonschema>=4.20'"
             pixel_index_contracts: false
 
     steps:
@@ -293,14 +296,16 @@ jobs:
         run: python -m unittest discover -s contracts/pixel_index/tests
 
       - name: Test Pixel Agents contract reporting
-        # Exercises pixelagents' build pipeline *and* floorplan's
+        # Exercises pixelagents' build pipeline *and* cctv's
         # WebviewAssetProvider consuming it (see contracts/pixel_agents/verify.py)
-        # -- needs floorplan's deps (pydantic, via this leg's Pixel Index
-        # contract install above), so it runs on the floorplan leg rather
-        # than pixelagents'. This discover also picks up
+        # -- moved here from floorplan's leg once cctv became the only
+        # dashboard-hosting cog (docs/cctv-design.md); needs pyyaml/jsonschema
+        # (verify_outbound.py), added to this leg's extra_deps below, not
+        # pydantic -- cctv's own WebviewAssetProvider has no pydantic
+        # dependency at all. This discover also picks up
         # test_generate_consumer_contract.py/test_lint_outbound_contract.py
-        # (below) automatically -- no separate step needed for those here.
-        if: matrix.cog == 'floorplan'
+        # automatically -- no separate step needed for those here.
+        if: matrix.cog == 'cctv'
         run: python -m unittest discover -s contracts/pixel_agents/tests
 
       - name: Check pixel-agents-consumer-contract.yaml is up to date

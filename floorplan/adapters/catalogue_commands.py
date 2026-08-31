@@ -11,8 +11,6 @@ from redbot.core import commands
 from corridor.domain import EMPLOYEE_KEY, llm_tool
 
 from ..application import LAYOUT_SORT_CHOICES, CatalogueResult
-from ..contracts.layout import RawOfficeLayout
-from ..contracts.outbound import layout_loaded
 from ..domain import normalize_http_url
 from .admin_commands import AdminCommandsMixin
 from .cog_base import PixelAgentsBase
@@ -44,12 +42,13 @@ class CatalogueCommandsMixin(PixelAgentsBase):
             return
         if ctx.interaction:
             await ctx.interaction.response.defer(ephemeral=True)
-        settings = await self._settings_service.global_settings()
-        ok, detail = await self._check_pixel_index_health(settings.pixel_index_api_url)
+        api_url = await self._settings_repository.pixel_index_api_url()
+        web_url = await self._settings_repository.pixel_index_web_url()
+        ok, detail = await self._check_pixel_index_health(api_url)
         await self._reply(
             ctx,
-            f"Pixel Index API: `{settings.pixel_index_api_url}`\n"
-            f"Pixel Index Web: `{settings.pixel_index_web_url}`\n"
+            f"Pixel Index API: `{api_url}`\n"
+            f"Pixel Index Web: `{web_url}`\n"
             f"Health check: {'✅ ' + detail if ok else '🛑 ' + detail}",
         )
 
@@ -57,13 +56,6 @@ class CatalogueCommandsMixin(PixelAgentsBase):
         result = await self._catalogue_service.health(url)
         ok, value = self._legacy_catalogue_result(result)
         return ok, str(value)
-
-    @staticmethod
-    def _clean_url(url: str) -> str | None:
-        try:
-            return normalize_http_url(url)
-        except ValueError:
-            return None
 
     @floorplan_pixelindex_group.command(name="set")
     @commands.admin_or_permissions(administrator=True)
@@ -74,12 +66,13 @@ class CatalogueCommandsMixin(PixelAgentsBase):
         if ctx.interaction:
             await ctx.interaction.response.defer(ephemeral=True)
         try:
-            clean = await self._settings_service.set_pixel_index_api_url(url)
+            clean = normalize_http_url(url)
         except ValueError:
             await self._reply(
                 ctx, "Please provide a valid URL, e.g. `https://pixel-index-api.nntin.xyz`."
             )
             return
+        await self._settings_repository.set_pixel_index_api_url(clean)
         ok, detail = await self._check_pixel_index_health(clean)
         await self._reply(
             ctx,
@@ -96,12 +89,13 @@ class CatalogueCommandsMixin(PixelAgentsBase):
         """Set the Pixel Index web frontend used by layout links."""
 
         try:
-            clean = await self._settings_service.set_pixel_index_web_url(url)
+            clean = normalize_http_url(url)
         except ValueError:
             await self._reply(
                 ctx, "Please provide a valid URL, e.g. `https://pixel-index.vercel.app`."
             )
             return
+        await self._settings_repository.set_pixel_index_web_url(clean)
         await self._reply(ctx, f"Pixel Index web frontend set to `{clean}`.")
 
     async def _pixel_index_get(
@@ -131,9 +125,6 @@ class CatalogueCommandsMixin(PixelAgentsBase):
         result = await self._catalogue_service.load_layout(user_id, slug)
         ok, value = self._legacy_catalogue_result(result)
         return ok, str(value)
-
-    async def _publish_catalogue_layout(self, layout: RawOfficeLayout) -> None:
-        await self._send(layout_loaded(layout))
 
     @staticmethod
     def _legacy_catalogue_result(result: CatalogueResult[Any]) -> tuple[bool, Any]:

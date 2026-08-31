@@ -1,27 +1,17 @@
-"""Infrastructure adapters for external Floorplan dependencies."""
+"""Infrastructure adapters for external Floorplan dependencies.
 
-from .client_hub import ClientHub, ClientState
-from .discord import activity_snapshot, member_snapshot, message_snapshot
+client_hub/discord/tickets/websocket/webview moved to `cctv` along with
+the dashboard/WebSocket surface they supported (docs/cctv-design.md) --
+what's left is Pixel Index's own HTTP client and floorplan's own
+(now minimal) Config settings.
+"""
+
 from .pixel_index import PixelIndexClient
-from .settings import CONFIG_IDENTIFIER, GLOBAL_DEFAULTS, GUILD_DEFAULTS, RedSettingsRepository
-from .tickets import TICKET_TTL_SECONDS, Ticket, TicketStore
-from .websocket import WebSocketServer
-from .webview import WebviewAssetProvider
+from .settings import CONFIG_IDENTIFIER, GLOBAL_DEFAULTS, RedSettingsRepository
 
 __all__ = [
     "CONFIG_IDENTIFIER",
-    "ClientHub",
-    "ClientState",
     "GLOBAL_DEFAULTS",
-    "GUILD_DEFAULTS",
     "PixelIndexClient",
     "RedSettingsRepository",
-    "TICKET_TTL_SECONDS",
-    "Ticket",
-    "TicketStore",
-    "WebSocketServer",
-    "WebviewAssetProvider",
-    "activity_snapshot",
-    "member_snapshot",
-    "message_snapshot",
 ]

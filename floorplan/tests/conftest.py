@@ -851,12 +851,27 @@ class FakeCorridor:
         )
 
 
+class _FakeOfficeState:
+    """Test double for `pixelagents.application.office_state.OfficeStateFacade`
+    -- floorplan only ever calls `set_discord_layout`, through
+    `PixelAgentsBase._set_discord_layout` (docs/cctv-design.md); records
+    calls for assertion rather than wiring a real corridor backend, since
+    floorplan itself never reads office state back."""
+
+    def __init__(self) -> None:
+        self.set_discord_layout_calls: list[dict] = []
+
+    async def set_discord_layout(self, layout):
+        self.set_discord_layout_calls.append(layout)
+
+
 class FakePixelAgents:
     """Test double for the cross-cog `bot.get_cog("PixelAgents")` reference.
 
     Mirrors `pixelagents.adapters.cog_base.WebviewBundleStatus` -- floorplan
-    only ever reads this, never triggers a (re)build (see
-    `adapters/cog_base.py::_sync_webview_assets`).
+    only reads `webview_bundle_status()` transitively (not directly, since
+    it hosts no webview page of its own anymore) and `office_state()` for
+    the one write path a Pixel Index catalogue load uses.
     """
 
     def __init__(
@@ -874,6 +889,7 @@ class FakePixelAgents:
         self.built_commit = built_commit if ready else None
         self.built_base_path = built_base_path if ready else None
         self.registered_dependents = set()
+        self._office_state = _FakeOfficeState()
 
     def register_dependent(self, extension_name):
         self.registered_dependents.add(extension_name)
@@ -890,68 +906,5 @@ class FakePixelAgents:
             built_base_path=self.built_base_path,
         )
 
-
-def write_fake_vite_build(build_out_dir: Path) -> None:
-    """Write a minimal Vite build output, shaped like a real one.
-
-    Used by test_webview_build.py and test_webview_dist_build.py to exercise
-    webview_build._sync_dist / the WebviewAssetProvider contract without a
-    real clone+npm+vite build. Covers only what _sync_dist reads -- index.html
-    referencing a hashed JS/CSS pair under the Dashboard subpath,
-    furniture-catalog.json / asset-index.json / the layout it points at,
-    decoded/*.json, and a font -- plus one raw per-tile PNG folder, so a test
-    can assert _sync_dist actually drops the passthrough files real Vite
-    output also carries, rather than happening to copy everything.
-    """
-
-    assets = build_out_dir / "assets"
-    (assets / "decoded").mkdir(parents=True)
-    (build_out_dir / "fonts").mkdir(parents=True)
-    (assets / "characters").mkdir(parents=True)
-
-    (build_out_dir / "index.html").write_text(
-        "<!doctype html><html><head>"
-        '<script type="module" '
-        'src="./assets/index-abc.js"></script>'
-        '<link rel="stylesheet" '
-        'href="./assets/index-abc.css">'
-        '</head><body><div id="root"></div></body></html>',
-        encoding="utf-8",
-    )
-    (assets / "index-abc.js").write_text("console.log('office');", encoding="utf-8")
-    (assets / "index-abc.css").write_text("body { margin: 0; }", encoding="utf-8")
-    (assets / "characters" / "char_0.png").write_bytes(b"not-a-real-png")
-
-    catalog = [
-        {
-            "id": "DESK",
-            "name": "Desk",
-            "category": "furniture",
-            "file": "DESK.png",
-            "width": 1,
-            "height": 1,
-            "footprintW": 1,
-            "footprintH": 1,
-        }
-    ]
-    (assets / "furniture-catalog.json").write_text(json.dumps(catalog), encoding="utf-8")
-    (assets / "asset-index.json").write_text(
-        json.dumps(
-            {"floors": [], "walls": [], "characters": [], "defaultLayout": "default-layout-1.json"}
-        ),
-        encoding="utf-8",
-    )
-    (assets / "default-layout-1.json").write_text(
-        json.dumps({"version": 1, "cols": 1, "rows": 1, "layoutRevision": 1, "tiles": [255]}),
-        encoding="utf-8",
-    )
-    decoded = {
-        "characters.json": [{"down": [], "up": [], "left": [], "right": []}],
-        "floors.json": [[["#ffffff"]]],
-        "walls.json": [[[["#ffffff"]]]],
-        "carpets.json": [[[["#ffffff"]]]],
-        "furniture.json": {"DESK": [["#8F6439"]]},
-    }
-    for name, data in decoded.items():
-        (assets / "decoded" / name).write_text(json.dumps(data), encoding="utf-8")
-    (build_out_dir / "fonts" / "Font.ttf").write_bytes(b"\x00\x01\x02\x03")
+    def office_state(self):
+        return self._office_state

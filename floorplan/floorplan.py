@@ -1,28 +1,26 @@
-"""Thin Floorplan Cog composition."""
+"""Thin Floorplan Cog composition.
+
+floorplan no longer hosts any dashboard/WebSocket surface -- see
+docs/cctv-design.md. What's left is Pixel Index browsing and loading a
+catalogue layout into the shared Discord-page office layout.
+"""
 
 from __future__ import annotations
 
-# `web` is a historical patch point used by integrations and contract tests.
-from aiohttp import web
 from redbot.core import commands
 
 from pixelagents.application.office import DEFAULT_PALETTE_COUNT, JS_MAX_SAFE, to_agent_id
 
 from .adapters.admin_commands import AdminCommandsMixin
 from .adapters.catalogue_commands import CatalogueCommandsMixin
-from .adapters.dashboard import DashboardMixin, dashboard_page
-from .adapters.discord_gateway import VISIBLE_STATUSES, DiscordGatewayMixin
-from .adapters.event_subscriptions import EventSubscriptionsMixin
 from .adapters.layout_views import LayoutBrowseView, LayoutDetailView, absolute_url
-from .adapters.office_gateway import OfficeGatewayMixin
 from .adapters.replies import ReplyMixin
 from .application import LAYOUT_SORT_CHOICES
 
-__all__ = ["Floorplan", "dashboard_page", "web"]
+__all__ = ["Floorplan"]
 
 # Stable names retained for downstream imports, same convention pixelagents
 # used before the split.
-_VISIBLE_STATUSES = VISIBLE_STATUSES
 _LAYOUT_SORT_CHOICES = LAYOUT_SORT_CHOICES
 _LayoutBrowseView = LayoutBrowseView
 _LayoutDetailView = LayoutDetailView
@@ -38,13 +36,9 @@ def _discord_id_to_agent_id(user_id: int) -> int:
 
 
 class Floorplan(
-    DashboardMixin,
-    OfficeGatewayMixin,
-    DiscordGatewayMixin,
-    EventSubscriptionsMixin,
     ReplyMixin,
     AdminCommandsMixin,
     CatalogueCommandsMixin,
     commands.Cog,
 ):
-    """Serve the Pixel Agents office and mirror Discord presence into it."""
+    """Browse and load shared office layouts from Pixel Index."""

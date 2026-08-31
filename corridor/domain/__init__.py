@@ -38,6 +38,7 @@ from .models import (
     ToolHandler,
     ToolVisibilityFilter,
 )
+from .office_state import OfficeState, OfficeStateChanged, OfficeStateKind
 from .reply_colors import REPLY_CATEGORY_COLORS
 
 __all__ = [
@@ -63,6 +64,9 @@ __all__ = [
     "IconSource",
     "LLMSettings",
     "MemberCapabilities",
+    "OfficeState",
+    "OfficeStateChanged",
+    "OfficeStateKind",
     "PermissionGroupDef",
     "PermissionSettings",
     "RegisteredAgent",

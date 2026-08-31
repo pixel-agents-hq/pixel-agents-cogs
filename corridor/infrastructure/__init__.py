@@ -10,6 +10,7 @@ from .llm_client import (
     ToolSpecWire,
 )
 from .mcp_client import McpClientPool, McpRequestError
+from .office_state_repository import RedOfficeStateRepository
 from .settings_repository import DEFAULT_LLM_BASE_URL, RedCorridorRepository
 
 __all__ = [
@@ -22,6 +23,7 @@ __all__ = [
     "McpClientPool",
     "McpRequestError",
     "RedCorridorRepository",
+    "RedOfficeStateRepository",
     "ToolCall",
     "ToolCallFunction",
     "ToolFunctionSpec",

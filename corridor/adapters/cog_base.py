@@ -7,7 +7,7 @@ stable contract they depend on through `required_cogs`.
 from __future__ import annotations
 
 import logging
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, Literal, TypeVar, cast
 
@@ -19,6 +19,7 @@ from ..application import (
     AgentDirectoryService,
     AgentToolServerRegistry,
     EventBusService,
+    OfficeStateService,
     PermissionService,
     ReplyContent,
     ReplyService,
@@ -32,6 +33,9 @@ from ..domain import (
     GuildSettings,
     IconPreference,
     LLMSettings,
+    OfficeState,
+    OfficeStateChanged,
+    OfficeStateKind,
     PermissionGroupDef,
     RegisteredAgent,
     RegisteredMcpServer,
@@ -44,7 +48,13 @@ from ..domain import (
     ToolVisibilityFilter,
     card_with_url,
 )
-from ..infrastructure import A2AServer, LiteLLMClient, McpClientPool, RedCorridorRepository
+from ..infrastructure import (
+    A2AServer,
+    LiteLLMClient,
+    McpClientPool,
+    RedCorridorRepository,
+    RedOfficeStateRepository,
+)
 from .api import (
     BotIconResolver,
     BotOwnerRegistry,
@@ -58,6 +68,7 @@ from .reply_sender import ReplySender
 log = logging.getLogger("red.corridor")
 
 _EventT = TypeVar("_EventT")
+MutationResult = TypeVar("MutationResult")
 
 # Conventional path for corridor's own bundled avatar image -- passed to
 # reply_sender() below regardless of whether a real file exists here yet;
@@ -80,6 +91,8 @@ class CogBase:
         self._permission_service = PermissionService(BotOwnerRegistry(bot))
         self._reply_service = ReplyService(BotIconResolver(bot))
         self._event_bus = EventBusService()
+        self._office_state_repository = RedOfficeStateRepository.create(self)
+        self._office_state_service = OfficeStateService(self._office_state_repository, logger=log)
         self._tool_registry = ToolRegistryService()
         self._agent_directory = AgentDirectoryService()
         self._a2a_server = A2AServer(logger=log)
@@ -441,6 +454,89 @@ class CogBase:
 
         self._event_bus.unsubscribe_owner(owner)
 
+    # --- Office state: two opaque, revisioned aggregates, corridor-owned --------
+    #
+    # See docs/cctv-design.md. Deliberately not part of the Agent*-prefixed
+    # Pub/Sub bus above -- OfficeStateChanged is a data-mutation
+    # notification, not an agent-activity event, and gets its own
+    # five-second-bounded delivery loop (OfficeStateService), not
+    # EventBusService. pixelagents' facade is the only intended caller of
+    # any of these; other cogs go through that facade, never these
+    # directly (docs/cctv-design.md §2.6).
+
+    async def read_office_state(self, kind: OfficeStateKind) -> OfficeState:
+        """The current aggregate for `kind`, creating a blank one on first
+        touch if none has been seeded yet."""
+
+        return await self._office_state_service.read(kind)
+
+    async def set_office_layout(
+        self, kind: OfficeStateKind, layout: dict[str, object]
+    ) -> OfficeState:
+        """Overwrite `kind`'s `layout`, preserving its `seats`, and publish
+        the resulting `OfficeStateChanged` to every current watcher."""
+
+        return await self._office_state_service.set_layout(kind, layout)
+
+    async def mutate_office_seats(
+        self,
+        kind: OfficeStateKind,
+        mutation: Callable[[dict[str, dict[str, object]]], MutationResult],
+    ) -> tuple[OfficeState, MutationResult]:
+        """Apply a synchronous read-modify-write `mutation` to `kind`'s
+        `seats`, preserving its `layout`, and publish the resulting
+        `OfficeStateChanged`. Returns the updated aggregate alongside
+        whatever `mutation` itself returns."""
+
+        return await self._office_state_service.mutate_seats(kind, mutation)
+
+    async def watch_office_state(
+        self,
+        kind: OfficeStateKind,
+        handler: Callable[[OfficeStateChanged], Awaitable[None]],
+        *,
+        owner: str,
+    ) -> OfficeState:
+        """Atomically register `handler` for `kind`'s `OfficeStateChanged`
+        delivery and return its current snapshot -- the primitive that
+        closes the cold-start gap: a caller never has to sequence a
+        separate subscribe-then-read pair (and risk a mutation landing in
+        the gap between them). `owner` follows the same convention as
+        `subscribe_event`."""
+
+        return await self._office_state_service.watch(kind, handler, owner=owner)
+
+    def unwatch_office_state_owner(self, owner: str) -> None:
+        """Call from the watching cog's own `cog_unload` -- same convention
+        as `unsubscribe_owner`."""
+
+        self._office_state_service.unwatch_owner(owner)
+
+    def watch_agents(
+        self,
+        handlers: Mapping[type, Callable[[Any], Awaitable[None]]],
+        *,
+        owner: str,
+    ) -> tuple[RegisteredAgent, ...]:
+        """Atomically subscribe to one or more agent-activity event types
+        (typically `AgentPresenceChanged`/`AgentReplied`) and return the
+        current A2A agent roster in one call -- generalizes the same
+        atomic watch-and-snapshot fix `watch_office_state` gives office
+        state to the agent-directory side, closing the confirmed gap
+        where a fresh subscriber (architect's own former presence
+        subscriber, prior to this cog's cctv-facing use) could miss an
+        agent that registered before it subscribed (docs/cctv-design.md
+        §1.4). Safe without a lock, unlike office state: both
+        `EventBusService.subscribe` and `AgentDirectoryService.list_agents`
+        are plain, non-awaiting in-memory operations, so calling them
+        back-to-back here is already atomic under Python's cooperative
+        scheduler -- there is no `await` point between them for a
+        concurrent `register_agent`/`unregister_agent` call to land in."""
+
+        for event_type, handler in handlers.items():
+            self._event_bus.subscribe(event_type, handler, owner=owner)
+        return self._agent_directory.list_agents()
+
     @commands.Cog.listener()
     async def on_cog_remove(self, cog: commands.Cog) -> None:
         """Defensive: Red dispatches this unconditionally after every cog
@@ -453,6 +549,7 @@ class CogBase:
         in the opposite (corridor-unloads-first) direction."""
 
         self._event_bus.unsubscribe_owner(cog.qualified_name)
+        self._office_state_service.unwatch_owner(cog.qualified_name)
         self._tool_registry.unregister_owner(cog.qualified_name)
         self._tool_registry.unregister_visibility_filter_owner(cog.qualified_name)
         removed_agents = self._agent_directory.list_agents_for_owner(cog.qualified_name)

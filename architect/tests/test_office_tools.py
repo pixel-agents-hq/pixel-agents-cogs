@@ -126,6 +126,38 @@ class TestDescribeOfficeTool(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(output.zones, [])
         self.assertEqual(output.furniture, [])
 
+    async def test_furniture_reports_exact_hex_and_hsb_not_a_bare_name(self) -> None:
+        pixelagents = FakePixelAgents(
+            furniture_styles=_MANIFEST,
+            editor_layout={
+                "version": 1,
+                "cols": 5,
+                "rows": 5,
+                "tiles": [1] * 25,
+                "furniture": [
+                    {
+                        "uid": "chair-1",
+                        "type": "WOODEN_CHAIR_FRONT",
+                        "col": 0,
+                        "row": 0,
+                        "color": {"h": 220, "s": 80, "b": 0, "c": 0},
+                    }
+                ],
+            },
+        )
+        service = OfficeLayoutService(OfficeLayoutRepository(lambda: pixelagents), _loader())
+        tool = DescribeOfficeTool(service, _loader())
+
+        output = await tool.handler(DescribeOfficeInput())
+
+        self.assertEqual(len(output.furniture), 1)
+        color = output.furniture[0].color
+        assert color is not None
+        self.assertEqual(color.hue, 220)
+        self.assertEqual(color.saturation, 80)
+        self.assertTrue(color.hex.startswith("#"))
+        self.assertTrue(color.closest_named_color)
+
 
 class TestPlaceFurnitureToolDynamicSchema(unittest.IsolatedAsyncioTestCase):
     async def test_style_enum_reflects_the_live_manifest(self) -> None:
@@ -412,6 +444,33 @@ class TestDescribeTilesTool(unittest.IsolatedAsyncioTestCase):
 
         self.assertFalse(output.is_empty)
         self.assertEqual(output.blocking_furniture_ids, [chair.id])
+
+    async def test_reports_exact_hex_and_hsb_not_a_bare_name(self) -> None:
+        # Off-palette on purpose (not a canonical _PALETTE entry) -- proves
+        # the exact value survives into the tool output, not just the
+        # nearest of the fixed 12 names.
+        pixelagents = FakePixelAgents(
+            furniture_styles=_MANIFEST,
+            editor_layout={
+                "version": 1,
+                "cols": 5,
+                "rows": 5,
+                "tiles": [1] * 25,
+                "tileColors": [{"h": 220, "s": 80, "b": 0, "c": 0}] + [None] * 24,
+                "furniture": [],
+            },
+        )
+        service = OfficeLayoutService(OfficeLayoutRepository(lambda: pixelagents), _loader())
+        tool = DescribeTilesTool(service, _loader())
+
+        output = await tool.handler(DescribeTilesInput(col=0, row=0, width=1, height=1))
+
+        color = output.tiles[0].color
+        assert color is not None
+        self.assertEqual(color.hue, 220)
+        self.assertEqual(color.saturation, 80)
+        self.assertTrue(color.hex.startswith("#"))
+        self.assertTrue(color.closest_named_color)
 
 
 class TestFindFurnitureAnchorsTool(unittest.IsolatedAsyncioTestCase):

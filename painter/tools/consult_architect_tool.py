@@ -43,8 +43,9 @@ class ConsultArchitectInput(BaseModel):
         description=(
             "The structural question or task to delegate to architect -- e.g. 'what furniture "
             "is in the room bounded by columns 5-10 and rows 2-6' or 'what are the office's "
-            "dimensions'. Architect knows positions/kinds/styles, never color -- do not ask it "
-            "about color."
+            "dimensions'. Architect can report exact tile/furniture color too, but "
+            "describe_tile_colors/describe_furniture_colors give you faster, more direct access "
+            "to it than relaying a question through architect."
         )
     )
 
@@ -58,9 +59,10 @@ class ConsultArchitectOutput(BaseModel):
 class ConsultArchitectTool:
     name = "consult_architect"
     description = (
-        "Ask architect what tiles/walls/furniture exist in the shared office layout and where "
-        "-- architect is colorblind and knows nothing about color, so never ask it a color "
-        "question. Each call is independent; architect has no memory of past consultations."
+        "Ask architect what tiles/walls/furniture exist in the shared office layout and where. "
+        "Each call is independent; architect has no memory of past consultations. For color, "
+        "prefer describe_tile_colors/describe_furniture_colors directly -- faster and more "
+        "precise than asking architect to relay it."
     )
 
     def __init__(self, client: ArchitectAsker, corridor: object) -> None:

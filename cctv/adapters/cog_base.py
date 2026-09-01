@@ -245,6 +245,18 @@ class CctvBase:
         self._server = None
         self._pipelines.clear()
 
+    async def refresh_pixelagents(self, pixelagents: Any) -> None:
+        """Called by pixelagents itself after it (re)loads, so an
+        independent pixelagents reload doesn't leave cctv holding a stale
+        Cog reference forever. `self._pixelagents` alone isn't enough here:
+        each `CctvPipeline` also captured its own copy of it at
+        `_create_pipelines()` time, so every live pipeline needs its own
+        update too. See pixelagents' `_refresh_dependents` docstring."""
+
+        self._pixelagents = pixelagents
+        for pipeline in self._pipelines.values():
+            pipeline.set_pixelagents(pixelagents)
+
     async def _seed_registered_agents(self, registered: tuple[RegisteredAgent, ...]) -> None:
         for agent in registered:
             display_name = cast(str, getattr(agent.card, "name", agent.agent_key))

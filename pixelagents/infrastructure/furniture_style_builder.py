@@ -65,7 +65,7 @@ _CATEGORY_TO_KIND: dict[str, str] = {
     "misc": "misc",
 }
 
-# Catalog `orientation` -> semantic `Direction` (architect/domain/office_ir.py).
+# Catalog `orientation` -> semantic `Direction` (pixelagents/domain/office_ir.py).
 _ORIENTATION_TO_FACING: dict[str, str] = {
     "front": "south",
     "back": "north",

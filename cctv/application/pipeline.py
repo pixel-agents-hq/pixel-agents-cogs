@@ -78,6 +78,14 @@ class CctvPipeline:
             logger=self._log,
         )
 
+    def set_pixelagents(self, pixelagents: PixelAgentsStateGateway) -> None:
+        """Called via `CctvBase.refresh_pixelagents` after pixelagents
+        itself (re)loads -- this pipeline captured its own `pixelagents`
+        reference at construction time, so `CctvBase` updating its own
+        `self._pixelagents` attribute alone wouldn't reach here."""
+
+        self._pixelagents = pixelagents
+
     @property
     def revision(self) -> int | None:
         return self._state.revision if self._state is not None else None

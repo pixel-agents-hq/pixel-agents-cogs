@@ -130,6 +130,7 @@ def test_pydantic_is_confined_to_the_office_schema_boundary() -> None:
     assert importers == [
         PACKAGE_ROOT / "application" / "office_state.py",
         PACKAGE_ROOT / "contracts" / "layout.py",
+        PACKAGE_ROOT / "infrastructure" / "color_summary.py",
     ]
 
 

@@ -225,7 +225,7 @@ sequenceDiagram
     NewPA->>NewPA: self._office_state = OfficeStateFacade(...)
     NewPA->>NewPA: _refresh_dependents() scans bot.cogs
     NewPA->>CCTV: refresh_pixelagents(self)
-    CCTV->>CCTV: self._pixelagents = NewPA; pipeline.set_pixelagents(NewPA) x2
+    CCTV->>CCTV: self._pixelagents = NewPA, then pipeline.set_pixelagents(NewPA) x2
     NewPA->>Architect: refresh_pixelagents(self)
     Architect->>Architect: self._pixelagents = NewPA
     Note over NewPA: any other loaded cog without refresh_pixelagents<br/>is skipped -- duck-typed, no registry to keep in sync

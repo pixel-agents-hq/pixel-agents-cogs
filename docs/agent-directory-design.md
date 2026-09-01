@@ -155,6 +155,12 @@ class AgentDirectoryService:
     def list_agents(self) -> tuple[RegisteredAgent, ...]: ...
 ```
 
+(`RegisteredAgent` above later gained a fourth field, `avatar_path: Path | None
+= None`, so pico can show the consulted agent's own icon in a `FooterOverride`
+distinct from its own author identity — see `docs/reply-identity-design.md`
+§7. Not designed in this doc; noted here only so this sketch doesn't read as
+the complete current shape.)
+
 `CogBase` gains the matching public methods (`register_agent`,
 `unregister_agent_owner`, `unregister_agent`, `list_agents`), and
 `on_cog_remove`'s defensive cleanup

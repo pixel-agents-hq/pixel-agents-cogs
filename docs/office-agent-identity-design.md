@@ -15,14 +15,18 @@
 > registered agents plus the bot account. Former Floorplan/Architect subscriber
 > paths below are historical.
 >
-> **Extended by architect's own dashboard consuming this too.** Originally
-> this doc only covered floorplan's canvas gaining genuine-agent support.
-> `architect/adapters/presence_subscription.py` now reconciles the same
+> **Extended by architect's own dashboard consuming this too (now historical,
+> see the CCTV note above).** Originally this doc only covered floorplan's
+> canvas gaining genuine-agent support. Architect then grew its own
+> `architect/adapters/presence_subscription.py`, which reconciled the same
 > `AgentPresenceChanged` events onto architect's own, separate
 > `OfficeService` instance (`docs/architect-design.md` §5/§9 item 11),
 > plus one entry with no corridor/`AgentDirectoryService` involvement at
 > all: the bot's own Discord account, represented as a synthetic
-> `GenuineAgentKey`, since it was never an A2A agent. `AgentPresenceChanged`
+> `GenuineAgentKey`, since it was never an A2A agent. That file no longer
+> exists — CCTV's own extraction (`cctv-design.md`) absorbed architect's
+> dashboard subscription the same way it absorbed floorplan's, so this
+> paragraph is history, not current code. `AgentPresenceChanged`
 > is now also published by corridor itself (`register_agent`/
 > `unregister_agent_owner`/`unregister_agent`), not just by architect's own
 > `cog_load`/`cog_unload` — see `docs/agent-directory-design.md`.
@@ -295,18 +299,27 @@ sequenceDiagram
 
 ## Path to more agents
 
-Today, architect hand-writes its own `_publish_presence`/`_publish_activity`
-in `architect/adapters/cog_base.py`. That's fine for the first genuine
-agent; it isn't a pattern worth making every future one re-derive.
-**Recommendation, not designed in full here:** once a second genuine
-agent exists, extract a small reusable helper (plausibly living in
-corridor, since corridor already owns the event schema) that a new
-A2A-agent cog can adopt with a few lines — given an `agent_key` and
-`display_name`, wire the load/unload presence publish and an activity
-callback for its own tool loop, the same shape `ToolLoopService.run`'s
-`on_activity` already established for architect. Deferred until there's a
-second real caller to design the extraction point against, rather than
-guessing its shape from one example.
+**Update: the presence half of this has since landed, the activity half
+hasn't.** This section originally observed that architect hand-wrote both
+its own `_publish_presence` and `_publish_activity` in
+`architect/adapters/cog_base.py`, and recommended extracting a shared
+helper once a second genuine agent existed. The presence-publish half was
+resolved as a side effect of `docs/agent-directory-design.md`, before a
+second genuine agent even arrived: corridor's own `register_agent`/
+`unregister_agent_owner`/`unregister_agent` now publish
+`AgentPresenceChanged` directly (see the addendum at the top of this doc),
+so a registering cog no longer hand-writes any presence-publish code at
+all. `painter` — this doc's second genuine agent
+(`painter/adapters/cog_base.py`) — confirms this: it registers with
+`corridor.register_agent(...)` and has no `_publish_presence` of its own.
+
+The activity half was **not** extracted, though: `painter/adapters/cog_base.py`
+still hand-writes its own `_publish_activity`, duplicating architect's
+pattern (`architect/adapters/cog_base.py`) rather than adopting a shared
+helper. **Recommendation, still not designed in full here:** now that
+there are two real callers to design the extraction point against, a
+small reusable `on_activity`-wiring helper (plausibly living in corridor,
+since corridor already owns the event schema) is worth revisiting.
 
 Separately, and explicitly **out of scope for this doc**: nothing here
 designs *discovery* of genuine agents (how pico or a human finds a second

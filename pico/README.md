@@ -6,9 +6,11 @@ Pico watches messages in servers where it's enabled. For each message it first d
 *whether* to react at all (a cheap rule-based check, falling back to one LLM
 classification call only for genuinely ambiguous cases), and if it decides to react, it
 may only act by calling tools -- never by sending raw LLM text directly. Pico ships
-one native tool (replying through corridor), plus whatever any other cog has
-registered into corridor's cross-cog tool registry -- see
-[Cross-cog tools](#cross-cog-tools) below.
+two kinds of native tools -- replying through corridor, and one `consult_<agent_key>`
+tool built fresh each turn per currently-registered A2A agent (e.g. `consult_architect`,
+`consult_painter`; see [Consulting other agents](#consulting-other-agents) below) --
+plus whatever any other cog has registered into corridor's cross-cog tool registry --
+see [Cross-cog tools](#cross-cog-tools) below.
 
 ## Installing
 
@@ -22,14 +24,20 @@ Requires [`corridor`](../corridor) (auto-loaded via `required_cogs`):
 
 ## Configuring
 
-Pico needs a bot owner to configure its LLM connection before it will do anything --
-`llm key` and `llm model` have no default and Pico stays silent until both are set:
+Pico's LLM connection is not configured on pico itself -- it's the one shared
+connection `corridor` owns for every LLM-backed dependent (pico, architect,
+painter), configured by a bot owner through `[p]corridor llm ...`:
 
 ```
-[p]pico llm endpoint https://litellm.nntin.xyz/   # already the default
-[p]pico llm key <virtual key>                      # required, no default
-[p]pico llm model <model name>                     # required, no default
+[p]corridor llm endpoint https://litellm.nntin.xyz/   # already the default
+[p]corridor llm key <virtual key>                      # required, no default
+[p]corridor llm model <model name>                     # already defaults to chatgpt/gpt-5.4
 ```
+
+Pico stays silent until `llm key` is set -- `llm model` already has a default
+and doesn't block readiness on its own. There is no `[p]pico llm ...` command
+anymore; see [`corridor`](../corridor)'s own docs for the full `llm`/`a2a`
+command group.
 
 Then a server admin opts their server in (default off):
 
@@ -41,9 +49,6 @@ Then a server admin opts their server in (default off):
 
 | Command | Scope | Description |
 |---|---|---|
-| `[p]pico llm endpoint <url>` | Bot owner | Set the LiteLLM proxy base URL |
-| `[p]pico llm key <key>` | Bot owner | Set the LiteLLM virtual key (deletes your message) |
-| `[p]pico llm model <model>` | Bot owner | Set the model name passed to the LLM endpoint |
 | `[p]pico maxtoolcalls <n>` | Bot owner | Set the max tool calls Pico may make per turn (default 5) |
 | `[p]pico prompt set <text>` | Bot owner | Set Pico's system prompt |
 | `[p]pico prompt reset` | Bot owner | Reset Pico's system prompt to the default |
@@ -137,7 +142,41 @@ the duration of that one loop and is discarded once it ends; it is never persist
 for the next triggering message. Raw assistant `content` returned alongside a tool
 call is kept in that same short-lived list (so the model has continuity across its
 own loop iterations) but is never sent to Discord -- the only way anything reaches
-Discord is through a tool's own handler (currently only the reply tool).
+Discord is through a tool's own handler. The reply tool is the only place the LLM's
+own composed words reach Discord; the `consult_<agent_key>` tools described next also
+post their own, separate, deterministic announcements straight from their handlers.
+
+## Consulting other agents
+
+Besides replying, pico's other native capability is delegating a sub-task to any
+currently-registered A2A agent. At the start of each triggering message's tool loop,
+[`adapters/listener.py`](adapters/listener.py)'s `_agent_tools` asks corridor for
+every agent in its agent directory (`corridor.list_agents()`) and builds one
+`consult_<agent_key>` tool per entry
+([`tools/consult_agent_tool.py`](tools/consult_agent_tool.py)) -- so with
+[`architect`](../architect) (structural office-layout edits) and
+[`painter`](../painter) (color-only office-layout edits) both loaded and
+registered, pico's tool list gains `consult_architect` and `consult_painter`
+automatically, with zero pico-side code change for either, and the same happens
+for any future agent. If no agent cog is loaded (or every one has unregistered),
+pico simply offers zero `consult_*` tools that turn -- there's no special-cased
+"not configured" branch and no hardcoded list of consultable agents to keep in
+sync.
+
+Consulting an agent is deterministic and transparent, not left to the LLM's
+paraphrase: the tool's own handler posts the outgoing question and the target
+agent's raw answer as two of its own Discord messages, independent of whatever
+pico's LLM later says in its own final reply via the reply tool -- plus one "🐛"
+announcement per intermediate debug event the consulted agent chooses to stream
+(e.g. `[p]architect debuglogging`/`[p]painter debuglogging`). Both announcements
+carry pico's own bound identity as the message author, but show the *consulted*
+agent's own name and icon in the footer (a `FooterOverride`), so a Discord user
+can tell architect's or painter's own reply apart from pico's own words on the
+same message. See [`tools/consult_agent_tool.py`](tools/consult_agent_tool.py)'s
+module docstring for the full mechanism, including the `AgentReplied` events this
+also publishes for CCTV's activity feed, and
+[`docs/agent-directory-design.md`](../docs/agent-directory-design.md) for the
+design of corridor's agent directory this all reads from.
 
 ## Cross-cog tools
 

@@ -219,8 +219,15 @@ jobs:
             pixel_index_contracts: false
           # cctv only talks to corridor (its own office-state API, no A2A of
           # its own) and pixelagents (webview build status + the office-state
-          # facade) -- aiohttp for its own Dashboard/WebSocket listener, no
-          # pydantic/a2a-sdk needed at all (docs/cctv-design.md).
+          # facade) -- aiohttp for its own Dashboard/WebSocket listener.
+          # Still needs a2a-sdk/uvicorn/mcp/typing-inspection like toolbox's
+          # own leg above: cctv/tests/conftest.py's FakeCorridor composes a
+          # REAL corridor.application.OfficeStateService (not a hand-rolled
+          # fake) to exercise the real atomic-watch/locking semantics, and
+          # importing corridor.application eagerly pulls in
+          # corridor.domain.agent_directory, which imports a2a-sdk at module
+          # scope -- same eager-import-chain gap toolbox's own comment above
+          # documents, just reached via a different corridor module.
           - cog: cctv
             test_target: "cctv/tests"
             lint_target: "cctv"
@@ -228,7 +235,7 @@ jobs:
             # pyyaml/jsonschema: contracts/pixel_agents/tests' own needs
             # (verify_outbound.py), run on this leg -- see that step's
             # own comment below.
-            extra_deps: "aiohttp 'pyyaml>=6.0' 'jsonschema>=4.20'"
+            extra_deps: "aiohttp 'pyyaml>=6.0' 'jsonschema>=4.20' 'a2a-sdk[http-server]' uvicorn 'mcp>=1.29,<2' 'typing-inspection<0.4.3'"
             pixel_index_contracts: false
 
     steps:

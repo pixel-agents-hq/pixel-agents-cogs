@@ -18,7 +18,7 @@ from redbot.core.errors import CogLoadError
 from .. import setup
 from ..infrastructure.settings_repository import DEFAULT_SYSTEM_PROMPT
 from ..painter import Painter
-from .conftest import FakeBot, FakeContext
+from .conftest import FakeBot, FakeContext, FakePixelAgents
 
 
 def _descriptions(bot: FakeBot) -> list[str | None]:
@@ -214,6 +214,47 @@ class TestDependentRegistration(unittest.IsolatedAsyncioTestCase):
 
         assert bot.corridor is not None
         self.assertNotIn("painter", bot.corridor.registered_dependents)
+
+
+class TestRefreshPixelagents(unittest.IsolatedAsyncioTestCase):
+    """Regression test for: pixelagents reloading independently of
+    painter's own reload left painter holding a stale `_pixelagents` Cog
+    reference forever (its now-unloaded `_office_state` facade included),
+    since `ensure_loaded` only resolves once, in painter's own `cog_load`.
+    pixelagents now pushes its fresh instance to every loaded cog exposing
+    `refresh_pixelagents` -- this is painter's side of it."""
+
+    async def test_refresh_pixelagents_replaces_the_cached_reference(self) -> None:
+        bot = FakeBot()
+        cog = Painter(bot=bot)
+        await cog.cog_load()
+        fresh = FakePixelAgents()
+
+        await cog.refresh_pixelagents(fresh)
+
+        self.assertIs(cog._pixelagents, fresh)
+
+        await cog.cog_unload()
+
+    async def test_lazy_style_lookup_sees_the_refreshed_instance(self) -> None:
+        # `_style_loader` closes over `self._pixelagents` (via
+        # `_LazyPixelAgents`) rather than capturing it at construction --
+        # updating the attribute alone must be enough, with no extra
+        # rewiring, for an already-built consumer to see the refresh.
+        bot = FakeBot()
+        cog = Painter(bot=bot)
+        await cog.cog_load()
+        cog._style_loader.styles()  # cache the original instance's manifest
+        fresh = FakePixelAgents(
+            furniture_styles={"styles": [{"style": "wood_chair", "kind": "seating"}]},
+            built_commit="f" * 40,
+        )
+
+        await cog.refresh_pixelagents(fresh)
+
+        self.assertEqual(cog._style_loader.styles().style_ids(), ["wood_chair"])
+
+        await cog.cog_unload()
 
 
 class TestAgentRegistration(unittest.IsolatedAsyncioTestCase):

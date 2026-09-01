@@ -48,6 +48,12 @@ All cogs in this repository are deployed from one synchronized revision.
 Mixed-version runtime protocols are unsupported and fail through ordinary import
 or API errors; no compatibility negotiation is implemented.
 
+Runtime dependency edges also mean a dependent must react when Corridor or
+Pixelagents reload independently of it, after this diagram's `-->` edges are
+already resolved — see [`dependency-cascades.md`](dependency-cascades.md) for
+Corridor's cascade-unload of dependents versus Pixelagents pushing a fresh
+Cog reference to them instead.
+
 ## Ownership map
 
 | Owner | Exclusive responsibilities |

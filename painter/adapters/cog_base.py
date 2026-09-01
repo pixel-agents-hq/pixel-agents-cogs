@@ -125,6 +125,16 @@ class CogBase:
             await self._corridor.unregister_agent_owner("painter")
             self._corridor.unregister_dependent("painter")
 
+    async def refresh_pixelagents(self, pixelagents: Any) -> None:
+        """Called by pixelagents itself after it (re)loads, so an
+        independent pixelagents reload doesn't leave painter holding a
+        stale Cog reference -- `_style_loader`/`_office_layout_repository`
+        both already read `self._pixelagents` lazily via a closure, so
+        updating this attribute is the whole fix. See pixelagents'
+        `_refresh_dependents` docstring."""
+
+        self._pixelagents = pixelagents
+
     async def _register_with_corridor(self) -> None:
         """Hands corridor painter's AgentCard + AgentExecutor so it can be
         mounted on corridor's own shared A2A listener -- same shape

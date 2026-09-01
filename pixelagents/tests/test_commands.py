@@ -211,5 +211,46 @@ class TestWebviewBuildSurfaces(unittest.IsolatedAsyncioTestCase):
         await self.cog._notify_owners_webview_build_failed()  # must not raise
 
 
+class TestRefreshDependents(unittest.IsolatedAsyncioTestCase):
+    """A dependent (cctv, architect, painter, floorplan) resolves its own
+    `self._pixelagents` reference once, in its own `cog_load`, via
+    `ensure_loaded`. If pixelagents itself reloads independently afterward,
+    that reference goes stale and its cached `_office_state` facade stays
+    permanently unloaded (issue: "pixelagents office-state facade is not
+    loaded" surfaced through cctv's editor websocket). `_refresh_dependents`
+    is pixelagents' half of the fix: push the new Cog instance to every
+    loaded cog exposing `refresh_pixelagents`, duck-typed so a new dependent
+    never needs wiring in here by name."""
+
+    def setUp(self) -> None:
+        self.cog = _make_cog()
+
+    async def test_calls_refresh_pixelagents_on_every_cog_that_defines_it(self) -> None:
+        dependent = MagicMock()
+        dependent.refresh_pixelagents = AsyncMock()
+        unrelated = MagicMock(spec=[])  # no refresh_pixelagents attribute at all
+        self.cog.bot.cogs = {"Cctv": dependent, "Unrelated": unrelated}
+
+        await self.cog._refresh_dependents()
+
+        dependent.refresh_pixelagents.assert_awaited_once_with(self.cog)
+
+    async def test_one_dependent_raising_does_not_block_another_or_the_caller(self) -> None:
+        broken = MagicMock()
+        broken.refresh_pixelagents = AsyncMock(side_effect=RuntimeError("boom"))
+        healthy = MagicMock()
+        healthy.refresh_pixelagents = AsyncMock()
+        self.cog.bot.cogs = {"Broken": broken, "Healthy": healthy}
+
+        await self.cog._refresh_dependents()  # must not raise
+
+        healthy.refresh_pixelagents.assert_awaited_once_with(self.cog)
+
+    async def test_noop_when_nothing_is_loaded_yet(self) -> None:
+        self.cog.bot.cogs = {}
+
+        await self.cog._refresh_dependents()  # must not raise
+
+
 if __name__ == "__main__":
     unittest.main()

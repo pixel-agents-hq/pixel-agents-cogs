@@ -56,6 +56,14 @@ class FloorplanBase:
             self._corridor.unregister_dependent("floorplan")
         await self._pixel_index_client.close()
 
+    async def refresh_pixelagents(self, pixelagents: Any) -> None:
+        """Called by pixelagents itself after it (re)loads, so an
+        independent pixelagents reload doesn't leave floorplan holding a
+        stale Cog reference. See pixelagents' `_refresh_dependents`
+        docstring."""
+
+        self._pixelagents = pixelagents
+
     async def _apply_catalogue_layout(self, layout: dict[str, object]) -> None:
         await self._pixelagents.set_office_layout(OfficeStateKind.DISCORD, layout)
 

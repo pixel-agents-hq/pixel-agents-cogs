@@ -19,6 +19,11 @@ loading in `setup()`/`cog_load()`, via `bot._cog_mgr.find_cog(name)` +
 internally. This doc is the single place that explains the resulting
 pattern.
 
+This doc only covers *acquiring* a dependency reference. What happens to
+that reference afterward, if the dependency itself reloads independently of
+the dependent that holds it, is covered separately in
+[`dependency-cascades.md`](dependency-cascades.md).
+
 ## The two tools
 
 Both live in `corridor/dependency_loader.py` (except bootstrapping corridor

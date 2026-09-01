@@ -67,6 +67,22 @@ class TestFloorplanLifecycle(unittest.IsolatedAsyncioTestCase):
 
         cog._pixelagents.set_office_layout.assert_awaited_once_with(OfficeStateKind.DISCORD, layout)
 
+    async def test_refresh_pixelagents_replaces_the_cached_reference(self) -> None:
+        # Regression test for: pixelagents reloading independently of
+        # floorplan's own reload left floorplan holding a stale
+        # `_pixelagents` Cog reference forever, since `ensure_loaded` only
+        # resolves once, in floorplan's own `cog_load`. pixelagents now
+        # pushes its fresh instance to every loaded cog exposing
+        # `refresh_pixelagents` -- floorplan only reads `self._pixelagents`
+        # directly, so updating the attribute is the whole fix.
+        cog = make_cog()
+        cog._pixelagents = MagicMock()
+        fresh = MagicMock()
+
+        await cog.refresh_pixelagents(fresh)
+
+        assert cog._pixelagents is fresh
+
 
 class TestFloorplanAuthorization(unittest.IsolatedAsyncioTestCase):
     async def test_owner_can_load_a_layout(self) -> None:

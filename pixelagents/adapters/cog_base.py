@@ -209,6 +209,7 @@ class PixelAgentsBase:
             self.bundled_default_layout,
             self._style_loader.styles,
         )
+        await self._refresh_dependents()
         if self._webview_build_outcome is not None and not self._webview_build_outcome.ok:
             await self._notify_owners_webview_build_failed()
 
@@ -216,6 +217,35 @@ class PixelAgentsBase:
         self._office_state = None
         if self._corridor is not None:
             self._corridor.unregister_dependent("pixelagents")
+
+    async def _refresh_dependents(self) -> None:
+        """Push this Cog instance to every already-loaded cog that cached a
+        reference to pixelagents -- cctv, architect, painter, and floorplan
+        each resolve `self._pixelagents` once, in their own `cog_load`, via
+        `ensure_loaded`. That resolution never re-runs on its own, so a
+        pixelagents reload that happens independently of theirs (e.g.
+        triggered by hot-reload picking up an unrelated file, or a manual
+        `[p]reload pixelagents`) used to leave them holding a reference to
+        the discarded old Cog instance forever -- including its
+        `_office_state`, which `cog_unload` had already nulled out on that
+        old instance. Every call through the stale reference then raised
+        "pixelagents office-state facade is not loaded" until the dependent
+        itself happened to reload too.
+
+        Duck-typed and best-effort by design: any currently loaded cog that
+        defines `refresh_pixelagents` gets called, so a new dependent
+        doesn't need to be wired in here by name, and one dependent's
+        refresh failing must never block another's or pixelagents' own
+        load."""
+
+        for cog in list(self.bot.cogs.values()):
+            refresh = getattr(cog, "refresh_pixelagents", None)
+            if refresh is None:
+                continue
+            try:
+                await refresh(self)
+            except Exception:
+                log.exception("pixelagents: failed to refresh dependent cog %r", type(cog).__name__)
 
     # Cross-adapter hook resolved by the composed Cog's MRO.
     async def _reply(

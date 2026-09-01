@@ -62,8 +62,15 @@ ensure_webview_built(cog_data_path)
   -> npm ci --workspace=webview-ui --ignore-scripts
   -> vite build --base ./
   -> decode sprite assets and generate furniture-styles.json
-  -> atomically replace <cog_data_path>/webview_dist
+  -> remove and rebuild <cog_data_path>/webview_dist in place
 ```
+
+The last step is not an atomic rename/swap: `_sync_dist` removes the
+existing `webview_dist` (if any) and repopulates it file by file. An
+`fcntl`-based file lock (`_build_lock`) still serializes concurrent build
+attempts against the same `cog_data_path` so two builds never interleave
+their writes, but a process crash mid-`_sync_dist` can leave a partial
+`webview_dist` behind rather than rolling back to the previous build.
 
 The relative `./` asset base lets CCTV serve one build beneath its own static
 Dashboard route. `webview_bundle_status()` is a read-only surface and never

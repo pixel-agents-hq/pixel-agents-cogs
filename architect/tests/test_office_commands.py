@@ -6,6 +6,8 @@ from __future__ import annotations
 
 import unittest
 
+from corridor.domain import OfficeStateKind
+
 from ..architect import Architect
 from .conftest import FakeBot, FakeContext, FakePixelAgents
 
@@ -70,13 +72,17 @@ class TestOfficeCommandsAreOwnerGated(unittest.TestCase):
 
 class TestOfficeCommandsFunctional(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
-        self.bot = FakeBot(pixelagents=FakePixelAgents(furniture_styles=_MANIFEST))
+        self.bot = FakeBot(
+            pixelagents=FakePixelAgents(
+                furniture_styles=_MANIFEST,
+                editor_layout=dict(_EMPTY_LAYOUT),
+            )
+        )
         self.cog = Architect(bot=self.bot)
         self.ctx = FakeContext()
 
     async def asyncSetUp(self) -> None:
         await self.cog.cog_load()
-        await self.cog._office_layout_settings.set_layout(dict(_EMPTY_LAYOUT))
 
     async def test_describe_reports_an_empty_office(self) -> None:
         await self.cog.office_describe.callback(self.cog, self.ctx)
@@ -111,20 +117,12 @@ class TestOfficeCommandsFunctional(unittest.IsolatedAsyncioTestCase):
         message = _descriptions(self.bot)[-1] or ""
         self.assertIn("does not exist", message)
 
-    async def test_mutation_broadcasts_layout_loaded_to_the_client_hub(self) -> None:
-        broadcasts: list[dict[str, object]] = []
-
-        async def fake_broadcast(message: dict[str, object], **kwargs: object) -> None:
-            broadcasts.append(message)
-
-        self.cog._client_hub.broadcast = fake_broadcast  # type: ignore[method-assign]
-
+    async def test_mutation_advances_the_editor_aggregate(self) -> None:
         await self.cog.office_place_furniture.callback(self.cog, self.ctx, "desk", "desk", 0, 0)
 
-        self.assertEqual(len(broadcasts), 1)
-        self.assertEqual(broadcasts[0]["type"], "layoutLoaded")
-        assert isinstance(broadcasts[0]["layout"], dict)
-        self.assertEqual(broadcasts[0]["layout"]["cols"], 5)
+        state = await self.cog._pixelagents.office_state(OfficeStateKind.EDITOR)
+        self.assertEqual(state.revision, 2)
+        self.assertEqual(state.layout["cols"], 5)
 
     async def test_painttiles_floor_then_describetiles_shows_it(self) -> None:
         await self.cog.office_paint_tiles.callback(self.cog, self.ctx, 0, 0, 1, 1, "floor", 3)

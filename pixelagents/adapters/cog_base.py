@@ -98,7 +98,7 @@ class PixelAgentsBase:
         return outcome.status_line
 
     def webview_bundle_status(self) -> WebviewBundleStatus:
-        """Public, read-only cross-cog surface consumed by floorplan.
+        """Public, read-only cross-cog surface consumed by CCTV and agents.
 
         No rebuild trigger here -- rebuilding stays
         `[p]pixelagents webview rebuild`-only.

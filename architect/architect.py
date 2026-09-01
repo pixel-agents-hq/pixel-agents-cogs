@@ -6,18 +6,12 @@ from redbot.core import commands
 
 from .adapters.cog_base import CogBase
 from .adapters.commands import CommandsMixin
-from .adapters.dashboard import DashboardMixin
 from .adapters.office_commands import OfficeCommandsMixin
-from .adapters.office_gateway import OfficeGatewayMixin
-from .adapters.presence_subscription import PresenceSubscriptionMixin
 
 
 class Architect(
     CommandsMixin,
     OfficeCommandsMixin,
-    DashboardMixin,
-    OfficeGatewayMixin,
-    PresenceSubscriptionMixin,
     CogBase,
     commands.Cog,
 ):

@@ -85,26 +85,19 @@ _MANIFEST = {
 }
 
 
-class FakeSettingsRepository:
-    def __init__(self) -> None:
-        self._layout: dict[str, object] | None = {
+def _service() -> OfficeLayoutService:
+    pixelagents = FakePixelAgents(
+        furniture_styles=_MANIFEST,
+        editor_layout={
             "version": 1,
             "cols": 5,
             "rows": 5,
             "tiles": [1] * 25,
             "furniture": [],
-        }
-
-    async def layout(self) -> dict[str, object] | None:
-        return self._layout
-
-    async def set_layout(self, layout: dict[str, object]) -> None:
-        self._layout = layout
-
-
-def _service() -> OfficeLayoutService:
-    repository = OfficeLayoutRepository(FakeSettingsRepository())
-    loader = FurnitureStyleLoader(FakePixelAgents(furniture_styles=_MANIFEST))
+        },
+    )
+    repository = OfficeLayoutRepository(lambda: pixelagents)
+    loader = FurnitureStyleLoader(pixelagents)
     return OfficeLayoutService(repository, loader)
 
 

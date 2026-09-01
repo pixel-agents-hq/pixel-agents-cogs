@@ -1,31 +1,13 @@
-"""Painter's own OfficeLayoutRepository reads/writes the same shape
-architect's does -- see docs/painter-design.md part A. No decode_raw()
-here: that method exists on architect's own repository purely for its
-in-browser editor's whole-office save path, which painter has no
-equivalent of."""
-
 from __future__ import annotations
 
 import unittest
 
+from corridor.domain import OfficeState, OfficeStateKind
 from pixelagents.domain import Office
 from pixelagents.infrastructure.furniture_styles import FurnitureStyleManifest
 
-from ..infrastructure.office_layout_repository import (
-    OfficeLayoutNotSeededError,
-    OfficeLayoutRepository,
-)
-
-
-class FakeSettingsRepository:
-    def __init__(self, layout: dict[str, object] | None = None) -> None:
-        self._layout = layout
-
-    async def layout(self) -> dict[str, object] | None:
-        return self._layout
-
-    async def set_layout(self, layout: dict[str, object]) -> None:
-        self._layout = layout
+from ..infrastructure.office_layout_repository import OfficeLayoutRepository
+from .conftest import FakePixelAgents
 
 
 def _flat_layout(cols: int = 3, rows: int = 3) -> dict[str, object]:
@@ -39,14 +21,9 @@ def _flat_layout(cols: int = 3, rows: int = 3) -> dict[str, object]:
 
 
 class TestOfficeLayoutRepository(unittest.IsolatedAsyncioTestCase):
-    async def test_load_raises_when_nothing_seeded_yet(self) -> None:
-        repository = OfficeLayoutRepository(FakeSettingsRepository(layout=None))
-
-        with self.assertRaises(OfficeLayoutNotSeededError):
-            await repository.load(FurnitureStyleManifest.from_raw({"styles": []}))
-
-    async def test_load_decodes_the_stored_layout(self) -> None:
-        repository = OfficeLayoutRepository(FakeSettingsRepository(layout=_flat_layout(4, 5)))
+    async def test_load_reads_the_editor_aggregate(self) -> None:
+        pixelagents = FakePixelAgents(editor_layout=_flat_layout(4, 5))
+        repository = OfficeLayoutRepository(lambda: pixelagents)
 
         office = await repository.load(FurnitureStyleManifest.from_raw({"styles": []}))
 
@@ -54,13 +31,25 @@ class TestOfficeLayoutRepository(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(office.width, 4)
         self.assertEqual(office.height, 5)
 
-    async def test_save_encodes_and_persists_and_returns_the_raw_json(self) -> None:
-        settings = FakeSettingsRepository(layout=_flat_layout(3, 3))
-        repository = OfficeLayoutRepository(settings)
+    async def test_save_preserves_editor_avatar_seats(self) -> None:
+        pixelagents = FakePixelAgents(editor_layout=_flat_layout())
+        pixelagents._states[OfficeStateKind.EDITOR] = OfficeState(
+            kind=OfficeStateKind.EDITOR,
+            layout=_flat_layout(),
+            seats={"painter": {"seatId": "desk-2"}},
+            revision=1,
+        )
+        repository = OfficeLayoutRepository(lambda: pixelagents)
         styles = FurnitureStyleManifest.from_raw({"styles": []})
         office = await repository.load(styles)
 
-        raw = await repository.save(office, styles)
+        await repository.save(office, styles)
 
-        self.assertEqual(raw["cols"], 3)
-        self.assertEqual(await settings.layout(), raw)
+        saved = await pixelagents.office_state(OfficeStateKind.EDITOR)
+        self.assertEqual(saved.layout["cols"], 3)
+        self.assertEqual(saved.seats, {"painter": {"seatId": "desk-2"}})
+        self.assertEqual(saved.revision, 2)
+
+
+if __name__ == "__main__":
+    unittest.main()

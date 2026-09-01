@@ -1,11 +1,7 @@
 """Dependency composition and lifecycle for the Painter Cog.
 
-A deliberate parallel copy of `architect/adapters/cog_base.py`'s shape,
-stripped of everything architect needs that painter doesn't: no WebSocket
-server, no webview, no Dashboard route, no presence tracking -- painter
-serves no browser-facing surface of its own at all, it only registers
-with corridor's shared A2A listener and edits the one shared office
-layout directly. See docs/painter-design.md.
+Painter registers on corridor's A2A listener and mutates the editor aggregate
+through pixelagents. It owns no browser-facing resources; CCTV owns those.
 """
 
 from __future__ import annotations
@@ -18,7 +14,6 @@ from redbot.core.bot import Red
 
 from corridor.domain import AgentRef, AgentReplied, RegisteredAgent, ReplyCategory
 from pixelagents.infrastructure.furniture_styles import FurnitureStyleLoader
-from pixelagents.infrastructure.office_layout_settings import RedOfficeLayoutSettings
 
 from ..application import ToolLoopService
 from ..application.painter_layout_service import PainterLayoutService
@@ -84,15 +79,10 @@ class CogBase:
         llm = CorridorLLMClient(lambda: self._corridor)
         self._tool_loop_service = ToolLoopService(llm)
         self._style_loader = FurnitureStyleLoader(_LazyPixelAgents(lambda: self._pixelagents))
-        # The shared office layout -- same store architect reads/writes,
-        # reached independently (not through a live architect reference):
-        # see docs/painter-design.md part A.
-        self._office_layout_settings = RedOfficeLayoutSettings.create()
-        self._office_layout_repository = OfficeLayoutRepository(self._office_layout_settings)
+        self._office_layout_repository = OfficeLayoutRepository(lambda: self._pixelagents)
         self._painter_layout_service = PainterLayoutService(
             self._office_layout_repository,
             self._style_loader,
-            on_layout_changed=self._notify_architect_layout_changed,
         )
         self._architect_client = ArchitectClient()
         self._tools: list[ToolSpec] = [
@@ -116,15 +106,19 @@ class CogBase:
 
         from corridor.dependency_loader import ensure_loaded
 
-        self._corridor = await ensure_corridor_loaded(self.bot)
-        # So unloading corridor cascades to unload this cog too, instead of
-        # leaving it running with a stale corridor reference.
-        self._corridor.register_dependent("painter")
-        self._reply = self._corridor.reply_sender(
-            owner="Painter", avatar_path=AVATAR_PATH, category=ReplyCategory.AGENT
-        )
-        await self._register_with_corridor()
-        self._pixelagents = await ensure_loaded(self.bot, "pixelagents", "PixelAgents")
+        try:
+            self._corridor = await ensure_corridor_loaded(self.bot)
+            # So unloading corridor cascades to unload this cog too, instead of
+            # leaving it running with a stale corridor reference.
+            self._corridor.register_dependent("painter")
+            self._reply = self._corridor.reply_sender(
+                owner="Painter", avatar_path=AVATAR_PATH, category=ReplyCategory.AGENT
+            )
+            self._pixelagents = await ensure_loaded(self.bot, "pixelagents", "PixelAgents")
+            await self._register_with_corridor()
+        except Exception:
+            await self.cog_unload()
+            raise
 
     async def cog_unload(self) -> None:
         if self._corridor is not None:
@@ -162,28 +156,6 @@ class CogBase:
             )
         except Exception:
             log.exception("painter: failed to publish tool/thinking activity")
-
-    async def _notify_architect_layout_changed(self) -> None:
-        """Best-effort: painter has no WebSocket server of its own to push
-        a live update through the way architect's own writes already do
-        synchronously as part of the same mutation
-        (`OfficeLayoutService._persist`) -- without this, a painter-made
-        recolor is real and persisted immediately, but a browser already
-        showing the office only picks it up on its next manual reload.
-        `bot.get_cog("Architect")` is the same lazy, optional cross-cog
-        lookup shape used throughout this repo (e.g.
-        `dependency_loader.py`'s `ensure_loaded`) -- if architect isn't
-        currently loaded, or the lookup/call fails for any other reason,
-        this silently does nothing rather than failing the recolor that
-        already succeeded and persisted before this callback ever runs."""
-
-        try:
-            architect = self.bot.get_cog("Architect")
-            if architect is None:
-                return
-            await architect.notify_shared_layout_changed()
-        except Exception:
-            log.exception("painter: could not notify architect to refresh its webview clients")
 
 
 class _LazyPixelAgents:

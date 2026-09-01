@@ -177,7 +177,7 @@ def is_up_to_date(webview_dist: Path, commit: str, base_path: str) -> bool:
 def built_commit(webview_dist: Path) -> str | None:
     """The commit `webview_dist` was actually built from, if known.
 
-    Used by `PixelAgentsBase.webview_bundle_status()` so floorplan can tell
+    Used by `PixelAgentsBase.webview_bundle_status()` so CCTV can tell
     a rebuild-to-a-different-commit apart from "still the same bundle" --
     same marker file `is_up_to_date` checks, just exposed for a reader
     outside this module.

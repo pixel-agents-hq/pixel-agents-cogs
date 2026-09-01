@@ -29,15 +29,6 @@ class TestCommandsAreOwnerGated(unittest.TestCase):
     def setUp(self) -> None:
         self.cog = Architect(bot=FakeBot())
 
-    def test_ws_group_is_owner_gated(self) -> None:
-        self.assertTrue(getattr(self.cog.ws_group.callback, "__is_owner__", False))
-
-    def test_ws_host_is_owner_gated(self) -> None:
-        self.assertTrue(getattr(self.cog.ws_host.callback, "__is_owner__", False))
-
-    def test_ws_port_is_owner_gated(self) -> None:
-        self.assertTrue(getattr(self.cog.ws_port.callback, "__is_owner__", False))
-
     def test_maxtoolcalls_is_owner_gated(self) -> None:
         self.assertTrue(getattr(self.cog.maxtoolcalls.callback, "__is_owner__", False))
 
@@ -60,25 +51,6 @@ class TestArchitectCommands(unittest.IsolatedAsyncioTestCase):
 
     async def asyncTearDown(self) -> None:
         await self.cog.cog_unload()
-
-    async def test_ws_host_persists_and_tells_the_owner_to_reload(self) -> None:
-        await self.cog.ws_host.callback(self.cog, self.ctx, "0.0.0.0")
-
-        settings = await self.cog._repository.global_settings()
-        self.assertEqual(settings.ws_host, "0.0.0.0")
-        self.assertIn("Reload the cog", _descriptions(self.bot)[-1] or "")
-
-    async def test_ws_port_persists_and_tells_the_owner_to_reload(self) -> None:
-        await self.cog.ws_port.callback(self.cog, self.ctx, 9001)
-
-        settings = await self.cog._repository.global_settings()
-        self.assertEqual(settings.ws_port, 9001)
-        self.assertIn("Reload the cog", _descriptions(self.bot)[-1] or "")
-
-    async def test_ws_port_rejects_out_of_range_values(self) -> None:
-        await self.cog.ws_port.callback(self.cog, self.ctx, 0)
-
-        self.assertIn("Port must be", _descriptions(self.bot)[-1] or "")
 
     async def test_maxtoolcalls_updates(self) -> None:
         await self.cog.maxtoolcalls.callback(self.cog, self.ctx, 3)
@@ -157,33 +129,13 @@ class TestArchitectCommands(unittest.IsolatedAsyncioTestCase):
         key_field = next(f for f in fields if f.name == "LLM Key")
         self.assertEqual(key_field.value, "*(not set)*")
 
-    async def test_status_shows_webview_health(self) -> None:
+    async def test_status_shows_the_editor_revision(self) -> None:
         await self.cog.status.callback(self.cog, self.ctx)
 
         assert self.bot.corridor is not None
         fields = self.bot.corridor.replies[-1]["fields"]
-        webview_field = next(f for f in fields if f.name == "Webview")
-        # The default FakePixelAgents dist_path is an empty temp dir --
-        # ready per its status, but with no real index.html/sprites to load.
-        self.assertEqual(webview_field.value, "⚠️ missing")
-
-    async def test_status_shows_layout_not_seeded_without_a_bundled_default(self) -> None:
-        await self.cog.status.callback(self.cog, self.ctx)
-
-        assert self.bot.corridor is not None
-        fields = self.bot.corridor.replies[-1]["fields"]
-        layout_field = next(f for f in fields if f.name == "Layout")
-        self.assertEqual(layout_field.value, "⚠️ not seeded yet")
-
-    async def test_status_shows_layout_seeded_once_set(self) -> None:
-        await self.cog._office_layout_settings.set_layout({"tiles": [1]})
-
-        await self.cog.status.callback(self.cog, self.ctx)
-
-        assert self.bot.corridor is not None
-        fields = self.bot.corridor.replies[-1]["fields"]
-        layout_field = next(f for f in fields if f.name == "Layout")
-        self.assertIn("seeded", layout_field.value)
+        state_field = next(f for f in fields if f.name == "Editor Aggregate")
+        self.assertEqual(state_field.value, "✅ revision 1")
 
 
 class TestCogLoadSurvivesARegistrationFailure(unittest.IsolatedAsyncioTestCase):
@@ -414,89 +366,3 @@ class TestPresencePublishing(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(event.agent.guild_id)
         self.assertTrue(event.agent.is_bot)
         self.assertEqual(event.agent.agent_key, "architect")
-
-
-class TestNotifySharedLayoutChanged(unittest.IsolatedAsyncioTestCase):
-    """The public hook `painter` calls (`bot.get_cog("Architect")`,
-    best-effort) after its own recolor mutations -- painter has no
-    WebSocket clients of its own to push a live update through directly,
-    so it reaches architect's instead. See docs/painter-design.md's open
-    risks and painter/adapters/cog_base.py's
-    `_notify_architect_layout_changed`."""
-
-    async def test_rebroadcasts_the_current_layout(self) -> None:
-        bot = FakeBot()
-        cog = Architect(bot=bot)
-        await cog.cog_load()
-        self.addAsyncCleanup(cog.cog_unload)
-        await cog._office_layout_settings.set_layout(
-            {"version": 1, "cols": 3, "rows": 3, "tiles": [1] * 9, "furniture": []}
-        )
-        broadcasts: list[dict[str, object]] = []
-
-        async def fake_broadcast(message: dict[str, object], **kwargs: object) -> None:
-            broadcasts.append(message)
-
-        cog._client_hub.broadcast = fake_broadcast  # type: ignore[method-assign]
-
-        await cog.notify_shared_layout_changed()
-
-        self.assertEqual(len(broadcasts), 1)
-        self.assertEqual(broadcasts[0]["type"], "layoutLoaded")
-        assert isinstance(broadcasts[0]["layout"], dict)
-        self.assertEqual(broadcasts[0]["layout"]["cols"], 3)
-
-    async def test_reflects_a_change_painter_made_directly_to_the_shared_store(self) -> None:
-        """The whole point: this doesn't just re-send architect's own
-        last-known copy -- it re-reads the shared store, so a mutation
-        architect never itself made (painter's own recolor) is picked up
-        too."""
-
-        bot = FakeBot()
-        cog = Architect(bot=bot)
-        await cog.cog_load()
-        self.addAsyncCleanup(cog.cog_unload)
-        await cog._office_layout_settings.set_layout(
-            {"version": 1, "cols": 3, "rows": 3, "tiles": [1] * 9, "furniture": []}
-        )
-        # Simulate painter recoloring directly against the shared store,
-        # entirely outside architect's own OfficeLayoutService.
-        await cog._office_layout_settings.set_layout(
-            {
-                "version": 1,
-                "cols": 3,
-                "rows": 3,
-                "tiles": [1] * 9,
-                "tileColors": [{"h": 220, "s": 80, "b": 0, "c": 0}] + [None] * 8,
-                "furniture": [],
-            }
-        )
-        broadcasts: list[dict[str, object]] = []
-
-        async def fake_broadcast(message: dict[str, object], **kwargs: object) -> None:
-            broadcasts.append(message)
-
-        cog._client_hub.broadcast = fake_broadcast  # type: ignore[method-assign]
-
-        await cog.notify_shared_layout_changed()
-
-        assert isinstance(broadcasts[0]["layout"], dict)
-        self.assertEqual(
-            broadcasts[0]["layout"]["tileColors"][0], {"h": 220, "s": 80, "b": 0, "c": 0}
-        )
-
-    async def test_no_op_when_nothing_has_been_seeded_yet(self) -> None:
-        bot = FakeBot()
-        cog = Architect(bot=bot)
-        await cog.cog_load()
-        self.addAsyncCleanup(cog.cog_unload)
-        broadcasts: list[dict[str, object]] = []
-
-        async def fake_broadcast(message: dict[str, object], **kwargs: object) -> None:
-            broadcasts.append(message)
-
-        cog._client_hub.broadcast = fake_broadcast  # type: ignore[method-assign]
-
-        await cog.notify_shared_layout_changed()  # must not raise
-
-        self.assertEqual(broadcasts, [])

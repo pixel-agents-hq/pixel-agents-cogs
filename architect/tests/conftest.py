@@ -6,11 +6,12 @@ from __future__ import annotations
 
 import tempfile
 import types
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
-from corridor.domain import AgentPresenceChanged, AgentRef
+from corridor.domain import AgentPresenceChanged, AgentRef, OfficeState, OfficeStateKind
 
 
 class FakeGuild:
@@ -160,12 +161,7 @@ class FakeReplySender:
 
 
 class FakePixelAgents:
-    """Test double for the cross-cog `bot.get_cog("PixelAgents")` reference.
-
-    Mirrors `pixelagents.adapters.cog_base.WebviewBundleStatus` --
-    architect only ever reads this, never triggers a (re)build (see
-    `adapters/cog_base.py::_sync_webview_assets`). Copied from
-    `floorplan/tests/conftest.py`'s own `FakePixelAgents`."""
+    """Test double for bundle metadata, style manifest, and office state."""
 
     def __init__(
         self,
@@ -176,6 +172,7 @@ class FakePixelAgents:
         built_commit: str = "a" * 40,
         built_base_path: str = "./",
         furniture_styles: dict[str, Any] | None = None,
+        editor_layout: dict[str, object] | None = None,
     ) -> None:
         self.dist_path = dist_path or Path(tempfile.mkdtemp(prefix="fake-pixelagents-dist-"))
         self.ready = ready
@@ -183,6 +180,21 @@ class FakePixelAgents:
         self.built_commit = built_commit if ready else None
         self.built_base_path = built_base_path if ready else None
         self._furniture_styles = furniture_styles
+        layout = editor_layout or {
+            "version": 1,
+            "cols": 1,
+            "rows": 1,
+            "tiles": [1],
+            "furniture": [],
+        }
+        self._states = {
+            OfficeStateKind.EDITOR: OfficeState(
+                kind=OfficeStateKind.EDITOR,
+                layout=layout,
+                seats={},
+                revision=1,
+            )
+        }
 
     def webview_bundle_status(self) -> Any:
         return types.SimpleNamespace(
@@ -195,6 +207,22 @@ class FakePixelAgents:
 
     def furniture_style_manifest(self) -> dict[str, Any] | None:
         return self._furniture_styles
+
+    async def office_state(self, kind: OfficeStateKind) -> OfficeState:
+        return self._states[kind]
+
+    async def set_office_layout(
+        self, kind: OfficeStateKind, layout: Mapping[str, object]
+    ) -> OfficeState:
+        current = self._states[kind]
+        updated = OfficeState(
+            kind=kind,
+            layout=dict(layout),
+            seats=current.seats,
+            revision=current.revision + 1,
+        )
+        self._states[kind] = updated
+        return updated
 
 
 class FakeUser:

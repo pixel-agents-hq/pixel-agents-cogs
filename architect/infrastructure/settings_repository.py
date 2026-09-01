@@ -1,9 +1,7 @@
 """Red Config-backed implementation of architect's settings storage.
 
-Global (bot-owner) scope only -- unlike pico, architect has no per-guild
-`enabled` toggle: its A2A listener and webview are process-scoped, not
-per-guild (see docs/architect-design.md section 6). The LLM *connection*
-lives in corridor, shared with pico.
+Global (bot-owner) scope only. The LLM connection and A2A listener live in
+Corridor; the revisioned editor layout lives behind Pixelagents' facade.
 """
 
 from __future__ import annotations
@@ -17,7 +15,7 @@ from ..domain import GlobalSettings
 # Freshly rolled for this cog -- Config keys and defaults below are the
 # canonical registration contract once real data exists under this
 # identifier; do not change casually after release.
-CONFIG_IDENTIFIER = 4172636869746374
+CONFIG_IDENTIFIER = 0x6172636869746563745F6167656E74  # "architect_agent"
 
 DEFAULT_MAX_TOOL_CALLS = 5
 DEFAULT_SYSTEM_PROMPT = (
@@ -36,11 +34,6 @@ DEFAULT_SYSTEM_PROMPT = (
     "answer as plain text; that text is sent back directly, so make it "
     "complete and self-contained."
 )
-# Deliberately different from floorplan's own ws_port default (3210) and
-# corridor's shared a2a_port default (8931) -- independent listeners on
-# one host.
-DEFAULT_WS_HOST = "127.0.0.1"
-DEFAULT_WS_PORT = 8932
 # Off by default -- verbose per-tool-call logging (tool name, arguments,
 # and result/error for every call the LLM makes) is noisy in normal
 # operation and only useful while actively diagnosing a tool-calling
@@ -53,16 +46,7 @@ DEFAULT_DEBUG_LOGGING = False
 GLOBAL_DEFAULTS: dict[str, object] = {
     "max_tool_calls": DEFAULT_MAX_TOOL_CALLS,
     "system_prompt": DEFAULT_SYSTEM_PROMPT,
-    "ws_host": DEFAULT_WS_HOST,
-    "ws_port": DEFAULT_WS_PORT,
     "debug_logging": DEFAULT_DEBUG_LOGGING,
-    # Legacy location only -- the live layout store moved to
-    # `pixelagents.infrastructure.office_layout_settings` (docs/painter-design.md
-    # part A) so `painter` can reach it too. Kept registered here, with
-    # `layout()` still readable below, purely so `CogBase`'s one-time
-    # migration can read whatever an existing install still has under this
-    # old key and copy it across; nothing writes here anymore.
-    "layout": None,
 }
 
 
@@ -74,13 +58,18 @@ class RedArchitectRepository:
 
     @classmethod
     def create(cls, cog: object) -> RedArchitectRepository:
-        config = Config.get_conf(cog, identifier=CONFIG_IDENTIFIER, force_registration=True)
+        config = Config.get_conf(
+            cog,
+            identifier=CONFIG_IDENTIFIER,
+            force_registration=True,
+            cog_name="architect",
+        )
         config.register_global(**GLOBAL_DEFAULTS)
         return cls(config)
 
     @property
     def config(self) -> Any:
-        """Expose the raw Config object for the legacy cog compatibility surface."""
+        """Expose the Config object for Red's conventional cog surface."""
 
         return self._config
 
@@ -88,8 +77,6 @@ class RedArchitectRepository:
         return GlobalSettings(
             max_tool_calls=cast(int, await self._config.max_tool_calls()),
             system_prompt=cast(str, await self._config.system_prompt()),
-            ws_host=cast(str, await self._config.ws_host()),
-            ws_port=cast(int, await self._config.ws_port()),
             debug_logging=cast(bool, await self._config.debug_logging()),
         )
 
@@ -104,23 +91,5 @@ class RedArchitectRepository:
     async def reset_system_prompt(self) -> None:
         await self._config.system_prompt.set(DEFAULT_SYSTEM_PROMPT)
 
-    async def set_ws_host(self, value: str) -> None:
-        await self._config.ws_host.set(value)
-
-    async def set_ws_port(self, value: int) -> None:
-        if isinstance(value, bool) or not 1 <= value <= 65535:
-            raise ValueError("Port must be an integer from 1 through 65535.")
-        await self._config.ws_port.set(value)
-
     async def set_debug_logging(self, value: bool) -> None:
         await self._config.debug_logging.set(bool(value))
-
-    async def legacy_layout(self) -> dict[str, object] | None:
-        """Whatever this install last stored under the old, architect-owned
-        `layout` key -- migration-only, see `CogBase._migrate_legacy_layout`.
-        `None` for a fresh install, or one already migrated."""
-
-        return cast("dict[str, object] | None", await self._config.layout())
-
-    async def clear_legacy_layout(self) -> None:
-        await self._config.layout.set(None)

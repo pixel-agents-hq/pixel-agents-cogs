@@ -1,14 +1,9 @@
 """Discord-facing commands. Thin: translate ctx <-> repository calls only.
 
-Replies go through corridor (this cog's required_cogs dependency), never a
-raw ctx.send(), so this cog respects whatever reply style a guild has
-configured. All bot-owner scope -- painter is A2A-only and process-scoped,
-not per-guild, so like architect there is no `[p]painter enabled` toggle
-(see docs/architect-design.md section 6, which painter's shape mirrors).
-Unlike architect, painter has no WebSocket server, webview, or `ws ...`
-command group of its own -- it edits the one shared office layout
-directly (docs/painter-design.md part A), not a private store it also
-serves to a browser.
+Replies go through corridor (this cog's required-cogs dependency), never a
+raw ctx.send(), so this cog respects the configured reply style. All settings
+are bot-owner scoped: painter is A2A-only and process-scoped. Browser hosting
+belongs to CCTV; painter changes the editor aggregate through pixelagents.
 """
 
 from __future__ import annotations
@@ -17,7 +12,7 @@ from typing import Any
 
 from redbot.core import commands
 
-from corridor.domain import ReplyField
+from corridor.domain import OfficeStateKind, ReplyField
 
 from ..infrastructure import RedPainterRepository
 
@@ -25,12 +20,11 @@ _MASKED_KEY = "•" * 8
 
 
 class CommandsMixin:
-    """Requires `self._repository: RedPainterRepository`,
-    `self._office_layout_settings`, and `self._corridor` (all provided by
-    CogBase)."""
+    """Requires the repositories and cross-cog references from CogBase."""
 
     _repository: RedPainterRepository
     _corridor: Any
+    _pixelagents: Any
     _reply: Any
 
     @commands.hybrid_group(name="painter", invoke_without_command=True)
@@ -103,7 +97,11 @@ class CommandsMixin:
 
         settings = await self._repository.global_settings()
         llm_settings: Any = await self._corridor.llm_settings()
-        layout = await self._office_layout_settings.layout()  # type: ignore[attr-defined]
+        try:
+            editor_state = await self._pixelagents.office_state(OfficeStateKind.EDITOR)
+            editor_status = f"✅ revision {editor_state.revision}"
+        except (RuntimeError, TypeError, ValueError) as exc:
+            editor_status = f"⚠️ unavailable: {exc}"
         fields = [
             ReplyField("LLM Endpoint", llm_settings.llm_base_url, False),
             ReplyField("LLM Model", llm_settings.llm_model or "*(not set)*"),
@@ -118,8 +116,8 @@ class CommandsMixin:
                 False,
             ),
             ReplyField(
-                "Office Layout",
-                "✅ available (shared with architect)" if layout else "⚠️ not seeded yet",
+                "Editor Aggregate",
+                editor_status,
                 False,
             ),
         ]

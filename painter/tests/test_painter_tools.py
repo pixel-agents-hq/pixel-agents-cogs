@@ -7,7 +7,9 @@ from __future__ import annotations
 
 import types
 import unittest
+from collections.abc import Mapping
 
+from corridor.domain import OfficeState, OfficeStateKind
 from pixelagents.domain import GridPosition, GridRect
 from pixelagents.infrastructure.furniture_styles import FurnitureStyleLoader
 
@@ -55,13 +57,18 @@ _MANIFEST = {
 
 class FakeSettingsRepository:
     def __init__(self, layout: dict[str, object]) -> None:
-        self._layout: dict[str, object] | None = layout
+        self._state = OfficeState(OfficeStateKind.EDITOR, layout, {}, 1)
 
-    async def layout(self) -> dict[str, object] | None:
-        return self._layout
+    async def office_state(self, kind: OfficeStateKind) -> OfficeState:
+        assert kind is OfficeStateKind.EDITOR
+        return self._state
 
-    async def set_layout(self, layout: dict[str, object]) -> None:
-        self._layout = layout
+    async def set_office_layout(
+        self, kind: OfficeStateKind, layout: Mapping[str, object]
+    ) -> OfficeState:
+        assert kind is OfficeStateKind.EDITOR
+        self._state = OfficeState(kind, dict(layout), self._state.seats, self._state.revision + 1)
+        return self._state
 
 
 class FakePixelAgents:
@@ -88,7 +95,8 @@ def _layout() -> dict[str, object]:
 
 
 def _service() -> PainterLayoutService:
-    repository = OfficeLayoutRepository(FakeSettingsRepository(_layout()))
+    state = FakeSettingsRepository(_layout())
+    repository = OfficeLayoutRepository(lambda: state)
     loader = FurnitureStyleLoader(FakePixelAgents(_MANIFEST))
     return PainterLayoutService(repository, loader)
 

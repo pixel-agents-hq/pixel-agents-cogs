@@ -85,7 +85,7 @@ def unregister_visibility_filter_owner(self, owner: str) -> None:
     ...
 ```
 
-`list_tools_for(ctx)` (`corridor/adapters/cog_base.py:280-306`) gets one
+`list_tools_for(ctx)` (`corridor/adapters/cog_base.py:594-622`) gets one
 more step per tool, after the existing group/`can_run` checks and before
 `allowed.append(tool)`: run every registered filter, short-circuit to
 "omit" on the first `False`, and — matching the existing
@@ -105,7 +105,7 @@ filter.
 
 Toolbox needs a `RegisteredTool` for a command whose author never wrote
 `@llm_tool()`. Rather than a second, parallel schema inference, the
-per-parameter inference core in `corridor/domain/llm_tools.py:146-238` is
+per-parameter inference core in `corridor/domain/llm_tools.py:167-223` is
 extracted into a shared, strictness-parameterized helper:
 
 ```python
@@ -142,7 +142,7 @@ the person clicking it, not a state worth reaching blind.
 Toolbox registers wrapped tools the same way any provider does — `owner=
 cog.qualified_name`, the *source* cog's name, not `"Toolbox"`. That one
 choice is what makes cleanup free: corridor's own defensive
-`on_cog_remove` listener (`corridor/adapters/cog_base.py:228-240`) already
+`on_cog_remove` listener (`corridor/adapters/cog_base.py:506-524`) already
 calls `unregister_owner(cog.qualified_name)` unconditionally on every cog
 removal. Toolbox never needs to react to unload at all.
 
@@ -154,22 +154,30 @@ already know about each other, not bot-lifecycle plumbing:
 # toolbox/adapters/cog_base.py
 @commands.Cog.listener()
 async def on_cog_add(self, cog: commands.Cog) -> None:
-    """Red-specific event (redbot/core/bot.py:2084), dispatched after every
-    `bot.add_cog`, including cogs loaded after toolbox itself. Re-wrap
-    every selected-but-undecorated command the newly (re)loaded cog
-    provides. Mirrors redbot/cogs/permissions/permissions.py's own
-    on_cog_add resync for the same reason: derived state has to notice
-    every cog it didn't load first."""
+    """Red-specific event (redbot/core/bot.py, dispatched from
+    `Red.add_cog` after every `bot.add_cog`), including cogs loaded after
+    toolbox itself. Re-wrap every selected-but-undecorated command the
+    newly (re)loaded cog provides. Mirrors redbot/cogs/permissions/
+    permissions.py's own on_cog_add resync for the same reason: derived
+    state has to notice every cog it didn't load first."""
     if cog is self:
         return
-    await self._service.resync_selected_tools(cog)
+    await self._resync_tool_registrations(cog)
 ```
 
-`resync_selected_tools(cog)` walks `cog.walk_commands()`, and for each
-command whose qualified name is in toolbox's selection Config and that has
-no `llm_tool_spec()` already (an author-decorated command re-registers
-itself at its own `cog_load` and needs no help from toolbox), synthesizes
-and registers a `RegisteredTool`.
+`_resync_tool_registrations(cog)` -- a `CogBase` method, not a call onto
+`NodeService`/`ToolSelectionService` -- delegates the actual command scan
+to `collect_wrappable_tools(cog, selected)` in
+`toolbox/adapters/tool_wrapping.py`: it walks `cog`'s members (mirroring
+corridor's own `collect_registered_tools` scanner), and for each command
+whose qualified name is in toolbox's selection Config and that has no
+`llm_tool_spec()` already (an author-decorated command re-registers itself
+at its own `cog_load` and needs no help from toolbox), synthesizes a
+`RegisteredTool`; `_resync_tool_registrations` then calls
+`self._corridor.register_tool(tool, owner=cog.qualified_name)` for each
+one, tolerating (and logging) a name collision here since this bulk path
+runs for every cog on every load, not just the one command a user just
+selected.
 
 Startup ordering is a non-issue: `on_cog_add` fires once per cog for every
 cog Red loads, including ones that finish loading after toolbox, so
@@ -178,18 +186,27 @@ it actually appears, exactly like `permissions` does today.
 
 ## The UI
 
-A `discord.ui.LayoutView`, structurally cloned from
-`corridor/adapters/settings_ui.py`'s `SharedSettingsView`/
-`build_shared_settings_container()` — a `Container` of rows, one per
-candidate command, each row a `Section`/`ActionRow` with a toggle
-`Button`, paginated through `corridor/ui_limits.py`'s existing
-component-count and 25-option-`Select` helpers exactly as
-`floorplan/adapters/layout_views.py` already paginates layout browsing.
-No new interaction pattern; this is the fourth cog to use the same shape.
+Two separate `discord.ui.LayoutView`s in `toolbox/adapters/tool_panel.py`
+— `ToolSelectionView` (global panel, `[p]toolbox tools`) and
+`ToolGuildOverrideView` (per-guild panel, `[p]toolbox tools guild`) —
+structurally cloned from `corridor/adapters/settings_ui.py`'s
+`SharedSettingsView`/`build_shared_settings_container()`: a `Container` of
+rows, one per candidate command or registered tool, each row a
+`TextDisplay` plus an `ActionRow` of toggle `Button`s. Pagination is
+toolbox's own fixed `PAGE_SIZE = 5` slice of an already-computed
+in-memory list, with page state living on the view instance and rebuilt
+in place on prev/next — closer to floorplan's `LayoutBrowseView` shape
+than a `Select`-driven one. Neither view uses a `discord.ui.Select` at
+all, so `corridor/ui_limits.py`'s 25-option-`Select` limit doesn't apply
+here; its component-count checker (`check_ui_tree`) does validate both
+views' rendered component trees, but only in tests
+(`toolbox/tests/test_discord_ui_limits.py`), not as a runtime pagination
+helper the views themselves call. No new interaction pattern beyond that;
+this is the fourth cog to use the `LayoutView` shape.
 
 Candidates are enumerated with `bot.walk_commands()`, filtered the same
 way Red's own help formatter filters (`redbot/core/commands/help.py:
-716-746`): skip `hidden`, skip a command that's `not enabled`, skip one
+717-746`): skip `hidden`, skip a command that's `not enabled`, skip one
 `ctx.author` (the owner opening the panel) can't `can_run`. This keeps
 "what toolbox offers to wrap" identical to "what `[p]help` would show that
 owner" — no separate, harder-to-explain eligibility rule.
@@ -197,16 +214,28 @@ owner" — no separate, harder-to-explain eligibility rule.
 Each row shows: command qualified name, short doc (`command.short_doc`),
 current state (`already an @llm_tool` / `selected, enabled` / `selected,
 disabled` / `not selected`), and one action appropriate to that state.
-Guild-override rows only appear when the panel is opened inside a guild;
-the owner opening it in DMs manages only the global default.
+The guild-override rows are not a conditional section rendered inside the
+global panel; they live entirely in the separate `ToolGuildOverrideView`,
+reached only through the separate, admin-gated `[p]toolbox tools guild`
+command. Both `tools` and `tools guild` (like every `toolbox` command)
+carry `@commands.guild_only()`, so neither panel can actually be opened in
+DMs at all — the owner manages the global default from inside a guild
+they can run `[p]toolbox tools` in, not from DMs as an earlier draft of
+this design assumed.
 
 ## Config shape
 
 ```python
-# toolbox/infrastructure/settings_repository.py
+# toolbox/infrastructure/settings_repository.py -- unchanged, node-install keys only
+GLOBAL_DEFAULTS = {"installed_version": None, "installed_dir": None}
+
+# toolbox/infrastructure/tool_selection_repository.py -- new file
 GLOBAL_DEFAULTS = {
-    ...,  # existing node-install keys, untouched
     "selected_tool_commands": [],       # list[str] of qualified names
+}
+
+# toolbox/infrastructure/tool_visibility_repository.py -- new file
+GLOBAL_DEFAULTS = {
     "tool_enabled_default": {},         # dict[str, bool], qualified name -> default
 }
 GUILD_DEFAULTS = {
@@ -214,10 +243,20 @@ GUILD_DEFAULTS = {
 }
 ```
 
-`register_guild` is new for toolbox (today it's global-only, deliberately,
-for the Node.js host state); this feature is the first toolbox concern
-that's genuinely guild-scoped, so it gets its own `register_guild` call
-alongside the existing `register_global`, not a repurposing of it.
+Shipped as two new `infrastructure/` repository files rather than growing
+`settings_repository.py` itself, each with its own repository class
+(`RedToolSelectionRepository`, `RedToolVisibilityRepository`) -- but all
+three files call `Config.get_conf(cog, identifier=CONFIG_IDENTIFIER, ...)`
+against the *same* identifier constant, re-exported from
+`settings_repository.py`, since Red's Config is a singleton per
+(cog name, identifier) pair and `register_global`/`register_guild`
+accumulate keys across separate calls.
+
+`register_guild` is new for toolbox (today the node-install state and the
+selection set are global-only, deliberately); this feature's visibility
+layer is the first toolbox concern that's genuinely guild-scoped, so
+`RedToolVisibilityRepository` gets its own `register_guild` call alongside
+`register_global`, not a repurposing of the existing one.
 
 ## What does *not* change
 

@@ -1,10 +1,10 @@
 # Extracting dashboard hosting into a new `cctv` cog
 
-**Status: decided, implementation pending.** This document is the agreed
-implementation design. Its factual baseline was checked against this repository
-on 2026-08-31, and every architecture choice below was resolved with the repo
-owner during design validation. There are no remaining product or cross-cog
-architecture questions; exact private helper names remain implementation details.
+**Status: implemented and validated.** This document is the agreed architecture
+and implementation record. Its pre-refactor baseline was checked against this
+repository on 2026-08-31, every architecture choice below was resolved with the
+repo owner during design validation, and the implementation acceptance gates
+passed on 2026-09-01.
 
 The refactor extracts all browser-facing office hosting from `floorplan` and
 `architect` into one new cog, `cctv`. Loading `cctv` provides two independent
@@ -12,7 +12,7 @@ Pixel Agents pages through one Dashboard namespace and one HTTP/WebSocket
 listener. Without `cctv`, there is no dashboard or office WebSocket surface, but
 Pixel Index operations and architect/painter layout mutations continue to work.
 
-## 1. Verified current state
+## 1. Verified pre-refactor state
 
 ### 1.1 Two independently hosted pages
 
@@ -418,7 +418,7 @@ sequenceDiagram
     C->>C: release lock
 ```
 
-## 4. Concrete package changes
+## 4. Implemented package changes
 
 ### 4.1 Corridor
 
@@ -488,15 +488,26 @@ sequenceDiagram
 
 ## 6. Readiness
 
-This architecture is ready for implementation. Implementation is complete only
-when:
+Implementation and validation completed on 2026-09-01:
 
-1. both state aggregates and atomic watches are covered by concurrency tests;
-2. office events have contract generation and five-second timeout tests;
-3. `cctv` live tests exercise both routes on one listener and both authorization
-   policies;
-4. cold-start tests cover cctv-before/after architect and painter;
-5. floorplan/architect/painter work with `cctv` unloaded;
-6. no old Dashboard/WebSocket route or command remains;
-7. all package-specific test suites, Ruff, mypy, contract checks, and Mermaid
-   validation pass.
+1. Both aggregates, atomic initialization, and gap-free watch/snapshot behavior
+   are covered for both state kinds in
+   `corridor/tests/test_office_state_service.py`.
+2. `corridor/office_state.yaml` is generated and checked by the Corridor contract
+   suite. The office-specific five-second cancellation boundary, post-timeout
+   persistence, and continued delivery are covered by the office-state service
+   tests.
+3. `cctv/tests/test_server.py` opens both WebSocket routes on the same live aiohttp
+   listener and exercises the open editor policy, ticket-gated Discord writes,
+   and per-write Discord authorization revocation.
+4. `cctv/tests/test_startup_order.py` covers architect and painter registration
+   both before CCTV's roster snapshot and after its event subscription.
+5. `cctv/tests/test_boundaries.py` proves floorplan, architect, and painter have no
+   runtime dependency on CCTV; their complete package suites also pass without
+   loading CCTV.
+6. Boundary tests and the floorplan/architect architecture suites prove that the
+   old Dashboard/WebSocket modules, routes, fields, and commands are absent.
+7. Every production cog suite passes: 1,316 tests plus 32 subtests, with one
+   intentional skip. Ruff checks 390 files, strict mypy checks 224 source files,
+   all 57 contract-tooling tests and every contract generator/linter pass, and
+   Mermaid CLI renders all 39 tracked Markdown files successfully.

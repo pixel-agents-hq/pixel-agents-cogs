@@ -120,7 +120,9 @@ class CommandsMixin(CctvBase):
     @commands.admin_or_permissions(administrator=True)
     async def cmd_rich_presence(self, ctx: commands.Context, value: bool) -> None:
         await self._settings.set_broadcast_rich_presence(value)
-        if not value:
+        if value:
+            await self._sync_all_guilds()
+        else:
             await self.discord_pipeline.office.clear_presence()
         await self._reply(ctx, f"Rich-presence display set to `{value}`.")
 

@@ -63,6 +63,30 @@ def test_old_browser_routes_exist_only_as_documented_absences() -> None:
     assert offenders == []
 
 
+def test_old_browser_commands_are_absent_from_floorplan_and_architect() -> None:
+    floorplan = "\n".join(
+        path.read_text(encoding="utf-8") for path in _production_modules("floorplan")
+    )
+    architect = "\n".join(
+        path.read_text(encoding="utf-8") for path in _production_modules("architect")
+    )
+
+    for command in (
+        'command(name="settings")',
+        'command(name="wsport")',
+        'command(name="toolcleardelay")',
+        'command(name="richpresence")',
+        'command(name="messages")',
+        'command(name="enable")',
+        'command(name="disable")',
+        'command(name="includebots")',
+        'command(name="sync")',
+        'command(name="despawnall")',
+    ):
+        assert command not in floorplan
+    assert 'group(name="ws")' not in architect
+
+
 def test_new_config_identities_are_distinct_and_do_not_reuse_legacy_ids() -> None:
     identifiers = {OFFICE_STATE_CONFIG, CCTV_CONFIG, FLOORPLAN_CONFIG, ARCHITECT_CONFIG}
     assert len(identifiers) == 4

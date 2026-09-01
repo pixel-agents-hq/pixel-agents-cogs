@@ -101,6 +101,39 @@ is unrelated to this — it's Discord's interactive-UI system, used only for
 corridor's *settings panel*, not for the embeds a reply renders as (Discord
 doesn't allow mixing V1 embeds and V2 components in the same message).
 
+## Per-cog reply identity
+
+`send_reply`/`render_reply` also carry a per-cog **identity** rather than
+sending every reply anonymously. A dependent cog calls
+`corridor.reply_sender(owner="MyCog", avatar_path=<cog_package>/assets/avatar.png)`
+once (typically alongside `register_dependent`/`register_agent` in its own
+`cog_load`) and gets back a bound `ReplySender`
+([`corridor/adapters/reply_sender.py`](../corridor/adapters/reply_sender.py))
+whose own `send_reply`/`render_reply` forward to `CogBase`'s with that
+identity attached — every one of the many existing call sites keeps its
+exact `title`/`description`/`content`/`fields`/`code` signature; only
+*which object* they call changes. In `ReplyMode.EMBED` the owner name
+always shows as the embed author, regardless of whether an avatar exists;
+`avatar_path` is a conventional, git-committed path
+(`<cog_package>/assets/avatar.png`) whose existence is checked fresh on
+every send and, when present, attached as a real `discord.File` for the
+author icon. In `ReplyMode.TEXT`, which has no embed at all, the owner
+name instead prefixes the rendered content (`"**MyCog:** ..."`). Corridor
+binds its own identity the same way (`owner="Corridor"`, see
+`corridor/adapters/cog_base.py`'s `__init__`) — its commands are no longer
+anonymous. Avatar images are currently committed for architect, corridor,
+deskutils, floorplan, pico, pixelagents, testbench, and toolbox; `painter`
+(a newer A2A-only cog) already passes its conventional avatar path but has
+no image dropped in yet, so its replies show name-only until one is added.
+
+`pico`'s `ConsultAgentTool` additionally passes a one-off
+`FooterOverride(name, icon_url)` per call, which replaces the guild's
+configured footer — for that one message only — with the identity of the
+agent it just consulted (architect or painter), distinct from pico's own
+author identity on the same message. See
+[`docs/reply-identity-design.md`](reply-identity-design.md) for the full
+design, rollout, and implementation checklist.
+
 ## Cross-cog LLM tool registry
 
 A third thing corridor centralizes, same shape as its Pub/Sub event bus:
@@ -113,6 +146,106 @@ without `pico` and the registering cog ever depending on each other. See
 [`docs/corridor-tool-registry-design.md`](corridor-tool-registry-design.md)
 for the inferred metadata and permission behavior, full lifecycle, and the
 framework-neutral (plain JSON-Schema dict, not pydantic) contract this uses.
+
+## Cross-cog A2A agent directory
+
+Corridor also runs **one process-wide A2A listener**
+([`corridor/infrastructure/a2a_server.py`](../corridor/infrastructure/a2a_server.py) —
+a relocation of architect's own former per-agent listener, generalized to
+mount whatever's currently registered) instead of every LLM agent binding
+a socket of its own. An agent cog calls
+`corridor.register_agent(RegisteredAgent(agent_key=..., card=..., executor=...,
+avatar_path=...), owner=...)` from its own `cog_load` and
+`corridor.unregister_agent_owner(owner)` from `cog_unload`; corridor mounts
+the agent's real `a2a-sdk` `AgentExecutor` under `/<agent_key>/` on the
+shared listener, rewriting the card's `supported_interfaces[0].url` (and
+`icon_url`, when an avatar path was given) to the actual, corridor-configured
+host/port before storing it — the registering agent has no way to know that
+address itself. Registering/unregistering an agent also publishes
+`AgentPresenceChanged` on corridor's own event bus (below), so a directory
+membership and an office-canvas presence stay one event, not two things a
+cog must remember to keep in sync.
+
+Three A2A agents exist today: `architect` (every structural layout
+mutation) and `painter` (every color mutation on the same shared layout)
+are both A2A-only — no Discord bot login, no guild scope — and reachable
+as `consult_architect`/`consult_painter` tools `pico` builds fresh every
+turn from `corridor.list_agents()`; `pico` is the sole A2A **coordinator**,
+the one agent with a real Discord bot login, consulting the other two
+rather than being consulted itself. `[p]corridor a2a host`/
+`[p]corridor a2a port` (bot owner only) reconfigure and live-restart the
+shared listener, re-mounting every already-registered agent. See
+[`docs/agent-directory-design.md`](agent-directory-design.md) for the full
+design.
+
+## MCP tool-server bridge
+
+Distinct from the LLM tool registry above (which exposes *Discord
+commands* as tools): corridor also bridges a cog-owned **MCP tools
+server** into a registered A2A agent's own tool-calling loop, so e.g.
+`suggestionbox`'s `report_error`/`suggest_improvement` tools reach
+architect's and painter's tool loops without either cog importing the
+other or corridor hosting a second listener of its own. A providing cog
+calls `corridor.register_mcp_server(RegisteredMcpServer(owner=...,
+base_url=..., agent_allowed=...), owner=...)` from its own `cog_load`;
+corridor connects to that server's own Streamable HTTP endpoint and caches
+its tool list at registration time (not re-fetched on a schedule). An
+agent's own tool loop calls `corridor.list_agent_tools_for(agent_key)`
+fresh every turn to get every tool it's currently allowed to use — gated
+per `agent_key` by the *registering* cog's own `agent_allowed` check, not
+by corridor's Discord permission groups. See
+[`docs/suggestionbox-design.md`](suggestionbox-design.md) §6 for the full
+design.
+
+## Pub/Sub event bus
+
+Another thing corridor centralizes, same in-process-registry shape as the
+tool registry/A2A directory/MCP bridge above:
+`corridor.publish_event(event)` / `corridor.subscribe_event(event_type,
+handler, owner=...)` / `corridor.unsubscribe_owner(owner)` dispatch a
+closed set of `Agent*` dataclasses (`AgentReplied`, `AgentPresenceChanged`,
+`AgentStatusChanged`, `AgentToolStarted`, `AgentHighlighted`,
+`AgentUnhighlighted`) by concrete type, synchronously, with per-subscriber
+exception isolation — a raising handler is logged, never propagated back
+to the publisher. Corridor itself publishes presence (its own Discord
+gateway listeners, plus `register_agent`/`unregister_agent_owner` for any
+A2A agent above), `pico`/`architect`/`painter` publish `AgentReplied` for
+their own replies and tool-use/thinking steps, and `cctv` is the current
+sole subscriber, rendering the shared office canvas from whatever the bus
+delivers (floorplan was the original subscriber before the office
+dashboards moved into `cctv`). See
+[`docs/corridor-pubsub-design.md`](corridor-pubsub-design.md) for the full
+design and event catalog, generated into
+[`corridor/corridor.yaml`](../corridor/corridor.yaml) by
+`corridor/event_catalog.py`.
+
+## Revisioned office state
+
+Corridor also persists two independent, opaque-to-corridor aggregates it
+calls `discord` and `editor` — each a Pixel Agents layout, avatar-seat
+records, and a monotonically increasing revision — behind their own fresh
+`Config` identity
+([`corridor/infrastructure/office_state_repository.py`](../corridor/infrastructure/office_state_repository.py)),
+unrelated to corridor's own settings `Config` and to every former
+Floorplan/Architect/Pixelagents layout store. `OfficeStateService`
+([`corridor/application/office_state_service.py`](../corridor/application/office_state_service.py))
+makes each kind's reads/writes atomic per-kind (a per-kind `asyncio.Lock`,
+not one lock shared across both) and publishes a complete
+`OfficeStateChanged` after every successful mutation, once the lock is
+released.
+
+Corridor deliberately never interprets either JSON schema itself —
+[`pixelagents`](../pixelagents) owns the Semantic IR domain model and is
+the one facade `architect`/`painter` actually call through
+(`office_state`/`set_office_layout`/`set_office_seats`, delegating straight
+into corridor underneath). This is the one Config store genuinely owned by
+corridor among the office-layout-adjacent cogs: pixelagents' *own* `Config`
+identity holds only one unrelated value, a webview build-commit override
+(see `pixelagents/infrastructure/settings.py`'s own comment on which cog
+owns which slice of Config: CCTV owns browser/display settings, Floorplan
+owns Pixel Index URLs, corridor owns this opaque office state). Its
+generated contract is committed as
+[`corridor/office_state.yaml`](../corridor/office_state.yaml).
 
 ## What a dependent cog calls
 
@@ -218,6 +351,22 @@ Red-registered admin role (`[p]set addadminrole`), or bot ownership
 in [`corridor/adapters/commands.py`](../corridor/adapters/commands.py)). A
 user without one of those gets no response and no error message — that's
 Red's default behavior for a failed permission check, not a bug.
+
+### Bot-owner-only commands: `[p]corridor llm`/`[p]corridor a2a`/`[p]corridor status`
+
+Separate from the per-guild settings panel above, `[p]corridor` (also in
+[`corridor/adapters/commands.py`](../corridor/adapters/commands.py)) is a
+bot-owner-only group configuring the process-wide infrastructure every
+guild shares: `[p]corridor llm endpoint`/`key`/`model` set the one LiteLLM
+connection `pico`/`architect`/`painter` all read via `corridor.llm_settings()`
+(moved here from pico's former `[p]pico llm ...` group), and
+`[p]corridor a2a host`/`port` set the shared A2A listener's bind
+host/port, live-restarting it and re-mounting every already-registered
+agent (moved here from architect's former per-agent `[p]architect a2a ...`
+group — see [`docs/agent-directory-design.md`](agent-directory-design.md)).
+`[p]corridor status` (any user) shows the current LLM endpoint/model, the
+A2A listener's host/port and running state, and every currently registered
+agent key.
 
 ## What this is not
 

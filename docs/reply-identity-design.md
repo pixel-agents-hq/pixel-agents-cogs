@@ -3,8 +3,18 @@
 **Status: implemented.** Sections 1-11 describe what's actually running
 today; §12's checklist is complete, including tests across every touched
 package (corridor, architect, pico, deskutils, toolbox, testbench,
-floorplan, pixelagents). No avatar image files exist yet anywhere in the
-repo (§10's rollout) — every author line currently shows name-only.
+floorplan, pixelagents). §10's rollout has since progressed past its
+initial commit: real `avatar.png` files now exist at the conventional path
+for architect, corridor, deskutils, floorplan, pico, pixelagents,
+testbench, and toolbox, so those cogs' author (and, for architect,
+consulted-agent footer) icons are live. `painter` — an A2A-only cog added
+after this design shipped — follows the same `reply_sender(owner=...,
+avatar_path=...)` pattern but has no `avatar.png` dropped in yet, so its
+replies still show name-only, same as every cog did before rollout.
+Corridor itself also gained its own bound identity
+(`owner="Corridor"`, `corridor/adapters/cog_base.py`'s `__init__`) since
+§5/§11 were written — its own commands are no longer anonymous; see the
+note at the end of §5 below.
 
 ## 1. Problem
 
@@ -306,14 +316,27 @@ def reply_sender(self, *, owner: str, avatar_path: Path | None = None) -> ReplyS
 `CogBase.render_reply`/`send_reply` gain the two new optional parameters
 (`identity: ReplyIdentity | None = None`, `footer_override: FooterOverride
 | None = None`, both defaulting to `None`) and simply forward them into
-`ReplyService.render`. Corridor's own `CommandsMixin`
-(`corridor/adapters/commands.py`) keeps calling `self.send_reply(...)`
-bare, with no identity — its own replies stay anonymous, exactly today's
-behavior; corridor is the implementer of this whole mechanism, not a
-dependent that needs to be told apart from other cogs on its own
-commands. (A later, purely additive pass could give corridor its own
-`self._reply = self.reply_sender(owner="Corridor")` if ever wanted — out
-of scope here, not required.)
+`ReplyService.render`.
+
+**Update:** the paragraph immediately below describes this design's
+original, as-implemented scope, where corridor's own commands stayed
+anonymous — that has since changed. `CogBase.__init__` now sets
+`self._reply = self.reply_sender(owner="Corridor", avatar_path=AVATAR_PATH,
+category=ReplyCategory.ROOM)`, and `CommandsMixin`
+(`corridor/adapters/commands.py`) calls `self._reply.send_reply(...)`
+throughout — corridor's own replies now carry the "Corridor" author
+identity like every dependent cog's, which is exactly the "purely
+additive follow-up" the original paragraph and §11 left open. Kept below
+for the historical record:
+
+> Corridor's own `CommandsMixin`
+> (`corridor/adapters/commands.py`) keeps calling `self.send_reply(...)`
+> bare, with no identity — its own replies stay anonymous, exactly today's
+> behavior; corridor is the implementer of this whole mechanism, not a
+> dependent that needs to be told apart from other cogs on its own
+> commands. (A later, purely additive pass could give corridor its own
+> `self._reply = self.reply_sender(owner="Corridor")` if ever wanted — out
+> of scope here, not required.)
 
 ## 6. `send_rendered_reply` changes (`corridor/adapters/api.py`)
 
@@ -706,9 +729,11 @@ day one, not a literal `None` — existence is checked fresh at send time
 - **A guild-configurable "hide cog author lines" toggle.** Requirement 1
   is unconditional (name always shows once an identity is bound) — no new
   `ReplyPreferences` field to suppress it is introduced here.
-- **Corridor gaining its own bound `self._reply` for its own commands.**
+- ~~**Corridor gaining its own bound `self._reply` for its own commands.**
   Corridor's own replies stay anonymous, exactly today's behavior (§5) —
-  a purely additive follow-up if ever wanted.
+  a purely additive follow-up if ever wanted.~~ **Done, in a later pass:**
+  see the update note in §5 above — corridor now binds
+  `owner="Corridor"` the same way every dependent cog does.
 
 ## 12. Implementation checklist
 

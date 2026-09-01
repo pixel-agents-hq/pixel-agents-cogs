@@ -12,6 +12,7 @@
 > | corridor | **publishes** presence + reply-mirror events from its own Discord listeners (`corridor/adapters/discord_gateway.py`), and `AgentPresenceChanged` for any A2A agent's directory registration (`register_agent`/`unregister_agent_owner`/`unregister_agent` — `corridor/adapters/cog_base.py`) |
 > | pico | publishes `AgentReplied` — `pico/tools/reply_tool.py` |
 > | architect | publishes `AgentReplied` (tool use/thinking) — `architect/adapters/cog_base.py`. No longer publishes `AgentPresenceChanged` itself; corridor's own `register_agent`/`unregister_agent_owner` do that as a side effect of architect's A2A registration, see `docs/agent-directory-design.md` |
+> | painter | **added after this design and cctv-design.md shipped** — a third A2A-only agent (color mutations), publishing `AgentReplied` (tool use/thinking) from `painter/adapters/cog_base.py`'s `_publish_activity`, same shape as architect's row above (fixed `PAINTER_AGENT_REF`, no self-published `AgentPresenceChanged` — that's `register_agent`/`unregister_agent_owner`'s side effect, same as architect) |
 > | testbench | manual dev/test publisher, any event — unchanged |
 >
 > See "Migration notes" near the end for what changed at each call site.
@@ -254,7 +255,7 @@ Every field above was checked against `core/asyncapi.yaml` in
 
 | Dataclass | Published by (target) | Wire translation |
 |---|---|---|
-| `AgentReplied` | **corridor** (message mirroring, replacing floorplan's own `on_message`), **pico** (`ReplyTool`, after `send_reply` succeeds), **architect** (tool use/thinking steps, and see "architect" below) | `agentToolStart` (`status=summary`) then `agentSelected`, via `OfficeService.send_message_activity`. After `message_tool_clear_delay`, `OfficeService.clear_message_activity` sends `agentToolsClear` only |
+| `AgentReplied` | **corridor** (message mirroring, replacing floorplan's own `on_message`), **pico** (`ReplyTool`, after `send_reply` succeeds), **architect** and **painter** (tool use/thinking steps, see "architect"/"painter" below) | `agentToolStart` (`status=summary`) then `agentSelected`, via `OfficeService.send_message_activity`. After `message_tool_clear_delay`, `OfficeService.clear_message_activity` sends `agentToolsClear` only |
 | `AgentPresenceChanged` | **corridor** (member update/presence update/join/remove listeners, replacing floorplan's own; and `register_agent`/`unregister_agent_owner`/`unregister_agent`, for any A2A-registered agent — see "corridor" below) | `OfficeService.reconcile()` — spawns/closes/renames the agent, forwards each `AgentActivity` |
 | `AgentStatusChanged` | manual only (`testbench`) — no automated publisher yet | `agentStatus` via `OfficeService.set_status`, gated on `is_tracked` |
 | `AgentToolStarted` | manual only (`testbench`) — deliberately unused by architect's tool/thinking reporting, see the `AgentReplied` docstring above | `agentToolStart` via `OfficeService.start_tool_activity`, gated on `is_tracked` |
@@ -265,9 +266,10 @@ Every field above was checked against `core/asyncapi.yaml` in
 
 The publisher set is **dynamic too, not a hardcoded list.** Any cog can
 publish by calling `corridor.publish_event(event)` with a real
-`AgentRef` for whatever it represents — corridor, pico, architect, and
-testbench are just the publishers that exist today, the same way
-floorplan is just the only subscriber that exists today. Publishing
+`AgentRef` for whatever it represents — corridor, pico, architect,
+painter, and testbench are just the publishers that exist today (painter
+arrived after this design shipped, confirming the point), the same way
+cctv is just the only subscriber that exists today. Publishing
 requires no registration/lifecycle call at all (unlike subscribing) —
 there's nothing to add or remove on cog load/unload, since a publisher
 that stops running simply stops calling `publish_event`.
@@ -336,6 +338,18 @@ is_bot=True, agent_key="architect")`, a module-level constant in
   publishes `AgentReplied(agent=ARCHITECT_AGENT_REF, summary=...)` through
   corridor — into both `ArchitectAgentExecutor` and, transitively, every
   call to `tool_loop.run()`.
+
+### painter
+
+**Added after this design shipped**, confirming the "for free" claim
+above: `painter` (a later, color-only A2A agent, structurally distinct
+from architect only in what it mutates) follows architect's exact shape —
+a fixed `PAINTER_AGENT_REF` constant in `painter/adapters/cog_base.py`, no
+self-published `AgentPresenceChanged` (`register_agent`/
+`unregister_agent_owner` cover it), and a `_publish_activity` method
+publishing `AgentReplied(agent=PAINTER_AGENT_REF, summary=...)` per tool
+call/thinking step from its own tool loop. No bus-side code changed to
+add it.
 
 ```mermaid
 sequenceDiagram

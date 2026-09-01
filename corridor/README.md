@@ -50,6 +50,12 @@ Any cog's own settings command can also embed the same controls inline via
 `build_shared_settings_container()`, rather than sending users to a separate
 command.
 
+Separately, `[p]corridor llm endpoint/key/model` and
+`[p]corridor a2a host/port` (both bot-owner only) configure the one shared
+LLM connection (`pico`/`architect`/`painter`) and the shared A2A listener
+(below); `[p]corridor status` shows both plus every currently registered
+agent.
+
 corridor also hosts a cross-cog **LLM tool registry**: apply
 `@corridor.domain.llm_tool()` directly to a command's callback and it
 becomes a tool `pico` (if loaded) can call directly from its tool-calling
@@ -59,12 +65,58 @@ descriptions from their names, and availability from the command's native
 checks; every value can still be overridden explicitly. See
 [`docs/corridor-tool-registry-design.md`](../docs/corridor-tool-registry-design.md).
 
+## Per-cog reply identity
+
+Every reply also carries a per-cog identity: a dependent cog calls
+`corridor.reply_sender(owner="MyCog", avatar_path=<cog>/assets/avatar.png)`
+once (typically in `cog_load`) and uses the returned `ReplySender`'s own
+`send_reply`/`render_reply` instead of calling `corridor`'s directly. The
+owner name always shows as the embed author (or as a `"**MyCog:** "` text
+prefix in `ReplyMode.TEXT`); the avatar attaches automatically once a real
+`avatar.png` exists at that conventional path. `architect`, `corridor`,
+`deskutils`, `floorplan`, `pico`, `pixelagents`, `testbench`, and `toolbox`
+all ship one today; `painter` binds the same conventional path but has no
+image yet, so its replies currently show name-only. See
+[`docs/reply-identity-design.md`](../docs/reply-identity-design.md).
+
+## Cross-cog A2A agent directory and MCP tool-server bridge
+
+Corridor runs the one process-wide A2A listener every LLM agent mounts
+onto (`corridor.register_agent(...)`/`corridor.unregister_agent_owner(...)`)
+instead of binding a socket of its own, and centralizes a second bridge
+for cog-owned MCP tool servers (`corridor.register_mcp_server(...)`) that
+a registered agent's own tool loop can call through
+(`corridor.list_agent_tools_for(agent_key)`) — e.g. `suggestionbox`'s
+feedback tools reaching `architect`/`painter` without either side
+importing the other. `architect` (structural layout) and `painter` (color,
+a newer cog) are both A2A-only agents reachable this way as
+`consult_architect`/`consult_painter` tools; `pico` is the sole A2A
+coordinator and the only one of the three with a real Discord bot login.
+See [`docs/agent-directory-design.md`](../docs/agent-directory-design.md)
+and [`docs/suggestionbox-design.md`](../docs/suggestionbox-design.md) §6.
+
+## Pub/Sub event bus
+
+`corridor.publish_event(event)`/`corridor.subscribe_event(event_type,
+handler, owner=...)` dispatch a closed set of `Agent*` events (presence,
+replies, tool-use steps, highlight/select) by concrete type, synchronously,
+with per-subscriber error isolation. Corridor, `pico`, `architect`, and
+`painter` all publish; `cctv` is the current sole subscriber, rendering
+the shared office canvas (floorplan was the original subscriber before the
+office dashboards moved into `cctv`). See
+[`docs/corridor-pubsub-design.md`](../docs/corridor-pubsub-design.md).
+
 ## Revisioned office state
 
 Corridor persists two independent opaque aggregates, `discord` and `editor`.
 Each contains a Pixel Agents layout, avatar-seat records, and a monotonically
 increasing revision. Corridor deliberately does not interpret either JSON
-schema; [`pixelagents`](../pixelagents) provides the validated public facade.
+schema; [`pixelagents`](../pixelagents) owns the Semantic IR domain model
+and provides the validated public facade (`office_state`/`set_office_layout`/
+`set_office_seats`) that `architect`/`painter` actually call through, but
+the underlying `Config` store itself is corridor's — pixelagents' own
+`Config` identity holds only one unrelated value (a webview build-commit
+override).
 
 The persistence service supports idempotent initialization, complete reads,
 field-specific layout/seat updates, and atomic watch-and-snapshot registration.

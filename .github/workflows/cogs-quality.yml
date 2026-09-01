@@ -154,12 +154,18 @@ jobs:
           # and architect.infrastructure.settings_repository, both of which
           # reach a2a-sdk (corridor.domain.agent_directory / architect's
           # a2a_server) -- needs a2a-sdk[http-server]+uvicorn for the same
-          # reason as corridor's own leg above.
+          # reason as corridor's own leg above. architect's a2a_server also
+          # pulls in architect.application.tool_loop_service ->
+          # corridor.infrastructure.llm_client, which (like corridor.adapters
+          # elsewhere in this matrix) triggers corridor/infrastructure/
+          # __init__.py's whole eager import chain, mcp_client included --
+          # needs mcp+typing-inspection for the same reason as corridor's own
+          # leg above too.
           - cog: cctv
             test_target: "cctv/tests"
             lint_target: "cctv"
             mypy_target: "cctv"
-            extra_deps: "aiohttp 'pydantic>=2.11.3,<2.12' 'a2a-sdk[http-server]' uvicorn"
+            extra_deps: "aiohttp 'pydantic>=2.11.3,<2.12' 'a2a-sdk[http-server]' uvicorn 'mcp>=1.29,<2' 'typing-inspection<0.4.3'"
             pixel_index_contracts: false
           # pico talks to aiohttp (LiteLLM proxy) and pydantic (wire/tool
           # models) like floorplan, plus httpx and a2a-sdk for its

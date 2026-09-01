@@ -4,6 +4,20 @@
 > codec, and mutation rules remain current, but Architect now reads/writes
 > Pixelagents' revisioned editor aggregate rather than an Architect-owned layout
 > Config. CCTV owns browser rendering.
+>
+> **Module location also moved, since [`painter-design.md`](painter-design.md)
+> part A.** `office_ir.py`, `pixel_agents_adapter.py`, `furniture_styles.py`,
+> and `color_names.py` no longer live under `architect/` at all (§10 below
+> describes their original location) — they moved to `pixelagents/domain/`
+> and `pixelagents/infrastructure/` so Painter, a second, independent A2A
+> agent doing color-only mutations on the same shared layout, could import
+> the identical IR/codec/manifest instead of forking a second copy.
+> `architect/domain/models.py` now holds only `GlobalSettings`; every IR
+> dataclass architect imports (`Office`, `Grid`, `TileCell`, `FurnitureItem`,
+> …) comes from `pixelagents.domain.office_ir` via `architect/domain/__init__.py`.
+> §4–9's schema, conversion rules, and validation logic are otherwise
+> unchanged by this move — only *where the code lives* changed, not what it
+> does or which cog owns the data.
 
 **Status: implemented (v2).** v1 (described in
 `## Appendix: v1 implementation history` at the end of this document) shipped
@@ -189,7 +203,11 @@ flowchart TB
 - **Pixel Agents Layout JSON** is exactly what's stored today
   (`architect`'s `layout` Config field) and what `pixelagents.OfficeService`
   already consumes — this design changes nothing about that storage format
-  or the webview/bootstrap path.
+  or the webview/bootstrap path. *(As of `cctv-design.md`, that storage is
+  no longer an architect-owned Config field — it's Pixelagents' revisioned
+  `editor` aggregate, reached through `office_state`/`set_office_layout`
+  and persisted by Corridor. The JSON shape and the encode/decode contract
+  described here are unaffected.)*
 
 ## 4. The Semantic IR schema
 
@@ -896,10 +914,14 @@ Every mutation method (unchanged shape from v1):
    - Every `Seat.occupies_furniture_id` references an existing, `SEATING`-
      kind `FurnitureItem`; every `Seat.occupant_id` references an existing
      `Occupant`; no `Occupant` holds two seats at once. Unchanged from v1.
-4. Only once validation passes: calls `encode()`, persists via the
-   existing `set_layout`-shaped repository call, and broadcasts
-   `layoutLoaded` to connected webview clients (unchanged from v1,
-   `CogBase._broadcast_layout`).
+4. Only once validation passes: calls `encode()` and persists via the
+   repository call (`OfficeLayoutRepository.save`, §6.2). *(Updated by
+   `cctv-design.md`: this used to also broadcast `layoutLoaded` directly to
+   connected webview clients via `CogBase._broadcast_layout` — that
+   broadcast concept is gone along with architect's own WebSocket server;
+   persisting through Pixelagents' revisioned `editor` aggregate is now the
+   only side effect, and CCTV is responsible for noticing the new revision
+   and rendering it.)*
 5. On any validation failure: raises `OfficeValidationError(reason)` with
    the specific rule that failed; the stored layout is untouched (nothing
    to roll back, since step 2 never wrote anywhere shared).
@@ -936,6 +958,17 @@ practices that make it hold still apply exactly as before:
    format, only `decode()`/`encode()` need to change.
 
 ## 10. Project/module boundaries
+
+> **As-shipped-at-the-time record — module locations below moved since.**
+> Per the top-of-document note, `office_ir.py`, `pixel_agents_adapter.py`,
+> `furniture_styles.py`, and `color_names.py` now live under `pixelagents/`
+> (shared with Painter), not `architect/` as shown below; `architect/domain/`
+> re-exports the IR types it needs from `pixelagents.domain.office_ir`
+> instead of defining them itself. `office_layout_repository.py` no longer
+> stores anything in a Config field at all — it calls Pixelagents'
+> `office_state`/`set_office_layout` facade (`OfficeStateKind.EDITOR`),
+> which Corridor persists (`docs/cctv-design.md`). The rest of this tree
+> (application/tools/adapters layering, §8's service surface) is unchanged.
 
 ```
 architect/

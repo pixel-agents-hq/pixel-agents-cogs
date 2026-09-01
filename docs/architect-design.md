@@ -524,3 +524,11 @@ discovered during implementation:
     corridor-independent `GenuineAgentKey` entry for the bot's own Discord
     account, since that account is not an A2A agent. See
     `docs/office-agent-identity-design.md`.
+
+    **Superseded by `cctv-design.md`:** `presence_subscription.py` (and the
+    dashboard/`OfficeService` instance it fed) was deleted outright when
+    CCTV absorbed architect's dashboard subscription — `AgentPresenceChanged`
+    is still auto-published by corridor as described above, but architect
+    itself no longer reconciles it onto anything; CCTV does. A test,
+    `architect/tests/test_architecture.py::test_browser_and_presence_modules_are_removed`,
+    now asserts the file is gone.

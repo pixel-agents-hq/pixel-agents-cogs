@@ -21,6 +21,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, create_model
 
+from pixelagents.infrastructure.color_summary import ColorSummary, color_summary
 from pixelagents.infrastructure.furniture_styles import (
     FurnitureStyle,
     FurnitureStyleLoader,
@@ -96,7 +97,14 @@ class FurnitureSummary(BaseModel):
     )
     facing: str | None = None
     label: str | None = None
-    color: str | None = None
+    color: ColorSummary | None = Field(
+        default=None,
+        description=(
+            "This item's exact current color as hex plus hue/saturation/brightness/contrast, "
+            "not just a name -- null if it has never been recolored. closest_named_color is "
+            "informational only (nearest of the fixed palette), never the actual stored value."
+        ),
+    )
     occupied_cells: list[OccupiedCellSummary] = Field(
         default_factory=list,
         description=(
@@ -136,7 +144,16 @@ class TileSummary(BaseModel):
     row: int
     kind: str
     material: int | None = None
-    color: str | None = None
+    color: ColorSummary | None = Field(
+        default=None,
+        description=(
+            "The tile's exact current color as hex plus hue/saturation/brightness/contrast, "
+            "not just a name -- null for a void tile or one that was never colored. "
+            "closest_named_color is informational only (nearest of the fixed palette "
+            "paint_tiles/create_zone still validate color input against), never the actual "
+            "stored value."
+        ),
+    )
     zone_label: str | None = None
     furniture_id: str | None = None
 
@@ -150,7 +167,7 @@ def _furniture_summary(item: FurnitureItem, styles: FurnitureStyleManifest) -> F
         row=item.position.row,
         facing=item.facing.value if item.facing else None,
         label=item.label,
-        color=item.color,
+        color=color_summary(item.color, item.raw_color),
         occupied_cells=[
             OccupiedCellSummary(col=cell.col, row=cell.row, is_anchor=cell == item.position)
             for cell in styles.occupied_cells(item.style, item.facing, item.position)
@@ -191,7 +208,7 @@ def _tile_summary(
         row=position.row,
         kind=cell.kind.value,
         material=cell.material,
-        color=cell.color,
+        color=color_summary(cell.color, cell.raw_color),
         zone_label=cell.zone_label,
         furniture_id=furniture_by_cell.get(position),
     )

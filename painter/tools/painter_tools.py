@@ -43,10 +43,8 @@ from pixelagents.infrastructure.color_names import (
     SATURATION_MIN,
     HsbColor,
     hex_to_hsb,
-    hsb_for,
-    hsb_to_hex,
-    nearest_name,
 )
+from pixelagents.infrastructure.color_summary import ColorSummary, color_summary
 
 from ..application.painter_layout_service import PainterLayoutService, PainterValidationError
 from .base import ToolSpec
@@ -144,44 +142,6 @@ def _resolve_color(spec: ColorSpec) -> HsbColor | str:
     }
 
 
-class ColorSummary(BaseModel):
-    """The exact current color, in the same terms `ColorSpec` accepts --
-    read this before asking for "lighter"/"darker"/a hue-preserving
-    adjustment. `closest_named_color` is informational only (the nearest
-    of architect's own small fixed palette, purely for a human-readable
-    label) -- never treat it as the actual stored color. `hex` never
-    moves in response to `contrast` alone (see `hsb_to_hex`'s own
-    docstring) -- it's a flat preview of hue/saturation/brightness, not
-    the actual in-game render, which does respond to contrast on a real
-    tile/wall/furniture texture."""
-
-    hex: str
-    hue: int
-    saturation: int
-    brightness: int
-    contrast: int
-    closest_named_color: str
-
-
-def _color_summary(
-    color_name: str | None, raw_color: tuple[int, int, int, int] | None
-) -> ColorSummary | None:
-    if raw_color is not None:
-        hsb: HsbColor = {"h": raw_color[0], "s": raw_color[1], "b": raw_color[2], "c": raw_color[3]}
-    elif color_name is not None:
-        hsb = hsb_for(color_name)
-    else:
-        return None
-    return ColorSummary(
-        hex=hsb_to_hex(hsb),
-        hue=hsb["h"],
-        saturation=hsb["s"],
-        brightness=hsb["b"],
-        contrast=hsb["c"],
-        closest_named_color=nearest_name(hsb),
-    )
-
-
 class TileColorSummary(BaseModel):
     col: int
     row: int
@@ -202,7 +162,7 @@ def _tile_summary(position: GridPosition, cell: TileCell) -> TileColorSummary:
         col=position.col,
         row=position.row,
         kind=cell.kind.value,
-        color=_color_summary(cell.color, cell.raw_color),
+        color=color_summary(cell.color, cell.raw_color),
     )
 
 
@@ -212,7 +172,7 @@ def _furniture_summary(item: FurnitureItem) -> FurnitureColorSummary:
         kind=item.kind.value,
         style=item.style,
         label=item.label,
-        color=_color_summary(item.color, item.raw_color),
+        color=color_summary(item.color, item.raw_color),
     )
 
 

@@ -55,8 +55,10 @@ revision below for the replacement `ColorSpec` (hex, or hue+saturation
 plus a brightness/contrast adjustment) model, and
 `pixelagents/infrastructure/color_names.py`'s `hex_to_hsb`/`hsb_to_hex`
 for the general (non-palette) conversion this required. architect's own
-tools are unaffected — they still validate against the same fixed
-palette as before.
+**write** tools (`paint_tiles`/`create_zone`) are unaffected — they still
+validate `color` against the same fixed palette as before. Its **read**
+tools were later revised too; see the second "Post-ship revision" note in
+§4.
 
 ## 1. Scope for v1
 
@@ -185,6 +187,26 @@ becomes a thin pass-through to pixelagents' store (§5.3) instead of
 architect's own private Config identifier, and its decode/encode calls
 resolve to pixelagents' module instead of a local one. No new architect
 tools, no system-prompt changes, no new A2A behavior.
+
+**Post-ship revision:** the "colorblind" framing above described
+architect's *write* tools correctly but was over-applied to its *read*
+tools too. A real report ("architect always says floor material 1 is
+slate_gray") turned out not to be a bug (the seed layout's material-1
+tiles genuinely are `slate_gray`), but exposed that architect's
+`describe_office`/`describe_tiles` only ever reported a coarse palette
+name, discarding the exact color the shared `Office` aggregate already
+carried — the same data painter's own `describe_tile_colors`/
+`describe_furniture_colors` were already reading with full fidelity.
+architect's read tools now report the same structured
+`{hex, hue, saturation, brightness, contrast, closest_named_color}` shape
+painter's do, built from one shared implementation
+(`pixelagents/infrastructure/color_summary.py`) both cogs' `tools/*.py`
+import, not duplicated per cog. architect's *write* surface
+(`paint_tiles`/`create_zone`) is unchanged and still validates `color`
+against the fixed palette only — architect can now **report** exact
+color, but still cannot **accept** one. `painter/tools/consult_architect_tool.py`'s
+description strings were updated to match (no longer claiming architect
+"knows nothing about color").
 
 ## 5. Part A — extract the Semantic IR into `pixelagents`
 

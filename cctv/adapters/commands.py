@@ -33,6 +33,8 @@ class CommandsMixin(CctvBase):
     @cctv_group.command(name="status")
     @commands.admin_or_permissions(administrator=True)
     async def cmd_status(self, ctx: commands.Context) -> None:
+        """Show CCTV's listener, dashboard, pipeline, and guild settings."""
+
         settings = await self._settings.global_settings()
         guild = await self._settings.guild_settings(self._guild(ctx))
         reasons = self._degraded_reasons()
@@ -78,6 +80,8 @@ class CommandsMixin(CctvBase):
     @cctv_group.command(name="dashboard")
     @commands.admin_or_permissions(administrator=True)
     async def cmd_dashboard(self, ctx: commands.Context) -> None:
+        """Show whether Red Web Dashboard is loaded and CCTV's page links."""
+
         status = "loaded and ready" if dashboard_cog_loaded(self.bot) else "not loaded"
         await self._reply(
             ctx,
@@ -88,6 +92,8 @@ class CommandsMixin(CctvBase):
     @cctv_group.command(name="host")
     @commands.is_owner()
     async def cmd_host(self, ctx: commands.Context, host: str) -> None:
+        """Set the listener's bind host. Bot owner only; requires a reload."""
+
         try:
             clean = await self._settings.set_listener_host(host)
         except ValueError as exc:
@@ -98,6 +104,8 @@ class CommandsMixin(CctvBase):
     @cctv_group.command(name="port")
     @commands.is_owner()
     async def cmd_port(self, ctx: commands.Context, port: int) -> None:
+        """Set the listener's bind port. Bot owner only; requires a reload."""
+
         try:
             await self._settings.set_listener_port(port)
         except ValueError as exc:
@@ -109,6 +117,8 @@ class CommandsMixin(CctvBase):
     @commands.is_owner()
     @app_commands.describe(page="discord or editor", seconds="Seconds before clearing activity")
     async def cmd_clear_delay(self, ctx: commands.Context, page: str, seconds: float) -> None:
+        """Set how long a page waits before clearing a stale activity. Bot owner only."""
+
         try:
             await self._settings.set_clear_delay(page.lower(), seconds)
         except ValueError as exc:
@@ -119,6 +129,8 @@ class CommandsMixin(CctvBase):
     @cctv_group.command(name="richpresence")
     @commands.admin_or_permissions(administrator=True)
     async def cmd_rich_presence(self, ctx: commands.Context, value: bool) -> None:
+        """Enable or disable broadcasting Discord rich presence to CCTV pages."""
+
         await self._settings.set_broadcast_rich_presence(value)
         if value:
             await self._sync_all_guilds()
@@ -129,12 +141,16 @@ class CommandsMixin(CctvBase):
     @cctv_group.command(name="messages")
     @commands.admin_or_permissions(administrator=True)
     async def cmd_messages(self, ctx: commands.Context, value: bool) -> None:
+        """Enable or disable broadcasting chat messages to CCTV pages."""
+
         await self._settings.set_broadcast_messages(value)
         await self._reply(ctx, f"Message display set to `{value}`.")
 
     @cctv_group.command(name="enable")
     @commands.admin_or_permissions(administrator=True)
     async def cmd_enable(self, ctx: commands.Context) -> None:
+        """Enable CCTV for this guild and sync its current roster."""
+
         guild = self._guild(ctx)
         await self._settings.set_guild_enabled(guild.id, True)
         await self.discord_pipeline.clients.reauthorize(self._can_edit_discord)
@@ -143,6 +159,8 @@ class CommandsMixin(CctvBase):
     @cctv_group.command(name="disable")
     @commands.admin_or_permissions(administrator=True)
     async def cmd_disable(self, ctx: commands.Context) -> None:
+        """Disable CCTV for this guild and despawn its Discord roster."""
+
         guild = self._guild(ctx)
         await self._settings.set_guild_enabled(guild.id, False)
         await self.discord_pipeline.clients.reauthorize(self._can_edit_discord)
@@ -152,6 +170,8 @@ class CommandsMixin(CctvBase):
     @cctv_group.command(name="includebots")
     @commands.admin_or_permissions(administrator=True)
     async def cmd_include_bots(self, ctx: commands.Context, value: bool) -> None:
+        """Include or exclude bot accounts from this guild's CCTV roster."""
+
         guild = self._guild(ctx)
         await self._settings.set_guild_include_bots(guild.id, value)
         if await self._settings.guild_enabled(guild):
@@ -162,6 +182,8 @@ class CommandsMixin(CctvBase):
     @cctv_group.command(name="sync")
     @commands.admin_or_permissions(administrator=True)
     async def cmd_sync(self, ctx: commands.Context) -> None:
+        """Force a full resync of this guild's Discord roster."""
+
         guild = self._guild(ctx)
         if not await self._settings.guild_enabled(guild):
             await self._reply(ctx, "Guild is disabled. Enable it first.")
@@ -171,6 +193,8 @@ class CommandsMixin(CctvBase):
     @cctv_group.command(name="despawnall")
     @commands.admin_or_permissions(administrator=True)
     async def cmd_despawn_all(self, ctx: commands.Context) -> None:
+        """Despawn this guild's entire Discord roster without disabling it."""
+
         await self._despawn_guild(self._guild(ctx))
         await self._reply(ctx, "Guild roster despawned.")
 

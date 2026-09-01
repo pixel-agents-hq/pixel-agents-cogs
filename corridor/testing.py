@@ -435,9 +435,8 @@ def _install_redbot() -> None:
         ) -> _FakeConfig:
             # `cog_name` mirrors real Config.get_conf's "no live cog
             # instance, just an explicit owner name" mode (used by e.g.
-            # pixelagents.infrastructure.office_layout_settings, reached
-            # from a cog other than pixelagents itself) -- accepted here
-            # purely so callers don't crash passing it; this fake has no
+            # pixelagents.infrastructure.settings) -- accepted here purely
+            # so callers don't crash passing it; this fake has no
             # cross-instance identity to key by regardless (every call
             # returns a fresh, independent store either way).
             return cls()

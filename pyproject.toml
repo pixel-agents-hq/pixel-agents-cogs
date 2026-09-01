@@ -88,11 +88,7 @@ disable_error_code = ["misc"]
 # Same gap as pixelagents.adapters.commands above, mirrored for floorplan:
 # Red is absent from the lightweight CI type environment, so its decorators
 # are dynamically typed. Keep the adapters otherwise strict.
-module = [
-    "floorplan.adapters.catalogue_commands",
-    "floorplan.adapters.dashboard",
-    "floorplan.adapters.discord_gateway",
-]
+module = ["floorplan.adapters.catalogue_commands"]
 disable_error_code = ["untyped-decorator"]
 
 [[tool.mypy.overrides]]
@@ -211,13 +207,6 @@ module = ["architect.adapters.commands"]
 disable_error_code = ["arg-type", "no-any-return", "untyped-decorator"]
 
 [[tool.mypy.overrides]]
-# Same gap as floorplan.adapters.dashboard above, mirrored for architect:
-# Red is absent from the lightweight CI type environment, so
-# @commands.Cog.listener() (on_dashboard_cog_add) is dynamically typed.
-module = ["architect.adapters.dashboard"]
-disable_error_code = ["untyped-decorator"]
-
-[[tool.mypy.overrides]]
 # Same gap as architect.adapters.commands above: Red is absent from the
 # lightweight CI type environment, so its decorators (and the
 # CommandsMixin.architect_group.group(...) nesting) leak Any, and the
@@ -268,8 +257,8 @@ module = ["cctv.adapters.commands"]
 disable_error_code = ["arg-type", "no-any-return", "untyped-decorator"]
 
 [[tool.mypy.overrides]]
-# Same gap as floorplan.adapters.dashboard / architect.adapters.dashboard
-# above, mirrored for cctv: Red is absent from the lightweight CI type
+# Same gap as pixelagents.adapters.commands above, mirrored for cctv's
+# dashboard route: Red is absent from the lightweight CI type
 # environment, so @commands.Cog.listener() (on_dashboard_cog_add) is
 # dynamically typed.
 module = ["cctv.adapters.dashboard"]

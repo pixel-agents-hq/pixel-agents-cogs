@@ -7,6 +7,10 @@ architect's registration tests, pico's `_agent_tools`/`ConsultAgentTool`
 tests, and a real, unmocked pico→corridor→architect A2A round trip in
 `pico/tests/test_architect_client.py`).
 
+Browser/WebSocket references in this document predate CCTV and are superseded by
+[`cctv-design.md`](cctv-design.md); they are unrelated to the still-current A2A
+listener and directory design.
+
 ## 1. Problem
 
 This design has two parts, both aimed at "adding agent N+1 should not

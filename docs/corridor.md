@@ -176,7 +176,8 @@ instead: same `ReplyMode` rendering, returned as a `RenderedReply` DTO
 instead of sent, so the caller does its own send. floorplan's `ReplyMixin`
 ([`floorplan/adapters/replies.py`](../floorplan/adapters/replies.py)) is
 the reference example. Every command handler across
-corridor/deskutils/floorplan/pico/pixelagents/testbench/toolbox is checked
+architect/cctv/corridor/deskutils/floorplan/painter/pico/pixelagents/
+suggestionbox/testbench/toolbox is checked
 for this by
 [`contracts/discord_replies/lint_reply_channel.py`](../contracts/discord_replies/lint_reply_channel.py)
 (run in CI by `cogs-quality.yml`), which fails on any raw

@@ -2,12 +2,10 @@
 
 Global (bot-owner) scope only, mirroring architect's own settings
 repository shape (`architect/infrastructure/settings_repository.py`) --
-painter is A2A-only too, with no per-guild `enabled` toggle. Unlike
-architect, painter owns no `ws_host`/`ws_port`/webview settings at all --
-it never serves a WebSocket transport or a Dashboard page of its own, and
-its office layout isn't its own private store either (it reads/writes the
-one pixelagents-owned layout, see `docs/painter-design.md` part A). The
-LLM *connection* lives in corridor, shared with pico and architect.
+painter is A2A-only too, with no per-guild `enabled` toggle. It stores only
+prompt/tool-loop/debug settings; browser transport belongs to CCTV and editor
+state is reached through Pixelagents. The LLM connection lives in Corridor,
+shared with Pico and Architect.
 """
 
 from __future__ import annotations

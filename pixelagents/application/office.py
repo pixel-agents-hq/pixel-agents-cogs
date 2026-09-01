@@ -467,9 +467,9 @@ class OfficeService:
         """A genuine agent's AgentReplied (tool use/thinking) -- the same
         wire treatment send_message_activity gives a real Discord message,
         minus MessageSnapshot's Discord-shaped message_id (a genuine agent
-        has no real message to key off; floorplan's synthetic-id comment
-        for the Discord path already notes nothing downstream depends on
-        its real value either)."""
+        has no real message to key off; CCTV's synthetic Discord ID similarly
+        exists only to satisfy the internal snapshot shape, and nothing
+        downstream uses its real value either)."""
 
         agent_id = self.genuine_agent_id(identity.agent_key)
         truncated = content if len(content) <= 40 else content[:40] + "…"

@@ -30,7 +30,7 @@ than being forced into a bucket that doesn't fit:
 
 deskutils' commands are utilities (time, text-counting, message-quoting) in
 the same vein as toolbox/testbench, so it's folded into Furniture. pixelagents
-(vendors/builds the webview for floorplan to serve, with almost no
+(vendors/builds the webview for CCTV to serve, with almost no
 chat-facing surface of its own) still doesn't clearly fit Agent, Room, or
 Furniture -- rather than guess, it's left uncategorized. It can be folded
 into a category later without any structural change: just pass `category=`

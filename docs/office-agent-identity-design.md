@@ -9,6 +9,12 @@
 > for an agent that isn't a Discord account at all. Every item in the
 > "Implementation checklist" below has landed.
 >
+> **Consumer topology updated by [`cctv-design.md`](cctv-design.md).** CCTV now
+> owns both rosters and uses this same identity model. The Discord page includes
+> enabled-guild members plus registered agents; the editor page includes
+> registered agents plus the bot account. Former Floorplan/Architect subscriber
+> paths below are historical.
+>
 > **Extended by architect's own dashboard consuming this too.** Originally
 > this doc only covered floorplan's canvas gaining genuine-agent support.
 > `architect/adapters/presence_subscription.py` now reconciles the same

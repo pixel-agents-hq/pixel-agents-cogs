@@ -5,7 +5,7 @@ Publish corridor bus events manually, for testing.
 The bot owner can publish any of corridor's Pub/Sub events
 (`AgentReplied`, `AgentPresenceChanged`, ...) on demand through a Discord
 UI, without waiting for a real Discord presence change or message --
-useful for exercising floorplan's webview canvas rendering, or corridor's
+useful for exercising CCTV's webview canvas rendering, or corridor's
 own dispatch/error-isolation, in isolation.
 
 The event picker, its per-field inputs, and the modal that collects
@@ -15,16 +15,9 @@ catalog** (`corridor/event_catalog.py`, mirrored into
 `corridor/domain/models.py` makes it show up here automatically, with no
 code change in this cog.
 
-floorplan subscribes to all six event types, so every event testbench can
-publish has a visible effect on the canvas: `AgentPresenceChanged`/
-`AgentReplied` (also published by floorplan itself, from real Discord
-activity) and `AgentToolStarted`/`AgentStatusChanged`/`AgentHighlighted`/
-`AgentUnhighlighted` (published today only by testbench's own UI — no
-automated publisher exists for these four yet; see
-[`docs/corridor-pubsub-design.md`](../docs/corridor-pubsub-design.md)'s
-"What this PR lands" checklist). The target agent must already be on the
-canvas (`is_tracked`) for any of the four to have an effect, same as every
-other subscriber handler.
+CCTV subscribes to all six event types, so every event Testbench publishes can
+have a visible effect on either office page. Activity/highlight/status events
+require the target agent to be present in that page's current roster.
 
 ## Installing
 

@@ -180,10 +180,10 @@ jobs:
             mypy_target: "deskutils"
             extra_deps: "'pydantic>=2.11.3,<2.12' 'a2a-sdk[http-server]' uvicorn 'mcp>=1.29,<2' 'typing-inspection<0.4.3'"
             pixel_index_contracts: false
-          # architect talks to aiohttp/pydantic like pico (the shared
-          # corridor-owned LLM connection), plus a2a-sdk (its A2A server --
-          # http-server extra pulls in starlette/sse-starlette) and uvicorn
-          # to run its dedicated listener. No Pixel Index integration.
+          # architect registers an A2A executor on corridor's shared listener
+          # and uses pixelagents' pydantic-backed editor-state boundary. Its
+          # own browser/listener stack was removed; dependencies below also
+          # cover eager imports reached through corridor in this test leg.
           - cog: architect
             test_target: "architect/"
             lint_target: "architect"
@@ -203,14 +203,9 @@ jobs:
             mypy_target: "suggestionbox"
             extra_deps: "aiohttp 'pydantic>=2.11.3,<2.12' 'a2a-sdk[http-server]' uvicorn 'mcp>=1.29,<2' 'typing-inspection<0.4.3'"
             pixel_index_contracts: false
-          # painter is both an A2A server (its own AgentExecutor, like
-          # architect -- needs a2a-sdk[http-server]+uvicorn) and an A2A
-          # client to architect (painter/infrastructure/architect_client.py,
-          # httpx + a2a.client, same shape as pico's own architect_client.py)
-          # -- so it needs the union of architect's and pico's extra_deps.
-          # Reads/writes the shared office layout via pixelagents'
-          # infrastructure modules (docs/painter-design.md), no extra deps
-          # of its own beyond that.
+          # painter registers an executor on corridor's listener, optionally
+          # calls architect over A2A/httpx, and uses pixelagents' editor-state
+          # facade. It owns no browser listener or notification callback.
           - cog: painter
             test_target: "painter/"
             lint_target: "painter"

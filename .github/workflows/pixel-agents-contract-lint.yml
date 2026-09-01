@@ -42,8 +42,8 @@ jobs:
       - name: Test consumer-contract tooling
         # NOT `unittest discover -s contracts/pixel_agents/tests` -- that
         # also collects test_status_site.py, which imports verify.py, which
-        # imports floorplan (pydantic/discord). Every other test module here
-        # is floorplan-free (verified: schema.py/verify_outbound.py only
+        # imports CCTV's serving adapter (aiohttp/pydantic). Every other test
+        # module here is CCTV-free (schema.py/verify_outbound.py only
         # import pixelagents + stdlib + pyyaml/jsonschema), so target them
         # directly to keep this job's dependency footprint minimal without
         # losing coverage.

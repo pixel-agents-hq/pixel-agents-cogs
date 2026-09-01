@@ -3,8 +3,8 @@
 Bot-owner only throughout (`@commands.is_owner()`), not a per-guild
 permission tier: mirrors toolbox's reasoning exactly (see
 toolbox/adapters/commands.py) -- the webview build is one shared artifact on
-the bot host that every guild's floorplan instance reads, not per-guild
-data, so a guild-scoped permission would be the wrong tier for it regardless
+the bot host that CCTV and the editor agents read, not per-guild data, so a
+guild-scoped permission would be the wrong tier for it regardless
 of how it's granted. `guild_only()` stays on every command anyway, purely so
 `ctx.guild` is available for corridor's guild-scoped reply rendering (see
 `.replies.ReplyMixin`), the same reason toolbox keeps it despite also being

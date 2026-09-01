@@ -1,10 +1,4 @@
-"""Dependency composition and lifecycle for the Pixel Agents Cog.
-
-pixelagents owns exactly one thing now: vendoring and building the Pixel
-Agents webview (see Architecture.md). floorplan consumes the result through
-`webview_bundle_status()` below instead of resolving its own
-`cog_data_path` or running its own build.
-"""
+"""Dependency composition for the bundle and validated office-state facade."""
 
 from __future__ import annotations
 
@@ -58,7 +52,7 @@ class WebviewBundleStatus:
 
 
 class PixelAgentsBase:
-    """Wire the one remaining repository and own the build's lifecycle."""
+    """Own the bundle lifecycle and compose Corridor's schema-aware facade."""
 
     bot: Red
     config: Any

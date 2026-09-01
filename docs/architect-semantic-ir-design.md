@@ -1,5 +1,10 @@
 # Semantic IR: architect ↔ Pixel Agents office
 
+> **Persistence topology updated by [`cctv-design.md`](cctv-design.md).** The IR,
+> codec, and mutation rules remain current, but Architect now reads/writes
+> Pixelagents' revisioned editor aggregate rather than an Architect-owned layout
+> Config. CCTV owns browser rendering.
+
 **Status: implemented (v2).** v1 (described in
 `## Appendix: v1 implementation history` at the end of this document) shipped
 a working but *deliberately lossy* Semantic IR: single-tile furniture

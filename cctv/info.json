@@ -14,7 +14,7 @@
     },
     "requirements": [
         "aiohttp",
-        "pydantic>=2.11.3,<2.14"
+        "pydantic>=2.11.3,<2.12"
     ],
     "tags": [
         "cctv",

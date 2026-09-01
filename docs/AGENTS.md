@@ -9,22 +9,22 @@ together in one place.
 
 | Package | Owns | README |
 |---|---|---|
-| [`corridor`](../corridor) | Shared per-guild permissions, reply-style formatting, the one LLM connection pico and architect both read (`[p]corridor llm ...`), and the one shared A2A listener every registered agent is mounted on (`[p]corridor a2a ...`). Every other cog depends on it instead of reinventing any of that. | [corridor/README.md](../corridor/README.md) |
-| [`pixelagents`](../pixelagents) | Vendors and builds the Pixel Agents webview (clone + `npm`/`vite`) for other cogs to serve. No runtime/Discord surface of its own, but does own the Semantic IR domain model, Pixel Agents JSON codec, color palette, and the one Config-backed store for the office layout `architect` and `painter` share (`docs/painter-design.md` part A) — a deliberate exception to "owns nothing runtime-facing," not an oversight. | [pixelagents/README.md](../pixelagents/README.md) |
-| [`floorplan`](../floorplan) | Serves the built webview as a Red Dashboard page, mirrors Discord presence into it, and browses the Pixel Index layout catalogue. | [floorplan/README.md](../floorplan/README.md) |
+| [`corridor`](../corridor) | Shared permissions/replies, LLM and A2A infrastructure, agent/tool registries, event delivery, and opaque persistence for the two revisioned office aggregates. | [corridor/README.md](../corridor/README.md) |
+| [`pixelagents`](../pixelagents) | Builds the Pixel Agents webview and owns the layout/seat schema, Semantic IR/codec, validation, lazy initialization, and typed facade over Corridor's opaque office state. It owns no browser transport. | [pixelagents/README.md](../pixelagents/README.md) |
+| [`cctv`](../cctv) | Owns both Pixel Agents Dashboard pages, one two-route WebSocket listener, Discord/registered-agent projection, browser authorization, display settings, and per-page live pipelines. | [cctv/README.md](../cctv/README.md) |
+| [`floorplan`](../floorplan) | Owns Pixel Index API/Web configuration, catalogue browsing, and loading selected layouts into the Discord aggregate. | [floorplan/README.md](../floorplan/README.md) |
 | [`toolbox`](../toolbox) | Bot-owner Node.js/npm installation on the host, plus a Components v2 panel (`[p]toolbox tools`) for turning any `[p]help`-listed command into an LLM tool corridor's registry offers to pico. | [toolbox/README.md](../toolbox/README.md) |
 | [`pico`](../pico) | An LLM-backed Discord presence: decides whether to react to a message, then acts only via a bounded tool-calling loop (never a raw LLM text send). The sole A2A coordinator -- delegates a sub-task to whichever agents (`architect`, or any future one) are currently registered in corridor's agent directory, via one `consult_<agent_key>` tool per entry. | [pico/README.md](../pico/README.md) |
-| [`architect`](../architect) | A second, independent LLM agent -- never Discord-user-facing -- reachable only over the [A2A protocol](https://a2a-protocol.org/) on corridor's own shared listener (`docs/agent-directory-design.md`). Shares corridor's LLM connection with pico. Serves pixelagents' built webview bundle under its own Dashboard route (`/third-party/architect`), and edits that layout through a Semantic IR (`docs/architect-semantic-ir-design.md`) via LLM tools and `[p]architect office ...` commands. | [architect/README.md](../architect/README.md) |
-| [`painter`](../painter) | A third, independent LLM agent -- never Discord-user-facing -- reachable only over A2A on corridor's own shared listener, invoked by pico exactly like `architect`. Shares one office layout with `architect`: architect knows what tiles/walls/furniture exist and where but is colorblind; painter reads/writes color only (floor tiles, walls, furniture), and can never add, remove, move, or restructure anything. See `docs/painter-design.md`. | [painter/README.md](../painter/README.md) |
+| [`architect`](../architect) | A2A-only LLM agent registered on Corridor's shared listener. Performs structural mutations against Pixelagents' revisioned editor aggregate and owns no browser transport. | [architect/README.md](../architect/README.md) |
+| [`painter`](../painter) | A2A-only color agent using the same editor aggregate as Architect. Its surface cannot add, remove, move, or resize structure and has no direct browser notification hook. | [painter/README.md](../painter/README.md) |
 | [`suggestionbox`](../suggestionbox) | Runs its own MCP tools server (`report_error`/`suggest_improvement`) that posts to a bot-owner-configured Discord channel. Registers into corridor's `AgentToolServerRegistry` so a registered A2A agent's own tool loop (`architect`, `painter` today) can call the same tools, gated per agent by a Components v2 toggle panel (`[p]suggestionbox agents`). See `docs/suggestionbox-design.md`. | [suggestionbox/README.md](../suggestionbox/README.md) |
-| [`testbench`](../testbench) | Bot-owner-only: publishes any corridor Pub/Sub event through a Discord UI generated from corridor's own event catalog, for exercising floorplan's canvas rendering without a real Discord presence change or message. | [testbench/README.md](../testbench/README.md) |
+| [`testbench`](../testbench) | Bot-owner-only: publishes Corridor agent events through a generated Discord UI for exercising CCTV projection without a real gateway event. | [testbench/README.md](../testbench/README.md) |
 | [`deskutils`](../deskutils) | Small Discord utilities with no state of their own; today just `[p]deskutils time`, showing the current time via Discord's native per-viewer timestamp markup plus explicit UTC/named-zone formatting. | [deskutils/README.md](../deskutils/README.md) |
 | [`contracts`](../contracts) | **Not a cog** — `"type": "SHARED_LIBRARY"` in its `info.json`, so Red's Downloader skips it. CI-only: consumer-driven contract tests against Pixel Index and Pixel Agents, plus the reply-channel lint. (It does have a no-op `setup()` — purely to stop dev-time hot reload tooling from reporting a spurious failure; see `contracts/__init__.py`.) | [contracts/README.md](../contracts/README.md) |
 
-`pixelagents` and `floorplan` used to be one combined cog; [issue #21](https://github.com/pixel-agents-hq/pixel-agents-cogs/issues/21)
-split "owns the vendor and the build" from "owns everything that consumes
-the result." That split has landed on `develop` — treat both as separate,
-present-day cogs, not a pending change.
+The current office boundary is: Corridor persists, Pixelagents validates, CCTV
+hosts/projects, Floorplan consumes Pixel Index, and Architect/Painter mutate the
+editor aggregate. See [`docs/cctv-design.md`](cctv-design.md).
 
 See [`docs/architecture.md`](architecture.md) for Mermaid diagrams of how
 these packages depend on and relate to each other — the dependency graph,
@@ -89,6 +89,7 @@ from the repo root:
 
 ```sh
 python -m pytest -q corridor/
+python -m pytest -q cctv/tests
 python -m pytest -q floorplan/tests
 python -m pytest -q pixelagents/tests
 python -m pytest -q toolbox/
@@ -99,9 +100,9 @@ python -m pytest -q suggestionbox/
 python -m pytest -q testbench/
 python -m pytest -q deskutils/
 
-python -m ruff format --check corridor floorplan pixelagents toolbox pico architect painter suggestionbox testbench deskutils
-python -m ruff check corridor floorplan pixelagents toolbox pico architect painter suggestionbox testbench deskutils
-python -m mypy corridor floorplan pixelagents toolbox pico architect painter suggestionbox testbench deskutils
+python -m ruff format --check corridor cctv floorplan pixelagents toolbox pico architect painter suggestionbox testbench deskutils
+python -m ruff check corridor cctv floorplan pixelagents toolbox pico architect painter suggestionbox testbench deskutils
+python -m mypy corridor cctv floorplan pixelagents toolbox pico architect painter suggestionbox testbench deskutils
 python -m unittest discover -s contracts/tests
 python -m contracts.discord_replies.lint_reply_channel
 ```

@@ -7,10 +7,10 @@ from __future__ import annotations
 
 import types
 import unittest
-from collections.abc import Awaitable, Callable
 
 from pixelagents.domain import FurnitureKind, GridPosition, GridRect
 from pixelagents.infrastructure.furniture_styles import FurnitureStyleLoader
+from pixelagents.infrastructure.pixel_agents_adapter import decode, encode
 
 from ..application.painter_layout_service import PainterLayoutService, PainterValidationError
 from ..infrastructure.office_layout_repository import OfficeLayoutRepository
@@ -53,15 +53,20 @@ _MANIFEST = {
 }
 
 
-class FakeSettingsRepository:
+class FakeOfficeState:
+    """A minimal stand-in for pixelagents' `OfficeStateFacade`, satisfying
+    `OfficeLayoutRepository`'s `SupportsEditorOffice` protocol directly --
+    see `test_painter_tools.py`'s identical fake for why this file
+    doesn't reach for `conftest.py`'s full facade-backed one."""
+
     def __init__(self, layout: dict[str, object]) -> None:
-        self._layout: dict[str, object] | None = layout
-
-    async def layout(self) -> dict[str, object] | None:
-        return self._layout
-
-    async def set_layout(self, layout: dict[str, object]) -> None:
         self._layout = layout
+
+    async def load_editor_office(self, styles: object) -> object:
+        return decode(self._layout, styles)  # type: ignore[arg-type]
+
+    async def set_editor_layout(self, office: object, styles: object) -> None:
+        self._layout = encode(office, styles)  # type: ignore[arg-type]
 
 
 class FakePixelAgents:
@@ -102,19 +107,20 @@ def _layout() -> dict[str, object]:
     }
 
 
-def _service(
-    settings: FakeSettingsRepository,
-    *,
-    on_layout_changed: Callable[[], Awaitable[None]] | None = None,
-) -> PainterLayoutService:
-    repository = OfficeLayoutRepository(settings)
+def _service(layout: dict[str, object]) -> PainterLayoutService:
+    return _service_with_state(layout)[0]
+
+
+def _service_with_state(layout: dict[str, object]) -> tuple[PainterLayoutService, FakeOfficeState]:
+    office_state = FakeOfficeState(layout)
+    repository = OfficeLayoutRepository(lambda: office_state)
     loader = FurnitureStyleLoader(FakePixelAgents(_MANIFEST))
-    return PainterLayoutService(repository, loader, on_layout_changed=on_layout_changed)
+    return PainterLayoutService(repository, loader), office_state
 
 
 class TestDescribeTileColors(unittest.IsolatedAsyncioTestCase):
     async def test_reports_kind_and_color_per_cell(self) -> None:
-        service = _service(FakeSettingsRepository(_layout()))
+        service = _service(_layout())
 
         cells = await service.describe_tile_colors(area=GridRect(GridPosition(0, 0), 4, 1))
 
@@ -127,7 +133,7 @@ class TestDescribeTileColors(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(cells[3].color, "cool_blue")
 
     async def test_out_of_bounds_area_raises(self) -> None:
-        service = _service(FakeSettingsRepository(_layout()))
+        service = _service(_layout())
 
         with self.assertRaises(PainterValidationError):
             await service.describe_tile_colors(area=GridRect(GridPosition(0, 0), 10, 10))
@@ -135,14 +141,14 @@ class TestDescribeTileColors(unittest.IsolatedAsyncioTestCase):
 
 class TestDescribeFurnitureColors(unittest.IsolatedAsyncioTestCase):
     async def test_reports_every_item_with_no_filter(self) -> None:
-        service = _service(FakeSettingsRepository(_layout()))
+        service = _service(_layout())
 
         items = await service.describe_furniture_colors()
 
         self.assertEqual({item.id for item in items}, {"f-1", "f-2", "f-3"})
 
     async def test_filters_by_kind_and_style(self) -> None:
-        service = _service(FakeSettingsRepository(_layout()))
+        service = _service(_layout())
 
         items = await service.describe_furniture_colors(
             kind=FurnitureKind.SEATING, style="wooden_chair"
@@ -160,34 +166,31 @@ _GRAY = {"h": 0, "s": 0, "b": 0, "c": 0}
 
 class TestRecolorTiles(unittest.IsolatedAsyncioTestCase):
     async def test_recolors_a_floor_cell_keeping_its_material(self) -> None:
-        settings = FakeSettingsRepository(_layout())
-        service = _service(settings)
+        service, office_state = _service_with_state(_layout())
 
         await service.recolor_tiles(area=GridRect(GridPosition(0, 0), 1, 1), color=_BLUE)
 
         cells = await service.describe_tile_colors(area=GridRect(GridPosition(0, 0), 1, 1))
         self.assertEqual(cells[0].raw_color, (220, 80, 0, 0))
-        persisted = await settings.layout()
+        persisted = office_state._layout
         assert persisted is not None
         self.assertEqual(persisted["tiles"][0], 1)  # material unchanged
         self.assertEqual(persisted["tileColors"][0], {"h": 220, "s": 80, "b": 0, "c": 0})
 
     async def test_recolors_a_wall_cell(self) -> None:
-        settings = FakeSettingsRepository(_layout())
-        service = _service(settings)
+        service, office_state = _service_with_state(_layout())
 
         await service.recolor_tiles(area=GridRect(GridPosition(1, 0), 1, 1), color=_GREEN)
 
         cells = await service.describe_tile_colors(area=GridRect(GridPosition(1, 0), 1, 1))
         self.assertEqual(cells[0].kind.value, "wall")
         self.assertEqual(cells[0].raw_color, (120, 60, 10, 0))
-        persisted = await settings.layout()
+        persisted = office_state._layout
         assert persisted is not None
         self.assertEqual(persisted["tiles"][1], 0)  # still a wall, not converted
 
     async def test_recolors_a_mixed_floor_and_wall_region_preserving_each_kind(self) -> None:
-        settings = FakeSettingsRepository(_layout())
-        service = _service(settings)
+        service, office_state = _service_with_state(_layout())
 
         await service.recolor_tiles(area=GridRect(GridPosition(0, 0), 2, 1), color=_YELLOW)
 
@@ -202,8 +205,7 @@ class TestRecolorTiles(unittest.IsolatedAsyncioTestCase):
         to the nearest named color on the next load."""
 
         off_palette = {"h": 199, "s": 12, "b": -37, "c": 63}
-        settings = FakeSettingsRepository(_layout())
-        service = _service(settings)
+        service, office_state = _service_with_state(_layout())
 
         await service.recolor_tiles(area=GridRect(GridPosition(0, 0), 1, 1), color=off_palette)
 
@@ -211,13 +213,13 @@ class TestRecolorTiles(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(cells[0].raw_color, (199, 12, -37, 63))
 
     async def test_refuses_to_recolor_void(self) -> None:
-        service = _service(FakeSettingsRepository(_layout()))
+        service = _service(_layout())
 
         with self.assertRaises(PainterValidationError):
             await service.recolor_tiles(area=GridRect(GridPosition(2, 0), 1, 1), color=_BLUE)
 
     async def test_rejects_an_out_of_range_hue(self) -> None:
-        service = _service(FakeSettingsRepository(_layout()))
+        service = _service(_layout())
 
         with self.assertRaises(PainterValidationError):
             await service.recolor_tiles(
@@ -226,7 +228,7 @@ class TestRecolorTiles(unittest.IsolatedAsyncioTestCase):
             )
 
     async def test_rejects_an_out_of_bounds_area(self) -> None:
-        service = _service(FakeSettingsRepository(_layout()))
+        service = _service(_layout())
 
         with self.assertRaises(PainterValidationError):
             await service.recolor_tiles(area=GridRect(GridPosition(0, 0), 99, 1), color=_BLUE)
@@ -234,8 +236,7 @@ class TestRecolorTiles(unittest.IsolatedAsyncioTestCase):
 
 class TestRecolorFurniture(unittest.IsolatedAsyncioTestCase):
     async def test_recolors_a_single_item_by_id(self) -> None:
-        settings = FakeSettingsRepository(_layout())
-        service = _service(settings)
+        service, office_state = _service_with_state(_layout())
 
         updated = await service.recolor_furniture(furniture_id="f-2", color=_PURPLE)
 
@@ -247,13 +248,13 @@ class TestRecolorFurniture(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(untouched.color)  # f-3's own original color survives
 
     async def test_unknown_furniture_id_raises(self) -> None:
-        service = _service(FakeSettingsRepository(_layout()))
+        service = _service(_layout())
 
         with self.assertRaises(PainterValidationError):
             await service.recolor_furniture(furniture_id="does-not-exist", color=_BLUE)
 
     async def test_out_of_range_saturation_raises(self) -> None:
-        service = _service(FakeSettingsRepository(_layout()))
+        service = _service(_layout())
 
         with self.assertRaises(PainterValidationError):
             await service.recolor_furniture(
@@ -263,7 +264,7 @@ class TestRecolorFurniture(unittest.IsolatedAsyncioTestCase):
 
 class TestRecolorFurnitureByStyle(unittest.IsolatedAsyncioTestCase):
     async def test_recolors_every_matching_item(self) -> None:
-        service = _service(FakeSettingsRepository(_layout()))
+        service = _service(_layout())
 
         count = await service.recolor_furniture_by_style(
             kind=FurnitureKind.SEATING, style="wooden_chair", color=_GRAY
@@ -276,7 +277,7 @@ class TestRecolorFurnitureByStyle(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(all(item.raw_color == (0, 0, 0, 0) for item in items))
 
     async def test_no_matches_returns_zero_not_an_error(self) -> None:
-        service = _service(FakeSettingsRepository(_layout()))
+        service = _service(_layout())
 
         count = await service.recolor_furniture_by_style(
             kind=FurnitureKind.STORAGE, style="bookshelf", color=_BLUE
@@ -285,7 +286,7 @@ class TestRecolorFurnitureByStyle(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(count, 0)
 
     async def test_out_of_range_contrast_raises(self) -> None:
-        service = _service(FakeSettingsRepository(_layout()))
+        service = _service(_layout())
 
         with self.assertRaises(PainterValidationError):
             await service.recolor_furniture_by_style(
@@ -293,92 +294,3 @@ class TestRecolorFurnitureByStyle(unittest.IsolatedAsyncioTestCase):
                 style="wooden_chair",
                 color={"h": 200, "s": 50, "b": 0, "c": -500},
             )
-
-
-class TestOnLayoutChangedNotification(unittest.IsolatedAsyncioTestCase):
-    """Painter has no WebSocket clients of its own -- `on_layout_changed`
-    is how a successful mutation still reaches a live browser rather than
-    only showing up on its next manual reload. Wired in production to
-    `painter/adapters/cog_base.py`'s `_notify_architect_layout_changed`,
-    not exercised here (that's `test_cog_commands.py`'s job) -- this only
-    verifies the service calls it at the right times."""
-
-    async def test_recolor_tiles_notifies_after_a_successful_save(self) -> None:
-        calls = 0
-
-        async def on_changed() -> None:
-            nonlocal calls
-            calls += 1
-
-        service = _service(FakeSettingsRepository(_layout()), on_layout_changed=on_changed)
-
-        await service.recolor_tiles(area=GridRect(GridPosition(0, 0), 1, 1), color=_BLUE)
-
-        self.assertEqual(calls, 1)
-
-    async def test_recolor_furniture_notifies_after_a_successful_save(self) -> None:
-        calls = 0
-
-        async def on_changed() -> None:
-            nonlocal calls
-            calls += 1
-
-        service = _service(FakeSettingsRepository(_layout()), on_layout_changed=on_changed)
-
-        await service.recolor_furniture(furniture_id="f-2", color=_BLUE)
-
-        self.assertEqual(calls, 1)
-
-    async def test_recolor_furniture_by_style_notifies_after_a_successful_save(self) -> None:
-        calls = 0
-
-        async def on_changed() -> None:
-            nonlocal calls
-            calls += 1
-
-        service = _service(FakeSettingsRepository(_layout()), on_layout_changed=on_changed)
-
-        await service.recolor_furniture_by_style(
-            kind=FurnitureKind.SEATING, style="wooden_chair", color=_BLUE
-        )
-
-        self.assertEqual(calls, 1)
-
-    async def test_not_called_when_a_zero_match_bulk_recolor_makes_no_change(self) -> None:
-        """recolor_furniture_by_style returns early (no save at all) when
-        nothing matches -- nothing changed, so nothing to notify about."""
-
-        calls = 0
-
-        async def on_changed() -> None:
-            nonlocal calls
-            calls += 1
-
-        service = _service(FakeSettingsRepository(_layout()), on_layout_changed=on_changed)
-
-        await service.recolor_furniture_by_style(
-            kind=FurnitureKind.STORAGE, style="bookshelf", color=_BLUE
-        )
-
-        self.assertEqual(calls, 0)
-
-    async def test_not_called_when_a_mutation_raises(self) -> None:
-        calls = 0
-
-        async def on_changed() -> None:
-            nonlocal calls
-            calls += 1
-
-        service = _service(FakeSettingsRepository(_layout()), on_layout_changed=on_changed)
-
-        with self.assertRaises(PainterValidationError):
-            await service.recolor_tiles(area=GridRect(GridPosition(2, 0), 1, 1), color=_BLUE)
-
-        self.assertEqual(calls, 0)
-
-    async def test_no_callback_given_is_a_silent_no_op(self) -> None:
-        service = _service(FakeSettingsRepository(_layout()))  # on_layout_changed defaults to None
-
-        await service.recolor_tiles(
-            area=GridRect(GridPosition(0, 0), 1, 1), color=_BLUE
-        )  # must not raise

@@ -1,63 +1,54 @@
-"""Config-backed storage for architect's `Office` IR.
+"""Bridges architect's `Office` IR against pixelagents' `OfficeStateFacade`
+-- the "editor" aggregate, shared with painter and with `cctv`'s editor
+dashboard page (docs/cctv-design.md). architect no longer owns any
+Config store of its own for the layout: this module's `office_state`
+callable resolves the live `pixelagents` Cog's facade lazily, since
+`pixelagents` isn't resolved until `cog_load()` runs but this repository
+is constructed in `CogBase.__init__` (same lazy-lookup shape as this
+package's `_LazyPixelAgents`).
 
-A thin wrapper around the existing `settings_repository.py`
-`layout()`/`set_layout()` methods -- no Pixel JSON schema change needed,
-it already stores an opaque JSON blob (`RedArchitectRepository.layout`).
-This is the only place `application/office_layout_service.py` touches the
-Pixel Agents adapter; everything above this module speaks `Office`, never
-raw JSON. See docs/architect-semantic-ir-design.md sections 8 and 10.
+This is the only place `application/office_layout_service.py` touches
+the Pixel Agents adapter; everything above this module speaks `Office`,
+never raw JSON.
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any, Protocol
 
+from pixelagents.application.office_state import OfficeLayoutNotSeededError
 from pixelagents.infrastructure.furniture_styles import FurnitureStyleManifest
-from pixelagents.infrastructure.pixel_agents_adapter import decode, encode
+from pixelagents.infrastructure.pixel_agents_adapter import decode
 
 from ..domain import Office
 
 
-class SupportsLayoutStorage(Protocol):
-    async def layout(self) -> dict[str, Any] | None: ...
-    async def set_layout(self, layout: dict[str, Any]) -> None: ...
+class SupportsEditorOffice(Protocol):
+    async def load_editor_office(self, styles: FurnitureStyleManifest) -> Office: ...
 
-
-class OfficeLayoutNotSeededError(RuntimeError):
-    """Raised when `load()` is called before architect has any stored
-    layout at all -- `CogBase._ensure_layout_seeded()` seeds one from
-    pixelagents' bundled default the first time the webview build syncs,
-    so this should only ever surface if that hasn't run yet."""
+    async def set_editor_layout(self, office: Office, styles: FurnitureStyleManifest) -> Any: ...
 
 
 class OfficeLayoutRepository:
-    def __init__(self, settings_repository: SupportsLayoutStorage) -> None:
-        self._settings_repository = settings_repository
+    def __init__(self, office_state: Callable[[], SupportsEditorOffice]) -> None:
+        self._office_state = office_state
 
     async def load(self, styles: FurnitureStyleManifest) -> Office:
-        raw = await self._settings_repository.layout()
-        if raw is None:
-            raise OfficeLayoutNotSeededError("architect's office layout has not been seeded yet")
-        return decode(raw, styles)
+        return await self._office_state().load_editor_office(styles)
 
     def decode_raw(self, raw: dict[str, Any], styles: FurnitureStyleManifest) -> Office:
         """Decode a raw Pixel Agents layout that didn't come from storage --
         e.g. a whole-office payload the in-browser editor sends after a
-        drag-and-drop session -- without touching `set_layout()`. Mirrors
-        `load()`'s own `decode()` call exactly; the caller (`OfficeLayoutService
-        .replace_layout`) still has to call `save()` separately to persist it."""
+        drag-and-drop session -- without touching `set_editor_layout()`.
+        Mirrors `load()`'s own decode exactly; the caller
+        (`OfficeLayoutService.replace_layout`) still has to call `save()`
+        separately to persist it."""
 
         return decode(raw, styles)
 
-    async def save(self, office: Office, styles: FurnitureStyleManifest) -> dict[str, Any]:
-        """Encode and persist `office`, returning the raw JSON that was
-        stored -- the caller (`OfficeLayoutService`) uses this to
-        broadcast `layoutLoaded` to connected webview clients without
-        re-encoding."""
-
-        raw = encode(office, styles)
-        await self._settings_repository.set_layout(raw)
-        return raw
+    async def save(self, office: Office, styles: FurnitureStyleManifest) -> None:
+        await self._office_state().set_editor_layout(office, styles)
 
 
-__all__ = ["OfficeLayoutNotSeededError", "OfficeLayoutRepository", "SupportsLayoutStorage"]
+__all__ = ["OfficeLayoutNotSeededError", "OfficeLayoutRepository", "SupportsEditorOffice"]

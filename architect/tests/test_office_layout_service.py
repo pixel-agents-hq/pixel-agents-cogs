@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 import unittest
-from typing import Any
 
 from pixelagents.infrastructure.furniture_styles import FurnitureStyleLoader
 
 from ..application.office_layout_service import OfficeLayoutService, OfficeValidationError, Touching
 from ..domain import Direction, FurnitureKind, GridPosition, GridRect, TileKind
 from ..infrastructure.office_layout_repository import OfficeLayoutRepository
-from .conftest import FakePixelAgents
+from .conftest import FakeCorridor, FakePixelAgents
 
 _MANIFEST = {
     "styles": [
@@ -96,17 +95,6 @@ _MANIFEST = {
 }
 
 
-class FakeSettingsRepository:
-    def __init__(self, layout: dict[str, object] | None) -> None:
-        self._layout = layout
-
-    async def layout(self) -> dict[str, object] | None:
-        return self._layout
-
-    async def set_layout(self, layout: dict[str, object]) -> None:
-        self._layout = layout
-
-
 def _empty_layout(cols: int = 5, rows: int = 5) -> dict[str, object]:
     return {
         "version": 1,
@@ -117,11 +105,16 @@ def _empty_layout(cols: int = 5, rows: int = 5) -> dict[str, object]:
     }
 
 
-def _service(layout: dict[str, object] | None = None, broadcast: Any = None) -> OfficeLayoutService:
-    settings = FakeSettingsRepository(layout if layout is not None else _empty_layout())
-    repository = OfficeLayoutRepository(settings)
-    loader = FurnitureStyleLoader(FakePixelAgents(furniture_styles=_MANIFEST))
-    return OfficeLayoutService(repository, loader, broadcast=broadcast)
+def _service(
+    layout: dict[str, object] | None = None, *, corridor: FakeCorridor | None = None
+) -> OfficeLayoutService:
+    corridor = corridor or FakeCorridor()
+    pixelagents = FakePixelAgents(
+        corridor=corridor, furniture_styles=_MANIFEST, default_layout=layout or _empty_layout()
+    )
+    repository = OfficeLayoutRepository(pixelagents.office_state)
+    loader = FurnitureStyleLoader(pixelagents)
+    return OfficeLayoutService(repository, loader)
 
 
 async def _paint_floor(service: OfficeLayoutService, area: GridRect, material: int = 1) -> None:
@@ -345,20 +338,6 @@ class TestPlaceFurniture(unittest.IsolatedAsyncioTestCase):
             await service.place_furniture(
                 kind=FurnitureKind.SEATING, style="wooden_chair", position=GridPosition(0, 1)
             )
-
-    async def test_broadcast_is_invoked_on_successful_mutation(self) -> None:
-        broadcasts: list[dict[str, object]] = []
-
-        async def broadcast(raw: dict[str, object]) -> None:
-            broadcasts.append(raw)
-
-        service = _service(broadcast=broadcast)
-        await _paint_floor(service, GridRect(GridPosition(0, 0), 3, 3))
-        await service.place_furniture(
-            kind=FurnitureKind.DESK, style="desk", position=GridPosition(0, 0)
-        )
-
-        self.assertEqual(len(broadcasts), 2)  # paint_tiles, then place_furniture
 
 
 class TestPlaceFurnitureTouching(unittest.IsolatedAsyncioTestCase):
@@ -996,18 +975,3 @@ class TestReplaceLayout(unittest.IsolatedAsyncioTestCase):
 
         after = await service.describe()
         self.assertEqual(after.furniture, [])
-
-    async def test_broadcast_is_invoked_on_successful_replace(self) -> None:
-        broadcasts: list[dict[str, object]] = []
-
-        async def broadcast(raw: dict[str, object]) -> None:
-            broadcasts.append(raw)
-
-        service = _service(broadcast=broadcast)
-
-        await service.replace_layout(
-            raw={"version": 1, "cols": 1, "rows": 1, "tiles": [1], "furniture": []}
-        )
-
-        self.assertEqual(len(broadcasts), 1)
-        self.assertEqual(broadcasts[0]["cols"], 1)

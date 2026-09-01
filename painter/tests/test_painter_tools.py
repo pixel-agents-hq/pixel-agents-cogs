@@ -10,6 +10,7 @@ import unittest
 
 from pixelagents.domain import GridPosition, GridRect
 from pixelagents.infrastructure.furniture_styles import FurnitureStyleLoader
+from pixelagents.infrastructure.pixel_agents_adapter import decode, encode
 
 from ..application.painter_layout_service import PainterLayoutService
 from ..infrastructure.office_layout_repository import OfficeLayoutRepository
@@ -53,15 +54,21 @@ _MANIFEST = {
 }
 
 
-class FakeSettingsRepository:
+class FakeOfficeState:
+    """A minimal stand-in for pixelagents' `OfficeStateFacade`, satisfying
+    `OfficeLayoutRepository`'s `SupportsEditorOffice` protocol directly --
+    this file only needs the "editor" aggregate's decode/encode round
+    trip, not the full facade machinery (lazy seeding, corridor plumbing)
+    `painter/tests/conftest.py`'s own `FakePixelAgents` wires up."""
+
     def __init__(self, layout: dict[str, object]) -> None:
-        self._layout: dict[str, object] | None = layout
-
-    async def layout(self) -> dict[str, object] | None:
-        return self._layout
-
-    async def set_layout(self, layout: dict[str, object]) -> None:
         self._layout = layout
+
+    async def load_editor_office(self, styles: object) -> object:
+        return decode(self._layout, styles)  # type: ignore[arg-type]
+
+    async def set_editor_layout(self, office: object, styles: object) -> None:
+        self._layout = encode(office, styles)  # type: ignore[arg-type]
 
 
 class FakePixelAgents:
@@ -88,7 +95,8 @@ def _layout() -> dict[str, object]:
 
 
 def _service() -> PainterLayoutService:
-    repository = OfficeLayoutRepository(FakeSettingsRepository(_layout()))
+    office_state = FakeOfficeState(_layout())
+    repository = OfficeLayoutRepository(lambda: office_state)
     loader = FurnitureStyleLoader(FakePixelAgents(_MANIFEST))
     return PainterLayoutService(repository, loader)
 

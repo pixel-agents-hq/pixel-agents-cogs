@@ -34,7 +34,7 @@ from ..tools.office_tools import (
     ResizeZoneTool,
     build_office_tools,
 )
-from .conftest import FakePixelAgents
+from .conftest import FakeCorridor, FakePixelAgents
 
 _MANIFEST = {
     "styles": [
@@ -85,26 +85,21 @@ _MANIFEST = {
 }
 
 
-class FakeSettingsRepository:
-    def __init__(self) -> None:
-        self._layout: dict[str, object] | None = {
-            "version": 1,
-            "cols": 5,
-            "rows": 5,
-            "tiles": [1] * 25,
-            "furniture": [],
-        }
-
-    async def layout(self) -> dict[str, object] | None:
-        return self._layout
-
-    async def set_layout(self, layout: dict[str, object]) -> None:
-        self._layout = layout
+_EMPTY_LAYOUT: dict[str, object] = {
+    "version": 1,
+    "cols": 5,
+    "rows": 5,
+    "tiles": [1] * 25,
+    "furniture": [],
+}
 
 
 def _service() -> OfficeLayoutService:
-    repository = OfficeLayoutRepository(FakeSettingsRepository())
-    loader = FurnitureStyleLoader(FakePixelAgents(furniture_styles=_MANIFEST))
+    pixelagents = FakePixelAgents(
+        corridor=FakeCorridor(), furniture_styles=_MANIFEST, default_layout=_EMPTY_LAYOUT
+    )
+    repository = OfficeLayoutRepository(pixelagents.office_state)
+    loader = FurnitureStyleLoader(pixelagents)
     return OfficeLayoutService(repository, loader)
 
 

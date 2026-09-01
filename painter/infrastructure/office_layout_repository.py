@@ -1,54 +1,41 @@
-"""Config-backed storage for the shared `Office` IR -- painter's own copy
-of `architect/infrastructure/office_layout_repository.py`'s shape, reading
-the *same* underlying store (see docs/painter-design.md part A):
-`RedOfficeLayoutSettings` is constructed independently here and in
-architect, both resolving to the same pixelagents-owned Config document
-by identifier + `cog_name`, not by sharing a Python object.
+"""Painter's own copy of `architect/infrastructure/office_layout_repository.py`'s
+shape, reading the *same* underlying "editor" aggregate through
+pixelagents' `OfficeStateFacade` -- see docs/painter-design.md part A and
+docs/cctv-design.md. Resolved independently here and in architect (not
+via a live architect reference), both reaching the same shared store.
 
 This is the only place `application/painter_layout_service.py` touches
 the Pixel Agents adapter; everything above this module speaks `Office`,
-never raw JSON.
+never raw JSON. No `decode_raw()` here: that method exists on architect's
+own repository purely for its in-browser editor's whole-office save path,
+which painter has no equivalent of.
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any, Protocol
 
+from pixelagents.application.office_state import OfficeLayoutNotSeededError
 from pixelagents.domain import Office
 from pixelagents.infrastructure.furniture_styles import FurnitureStyleManifest
-from pixelagents.infrastructure.pixel_agents_adapter import decode, encode
 
 
-class SupportsLayoutStorage(Protocol):
-    async def layout(self) -> dict[str, Any] | None: ...
-    async def set_layout(self, layout: dict[str, Any]) -> None: ...
+class SupportsEditorOffice(Protocol):
+    async def load_editor_office(self, styles: FurnitureStyleManifest) -> Office: ...
 
-
-class OfficeLayoutNotSeededError(RuntimeError):
-    """Raised when `load()` is called before the shared office layout has
-    been seeded at all -- architect's own `CogBase._ensure_layout_seeded()`
-    seeds it from pixelagents' bundled default the first time its webview
-    build syncs, so this should only ever surface if that hasn't run yet
-    (e.g. painter loaded before architect ever has)."""
+    async def set_editor_layout(self, office: Office, styles: FurnitureStyleManifest) -> Any: ...
 
 
 class OfficeLayoutRepository:
-    def __init__(self, settings_repository: SupportsLayoutStorage) -> None:
-        self._settings_repository = settings_repository
+    def __init__(self, office_state: Callable[[], SupportsEditorOffice]) -> None:
+        self._office_state = office_state
 
     async def load(self, styles: FurnitureStyleManifest) -> Office:
-        raw = await self._settings_repository.layout()
-        if raw is None:
-            raise OfficeLayoutNotSeededError("the shared office layout has not been seeded yet")
-        return decode(raw, styles)
+        return await self._office_state().load_editor_office(styles)
 
-    async def save(self, office: Office, styles: FurnitureStyleManifest) -> dict[str, Any]:
-        """Encode and persist `office`, returning the raw JSON that was
-        stored."""
-
-        raw = encode(office, styles)
-        await self._settings_repository.set_layout(raw)
-        return raw
+    async def save(self, office: Office, styles: FurnitureStyleManifest) -> None:
+        await self._office_state().set_editor_layout(office, styles)
 
 
-__all__ = ["OfficeLayoutNotSeededError", "OfficeLayoutRepository", "SupportsLayoutStorage"]
+__all__ = ["OfficeLayoutNotSeededError", "OfficeLayoutRepository", "SupportsEditorOffice"]

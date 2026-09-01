@@ -19,7 +19,7 @@ from pixelagents.infrastructure.furniture_styles import FurnitureStyleLoader
 from ..application.office_layout_service import OfficeLayoutService
 from ..domain import FurnitureKind, GridPosition, GridRect, TileKind
 from ..infrastructure.office_layout_repository import OfficeLayoutRepository
-from .conftest import FakePixelAgents
+from .conftest import FakeCorridor, FakePixelAgents
 
 _MANIFEST = {
     "styles": [
@@ -105,27 +105,19 @@ def _index(cols: int, col: int, row: int) -> int:
     return row * cols + col
 
 
-class FakeSettingsRepository:
-    def __init__(self, layout: dict[str, object]) -> None:
-        self._layout: dict[str, object] | None = layout
-
-    async def layout(self) -> dict[str, object] | None:
-        return self._layout
-
-    async def set_layout(self, layout: dict[str, object]) -> None:
-        self._layout = layout
-
-
-def _service(settings: FakeSettingsRepository) -> OfficeLayoutService:
-    repository = OfficeLayoutRepository(settings)
-    loader = FurnitureStyleLoader(FakePixelAgents(furniture_styles=_MANIFEST))
-    return OfficeLayoutService(repository, loader)
+def _service(layout: dict[str, object]) -> tuple[OfficeLayoutService, FakeCorridor]:
+    corridor = FakeCorridor()
+    pixelagents = FakePixelAgents(
+        corridor=corridor, furniture_styles=_MANIFEST, default_layout=layout
+    )
+    repository = OfficeLayoutRepository(pixelagents.office_state)
+    loader = FurnitureStyleLoader(pixelagents)
+    return OfficeLayoutService(repository, loader), corridor
 
 
 class TestEndToEndLosslessRoundTrip(unittest.IsolatedAsyncioTestCase):
     async def test_untouched_checkerboard_and_void_pocket_survive_every_mutation(self) -> None:
-        settings = FakeSettingsRepository(_irregular_layout())
-        service = _service(settings)
+        service, _corridor = _service(_irregular_layout())
 
         office = await service.describe()
         checkerboard_before = [
@@ -176,8 +168,7 @@ class TestEndToEndLosslessRoundTrip(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(final.grid.at(GridPosition(7, 6)).kind, TileKind.VOID)
 
     async def test_reload_after_every_mutation_reproduces_the_same_office(self) -> None:
-        settings = FakeSettingsRepository(_irregular_layout())
-        service = _service(settings)
+        service, _corridor = _service(_irregular_layout())
 
         await service.paint_tiles(
             area=GridRect(GridPosition(1, 1), 3, 3),
@@ -214,8 +205,7 @@ class TestEndToEndLosslessRoundTrip(unittest.IsolatedAsyncioTestCase):
 
         layout = _irregular_layout_with_off_palette_colors()
         original_tile_colors = list(cast("list[object]", layout["tileColors"]))
-        settings = FakeSettingsRepository(layout)
-        service = _service(settings)
+        service, corridor = _service(layout)
 
         # Repaint material only (no color) -- every cell in this rect must
         # keep its exact original raw color, not the palette's nearest
@@ -233,7 +223,8 @@ class TestEndToEndLosslessRoundTrip(unittest.IsolatedAsyncioTestCase):
             color="cool_blue",
         )
 
-        persisted = cast("dict[str, object]", await settings.layout())
+        state = await corridor.read_office_state("editor")
+        persisted = cast("dict[str, object]", state.layout)
         persisted_tile_colors = cast("list[object]", persisted["tileColors"])
 
         def _pos(col: int, row: int) -> int:
@@ -265,8 +256,7 @@ class TestEndToEndLosslessRoundTrip(unittest.IsolatedAsyncioTestCase):
             "tileColors": [off_palette, None],
             "furniture": [],
         }
-        settings = FakeSettingsRepository(layout)
-        service = _service(settings)
+        service, corridor = _service(layout)
 
         office = await service.describe()
         wall = office.grid.at(GridPosition(0, 0))
@@ -278,13 +268,13 @@ class TestEndToEndLosslessRoundTrip(unittest.IsolatedAsyncioTestCase):
         await service.paint_tiles(
             area=GridRect(GridPosition(1, 0), 1, 1), kind=TileKind.FLOOR, material=1
         )
-        persisted = cast("dict[str, object]", await settings.layout())
+        state = await corridor.read_office_state("editor")
+        persisted = cast("dict[str, object]", state.layout)
         persisted_tile_colors = cast("list[object]", persisted["tileColors"])
         self.assertEqual(persisted_tile_colors[0], off_palette)
 
     async def test_paint_floor_preserves_zone_tag_on_repaint(self) -> None:
-        settings = FakeSettingsRepository(_irregular_layout())
-        service = _service(settings)
+        service, _corridor = _service(_irregular_layout())
         await service.paint_tiles(
             area=GridRect(GridPosition(1, 1), 3, 3), kind=TileKind.FLOOR, material=3
         )

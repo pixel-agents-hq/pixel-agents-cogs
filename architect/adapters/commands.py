@@ -2,13 +2,15 @@
 
 Replies go through corridor (this cog's required_cogs dependency), never a
 raw ctx.send(), so this cog respects whatever reply style a guild has
-configured. `[p]architect ws ...`/`maxtoolcalls`/`prompt ...` are bot-owner
-scope -- architect's office WebSocket server and webview are process-scoped,
-not per-guild, so unlike pico there is no `[p]architect enabled` toggle
-(see docs/architect-design.md section 6). architect's former `[p]architect
-a2a ...` group is gone -- its A2A listener now lives on corridor's own
-shared one, configured via `[p]corridor a2a ...`
-(see docs/agent-directory-design.md).
+configured. `maxtoolcalls`/`debuglogging`/`prompt ...` are bot-owner
+scope -- architect is process-scoped, not per-guild, so unlike pico there
+is no `[p]architect enabled` toggle (see docs/architect-design.md section
+6). architect's former `[p]architect a2a ...` group is gone -- its A2A
+listener now lives on corridor's own shared one, configured via
+`[p]corridor a2a ...` (see docs/agent-directory-design.md). Its former
+`[p]architect ws ...` group is also gone -- architect no longer hosts any
+WebSocket server or webview of its own; `cctv` is the only dashboard-
+hosting cog now (docs/cctv-design.md), configured via `[p]cctv ...`.
 """
 
 from __future__ import annotations
@@ -26,18 +28,12 @@ _MASKED_KEY = "•" * 8
 
 class CommandsMixin:
     """Requires `self._repository: RedArchitectRepository`,
-    `self._office_layout_settings: RedOfficeLayoutSettings`, `self._corridor`,
-    and `self._websocket_server` (all provided by CogBase). Unlike
-    corridor's shared A2A listener, the office WebSocket server is not
-    live-restarted on a host/port change -- same "reload the cog to
-    rebind" convention floorplan's own `[p]floorplan wsport` already
-    uses, since rebinding a socket server out from under already-connected
-    clients is riskier than an explicit reload."""
+    `self._pixelagents`, and `self._corridor` (all provided by CogBase)."""
 
     _repository: RedArchitectRepository
     _corridor: Any
     _reply: Any
-    _websocket_server: Any
+    _pixelagents: Any
 
     @commands.hybrid_group(name="architect", invoke_without_command=True)
     async def architect_group(self, ctx: commands.Context) -> None:
@@ -45,46 +41,6 @@ class CommandsMixin:
 
         if ctx.invoked_subcommand is None:
             await ctx.send_help()
-
-    @architect_group.group(name="ws", invoke_without_command=True)
-    @commands.is_owner()
-    async def ws_group(self, ctx: commands.Context) -> None:
-        """Configure architect's own office WebSocket server. Bot owner only."""
-
-        if ctx.invoked_subcommand is None:
-            await ctx.send_help()
-
-    @ws_group.command(name="host")
-    @commands.is_owner()
-    async def ws_host(self, ctx: commands.Context, host: str) -> None:
-        """Set the office WebSocket server's bind host. Reload the cog to rebind."""
-
-        await self._repository.set_ws_host(host)
-        await self._reply.send_reply(
-            ctx,
-            description=(
-                f"WebSocket host set to `{host}`. Reload the cog to rebind, and update your "
-                "reverse-proxy route to match."
-            ),
-        )
-
-    @ws_group.command(name="port")
-    @commands.is_owner()
-    async def ws_port(self, ctx: commands.Context, port: int) -> None:
-        """Set the office WebSocket server's bind port. Reload the cog to rebind."""
-
-        try:
-            await self._repository.set_ws_port(port)
-        except ValueError as exc:
-            await self._reply.send_reply(ctx, description=str(exc))
-            return
-        await self._reply.send_reply(
-            ctx,
-            description=(
-                f"WebSocket port set to `{port}`. Reload the cog to rebind, and update your "
-                "reverse-proxy route to match."
-            ),
-        )
 
     @architect_group.command(name="maxtoolcalls")
     @commands.is_owner()
@@ -149,8 +105,7 @@ class CommandsMixin:
 
         settings = await self._repository.global_settings()
         llm_settings: Any = await self._corridor.llm_settings()
-        await self._sync_webview_assets()  # type: ignore[attr-defined]
-        layout = await self._office_layout_settings.layout()  # type: ignore[attr-defined]
+        state = await self._pixelagents.office_state().read("editor")
         fields = [
             ReplyField("LLM Endpoint", llm_settings.llm_base_url, False),
             ReplyField("LLM Model", llm_settings.llm_model or "*(not set)*"),
@@ -165,16 +120,9 @@ class CommandsMixin:
                 False,
             ),
             ReplyField(
-                "Office WebSocket",
-                f"{settings.ws_host}:{settings.ws_port} "
-                f"({'running' if self._websocket_server.running else 'not running'})",
-                False,
-            ),
-            ReplyField("Webview", self._webview_assets_status(), False),  # type: ignore[attr-defined]
-            ReplyField(
                 "Layout",
                 "✅ seeded (shared with painter, independent of floorplan)"
-                if layout
+                if state.layout
                 else "⚠️ not seeded yet",
                 False,
             ),

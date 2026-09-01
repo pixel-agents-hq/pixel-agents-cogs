@@ -6,9 +6,12 @@ Every mutation follows the same shape (docs/architect-semantic-ir-design.md
 section 8): load the current `Office`, apply the change to a *new* value
 (the IR dataclasses are frozen -- `dataclasses.replace`/`Grid.replacing`,
 never in-place edits), validate the whole resulting `Office` before ever
-encoding it, and only then persist + broadcast. A validation failure leaves
-the stored layout untouched, since nothing was written until validation
-passed.
+encoding it, and only then persist. A validation failure leaves the
+stored layout untouched, since nothing was written until validation
+passed. Live delivery to any connected `cctv` dashboard page happens
+automatically via corridor's own `OfficeStateChanged` publish on that
+persist (docs/cctv-design.md) -- this service pushes no broadcast of its
+own.
 
 There is no room concept anywhere in this service -- `Zone` is the only
 spatial-grouping concept exposed to the LLM, matching Pixel Agents' own
@@ -20,7 +23,6 @@ of relying on a room to auto-place within.
 from __future__ import annotations
 
 import uuid
-from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 from typing import Any
 
@@ -46,8 +48,6 @@ from ..domain import (
     Zone,
 )
 from ..infrastructure.office_layout_repository import OfficeLayoutRepository
-
-BroadcastCallback = Callable[[dict[str, Any]], Awaitable[None]]
 
 _MAX_DESCRIBE_TILES_AREA = 400
 
@@ -79,11 +79,9 @@ class OfficeLayoutService:
         self,
         repository: OfficeLayoutRepository,
         style_loader: FurnitureStyleLoader,
-        broadcast: BroadcastCallback | None = None,
     ) -> None:
         self._repository = repository
         self._style_loader = style_loader
-        self._broadcast = broadcast
 
     # -- queries -----------------------------------------------------
 
@@ -461,9 +459,7 @@ class OfficeLayoutService:
         return office, styles
 
     async def _persist(self, office: Office, styles: FurnitureStyleManifest) -> None:
-        raw = await self._repository.save(office, styles)
-        if self._broadcast is not None:
-            await self._broadcast(raw)
+        await self._repository.save(office, styles)
 
     @staticmethod
     def _find_zone(office: Office, zone_id: str) -> Zone:
@@ -754,4 +750,4 @@ def _validate_seats(office: Office) -> None:
             seated_occupants.add(seat.occupant_id)
 
 
-__all__ = ["BroadcastCallback", "OfficeLayoutService", "OfficeValidationError", "Touching"]
+__all__ = ["OfficeLayoutService", "OfficeValidationError", "Touching"]

@@ -51,13 +51,7 @@ class _ScriptedToolLoop:
 
 
 async def _settings() -> GlobalSettings:
-    return GlobalSettings(
-        max_tool_calls=5,
-        system_prompt="sys",
-        ws_host="127.0.0.1",
-        ws_port=_PORT + 1000,
-        debug_logging=False,
-    )
+    return GlobalSettings(max_tool_calls=5, system_prompt="sys", debug_logging=False)
 
 
 async def _llm_settings() -> _FakeArchitectLLMSettings:

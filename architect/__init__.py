@@ -33,11 +33,12 @@ async def setup(bot: Red) -> None:
     await ensure_corridor_loaded(bot)
     # pixelagents only needs to be *importable*, not a fully loaded Cog, at
     # this point: adapters/cog_base.py imports
-    # `pixelagents.application.office.OfficeService` at module scope (same
-    # convention floorplan's own setup() follows for the same reason --
-    # see floorplan/__init__.py's docstring on ensure_importable vs.
-    # ensure_loaded). Becoming a genuine loaded Cog instance stays lazy,
-    # resolved on first real use by cog_load() via corridor's ensure_loaded.
+    # `pixelagents.application.office_state.OfficeStateFacade` at module
+    # scope (same convention floorplan's own setup() follows for the same
+    # reason -- see floorplan/__init__.py's docstring on ensure_importable
+    # vs. ensure_loaded). Becoming a genuine loaded Cog instance stays
+    # lazy, resolved on first real use by cog_load() via corridor's
+    # ensure_loaded.
     from corridor.dependency_loader import ensure_importable
 
     await ensure_importable(bot, "pixelagents")

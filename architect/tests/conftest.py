@@ -10,7 +10,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
+from corridor.application import OfficeStateService
 from corridor.domain import AgentPresenceChanged, AgentRef
+from corridor.infrastructure import RedOfficeStateRepository
+from pixelagents.application.office_state import OfficeStateFacade
+from pixelagents.infrastructure.webview_build import bundled_default_layout
 
 
 class FakeGuild:
@@ -56,6 +60,9 @@ class FakeCorridor:
         self.published: list[Any] = []
         self._subscribers: dict[type, list[tuple[str, Any]]] = {}
         self._registered_agents: dict[str, Any] = {}
+        self._office_state_service = OfficeStateService(
+            RedOfficeStateRepository.create(cog=object())
+        )
 
     async def llm_settings(self) -> FakeLLMSettings:
         return self._llm_settings
@@ -144,6 +151,25 @@ class FakeCorridor:
 
         return FakeReplySender(self)
 
+    # --- office state: real corridor application/infrastructure classes,
+    # same pattern cctv's own FakeCorridor uses -- exercises the real
+    # atomic-watch/locking semantics rather than re-faking them. ---------
+
+    async def read_office_state(self, kind: str) -> Any:
+        return await self._office_state_service.read(kind)
+
+    async def set_office_layout(self, kind: str, layout: dict[str, Any]) -> Any:
+        return await self._office_state_service.set_layout(kind, layout)
+
+    async def mutate_office_seats(self, kind: str, mutation: Any) -> Any:
+        return await self._office_state_service.mutate_seats(kind, mutation)
+
+    async def watch_office_state(self, kind: str, handler: Any, *, owner: str) -> Any:
+        return await self._office_state_service.watch(kind, handler, owner=owner)
+
+    def unwatch_office_state_owner(self, owner: str) -> None:
+        self._office_state_service.unwatch_owner(owner)
+
 
 class FakeReplySender:
     def __init__(self, corridor: FakeCorridor) -> None:
@@ -159,23 +185,30 @@ class FakeReplySender:
         await self._corridor.publish_event(event)
 
 
+_AUTO = object()
+
+
 class FakePixelAgents:
     """Test double for the cross-cog `bot.get_cog("PixelAgents")` reference.
 
     Mirrors `pixelagents.adapters.cog_base.WebviewBundleStatus` --
-    architect only ever reads this, never triggers a (re)build (see
-    `adapters/cog_base.py::_sync_webview_assets`). Copied from
-    `floorplan/tests/conftest.py`'s own `FakePixelAgents`."""
+    architect only ever reads this, never triggers a (re)build. Its
+    `office_state()` returns a REAL `OfficeStateFacade` wired to the
+    given `FakeCorridor` as its backend -- same pattern cctv's own
+    `FakePixelAgents` uses, so the facade's own lazy-seeding/wire-schema
+    logic is exercised for real, not re-faked."""
 
     def __init__(
         self,
         *,
+        corridor: FakeCorridor | None = None,
         ready: bool = True,
         dist_path: Path | None = None,
         detail: str = "✅ loaded",
         built_commit: str = "a" * 40,
         built_base_path: str = "./",
         furniture_styles: dict[str, Any] | None = None,
+        default_layout: Any = _AUTO,
     ) -> None:
         self.dist_path = dist_path or Path(tempfile.mkdtemp(prefix="fake-pixelagents-dist-"))
         self.ready = ready
@@ -183,6 +216,16 @@ class FakePixelAgents:
         self.built_commit = built_commit if ready else None
         self.built_base_path = built_base_path if ready else None
         self._furniture_styles = furniture_styles
+        # `corridor` defaults to a private FakeCorridor for tests that
+        # only care about furniture styles/webview status, never office
+        # state -- those never observe which corridor backs the facade.
+        backend = corridor if corridor is not None else FakeCorridor()
+        if default_layout is _AUTO:
+            self._facade = OfficeStateFacade(
+                backend, default_layout=lambda: bundled_default_layout(self.dist_path)
+            )
+        else:
+            self._facade = OfficeStateFacade(backend, default_layout=lambda: default_layout)
 
     def webview_bundle_status(self) -> Any:
         return types.SimpleNamespace(
@@ -196,14 +239,8 @@ class FakePixelAgents:
     def furniture_style_manifest(self) -> dict[str, Any] | None:
         return self._furniture_styles
 
-
-class FakeUser:
-    """Stands in for `discord.ClientUser` (`bot.user`) -- only `id`/`name`
-    are ever read, by `PresenceSubscriptionMixin._reconcile_own_bot_account`."""
-
-    def __init__(self, user_id: int = 999, name: str = "TestBot") -> None:
-        self.id = user_id
-        self.name = name
+    def office_state(self) -> OfficeStateFacade:
+        return self._facade
 
 
 @dataclass(frozen=True)
@@ -238,13 +275,11 @@ class FakeBot:
         preloaded: bool = True,
         corridor_installable: bool = True,
         pixelagents_installable: bool = True,
-        user: FakeUser | None = None,
     ) -> None:
-        self.user = user if user is not None else FakeUser()
         self._pending_corridor = corridor or FakeCorridor()
         self.corridor: FakeCorridor | None = self._pending_corridor if preloaded else None
         self.corridor_installable = corridor_installable
-        self._pending_pixelagents = pixelagents or FakePixelAgents()
+        self._pending_pixelagents = pixelagents or FakePixelAgents(corridor=self._pending_corridor)
         self.pixelagents: FakePixelAgents | None = self._pending_pixelagents if preloaded else None
         self.pixelagents_installable = pixelagents_installable
         self._cog_mgr = FakeCogManager(self)

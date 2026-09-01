@@ -1,14 +1,21 @@
-"""Dependency composition and lifecycle for the Architect Cog."""
+"""Dependency composition and lifecycle for the Architect Cog.
+
+architect no longer hosts any dashboard/WebSocket surface, and no longer
+tracks a presence roster of its own -- both moved to `cctv`
+(docs/cctv-design.md). What's left is the A2A agent itself: its LLM tool
+loop and its layout-mutation tools, reading/writing the shared "editor"
+office aggregate through pixelagents' `OfficeStateFacade`. Live delivery
+to any connected `cctv` dashboard page happens automatically via
+corridor's own `OfficeStateChanged` publish on every write -- architect
+pushes no broadcast of its own.
+"""
 
 from __future__ import annotations
 
-import asyncio
 import logging
-from collections.abc import Callable, Coroutine, Mapping
 from pathlib import Path
 from typing import Any, cast
 
-from aiohttp import web
 from redbot.core.bot import Red
 
 from corridor.domain import (
@@ -17,21 +24,16 @@ from corridor.domain import (
     RegisteredAgent,
     ReplyCategory,
 )
-from pixelagents.application.office import OfficeService
+from pixelagents.application.office_state import OfficeStateFacade
 from pixelagents.infrastructure.furniture_styles import FurnitureStyleLoader
-from pixelagents.infrastructure.office_layout_settings import RedOfficeLayoutSettings
 
 from ..application import ToolLoopService
 from ..application.office_layout_service import OfficeLayoutService
 from ..dependency_loader import ensure_corridor_loaded
 from ..infrastructure import (
     ArchitectAgentExecutor,
-    ClientHub,
     CorridorLLMClient,
-    NullSeatRepository,
     RedArchitectRepository,
-    WebSocketServer,
-    WebviewAssetProvider,
     build_agent_card,
 )
 from ..infrastructure.office_layout_repository import OfficeLayoutRepository
@@ -69,10 +71,6 @@ async def _mcp_tools(corridor: Any) -> list[ToolSpec]:
     return tools
 
 
-# Injected as a `<base href>` at serve time (WebviewAssetProvider.base_href)
-# -- mirrors floorplan's own WEBVIEW_BASE_PATH constant, one route per cog.
-WEBVIEW_BASE_PATH = "/third-party/architect/static/"
-
 # architect's own fixed identity on corridor's event bus -- architect is
 # A2A-reachable, not a Discord bot login, and isn't scoped to one guild,
 # so it has neither a real discord_user_id nor a guild_id (see AgentRef's
@@ -94,7 +92,7 @@ class _LazyPixelAgents:
     is constructed in `__init__`, but `pixelagents` isn't resolved until
     `cog_load()` runs."""
 
-    def __init__(self, pixelagents_ref: Callable[[], Any]) -> None:
+    def __init__(self, pixelagents_ref: Any) -> None:
         self._pixelagents_ref = pixelagents_ref
 
     def furniture_style_manifest(self) -> dict[str, Any] | None:
@@ -102,6 +100,9 @@ class _LazyPixelAgents:
 
     def webview_bundle_status(self) -> Any:
         return self._pixelagents_ref().webview_bundle_status()
+
+    def office_state(self) -> OfficeStateFacade:
+        return cast(OfficeStateFacade, self._pixelagents_ref().office_state())
 
 
 class CogBase:
@@ -116,6 +117,7 @@ class CogBase:
         self.config = self._repository.config
         self._corridor: Any = None
         self._reply: Any = None
+        self._pixelagents: Any = None
         # The shared LLM connection lives in corridor (see
         # docs/architect-design.md) -- this proxy defers the actual lookup
         # until each call, since corridor isn't resolved until cog_load().
@@ -127,16 +129,16 @@ class CogBase:
         # than once per instance, and self._tools must never grow a
         # duplicate set of office tools on a second run), but the actual
         # `pixelagents` reference isn't resolved until cog_load().
-        self._style_loader = FurnitureStyleLoader(_LazyPixelAgents(lambda: self._pixelagents))
-        # The layout itself lives in pixelagents' own Config store now, not
-        # architect's -- see docs/painter-design.md part A. No live
-        # `pixelagents` Cog needed to construct this (same as `_repository`
-        # above needs no live `corridor`/`pixelagents` Cog either), only
-        # `redbot.core.Config` -- always available.
-        self._office_layout_settings = RedOfficeLayoutSettings.create()
-        self._office_layout_repository = OfficeLayoutRepository(self._office_layout_settings)
+        self._lazy_pixelagents = _LazyPixelAgents(lambda: self._pixelagents)
+        self._style_loader = FurnitureStyleLoader(self._lazy_pixelagents)
+        # The shared "editor" office aggregate lives in pixelagents'
+        # OfficeStateFacade now, not a private Config store of architect's
+        # own (docs/cctv-design.md) -- reached lazily, since `pixelagents`
+        # isn't resolved until cog_load() but this repository is built
+        # here in __init__.
+        self._office_layout_repository = OfficeLayoutRepository(self._lazy_pixelagents.office_state)
         self._office_layout_service = OfficeLayoutService(
-            self._office_layout_repository, self._style_loader, broadcast=self._broadcast_layout
+            self._office_layout_repository, self._style_loader
         )
         self._tools: list[ToolSpec] = [
             ReviewDesignTool(),
@@ -151,71 +153,6 @@ class CogBase:
             publish_activity=self._publish_activity,
             mcp_tools=lambda: _mcp_tools(self._corridor),
         )
-        self._pixelagents: Any = None
-        # Root is a placeholder until _sync_webview_assets() resolves
-        # pixelagents; base_href never changes, so it's set once here --
-        # same shape as floorplan's PixelAgentsBase.__init__.
-        self._webview_assets = WebviewAssetProvider(Path(), logger=log)
-        self._webview_assets.base_href = WEBVIEW_BASE_PATH
-        self._webview_built_commit: str | None = None
-        self._webview_build_convention_stale = False
-        # architect's own office WebSocket -- independent from floorplan's:
-        # see docs/architect-design.md on why this webview must never share
-        # a live connection (or its layout) with floorplan's. NullSeatRepository
-        # means no seat/palette assignment survives a restart -- it does NOT
-        # mean an empty agent roster: PresenceSubscriptionMixin
-        # (adapters/presence_subscription.py) feeds this OfficeService
-        # instance's genuine-agent roster from corridor's AgentPresenceChanged
-        # events, separately from seats/layout.
-        self._client_hub = ClientHub(logger=log)
-        self._office_service = OfficeService(NullSeatRepository(), self._send)
-        # Tracks the delayed clear tasks PresenceSubscriptionMixin's
-        # AgentReplied handler schedules -- cancelled at cog_unload so a
-        # reload never leaves an asyncio.sleep() dangling against a
-        # discarded OfficeService instance. Same "track, cancel, gather at
-        # shutdown" shape as floorplan's own TaskSupervisor
-        # (floorplan/application/tasks.py), duplicated in miniature rather
-        # than imported for the same "duplicated, not shared" reason noted
-        # throughout this package.
-        self._background_tasks: set[asyncio.Task[object]] = set()
-        self._websocket_server = WebSocketServer(
-            clients=self._client_hub,
-            on_webview_ready=self._on_webview_ready,
-            on_save_layout=self._on_save_layout,
-            health_snapshot=self._health_snapshot,
-            logger=log,
-        )
-
-    async def _send(self, message: Mapping[str, object]) -> None:
-        await self._client_hub.broadcast(message)
-
-    async def _broadcast_layout(self, raw: dict[str, Any]) -> None:
-        """`OfficeLayoutService`'s broadcast callback -- pushed to every
-        connected webview client after a successful mutation, same
-        message shape floorplan's own office_gateway.py already uses for
-        `saveLayout`."""
-
-        await self._send({"type": "layoutLoaded", "layout": raw})
-
-    async def notify_shared_layout_changed(self) -> None:
-        """Re-broadcasts the *current* shared office layout to every
-        connected webview client -- the public hook `painter` calls
-        (`bot.get_cog("Architect")`, best-effort) after its own recolor
-        mutations, since painter has no WebSocket server of its own to
-        push a live update through the way architect's own writes already
-        do synchronously as part of the same mutation
-        (`OfficeLayoutService._persist` -> `_broadcast_layout` above).
-        Without this, a painter-made change is real and persisted
-        immediately, but a browser already showing the office only picks
-        it up on its next manual reload -- see docs/painter-design.md's
-        open risks. Re-reads from `_office_layout_settings` rather than
-        trusting any caller-supplied payload, so it's correct regardless
-        of who mutated the shared store or when. A no-op (never raises)
-        if nothing has been seeded yet."""
-
-        raw = await self._office_layout_settings.layout()
-        if raw is not None:
-            await self._broadcast_layout(raw)
 
     async def cog_load(self) -> None:
         """required_cogs in info.json is only a Downloader install hint --
@@ -232,36 +169,8 @@ class CogBase:
         self._reply = self._corridor.reply_sender(
             owner="Architect", avatar_path=AVATAR_PATH, category=ReplyCategory.AGENT
         )
-        await self._migrate_legacy_layout()
-        await self._start_presence_tracking()
         await self._register_with_corridor()
         self._pixelagents = await ensure_loaded(self.bot, "pixelagents", "PixelAgents")
-        await self._notify_owners_dashboard_missing_if_unloaded()
-        if not await self._start_ws_server():
-            await self._notify_owners_ws_failed()
-
-    async def _migrate_legacy_layout(self) -> None:
-        """One-time migration: an existing install's office layout may
-        still sit under architect's own old `layout` Config key
-        (`RedArchitectRepository.legacy_layout`) from before this moved to
-        pixelagents' shared store (docs/painter-design.md part A).
-        Self-guarding, not a separate flag -- only copies across when the
-        new store is still empty *and* the old one has something, so a
-        second `cog_load()` (or a second cog instance) is a no-op. Must
-        never raise: a failed migration should not block architect from
-        loading, just leave the old data in place for next time."""
-
-        try:
-            if await self._office_layout_settings.layout() is not None:
-                return
-            legacy = await self._repository.legacy_layout()
-            if legacy is None:
-                return
-            await self._office_layout_settings.set_layout(legacy)
-            await self._repository.clear_legacy_layout()
-            log.info("architect: migrated its office layout to pixelagents' shared store")
-        except Exception:
-            log.exception("architect: could not migrate its legacy office layout")
 
     async def _register_with_corridor(self) -> None:
         """Hands corridor architect's AgentCard + AgentExecutor so it can
@@ -286,121 +195,10 @@ class CogBase:
         except Exception:
             log.exception("architect: could not register with corridor's agent directory")
 
-    async def _start_presence_tracking(self) -> None:
-        """Overridden by PresenceSubscriptionMixin -- kept as a no-op stub
-        here so CogBase alone stays usable without that mixin, same
-        pattern as `_start_ws_server`/`_notify_owners_dashboard_missing_if_unloaded`.
-        Must run before `_register_with_corridor()`: that call is what now
-        triggers corridor's own auto-published "online" AgentPresenceChanged
-        for architect's own agent_key (see corridor/adapters/cog_base.py's
-        `register_agent`) -- subscribing any later would miss architect's
-        own self-registration event on every fresh load."""
-
-    async def _start_ws_server(self) -> bool:
-        """Overridden by OfficeGatewayMixin -- kept as a no-op-failure stub
-        here so CogBase alone stays usable without that mixin, same
-        pattern as `_notify_owners_dashboard_missing_if_unloaded`."""
-
-        return True
-
-    async def _notify_owners_ws_failed(self) -> None:
-        """Best-effort DM -- must never raise, same convention as
-        `_notify_owners_a2a_failed`. aiohttp's own `WebSocketServer.start`
-        already logs the specific bind error; this only needs to point an
-        owner at the fix."""
-
-        settings = await self._repository.global_settings()
-        message = (
-            f"⚠️ architect's office WebSocket server failed to start on "
-            f"{settings.ws_host}:{settings.ws_port}. architect is still loaded and its "
-            "Discord commands work, but its webview will show no live layout until this "
-            "is fixed -- try [p]architect ws host/port once the issue is resolved."
-        )
-        try:
-            await self.bot.send_to_owners(message)
-        except Exception:
-            log.exception("architect: could not notify owners about the WebSocket server failure")
-
-    def _load_assets(self) -> None:
-        self._webview_assets.load_assets()
-
-    async def _sync_webview_assets(self) -> None:
-        """Refresh the built-bundle path/status from pixelagents. Same
-        shape as floorplan's own `PixelAgentsBase._sync_webview_assets`."""
-
-        status = self._pixelagents.webview_bundle_status()
-        self._webview_assets.root = status.dist_path.resolve()
-        self._webview_assets.build_status = None if status.ready else status.detail
-        if status.ready and status.built_commit != self._webview_built_commit:
-            await asyncio.to_thread(self._load_assets)
-            self._webview_built_commit = status.built_commit
-            self._check_webview_build_convention(getattr(status, "built_base_path", None))
-            await self._ensure_layout_seeded()
-
-    async def _ensure_layout_seeded(self) -> None:
-        """Seed the shared office layout store from pixelagents' bundled
-        default layout, once -- only if nothing is stored yet.
-
-        This is architect's (and painter's) own, independent layout,
-        entirely separate from floorplan's per-guild office Config:
-        loading a Pixel Index layout into floorplan's office
-        (`[p]floorplan layout view ...` -> "Load into office") writes only
-        to floorplan's own storage and never touches this one. There is no
-        command to edit this yet -- only the future layout-editing tools
-        will (see docs/architect-design.md)."""
-
-        if await self._office_layout_settings.layout() is not None:
-            return
-        default_layout = self._webview_assets.default_layout()
-        if default_layout is None:
-            return
-        await self._office_layout_settings.set_layout(default_layout)
-        log.info(
-            "architect: seeded the shared office layout store from pixelagents' bundled default "
-            "layout"
-        )
-
-    def _check_webview_build_convention(self, built_base_path: str | None) -> None:
-        # "./" is pixelagents' own RELATIVE_BASE_PATH build convention --
-        # duplicated as a literal here rather than imported, for the same
-        # reason WebviewAssetProvider itself is duplicated (see
-        # infrastructure/webview.py's module docstring).
-        stale = bool(built_base_path) and built_base_path != "./"
-        self._webview_build_convention_stale = stale
-        if stale:
-            log.warning(
-                "architect: webview built for %s, not ./ -- assets will 404. Run "
-                "[p]pixelagents webview rebuild.",
-                built_base_path,
-            )
-
-    def _webview_assets_status(self) -> str:
-        """Short, embed-field-sized summary of webview asset health."""
-
-        if self._webview_build_convention_stale:
-            return "⚠️ built with an outdated convention — run [p]pixelagents webview rebuild"
-        if self._webview_assets.assets.get("characters"):
-            return "✅ loaded"
-        return self._webview_assets.build_status or "⚠️ missing"
-
     async def cog_unload(self) -> None:
-        await self._websocket_server.stop()
-        tasks = tuple(self._background_tasks)
-        for task in tasks:
-            task.cancel()
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
         if self._corridor is not None:
             await self._corridor.unregister_agent_owner("architect")
             self._corridor.unregister_dependent("architect")
-
-    def _create_background_task(
-        self, coroutine: Coroutine[Any, Any, object], *, name: str
-    ) -> asyncio.Task[object]:
-        task = asyncio.create_task(coroutine, name=name)
-        self._background_tasks.add(task)
-        task.add_done_callback(self._background_tasks.discard)
-        return task
 
     async def _publish_activity(self, summary: str) -> None:
         """Reports one tool-use or "thinking" step from architect's own
@@ -415,22 +213,5 @@ class CogBase:
         except Exception:
             log.exception("architect: failed to publish tool/thinking activity")
 
-    async def _notify_owners_dashboard_missing_if_unloaded(self) -> None:
-        """Overridden by DashboardMixin -- kept as a no-op stub here so
-        CogBase alone (e.g. in isolation-focused tests) stays usable
-        without the Dashboard-facing mixin, same pattern as floorplan's
-        `PixelAgentsBase`."""
 
-    async def _on_webview_ready(self, socket: web.WebSocketResponse) -> None:
-        """Overridden by OfficeGatewayMixin -- kept as a no-op stub here so
-        CogBase alone stays usable without that mixin."""
-
-    async def _on_save_layout(self, raw_layout: dict[str, Any]) -> None:
-        """Overridden by OfficeGatewayMixin -- kept as a no-op stub here so
-        CogBase alone stays usable without that mixin."""
-
-    def _health_snapshot(self) -> Mapping[str, object]:
-        """Overridden by OfficeGatewayMixin -- kept as a stub here so
-        CogBase alone stays usable without that mixin."""
-
-        return {}
+__all__ = ["CogBase"]

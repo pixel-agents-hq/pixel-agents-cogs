@@ -7,16 +7,8 @@ from ..domain import GlobalSettings
 
 
 def test_global_settings_holds_its_fields() -> None:
-    settings = GlobalSettings(
-        max_tool_calls=5,
-        system_prompt="p",
-        ws_host="127.0.0.1",
-        ws_port=8932,
-        debug_logging=False,
-    )
+    settings = GlobalSettings(max_tool_calls=5, system_prompt="p", debug_logging=False)
 
     assert settings.max_tool_calls == 5
     assert settings.system_prompt == "p"
-    assert settings.ws_host == "127.0.0.1"
-    assert settings.ws_port == 8932
     assert settings.debug_logging is False

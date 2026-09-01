@@ -26,12 +26,12 @@ _MASKED_KEY = "•" * 8
 
 class CommandsMixin:
     """Requires `self._repository: RedPainterRepository`,
-    `self._office_layout_settings`, and `self._corridor` (all provided by
-    CogBase)."""
+    `self._pixelagents`, and `self._corridor` (all provided by CogBase)."""
 
     _repository: RedPainterRepository
     _corridor: Any
     _reply: Any
+    _pixelagents: Any
 
     @commands.hybrid_group(name="painter", invoke_without_command=True)
     async def painter_group(self, ctx: commands.Context) -> None:
@@ -103,7 +103,7 @@ class CommandsMixin:
 
         settings = await self._repository.global_settings()
         llm_settings: Any = await self._corridor.llm_settings()
-        layout = await self._office_layout_settings.layout()  # type: ignore[attr-defined]
+        state = await self._pixelagents.office_state().read("editor")
         fields = [
             ReplyField("LLM Endpoint", llm_settings.llm_base_url, False),
             ReplyField("LLM Model", llm_settings.llm_model or "*(not set)*"),
@@ -119,7 +119,7 @@ class CommandsMixin:
             ),
             ReplyField(
                 "Office Layout",
-                "✅ available (shared with architect)" if layout else "⚠️ not seeded yet",
+                "✅ available (shared with architect)" if state.layout else "⚠️ not seeded yet",
                 False,
             ),
         ]

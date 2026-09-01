@@ -33,7 +33,6 @@ color model revision for the full rationale.
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
 from dataclasses import replace
 
 from pixelagents.domain import (
@@ -78,22 +77,9 @@ class PainterLayoutService:
         self,
         repository: OfficeLayoutRepository,
         style_loader: FurnitureStyleLoader,
-        *,
-        on_layout_changed: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
         self._repository = repository
         self._style_loader = style_loader
-        # Unlike architect's own `OfficeLayoutService`, painter has no
-        # WebSocket clients of its own to push a `layoutLoaded` broadcast
-        # to -- this callback (wired to architect's `CogBase.
-        # notify_shared_layout_changed`, best-effort via `bot.get_cog`, see
-        # painter/adapters/cog_base.py) is how a painter mutation still
-        # shows up live rather than only on the browser's next reload.
-        # Takes no arguments -- unlike architect's own `BroadcastCallback`,
-        # the receiver re-reads the current shared layout itself rather
-        # than trusting a payload painter forwards, so this stays correct
-        # regardless of what else may have changed the store in between.
-        self._on_layout_changed = on_layout_changed
 
     async def describe_tile_colors(self, *, area: GridRect) -> list[TileCell]:
         office, _ = await self._load()
@@ -196,8 +182,6 @@ class PainterLayoutService:
 
     async def _persist(self, office: Office, styles: FurnitureStyleManifest) -> None:
         await self._repository.save(office, styles)
-        if self._on_layout_changed is not None:
-            await self._on_layout_changed()
 
 
 def _find_furniture(office: Office, furniture_id: str) -> FurnitureItem:

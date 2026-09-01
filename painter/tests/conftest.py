@@ -2,15 +2,19 @@
 place (../conftest.py) and is not duplicated here -- this module only holds
 the fake Discord-facing objects tests construct directly. A parallel copy
 of architect/tests/conftest.py's shape, minus what only architect's own
-webview/presence-tracking mixins need (FakeUser, dist_path handling
-beyond furniture_style_manifest)."""
+webview/dashboard mixins need."""
 
 from __future__ import annotations
 
+import types
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Literal
 
+from corridor.application import OfficeStateService
 from corridor.domain import AgentPresenceChanged, AgentRef
+from corridor.infrastructure import RedOfficeStateRepository
+from pixelagents.application.office_state import OfficeStateFacade
 
 
 class FakeGuild:
@@ -56,6 +60,9 @@ class FakeCorridor:
         self.published: list[Any] = []
         self._subscribers: dict[type, list[tuple[str, Any]]] = {}
         self._registered_agents: dict[str, Any] = {}
+        self._office_state_service = OfficeStateService(
+            RedOfficeStateRepository.create(cog=object())
+        )
 
     async def llm_settings(self) -> FakeLLMSettings:
         return self._llm_settings
@@ -140,6 +147,24 @@ class FakeCorridor:
     ) -> FakeReplySender:
         return FakeReplySender(self)
 
+    # --- office state: real corridor application/infrastructure classes,
+    # same pattern architect's/cctv's own FakeCorridor uses. -------------
+
+    async def read_office_state(self, kind: str) -> Any:
+        return await self._office_state_service.read(kind)
+
+    async def set_office_layout(self, kind: str, layout: dict[str, Any]) -> Any:
+        return await self._office_state_service.set_layout(kind, layout)
+
+    async def mutate_office_seats(self, kind: str, mutation: Any) -> Any:
+        return await self._office_state_service.mutate_seats(kind, mutation)
+
+    async def watch_office_state(self, kind: str, handler: Any, *, owner: str) -> Any:
+        return await self._office_state_service.watch(kind, handler, owner=owner)
+
+    def unwatch_office_state_owner(self, owner: str) -> None:
+        self._office_state_service.unwatch_owner(owner)
+
 
 class FakeReplySender:
     def __init__(self, corridor: FakeCorridor) -> None:
@@ -155,43 +180,44 @@ class FakeReplySender:
         await self._corridor.publish_event(event)
 
 
+_AUTO = object()
+
+
 class FakePixelAgents:
     """Test double for the cross-cog `bot.get_cog("PixelAgents")` reference.
-    Painter only ever reads the furniture style manifest through this --
-    unlike architect it has no webview/dist_path concern of its own."""
+    Its `office_state()` returns a REAL `OfficeStateFacade` wired to the
+    given `FakeCorridor` as its backend -- same pattern architect's/cctv's
+    own `FakePixelAgents` use."""
 
     def __init__(
         self,
         *,
+        corridor: FakeCorridor | None = None,
         ready: bool = True,
         built_commit: str = "a" * 40,
         furniture_styles: dict[str, Any] | None = None,
+        default_layout: Any = _AUTO,
     ) -> None:
         self.ready = ready
         self.built_commit = built_commit if ready else None
         self._furniture_styles = furniture_styles
+        backend = corridor if corridor is not None else FakeCorridor()
+        layout = None if default_layout is _AUTO else default_layout
+        self._facade = OfficeStateFacade(backend, default_layout=lambda: layout)
 
     def webview_bundle_status(self) -> Any:
-        import types
-
-        return types.SimpleNamespace(ready=self.ready, built_commit=self.built_commit)
+        return types.SimpleNamespace(
+            dist_path=Path("."),
+            ready=self.ready,
+            detail="✅ loaded",
+            built_commit=self.built_commit,
+        )
 
     def furniture_style_manifest(self) -> dict[str, Any] | None:
         return self._furniture_styles
 
-
-class FakeArchitectCog:
-    """Test double for `bot.get_cog("Architect")` -- the only slice
-    `_notify_architect_layout_changed` actually calls."""
-
-    def __init__(self, *, fail_with: Exception | None = None) -> None:
-        self._fail_with = fail_with
-        self.notify_calls = 0
-
-    async def notify_shared_layout_changed(self) -> None:
-        self.notify_calls += 1
-        if self._fail_with is not None:
-            raise self._fail_with
+    def office_state(self) -> OfficeStateFacade:
+        return self._facade
 
 
 @dataclass(frozen=True)
@@ -217,16 +243,12 @@ class FakeBot:
     """`preloaded=True` (the default) simulates corridor and pixelagents
     already being loaded on the bot. Pass `preloaded=False` to simulate
     both having been unloaded, exercising CogBase.cog_load()'s
-    auto-load-via-ensure_loaded path instead. `architect=...` stands in
-    for `bot.get_cog("Architect")` -- `None` (the default) simulates
-    architect not currently being loaded, exercising
-    `_notify_architect_layout_changed`'s best-effort degrade."""
+    auto-load-via-ensure_loaded path instead."""
 
     def __init__(
         self,
         corridor: FakeCorridor | None = None,
         pixelagents: FakePixelAgents | None = None,
-        architect: Any = None,
         preloaded: bool = True,
         corridor_installable: bool = True,
         pixelagents_installable: bool = True,
@@ -234,10 +256,9 @@ class FakeBot:
         self._pending_corridor = corridor or FakeCorridor()
         self.corridor: FakeCorridor | None = self._pending_corridor if preloaded else None
         self.corridor_installable = corridor_installable
-        self._pending_pixelagents = pixelagents or FakePixelAgents()
+        self._pending_pixelagents = pixelagents or FakePixelAgents(corridor=self._pending_corridor)
         self.pixelagents: FakePixelAgents | None = self._pending_pixelagents if preloaded else None
         self.pixelagents_installable = pixelagents_installable
-        self.architect: Any = architect
         self._cog_mgr = FakeCogManager(self)
         self.load_extension_calls: list[str] = []
         self.loaded_packages: list[str] = []
@@ -248,8 +269,6 @@ class FakeBot:
             return self.corridor
         if name == "PixelAgents":
             return self.pixelagents
-        if name == "Architect":
-            return self.architect
         return None
 
     async def load_extension(self, spec: FakeModuleSpec) -> None:

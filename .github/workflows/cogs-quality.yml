@@ -128,12 +128,15 @@ jobs:
             extra_deps: "'a2a-sdk[http-server]' uvicorn 'mcp>=1.29,<2' 'typing-inspection<0.4.3'"
             pixel_index_contracts: false
           # pixelagents owns the vendor/build pipeline and validated office-state
-          # facade; it has no Pixel Index HTTP contract of its own.
+          # facade; it has no Pixel Index HTTP contract of its own. It also
+          # now owns the pydantic-backed OfficeLayout contract model (moved
+          # from floorplan/contracts/layout.py), so it needs pydantic like
+          # corridor's own leg above.
           - cog: pixelagents
             test_target: "pixelagents/tests"
             lint_target: "pixelagents"
             mypy_target: "pixelagents"
-            extra_deps: "'pyyaml>=6.0' 'jsonschema>=4.20'"
+            extra_deps: "'pyyaml>=6.0' 'jsonschema>=4.20' 'pydantic>=2.11.3,<2.12'"
             pixel_index_contracts: false
           # floorplan owns only Pixel Index configuration, browsing, and loading.
           # floorplan's tests also import corridor.adapters, which pulls in
@@ -147,11 +150,16 @@ jobs:
             pixel_index_contracts: true
           # cctv owns both live webviews and their aiohttp listener. Its
           # schema boundary comes from pixelagents' pydantic layout model.
+          # cctv's tests also import corridor.domain (RegisteredAgent, etc.)
+          # and architect.infrastructure.settings_repository, both of which
+          # reach a2a-sdk (corridor.domain.agent_directory / architect's
+          # a2a_server) -- needs a2a-sdk[http-server]+uvicorn for the same
+          # reason as corridor's own leg above.
           - cog: cctv
             test_target: "cctv/tests"
             lint_target: "cctv"
             mypy_target: "cctv"
-            extra_deps: "aiohttp 'pydantic>=2.11.3,<2.12'"
+            extra_deps: "aiohttp 'pydantic>=2.11.3,<2.12' 'a2a-sdk[http-server]' uvicorn"
             pixel_index_contracts: false
           # pico talks to aiohttp (LiteLLM proxy) and pydantic (wire/tool
           # models) like floorplan, plus httpx and a2a-sdk for its

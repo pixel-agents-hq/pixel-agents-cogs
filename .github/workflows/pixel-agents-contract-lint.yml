@@ -29,9 +29,13 @@ jobs:
 
       - name: Install dependencies
         # Deliberately lighter than contracts/pixel_index/requirements.txt --
-        # outbound.py/office.py are plain-stdlib TypedDicts, no pydantic/aiohttp/
-        # discord needed for this offline path.
-        run: pip install 'pyyaml>=6.0' 'jsonschema>=4.20'
+        # outbound.py/office.py are plain-stdlib TypedDicts, no aiohttp/discord
+        # needed for this offline path. pydantic IS needed though:
+        # pixelagents/contracts/outbound.py -> pixelagents/contracts/__init__.py
+        # -> pixelagents/contracts/layout.py imports it directly (this module
+        # moved here from floorplan/contracts/layout.py, which is why the
+        # OfficeLayout contract model now needs pydantic on this offline path).
+        run: pip install 'pyyaml>=6.0' 'jsonschema>=4.20' 'pydantic>=2.11.3,<2.12'
 
       - name: Check pixel-agents-consumer-contract.yaml is up to date
         run: python -m contracts.pixel_agents.generate_consumer_contract --check

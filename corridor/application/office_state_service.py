@@ -32,21 +32,25 @@ class OfficeStateNotInitializedError(RuntimeError):
 
 
 class OfficeStateService:
-    """One lock makes subscribe+snapshot and every field write atomic."""
+    """A per-kind lock makes each kind's subscribe+snapshot and field
+    writes atomic, without serializing the discord and editor aggregates
+    against each other -- they're logically independent stores."""
 
     def __init__(self, storage: OfficeStateStorage, events: EventBusService) -> None:
         self._storage = storage
         self._events = events
-        self._lock = asyncio.Lock()
+        self._locks: dict[OfficeStateKind, asyncio.Lock] = {
+            kind: asyncio.Lock() for kind in OfficeStateKind
+        }
 
     async def state(self, kind: OfficeStateKind) -> OfficeState | None:
-        async with self._lock:
+        async with self._locks[kind]:
             state = await self._storage.state(kind)
             return copy_office_state(state) if state is not None else None
 
     async def initialize(self, kind: OfficeStateKind, layout: RawLayout) -> OfficeState:
         changed: OfficeState | None = None
-        async with self._lock:
+        async with self._locks[kind]:
             current = await self._storage.state(kind)
             if current is None:
                 current = OfficeState(
@@ -63,7 +67,7 @@ class OfficeStateService:
         return result
 
     async def set_layout(self, kind: OfficeStateKind, layout: RawLayout) -> OfficeState:
-        async with self._lock:
+        async with self._locks[kind]:
             current = await self._required(kind)
             updated = OfficeState(
                 kind=kind,
@@ -77,7 +81,7 @@ class OfficeStateService:
         return result
 
     async def set_seats(self, kind: OfficeStateKind, seats: SeatRecords) -> OfficeState:
-        async with self._lock:
+        async with self._locks[kind]:
             current = await self._required(kind)
             updated = OfficeState(
                 kind=kind,
@@ -95,7 +99,7 @@ class OfficeStateService:
         kind: OfficeStateKind,
         mutation: Callable[[SeatRecords], MutationResult],
     ) -> tuple[OfficeState, MutationResult]:
-        async with self._lock:
+        async with self._locks[kind]:
             current = await self._required(kind)
             seats = deepcopy(current.seats)
             mutation_result = mutation(seats)
@@ -121,7 +125,7 @@ class OfficeStateService:
             if event.state.kind == kind:
                 await handler(OfficeStateChanged(state=copy_office_state(event.state)))
 
-        async with self._lock:
+        async with self._locks[kind]:
             self._events.subscribe(OfficeStateChanged, filtered, owner=owner)
             state = await self._storage.state(kind)
             return copy_office_state(state) if state is not None else None

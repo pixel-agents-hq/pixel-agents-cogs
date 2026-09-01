@@ -327,6 +327,12 @@ jobs:
         if: matrix.cog == 'corridor'
         run: python -m contracts.corridor.lint_corridor_contract
 
+      - name: Check office_state.yaml matches the design doc
+        if: matrix.cog == 'corridor'
+        run: python -m contracts.corridor.lint_office_state_contract
+
       - name: Test corridor contract tooling
+        # Also picks up test_lint_office_state_contract.py automatically --
+        # no separate step needed for it here.
         if: matrix.cog == 'corridor'
         run: python -m unittest discover -s contracts/corridor/tests

@@ -75,11 +75,18 @@ class ClientHub:
             return False
         return True
 
-    async def broadcast(self, message: Mapping[str, object]) -> int:
+    async def broadcast(
+        self,
+        message: Mapping[str, object],
+        *,
+        exclude: web.WebSocketResponse | None = None,
+    ) -> int:
         if not self.clients:
             return 0
         sent = 0
         for socket in list(self.clients):
+            if socket is exclude:
+                continue
             sent += await self.send_to(socket, message)
         return sent
 

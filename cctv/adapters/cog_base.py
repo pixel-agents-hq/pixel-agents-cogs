@@ -238,6 +238,8 @@ class CctvBase:
         if self._corridor is not None:
             self._corridor.unsubscribe_owner("Cctv")
             self._corridor.unregister_dependent("cctv")
+        for pipeline in self._pipelines.values():
+            await pipeline.close()
         await self._tasks.shutdown()
         self._initial_sync_task = None
         if self._server is not None:

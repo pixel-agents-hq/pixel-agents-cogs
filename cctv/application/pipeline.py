@@ -9,7 +9,13 @@ from typing import Any, Protocol
 
 from aiohttp import web
 
-from corridor.domain import OfficeState, OfficeStateChanged, OfficeStateKind, SeatRecords
+from corridor.domain import (
+    OfficeState,
+    OfficeStateChanged,
+    OfficeStateKind,
+    RawLayout,
+    SeatRecords,
+)
 from pixelagents.application import DEFAULT_PALETTE_COUNT, OfficeService, PresenceService
 from pixelagents.application.office import merge_seat_patch
 from pixelagents.domain import AgentSnapshot, GenuineAgentKey, OfficeIdentity
@@ -25,6 +31,16 @@ from ..contracts import (
 from ..infrastructure.client_hub import ClientHub
 
 Authorize = Callable[[int], Awaitable[bool]]
+
+# A layout save fires once per placed tile while a user drags/paints in the
+# editor. Writing+publishing corridor's shared OfficeState on every single
+# one made the editor feel laggy (full aggregate read-modify-write plus a
+# synchronous cross-subscriber publish per tile) -- coalesce rapid saves
+# into one write, LAYOUT_SAVE_DEBOUNCE_SECONDS after the last one, instead.
+# Safe because nothing subscribes to live per-tile layout changes: architect
+# and painter only *pull* office_state() when a tool call runs, so a short
+# staleness window mid-drag costs them nothing.
+LAYOUT_SAVE_DEBOUNCE_SECONDS = 0.2
 
 
 class PixelAgentsStateGateway(Protocol):
@@ -70,6 +86,10 @@ class CctvPipeline:
         self._lock = asyncio.Lock()
         self._state: OfficeState | None = None
         self.error: str | None = None
+        self._pending_layout: RawLayout | None = None
+        self._pending_layout_socket: web.WebSocketResponse | None = None
+        self._layout_flush_task: asyncio.Task[None] | None = None
+        self._last_layout_writer: web.WebSocketResponse | None = None
         self.presence = PresenceService(self._send)
         self.office = OfficeService(
             seat_repository,
@@ -105,7 +125,15 @@ class CctvPipeline:
                 return
             self._state = state
             self.error = None
-            await self.clients.broadcast({"type": "layoutLoaded", "layout": state.layout})
+            # Exclude whichever socket's own save just produced this
+            # revision -- it already has this layout locally and doesn't
+            # need it echoed back. One-shot: a later revision from anywhere
+            # else (another client, or architect/painter mutating layout)
+            # goes to every connected client, this one included.
+            writer, self._last_layout_writer = self._last_layout_writer, None
+            await self.clients.broadcast(
+                {"type": "layoutLoaded", "layout": state.layout}, exclude=writer
+            )
             await self.clients.broadcast(self.office.existing_agents_message(state.seats))
 
     async def bootstrap(self, socket: web.WebSocketResponse) -> None:
@@ -127,7 +155,7 @@ class CctvPipeline:
         if isinstance(message, WebviewReadyMessage):
             await self.bootstrap(socket)
         elif isinstance(message, SaveLayoutMessage):
-            await self._pixelagents.set_office_layout(self.kind, message.layout.to_raw())
+            self._queue_layout_save(socket, message.layout.to_raw())
         elif isinstance(message, SaveAgentSeatsMessage):
             incoming = {
                 agent_id: patch.model_dump(by_alias=True, exclude_none=True)
@@ -156,6 +184,52 @@ class CctvPipeline:
             )
         elif isinstance(message, ImportLayoutMessage):
             return
+
+    def _queue_layout_save(self, socket: web.WebSocketResponse, layout: RawLayout) -> None:
+        """Remember `layout` as the latest unsaved edit and (re)start the
+        debounce timer -- a burst of saves from one drag collapses to a
+        single write of the final layout, LAYOUT_SAVE_DEBOUNCE_SECONDS
+        after the last message in the burst."""
+
+        self._pending_layout = layout
+        self._pending_layout_socket = socket
+        if self._layout_flush_task is not None:
+            self._layout_flush_task.cancel()
+        self._layout_flush_task = asyncio.create_task(
+            self._debounced_flush(), name=f"cctv-{self.page}-layout-flush"
+        )
+
+    async def _debounced_flush(self) -> None:
+        try:
+            await asyncio.sleep(LAYOUT_SAVE_DEBOUNCE_SECONDS)
+        except asyncio.CancelledError:
+            return
+        await self.flush_pending_layout()
+
+    async def flush_pending_layout(self) -> None:
+        """Persist the most recently queued layout edit, if any. Idempotent
+        -- a no-op once nothing is pending. Called by the debounce timer and
+        also explicitly on cog_unload/close, so an edit still inside the
+        debounce window isn't lost to a reload or shutdown."""
+
+        if self._pending_layout is None:
+            return
+        layout = self._pending_layout
+        socket = self._pending_layout_socket
+        self._pending_layout = None
+        self._pending_layout_socket = None
+        self._last_layout_writer = socket
+        await self._pixelagents.set_office_layout(self.kind, layout)
+
+    async def close(self) -> None:
+        """Cancel any pending debounce timer and flush the last unsaved
+        layout edit synchronously. Call before tearing down the pipeline
+        (cog_unload) so a save made just before shutdown isn't dropped."""
+
+        if self._layout_flush_task is not None:
+            self._layout_flush_task.cancel()
+            self._layout_flush_task = None
+        await self.flush_pending_layout()
 
     async def reconcile_discord(
         self,
@@ -188,4 +262,10 @@ class CctvPipeline:
         }
 
 
-__all__ = ["Authorize", "CctvPipeline", "PixelAgentsStateGateway", "SeatRepository"]
+__all__ = [
+    "LAYOUT_SAVE_DEBOUNCE_SECONDS",
+    "Authorize",
+    "CctvPipeline",
+    "PixelAgentsStateGateway",
+    "SeatRepository",
+]

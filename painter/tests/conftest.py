@@ -7,10 +7,11 @@ beyond furniture_style_manifest)."""
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from corridor.domain import AgentPresenceChanged, AgentRef
+from corridor.domain import AgentPresenceChanged, AgentRef, OfficeState, OfficeStateKind
 
 
 class FakeGuild:
@@ -156,9 +157,7 @@ class FakeReplySender:
 
 
 class FakePixelAgents:
-    """Test double for the cross-cog `bot.get_cog("PixelAgents")` reference.
-    Painter only ever reads the furniture style manifest through this --
-    unlike architect it has no webview/dist_path concern of its own."""
+    """Test double for style metadata and the revisioned editor state."""
 
     def __init__(
         self,
@@ -166,10 +165,26 @@ class FakePixelAgents:
         ready: bool = True,
         built_commit: str = "a" * 40,
         furniture_styles: dict[str, Any] | None = None,
+        editor_layout: dict[str, object] | None = None,
     ) -> None:
         self.ready = ready
         self.built_commit = built_commit if ready else None
         self._furniture_styles = furniture_styles
+        layout = editor_layout or {
+            "version": 1,
+            "cols": 1,
+            "rows": 1,
+            "tiles": [1],
+            "furniture": [],
+        }
+        self._states = {
+            OfficeStateKind.EDITOR: OfficeState(
+                kind=OfficeStateKind.EDITOR,
+                layout=layout,
+                seats={},
+                revision=1,
+            )
+        }
 
     def webview_bundle_status(self) -> Any:
         import types
@@ -179,19 +194,21 @@ class FakePixelAgents:
     def furniture_style_manifest(self) -> dict[str, Any] | None:
         return self._furniture_styles
 
+    async def office_state(self, kind: OfficeStateKind) -> OfficeState:
+        return self._states[kind]
 
-class FakeArchitectCog:
-    """Test double for `bot.get_cog("Architect")` -- the only slice
-    `_notify_architect_layout_changed` actually calls."""
-
-    def __init__(self, *, fail_with: Exception | None = None) -> None:
-        self._fail_with = fail_with
-        self.notify_calls = 0
-
-    async def notify_shared_layout_changed(self) -> None:
-        self.notify_calls += 1
-        if self._fail_with is not None:
-            raise self._fail_with
+    async def set_office_layout(
+        self, kind: OfficeStateKind, layout: Mapping[str, object]
+    ) -> OfficeState:
+        current = self._states[kind]
+        updated = OfficeState(
+            kind=kind,
+            layout=dict(layout),
+            seats=current.seats,
+            revision=current.revision + 1,
+        )
+        self._states[kind] = updated
+        return updated
 
 
 @dataclass(frozen=True)
@@ -217,16 +234,12 @@ class FakeBot:
     """`preloaded=True` (the default) simulates corridor and pixelagents
     already being loaded on the bot. Pass `preloaded=False` to simulate
     both having been unloaded, exercising CogBase.cog_load()'s
-    auto-load-via-ensure_loaded path instead. `architect=...` stands in
-    for `bot.get_cog("Architect")` -- `None` (the default) simulates
-    architect not currently being loaded, exercising
-    `_notify_architect_layout_changed`'s best-effort degrade."""
+    auto-load-via-ensure_loaded path instead."""
 
     def __init__(
         self,
         corridor: FakeCorridor | None = None,
         pixelagents: FakePixelAgents | None = None,
-        architect: Any = None,
         preloaded: bool = True,
         corridor_installable: bool = True,
         pixelagents_installable: bool = True,
@@ -237,7 +250,6 @@ class FakeBot:
         self._pending_pixelagents = pixelagents or FakePixelAgents()
         self.pixelagents: FakePixelAgents | None = self._pending_pixelagents if preloaded else None
         self.pixelagents_installable = pixelagents_installable
-        self.architect: Any = architect
         self._cog_mgr = FakeCogManager(self)
         self.load_extension_calls: list[str] = []
         self.loaded_packages: list[str] = []
@@ -248,8 +260,6 @@ class FakeBot:
             return self.corridor
         if name == "PixelAgents":
             return self.pixelagents
-        if name == "Architect":
-            return self.architect
         return None
 
     async def load_extension(self, spec: FakeModuleSpec) -> None:

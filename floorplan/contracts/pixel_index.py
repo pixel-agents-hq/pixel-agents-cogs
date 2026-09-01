@@ -58,8 +58,8 @@ class LayoutListResponse(BaseModel):
 
 class LayoutDetail(LayoutSummary):
     """GET /api/v1/layouts/{slug}. `layout` is the opaque Pixel Agents
-    layout blob (pixel-index itself treats it as additionalProperties: true)
-    — the OfficeLayout contract enforces its own required shape, so it's kept
-    untyped here rather than duplicating that structure."""
+    layout blob (pixel-index itself treats it as additionalProperties: true).
+    Pixelagents validates the value when Floorplan applies it, so this HTTP
+    boundary keeps it untyped rather than duplicating that structure."""
 
     layout: dict[str, Any]

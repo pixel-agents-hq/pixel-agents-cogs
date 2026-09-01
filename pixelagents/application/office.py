@@ -78,9 +78,9 @@ def merge_seat_patch(
     palette = patch.get("palette")
     hue_shift = patch.get("hueShift")
     seat_id = patch.get("seatId")
-    if isinstance(palette, int) and 0 <= palette < palette_count:
+    if type(palette) is int and 0 <= palette < palette_count:
         record["palette"] = palette
-    if isinstance(hue_shift, int) and 0 <= hue_shift <= 360:
+    if type(hue_shift) is int and 0 <= hue_shift <= 360:
         record["hueShift"] = hue_shift
     if isinstance(seat_id, str):
         record["seatId"] = seat_id
@@ -467,9 +467,9 @@ class OfficeService:
         """A genuine agent's AgentReplied (tool use/thinking) -- the same
         wire treatment send_message_activity gives a real Discord message,
         minus MessageSnapshot's Discord-shaped message_id (a genuine agent
-        has no real message to key off; floorplan's synthetic-id comment
-        for the Discord path already notes nothing downstream depends on
-        its real value either)."""
+        has no real message to key off; CCTV's synthetic Discord ID similarly
+        exists only to satisfy the internal snapshot shape, and nothing
+        downstream uses its real value either)."""
 
         agent_id = self.genuine_agent_id(identity.agent_key)
         truncated = content if len(content) <= 40 else content[:40] + "…"

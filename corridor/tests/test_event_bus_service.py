@@ -3,6 +3,7 @@ stand in for subscriber handlers, no unittest.mock needed."""
 
 from __future__ import annotations
 
+import asyncio
 import unittest
 from dataclasses import dataclass
 
@@ -118,6 +119,24 @@ class TestEventBusService(unittest.IsolatedAsyncioTestCase):
 
     async def test_unsubscribe_owner_for_unknown_owner_is_a_noop(self) -> None:
         self.bus.unsubscribe_owner("nobody")  # must not raise
+
+    async def test_optional_timeout_cancels_only_the_slow_subscriber(self) -> None:
+        cancelled = asyncio.Event()
+        received: list[_Ping] = []
+
+        async def slow(event: _Ping) -> None:
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cancelled.set()
+
+        self.bus.subscribe(_Ping, slow, owner="slow")
+        self.bus.subscribe(_Ping, _recorder(received), owner="healthy")
+
+        await self.bus.publish(_Ping("hi"), subscriber_timeout=0.01)
+
+        self.assertTrue(cancelled.is_set())
+        self.assertEqual(received, [_Ping("hi")])
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-"""Architecture constraints for the shrunk, vendor+build-only Pixel Agents Cog."""
+"""Architecture constraints for the Pixel Agents bundle and state boundary."""
 
 from __future__ import annotations
 
@@ -31,21 +31,12 @@ def test_composition_entrypoint_is_genuinely_thin() -> None:
 
 
 def test_framework_resources_have_one_owner_each() -> None:
-    """Two `Config.get_conf(` call sites now, deliberately -- one per
-    independent Config resource this cog owns, not two ways to reach the
-    same one (docs/painter-design.md part A): `settings.py` still owns
-    `webview_commit_override` alone; `office_layout_settings.py` owns the
-    shared architect/painter office layout, under its own distinct
-    identifier. Every other production module must still go through one
-    of these two, never call `Config.get_conf` itself."""
+    """Pixelagents has one Config identity; Corridor owns office state."""
 
     sources = {path: path.read_text(encoding="utf-8") for path in production_modules()}
     config_factories = [path for path, source in sources.items() if "Config.get_conf(" in source]
 
-    assert config_factories == [
-        PACKAGE_ROOT / "infrastructure" / "office_layout_settings.py",
-        PACKAGE_ROOT / "infrastructure" / "settings.py",
-    ]
+    assert config_factories == [PACKAGE_ROOT / "infrastructure" / "settings.py"]
 
 
 def test_pascalcase_and_lowercase_public_classes_are_identical() -> None:
@@ -106,10 +97,8 @@ def test_agent_visualization_modules_do_not_import_frameworks() -> None:
         assert imported_roots.isdisjoint(banned_roots), path
 
 
-def test_no_leftover_runtime_dependency_on_aiohttp_or_pydantic() -> None:
-    """pixelagents shrank to vendoring+building -- neither the office
-    WebSocket server nor the Pixel Index client live here any more, so
-    nothing under production code should still import them."""
+def test_no_leftover_runtime_dependency_on_aiohttp() -> None:
+    """HTTP/WebSocket ownership lives in cctv, never in pixelagents."""
 
     offenders: list[tuple[Path, str]] = []
     for path in production_modules():
@@ -121,9 +110,27 @@ def test_no_leftover_runtime_dependency_on_aiohttp_or_pydantic() -> None:
             elif isinstance(node, ast.ImportFrom) and node.module:
                 modules = [node.module.split(".")[0]]
             for module in modules:
-                if module in {"aiohttp", "pydantic"}:
+                if module == "aiohttp":
                     offenders.append((path, module))
     assert offenders == []
+
+
+def test_pydantic_is_confined_to_the_office_schema_boundary() -> None:
+    importers: list[Path] = []
+    for path in production_modules():
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        if any(
+            isinstance(node, ast.ImportFrom)
+            and node.module is not None
+            and node.module.partition(".")[0] == "pydantic"
+            for node in ast.walk(tree)
+        ):
+            importers.append(path)
+
+    assert importers == [
+        PACKAGE_ROOT / "application" / "office_state.py",
+        PACKAGE_ROOT / "contracts" / "layout.py",
+    ]
 
 
 def test_importing_the_package_does_not_cache_the_corridor_coupled_cog_module() -> None:

@@ -1,63 +1,38 @@
-"""Config-backed storage for architect's `Office` IR.
-
-A thin wrapper around the existing `settings_repository.py`
-`layout()`/`set_layout()` methods -- no Pixel JSON schema change needed,
-it already stores an opaque JSON blob (`RedArchitectRepository.layout`).
-This is the only place `application/office_layout_service.py` touches the
-Pixel Agents adapter; everything above this module speaks `Office`, never
-raw JSON. See docs/architect-semantic-ir-design.md sections 8 and 10.
-"""
+"""Semantic IR adapter over Pixelagents' revisioned editor aggregate."""
 
 from __future__ import annotations
 
-from typing import Any, Protocol
+from collections.abc import Callable, Mapping
+from typing import Protocol
 
+from corridor.domain import OfficeState, OfficeStateKind
 from pixelagents.infrastructure.furniture_styles import FurnitureStyleManifest
 from pixelagents.infrastructure.pixel_agents_adapter import decode, encode
 
 from ..domain import Office
 
 
-class SupportsLayoutStorage(Protocol):
-    async def layout(self) -> dict[str, Any] | None: ...
-    async def set_layout(self, layout: dict[str, Any]) -> None: ...
+class SupportsOfficeState(Protocol):
+    async def office_state(self, kind: OfficeStateKind) -> OfficeState: ...
 
-
-class OfficeLayoutNotSeededError(RuntimeError):
-    """Raised when `load()` is called before architect has any stored
-    layout at all -- `CogBase._ensure_layout_seeded()` seeds one from
-    pixelagents' bundled default the first time the webview build syncs,
-    so this should only ever surface if that hasn't run yet."""
+    async def set_office_layout(
+        self,
+        kind: OfficeStateKind,
+        layout: Mapping[str, object],
+    ) -> OfficeState: ...
 
 
 class OfficeLayoutRepository:
-    def __init__(self, settings_repository: SupportsLayoutStorage) -> None:
-        self._settings_repository = settings_repository
+    def __init__(self, pixelagents: Callable[[], SupportsOfficeState]) -> None:
+        self._pixelagents = pixelagents
 
     async def load(self, styles: FurnitureStyleManifest) -> Office:
-        raw = await self._settings_repository.layout()
-        if raw is None:
-            raise OfficeLayoutNotSeededError("architect's office layout has not been seeded yet")
-        return decode(raw, styles)
+        state = await self._pixelagents().office_state(OfficeStateKind.EDITOR)
+        return decode(state.layout, styles)
 
-    def decode_raw(self, raw: dict[str, Any], styles: FurnitureStyleManifest) -> Office:
-        """Decode a raw Pixel Agents layout that didn't come from storage --
-        e.g. a whole-office payload the in-browser editor sends after a
-        drag-and-drop session -- without touching `set_layout()`. Mirrors
-        `load()`'s own `decode()` call exactly; the caller (`OfficeLayoutService
-        .replace_layout`) still has to call `save()` separately to persist it."""
-
-        return decode(raw, styles)
-
-    async def save(self, office: Office, styles: FurnitureStyleManifest) -> dict[str, Any]:
-        """Encode and persist `office`, returning the raw JSON that was
-        stored -- the caller (`OfficeLayoutService`) uses this to
-        broadcast `layoutLoaded` to connected webview clients without
-        re-encoding."""
-
+    async def save(self, office: Office, styles: FurnitureStyleManifest) -> None:
         raw = encode(office, styles)
-        await self._settings_repository.set_layout(raw)
-        return raw
+        await self._pixelagents().set_office_layout(OfficeStateKind.EDITOR, raw)
 
 
-__all__ = ["OfficeLayoutNotSeededError", "OfficeLayoutRepository", "SupportsLayoutStorage"]
+__all__ = ["OfficeLayoutRepository", "SupportsOfficeState"]

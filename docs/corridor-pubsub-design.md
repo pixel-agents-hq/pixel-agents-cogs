@@ -1,13 +1,14 @@
 # Corridor event bus (PubSub): design
 
-> **Status: implemented.** This doc **replaces** the previous version of
-> `docs/corridor-pubsub-design.md`, which described the bus's original,
-> now-superseded topology (floorplan as both publisher and subscriber,
-> pico as a second publisher). Every row below is now real, not aspirational:
+> **Status: implemented; consumer topology updated by
+> [`cctv-design.md`](cctv-design.md).** The event types and Corridor publisher
+> behavior below remain current. Sections that name Floorplan as the office
+> subscriber describe the pre-CCTV topology; CCTV is now the single subscriber
+> and owns the filtering/projection policy.
 >
 > | Cog | Role |
 > |---|---|
-> | floorplan | **subscribes only** — `floorplan/adapters/event_subscriptions.py` |
+> | cctv | **subscribes only** — `cctv/adapters/cog_base.py` |
 > | corridor | **publishes** presence + reply-mirror events from its own Discord listeners (`corridor/adapters/discord_gateway.py`), and `AgentPresenceChanged` for any A2A agent's directory registration (`register_agent`/`unregister_agent_owner`/`unregister_agent` — `corridor/adapters/cog_base.py`) |
 > | pico | publishes `AgentReplied` — `pico/tools/reply_tool.py` |
 > | architect | publishes `AgentReplied` (tool use/thinking) — `architect/adapters/cog_base.py`. No longer publishes `AgentPresenceChanged` itself; corridor's own `register_agent`/`unregister_agent_owner` do that as a side effect of architect's A2A registration, see `docs/agent-directory-design.md` |

@@ -1,5 +1,11 @@
 # painter design
 
+> **State storage and browser notification superseded by
+> [`cctv-design.md`](cctv-design.md).** Architect and Painter now use
+> Pixelagents' validated editor-state facade over Corridor's revisioned
+> aggregate. `RedOfficeLayoutSettings` and Painter's direct Architect refresh
+> callback were removed. The color-only tool and A2A design remains current.
+
 Tracks [issue #55](https://github.com/pixel-agents-hq/pixel-agents-cogs/issues/55),
 "Add new cog 'painter'". This doc covers the whole change as agreed with
 the repo owner during design review — a single PR, in three parts that

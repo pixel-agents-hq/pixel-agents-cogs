@@ -2,16 +2,15 @@
     "$schema": "https://raw.githubusercontent.com/Cog-Creators/Red-DiscordBot/V3/develop/schema/red_cog.schema.json",
     "name": "architect",
     "short": "A second, independent LLM agent reachable only over A2A",
-    "description": "Architect is a second, independent LLM agent -- never Discord-user-facing -- reachable over the A2A protocol on corridor's own shared listener (see docs/agent-directory-design.md). Pico consults it as an A2A client. Shares corridor's LLM connection with pico. Serves pixelagents' built webview bundle under its own Dashboard route (/third-party/architect), rendering its own layout over its own office WebSocket server (/architect/ws) -- independent of floorplan's, not merely a copy of its static page. Edits that layout through a Semantic IR (rooms, zones, furniture, seats) via LLM tools and [p]architect office ... commands, both calling the same validated mutation service.",
+    "description": "Architect is an A2A-only LLM agent registered on corridor's shared listener. It performs structural editor-layout mutations through pixelagents' validated revisioned state facade. CCTV owns the browser view; Architect has no Dashboard or WebSocket surface.",
     "end_user_data_statement": "This cog sends A2A task messages it receives to corridor's configured LLM endpoint. It does not persistently store any data or metadata about Discord users.",
-    "install_msg": "Requires corridor and pixelagents (both auto-loaded). Configure the shared LLM connection with [p]corridor llm endpoint/key/model (bot owner). architect registers itself on corridor's shared A2A listener automatically -- configure that listener's host/port with [p]corridor a2a host/port, not an architect-specific command. The webview needs Red Web Dashboard loaded and pixelagents' bundle built ([p]pixelagents webview rebuild); its live layout also needs the office WebSocket server (127.0.0.1:8932 by default, [p]architect ws host/port) reachable at the public path /architect/ws -- add a reverse-proxy rule for it alongside whatever rule already forwards floorplan's /ws.",
+    "install_msg": "Requires corridor and pixelagents (both auto-loaded). Configure the shared LLM with [p]corridor llm endpoint/key/model and the shared A2A listener with [p]corridor a2a host/port. Load cctv separately if a browser view of the editor aggregate is wanted.",
     "author": ["Pixel Agents HQ Contributors"],
     "required_cogs": {
         "corridor": "https://github.com/pixel-agents-hq/pixel-agents-cogs",
         "pixelagents": "https://github.com/pixel-agents-hq/pixel-agents-cogs"
     },
     "requirements": [
-        "aiohttp",
         "pydantic>=2.11.3,<2.12",
         "a2a-sdk",
         "typing-inspection<0.4.3"

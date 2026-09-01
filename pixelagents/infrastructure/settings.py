@@ -8,11 +8,9 @@ from redbot.core import Config
 
 from ..domain import parse_commit_ref
 
-# Freshly rolled for this cog's shrunk scope -- the runtime settings that
-# used to share this identifier (ws_port, layout, seats, guild
-# enabled/include_bots, pixel_index urls, ...) now live in floorplan's own
-# Config store. Existing pre-split installations' webview_commit_override
-# is not carried over.
+# This Config owns only the build override. CCTV owns browser/display settings,
+# Floorplan owns Pixel Index URLs, and Corridor owns opaque office state. No
+# earlier combined-cog values are read or migrated.
 CONFIG_IDENTIFIER = 0x7069786C6167656E7473
 
 GLOBAL_DEFAULTS: dict[str, object] = {

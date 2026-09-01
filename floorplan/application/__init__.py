@@ -1,8 +1,4 @@
-"""Application services coordinating Floorplan use cases.
-
-OfficeService/PresenceService moved to `pixelagents.application` -- import
-them from there directly.
-"""
+"""Pixel Index catalogue use cases."""
 
 from .catalogue import (
     LAYOUT_SEARCH_PAGE_SIZE,
@@ -13,8 +9,6 @@ from .catalogue import (
     CatalogueResult,
     CatalogueService,
 )
-from .settings import SettingsService
-from .tasks import TaskSupervisor
 
 __all__ = [
     "LAYOUT_SEARCH_PAGE_SIZE",
@@ -24,6 +18,4 @@ __all__ = [
     "CatalogueErrorCode",
     "CatalogueResult",
     "CatalogueService",
-    "SettingsService",
-    "TaskSupervisor",
 ]

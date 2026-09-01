@@ -90,8 +90,8 @@ class ToolLoopService:
         coarse "thinking: ..."/"using tool X" summaries. Intended for
         streaming a live trace of this turn to an operator (e.g. architect's
         A2A executor turning each string into an intermediate task status
-        update) -- `on_activity`'s own consumer (the office webview presence
-        bubble) is unaffected by this parameter."""
+        update) -- `on_activity`'s own consumer (Corridor, and therefore CCTV's
+        office activity bubble) is unaffected by this parameter."""
 
         tools_by_name = {tool.name: tool for tool in tools}
         wire_tools = [_wire_spec(tool) for tool in tools]

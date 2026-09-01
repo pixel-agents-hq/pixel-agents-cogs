@@ -1,4 +1,10 @@
-# The `architect` cog: an A2A-reachable agent with its own webview
+# The `architect` cog: original A2A and webview design
+
+> **Browser and state ownership superseded by
+> [`cctv-design.md`](cctv-design.md).** Architect no longer owns a Dashboard
+> route, WebSocket listener, client hub, presence subscription, or private
+> layout Config. It now mutates Pixelagents' revisioned editor aggregate; CCTV
+> renders that state. The A2A executor and tool-loop sections remain relevant.
 
 **Status: implemented**, except the design-review/task-breakdown
 placeholder tools' real functionality (explicitly out of scope, see

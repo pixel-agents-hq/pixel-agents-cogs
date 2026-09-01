@@ -1,92 +1,45 @@
 # floorplan
 
-Serves the Pixel Agents office and mirrors Discord presence into it.
+Browse Pixel Index and load catalogue layouts into the Discord CCTV office.
 
-`floorplan` hosts the [Pixel Agents](https://github.com/pixel-agents-hq/pixel-agents)
-browser bundle — built by [`pixelagents`](../pixelagents) — as a Red
-Dashboard third-party page and serves its WebSocket protocol directly,
-turning Discord guild presence (online/idle/dnd status, rich presence,
-messages) into animated characters in a shared office. It also browses the
-public [Pixel Index](https://github.com/pixel-agents-hq/index) layout
-catalogue from Discord and can load a selected layout into the office.
-Editing the office layout is delegated to corridor's Keyholder permission
-tier — floorplan holds no role IDs of its own.
+Floorplan owns only Pixel Index API/Web configuration, catalogue browsing, and
+the authorized load action. It does not host a Dashboard page, bind a WebSocket
+listener, scan Discord guilds, mirror presence, or store office state. Those
+browser and projection responsibilities belong to [`cctv`](../cctv).
 
-This cog used to be part of a single combined `pixelagents` Cog; [issue
-#21](https://github.com/pixel-agents-hq/pixel-agents-cogs/issues/21) split
-vendoring/building (which stayed in `pixelagents`) from everything that
-consumes the result (this cog).
+Selected layouts are validated and written through [`pixelagents`](../pixelagents)
+to the revisioned `discord` aggregate persisted by Corridor. A load preserves
+the aggregate's avatar-seat records and does not affect the separate editor
+aggregate used by Architect and Painter.
 
 ## Installing
 
-Requires [`corridor`](../corridor) and [`pixelagents`](../pixelagents)
-(both auto-loaded via `required_cogs`):
-
-```
-[p]repo add pixel-agents-cogs https://github.com/pixel-agents-hq/pixel-agents-cogs
+```text
 [p]cog install pixel-agents-cogs floorplan
 [p]load floorplan
 ```
 
-floorplan does not build the webview itself — see
-[pixelagents](../pixelagents)'s own README if `[p]floorplan status`'s
-Assets field reports it missing (this requires `git`, `node`, and `npm` on
-the host; [`toolbox`](../toolbox) can install Node.js/npm for you).
-
-The office webview is served through [Red Web
-Dashboard](https://red-web-dashboard.readthedocs.io/en/latest/)
-(AAA3A-cogs' `dashboard`). floorplan stays loadable without it, but if
-dashboard isn't loaded yet when floorplan loads, the bot owner gets a DM
-with the setup link above — see
-[Architecture.md](Architecture.md#dashboard-dependency).
-
-## Configuring
-
-1. Set who may edit the office layout via corridor:
-   `[p]corridorsettings` (the Keyholder permission tier).
-2. Enable a guild: `[p]floorplan enable`.
-3. The office is served at `/third-party/floorplan`; route `/ws` on that
-   host to the port from `[p]floorplan wsport` (default `3210`).
+Corridor and Pixelagents are required and loaded on demand. CCTV is not a
+dependency: browsing and loading continue to work when no browser surface is
+loaded.
 
 ## Commands
 
 | Command | Description |
 |---|---|
-| `[p]floorplan status` | Configuration, client count, asset state |
-| `[p]floorplan settings` | Components V2 administration panel |
-| `[p]floorplan enable` / `disable` | Guild mirroring on/off |
-| `[p]floorplan sync` / `despawnall` | Reconcile / clear agents |
-| `[p]floorplan wsport <port>` | Office server port |
-| `[p]floorplan index` | Pixel Index endpoints and API health |
-| `[p]floorplan layout search [query] [tag] [sort]` | Browse Pixel Index layouts |
-| `[p]floorplan layout view <slug>` | View and optionally load a layout |
+| `[p]floorplan status` | Show Pixel Index endpoints and API health |
+| `[p]floorplan index` | Show endpoint configuration and health |
+| `[p]floorplan index set <url>` | Set the Pixel Index API base URL |
+| `[p]floorplan index setweb <url>` | Set the Pixel Index web base URL |
+| `[p]floorplan layout search [query] [tag] [sort]` | Browse catalogue layouts |
+| `[p]floorplan layout view <slug>` | View a layout and offer the load action |
 
-## Natural-language layout browsing
+The load button is allowed for the bot owner or a member satisfying Corridor's
+`keyholder` capability in any guild the bot can resolve. The public search and
+view commands are also registered as Corridor LLM tools.
 
-When Pico is loaded and enabled, the public layout commands are also
-available through Corridor's shared LLM tool registry. For example:
+Floorplan uses a fresh Config identity containing only the two Pixel Index URLs.
+Previous Floorplan settings and office state are intentionally not migrated.
 
-- “What layouts are available?” calls `floorplan_layout_search` without
-  filters and posts the same interactive five-result browse view as the
-  Discord command.
-- “Show me the default layout.” calls `floorplan_layout_view` with the Pixel
-  Index slug `default` and posts the same detail/preview view.
-
-Search also accepts the command's existing `query`, `tag`, and `sort`
-criteria. Both tools return structured, LLM-readable metadata in addition to
-posting the Discord view; the detail tool deliberately omits the full raw
-layout JSON. Viewing a layout does not load it automatically—the existing
-button and Keyholder authorization still control loading.
-
-See [Architecture.md](Architecture.md) for the full command list and
-configuration keys.
-
-## Docs
-
-- [Architecture.md](Architecture.md) — internal structure, routing, the
-  webview bundle's cross-cog handoff with pixelagents, and the WebSocket
-  bootstrap sequence.
-- [PERMISSIONS.md](PERMISSIONS.md) — how corridor's permission tiers gate
-  layout editing here.
-- [`docs/contract-testing.md`](../docs/contract-testing.md) — how this cog's
-  dependency on the Pixel Index API is verified in CI.
+See [Architecture.md](Architecture.md), [PERMISSIONS.md](PERMISSIONS.md), and
+[`docs/contract-testing.md`](../docs/contract-testing.md).

@@ -49,6 +49,34 @@ class TestMissingTools(unittest.TestCase):
             self.assertEqual(webview_build.missing_tools(), ())
 
 
+class TestBundledDefaultLayout(unittest.TestCase):
+    def test_reads_the_layout_selected_by_the_asset_index(self) -> None:
+        with TemporaryDirectory() as tmp:
+            dist = Path(tmp)
+            assets = dist / "assets"
+            assets.mkdir()
+            layout = {"version": 1, "tiles": [1]}
+            (assets / "asset-index.json").write_text(
+                json.dumps({"defaultLayout": "default.json"}), encoding="utf-8"
+            )
+            (assets / "default.json").write_text(json.dumps(layout), encoding="utf-8")
+
+            self.assertEqual(webview_build.load_bundled_default_layout(dist), layout)
+
+    def test_rejects_a_default_outside_the_assets_directory(self) -> None:
+        with TemporaryDirectory() as tmp:
+            dist = Path(tmp)
+            assets = dist / "assets"
+            assets.mkdir()
+            (assets / "asset-index.json").write_text(
+                json.dumps({"defaultLayout": "../secret.json"}), encoding="utf-8"
+            )
+            (dist / "secret.json").write_text("{}", encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "outside"):
+                webview_build.load_bundled_default_layout(dist)
+
+
 class TestIsUpToDate(unittest.TestCase):
     def test_false_when_index_html_missing(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -486,11 +514,11 @@ class TestRealWebviewBuild(unittest.TestCase):
     """Exercises the actual network/git/npm/vite path -- see the module docstring."""
 
     def test_ensure_webview_built_produces_a_working_dist(self) -> None:
-        # WebviewAssetProvider (which actually parses/serves this output) is
-        # floorplan's now -- contracts/pixel_agents/verify.py exercises the
+        # WebviewAssets (which actually parses/serves this output) is owned
+        # by CCTV -- contracts/pixel_agents/verify.py exercises the
         # full clone-build-serve path across both packages. This stays
         # scoped to what pixelagents itself owns: the build produces the
-        # files WebviewAssetProvider is documented to read.
+        # files WebviewAssets is documented to read.
         with TemporaryDirectory() as tmp:
             cog_data_dir = Path(tmp)
             result = webview_build.ensure_webview_built(cog_data_dir, logger=_LOG)

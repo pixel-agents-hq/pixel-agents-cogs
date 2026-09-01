@@ -1,5 +1,9 @@
 # suggestionbox: an MCP feedback server, mediated by corridor for A2A agents
 
+> Browser-listener examples naming the former Floorplan/Architect WebSocket
+> modules predate CCTV and are superseded by
+> [`cctv-design.md`](cctv-design.md). The MCP and agent-tool design is unchanged.
+
 **Status: implemented.** See the implementation checklist (§10) and this
 repo's own PRs for what actually landed; a follow-up review pass may note
 small deviations from the plan below (e.g. `render_channel_reply` reusing

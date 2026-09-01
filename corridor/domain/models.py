@@ -245,17 +245,17 @@ class MemberCapabilities:
 # EventBusService (corridor/application/event_bus_service.py). Deliberately
 # never mirrors pixel-agents' own wire vocabulary (agentToolStart,
 # ServerMessage, isExternal, ...) -- translating one of these into the
-# webview's actual protocol is entirely a subscriber's job (floorplan
-# today), never something this module encodes. See
+# webview's actual protocol is entirely a subscriber's job (CCTV today),
+# never something this module encodes. See
 # docs/corridor-pubsub-design.md for the full design rationale.
 
 
 @dataclass(frozen=True, slots=True)
 class AgentRef:
     """A Discord member represented as a webview agent. Deliberately holds
-    the *raw* Discord user ID, not floorplan's derived, JS-safe negative
-    agent ID -- that derivation (`_discord_id_to_agent_id`) stays
-    floorplan's own concern, the only place that currently needs it.
+    the *raw* Discord user ID, not CCTV's derived, JS-safe negative agent ID --
+    that derivation (`_discord_id_to_agent_id`) stays in Pixelagents' projection
+    service, the only place that currently needs it.
 
     `discord_user_id`/`guild_id` are `None` for an agent with no real
     Discord account or guild scope -- e.g. architect, which is
@@ -284,11 +284,9 @@ class AgentReplied:
     """Named for corridor's own verb (`send_reply`), not a generic "spoke".
 
     Originally scoped to "fires exactly when a publisher sends a reply
-    through corridor, nothing broader" -- widened once floorplan's own raw
-    Discord message mirroring became a second publisher alongside any cog's
-    `send_reply` call: both a cog routing a reply through corridor *and*
-    floorplan noticing a tracked member's own raw Discord message publish
-    this same event. `summary` always carries the full, untruncated text --
+    through corridor, nothing broader" -- widened once Corridor's raw Discord
+    message mirroring became a second publisher alongside any cog's
+    `send_reply` call. `summary` always carries the full, untruncated text --
     wording/truncation for the wire is the subscriber's job, never the
     publisher's."""
 
@@ -343,8 +341,8 @@ class AgentActivity:
     """One Discord rich-presence activity (Spotify, a game, ...), in
     corridor's own vocabulary -- shaped after pixelagents.domain's
     ActivitySnapshot, but corridor must not import pixelagents types, so
-    this is a parallel, hand-kept-in-sync copy. Includes `name`:
-    floorplan's PresenceService.label() falls back to `activity.name` for
+    this is a parallel, hand-kept-in-sync copy. Includes `name`: Pixelagents'
+    PresenceService.label() falls back to `activity.name` for
     every non-LISTENING kind (playing/watching/competing/streaming) --
     omitting it here would silently drop those rich-presence bubbles."""
 

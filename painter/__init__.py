@@ -32,9 +32,8 @@ async def setup(bot: Red) -> None:
 
     await ensure_corridor_loaded(bot)
     # pixelagents only needs to be *importable*, not a fully loaded Cog, at
-    # this point: adapters/cog_base.py imports
-    # `pixelagents.infrastructure.office_layout_settings.RedOfficeLayoutSettings`
-    # (and other pixelagents modules) at module scope -- same convention
+    # this point: adapters/cog_base.py imports Pixelagents' Semantic IR codec
+    # and furniture style loader at module scope -- the same convention
     # architect's own __init__.py follows for the same reason.
     from corridor.dependency_loader import ensure_importable
 

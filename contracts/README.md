@@ -13,9 +13,8 @@ dev-time hot reload tooling (which infers "reloadable cog" from any
 top-level package with an `info.json`, without checking `type`/`hidden`)
 doesn't report a spurious reload failure — see that function's docstring.
 
-It owns the contract for two external dependencies neither `pixelagents`
-nor `floorplan` controls, plus one internal one, corridor's own Pub/Sub
-event bus:
+It owns contracts for two external dependencies plus Corridor's internal agent
+event and office-state models:
 
 - **[Pixel Index](https://github.com/pixel-agents-hq/index)** — a plain
   HTTP API. The contract is generated from the same pydantic models
@@ -23,7 +22,7 @@ event bus:
   runtime, so it can't drift from what the code actually depends on.
 - **[Pixel Agents](https://github.com/pixel-agents-hq/pixel-agents)** — a
   build-time source dependency (`pixelagents` clones and builds its webview
-  at the commit pinned in `webview_vendor.commit`, and `floorplan` serves
+  at the commit pinned in `webview_vendor.commit`, and `cctv` serves
   the result). The "contract" here is a real clone + `npm ci` + `vite
   build`, checked against the same asset decoding the office actually
   needs. A second, narrower contract
@@ -45,7 +44,9 @@ event bus:
   itself. CI's `generate_corridor_contract.py --check` fails on any diff
   from the committed copy; `lint_corridor_contract.py` keeps one narrower
   job on top, checking every declared event name is still mentioned in
-  the design doc's own text.
+  the design doc's own text. `corridor/office_state.yaml` is generated and
+  checked separately from `corridor/office_state_catalog.py`, because office
+  state is not an agent event.
 
 Pixel Index and Pixel Agents (the build-pipeline contract) are checked live
 on a schedule and on relevant PRs, and published to a shared status site so

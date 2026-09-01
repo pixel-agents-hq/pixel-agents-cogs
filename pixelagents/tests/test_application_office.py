@@ -414,6 +414,12 @@ class TestMergeSeatPatch(unittest.TestCase):
 
         self.assertEqual(seats["-1"], {})
 
+    def test_boolean_numeric_fields_are_dropped(self) -> None:
+        seats: dict[str, dict[str, object]] = {}
+        merge_seat_patch(seats, "-1", 6, {"palette": True, "hueShift": False})
+
+        self.assertEqual(seats["-1"], {})
+
     def test_existing_record_fields_are_preserved_across_partial_patches(self) -> None:
         seats: dict[str, dict[str, object]] = {"-1": {"palette": 3, "hueShift": 10}}
         merge_seat_patch(seats, "-1", 6, {"seatId": "chair:2"})

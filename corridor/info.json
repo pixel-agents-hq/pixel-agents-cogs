@@ -1,9 +1,9 @@
 {
     "$schema": "https://raw.githubusercontent.com/Cog-Creators/Red-DiscordBot/V3/develop/schema/red_cog.schema.json",
     "name": "corridor",
-    "short": "Shared reply style and permission tiers for office-cogs.",
-    "description": "Owns one guild-wide store for reply formatting (text/embed, icon) and moderator/privileged role tiers, plus the one shared LLM connection every LLM-backed dependent (pico, architect) uses, plus the one shared A2A listener every registered agent is mounted on (see docs/agent-directory-design.md), plus an MCP client bridging any registered agent-tool server (suggestionbox) into a registered A2A agent's own tool loop (see docs/suggestionbox-design.md), exposed to other cogs via required_cogs so they don't each reinvent it.",
-    "end_user_data_statement": "This cog does not persistently store any data or metadata about users. It stores a bot-owner-configured LLM endpoint, model, and virtual key used by dependent cogs, plus the bind host/port for its own shared A2A listener.",
+    "short": "Shared services and office state for office-cogs.",
+    "description": "Owns shared reply and permission settings, LLM and A2A infrastructure, registered agent tools, and the two opaque revisioned office-state aggregates used by the cctv pages. Other cogs consume these services through required_cogs.",
+    "end_user_data_statement": "This cog stores bot-owner configuration for shared LLM/A2A services. It also stores Discord user IDs and registered agent IDs when those identities have avatar appearance or seat assignments in either cctv office-state aggregate.",
     "author": ["Tin Nguyen"],
     "required_cogs": {},
     "requirements": [

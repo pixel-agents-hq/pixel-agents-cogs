@@ -108,8 +108,7 @@ class TestCrossCogToolPublishesAgentReplied(unittest.IsolatedAsyncioTestCase):
     """Closes the same gap ReplyTool/ConsultAgentTool already closed for
     their own tool shapes: pico is the one actually calling the tool (the
     registering cog only supplied the handler), so pico is the one that
-    publishes -- floorplan and architect's own dashboard subscribe and
-    render whatever the bus delivers."""
+    publishes -- CCTV subscribes and renders whatever the bus delivers."""
 
     async def test_successful_call_publishes_agent_replied(self) -> None:
         corridor = FakeCorridor()

@@ -1,5 +1,6 @@
 """Typed outbound websocket contracts for the pixel-agents webview."""
 
+from .layout import JsonValue, OfficeLayout, RawOfficeLayout
 from .outbound import (
     AgentClosedMessage,
     AgentContextUsageMessage,
@@ -47,6 +48,9 @@ __all__ = [
     "AgentToolsClearMessage",
     "AgentToolStartMessage",
     "ExistingAgentsMessage",
+    "JsonValue",
+    "OfficeLayout",
+    "RawOfficeLayout",
     "SubagentClearMessage",
     "SubagentToolDoneMessage",
     "SubagentToolPermissionMessage",

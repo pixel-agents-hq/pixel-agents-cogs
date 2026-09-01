@@ -38,12 +38,23 @@ from .models import (
     ToolHandler,
     ToolVisibilityFilter,
 )
+from .office_state import (
+    OfficeState,
+    OfficeStateChanged,
+    OfficeStateKind,
+    RawLayout,
+    SeatRecords,
+    copy_office_state,
+)
 from .reply_colors import REPLY_CATEGORY_COLORS
 
 __all__ = [
     "EMPLOYEE_KEY",
     "LLMToolSpec",
     "OWNER_KEY",
+    "OfficeState",
+    "OfficeStateChanged",
+    "OfficeStateKind",
     "RESERVED_GROUP_KEYS",
     "REPLY_CATEGORY_COLORS",
     "A2ASettings",
@@ -74,11 +85,14 @@ __all__ = [
     "ReplyIdentity",
     "ReplyMode",
     "ReplyPreferences",
+    "RawLayout",
+    "SeatRecords",
     "ToolHandler",
     "ToolAvailabilityCheck",
     "ToolVisibilityFilter",
     "ToolDescription",
     "card_with_url",
+    "copy_office_state",
     "infer_parameters",
     "llm_tool",
     "llm_tool_spec",

@@ -127,17 +127,18 @@ jobs:
             mypy_target: "testbench"
             extra_deps: "'a2a-sdk[http-server]' uvicorn 'mcp>=1.29,<2' 'typing-inspection<0.4.3'"
             pixel_index_contracts: false
-          # pixelagents shrank to a vendor+build utility cog (like toolbox) --
-          # no aiohttp/pydantic left, and no Pixel Index contracts of its own.
+          # pixelagents owns the vendor/build pipeline and validated office-state
+          # facade; it has no Pixel Index HTTP contract of its own. It also
+          # now owns the pydantic-backed OfficeLayout contract model (moved
+          # from floorplan/contracts/layout.py), so it needs pydantic like
+          # corridor's own leg above.
           - cog: pixelagents
             test_target: "pixelagents/tests"
             lint_target: "pixelagents"
             mypy_target: "pixelagents"
-            extra_deps: "'pyyaml>=6.0' 'jsonschema>=4.20'"
+            extra_deps: "'pyyaml>=6.0' 'jsonschema>=4.20' 'pydantic>=2.11.3,<2.12'"
             pixel_index_contracts: false
-          # floorplan inherited the runtime half of the old pixelagents Cog:
-          # the dashboard, office WebSocket protocol, and Pixel Index
-          # integration, so it inherits that half's dependencies too.
+          # floorplan owns only Pixel Index configuration, browsing, and loading.
           # floorplan's tests also import corridor.adapters, which pulls in
           # corridor.infrastructure.A2AServer -- needs a2a-sdk[http-server]+
           # uvicorn for the same reason as corridor's own leg above.
@@ -147,6 +148,25 @@ jobs:
             mypy_target: "floorplan"
             extra_deps: "aiohttp 'a2a-sdk[http-server]' uvicorn 'mcp>=1.29,<2' 'typing-inspection<0.4.3'"
             pixel_index_contracts: true
+          # cctv owns both live webviews and their aiohttp listener. Its
+          # schema boundary comes from pixelagents' pydantic layout model.
+          # cctv's tests also import corridor.domain (RegisteredAgent, etc.)
+          # and architect.infrastructure.settings_repository, both of which
+          # reach a2a-sdk (corridor.domain.agent_directory / architect's
+          # a2a_server) -- needs a2a-sdk[http-server]+uvicorn for the same
+          # reason as corridor's own leg above. architect's a2a_server also
+          # pulls in architect.application.tool_loop_service ->
+          # corridor.infrastructure.llm_client, which (like corridor.adapters
+          # elsewhere in this matrix) triggers corridor/infrastructure/
+          # __init__.py's whole eager import chain, mcp_client included --
+          # needs mcp+typing-inspection for the same reason as corridor's own
+          # leg above too.
+          - cog: cctv
+            test_target: "cctv/tests"
+            lint_target: "cctv"
+            mypy_target: "cctv"
+            extra_deps: "aiohttp 'pydantic>=2.11.3,<2.12' 'a2a-sdk[http-server]' uvicorn 'mcp>=1.29,<2' 'typing-inspection<0.4.3'"
+            pixel_index_contracts: false
           # pico talks to aiohttp (LiteLLM proxy) and pydantic (wire/tool
           # models) like floorplan, plus httpx and a2a-sdk for its
           # consult_architect A2A client tool (pico/infrastructure/
@@ -174,10 +194,10 @@ jobs:
             mypy_target: "deskutils"
             extra_deps: "'pydantic>=2.11.3,<2.12' 'a2a-sdk[http-server]' uvicorn 'mcp>=1.29,<2' 'typing-inspection<0.4.3'"
             pixel_index_contracts: false
-          # architect talks to aiohttp/pydantic like pico (the shared
-          # corridor-owned LLM connection), plus a2a-sdk (its A2A server --
-          # http-server extra pulls in starlette/sse-starlette) and uvicorn
-          # to run its dedicated listener. No Pixel Index integration.
+          # architect registers an A2A executor on corridor's shared listener
+          # and uses pixelagents' pydantic-backed editor-state boundary. Its
+          # own browser/listener stack was removed; dependencies below also
+          # cover eager imports reached through corridor in this test leg.
           - cog: architect
             test_target: "architect/"
             lint_target: "architect"
@@ -197,14 +217,9 @@ jobs:
             mypy_target: "suggestionbox"
             extra_deps: "aiohttp 'pydantic>=2.11.3,<2.12' 'a2a-sdk[http-server]' uvicorn 'mcp>=1.29,<2' 'typing-inspection<0.4.3'"
             pixel_index_contracts: false
-          # painter is both an A2A server (its own AgentExecutor, like
-          # architect -- needs a2a-sdk[http-server]+uvicorn) and an A2A
-          # client to architect (painter/infrastructure/architect_client.py,
-          # httpx + a2a.client, same shape as pico's own architect_client.py)
-          # -- so it needs the union of architect's and pico's extra_deps.
-          # Reads/writes the shared office layout via pixelagents'
-          # infrastructure modules (docs/painter-design.md), no extra deps
-          # of its own beyond that.
+          # painter registers an executor on corridor's listener, optionally
+          # calls architect over A2A/httpx, and uses pixelagents' editor-state
+          # facade. It owns no browser listener or notification callback.
           - cog: painter
             test_target: "painter/"
             lint_target: "painter"
@@ -251,9 +266,9 @@ jobs:
         run: python -m unittest discover -s contracts/tests
 
       - name: Check reply-channel compliance (respects corridor's ReplyMode)
-        # Scans corridor/floorplan/pixelagents/toolbox together in one pass
-        # (it's a cross-cog check, not scoped to matrix.lint_target) -- run
-        # it once rather than once per matrix leg.
+        # Scans every command-owning cog together in one pass (it's a
+        # cross-cog check, not scoped to matrix.lint_target) -- run it once
+        # rather than once per matrix leg.
         if: matrix.cog == 'corridor'
         run: python -m contracts.discord_replies.lint_reply_channel
 
@@ -277,11 +292,10 @@ jobs:
         run: python -m unittest discover -s contracts/pixel_index/tests
 
       - name: Test Pixel Agents contract reporting
-        # Exercises pixelagents' build pipeline *and* floorplan's
-        # WebviewAssetProvider consuming it (see contracts/pixel_agents/verify.py)
-        # -- needs floorplan's deps (pydantic, via this leg's Pixel Index
-        # contract install above), so it runs on the floorplan leg rather
-        # than pixelagents'. This discover also picks up
+        # Exercises pixelagents' build pipeline and CCTV's WebviewAssets
+        # consumer (see contracts/pixel_agents/verify.py). The Floorplan leg
+        # already installs the contract-tooling dependencies, so this reporting
+        # suite remains there. This discover also picks up
         # test_generate_consumer_contract.py/test_lint_outbound_contract.py
         # (below) automatically -- no separate step needed for those here.
         if: matrix.cog == 'floorplan'
@@ -289,7 +303,7 @@ jobs:
 
       - name: Check pixel-agents-consumer-contract.yaml is up to date
         # Offline -- pixelagents/contracts/outbound.py + application/office.py
-        # are plain-stdlib TypedDicts, no clone/floorplan deps needed. See
+        # are plain-stdlib TypedDicts, no clone/CCTV deps needed. See
         # .github/workflows/pixel-agents-contract-lint.yml for the dedicated,
         # narrower-triggered version of these same two checks.
         if: matrix.cog == 'pixelagents'
@@ -305,10 +319,20 @@ jobs:
         if: matrix.cog == 'corridor'
         run: python -m contracts.corridor.generate_corridor_contract --check
 
+      - name: Check office_state.yaml is up to date
+        if: matrix.cog == 'corridor'
+        run: python -m contracts.corridor.generate_office_state_contract --check
+
       - name: Check corridor.yaml matches the design doc
         if: matrix.cog == 'corridor'
         run: python -m contracts.corridor.lint_corridor_contract
 
+      - name: Check office_state.yaml matches the design doc
+        if: matrix.cog == 'corridor'
+        run: python -m contracts.corridor.lint_office_state_contract
+
       - name: Test corridor contract tooling
+        # Also picks up test_lint_office_state_contract.py automatically --
+        # no separate step needed for it here.
         if: matrix.cog == 'corridor'
         run: python -m unittest discover -s contracts/corridor/tests

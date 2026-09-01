@@ -30,9 +30,8 @@ python_version = "3.11"
 strict = true
 ignore_missing_imports = true
 follow_imports = "silent"
-# Every production Pixel Agents / floorplan / corridor / toolbox / pico /
-# testbench module is part of the strict type gate (corridor includes the
-# shared component-limit checker, ui_limits.py).
+# Every production cog module is part of the strict type gate (corridor
+# includes the shared component-limit checker, ui_limits.py).
 files = [
     "pixelagents",
     "floorplan",
@@ -44,6 +43,7 @@ files = [
     "architect",
     "suggestionbox",
     "painter",
+    "cctv",
 ]
 exclude = [
     "^pixelagents/conftest\\.py$",
@@ -67,6 +67,8 @@ exclude = [
     "^suggestionbox/tests/",
     "^painter/conftest\\.py$",
     "^painter/tests/",
+    "^cctv/conftest\\.py$",
+    "^cctv/tests/",
 ]
 
 [[tool.mypy.overrides]]
@@ -208,13 +210,6 @@ module = ["architect.adapters.commands"]
 disable_error_code = ["arg-type", "no-any-return", "untyped-decorator"]
 
 [[tool.mypy.overrides]]
-# Same gap as floorplan.adapters.dashboard above, mirrored for architect:
-# Red is absent from the lightweight CI type environment, so
-# @commands.Cog.listener() (on_dashboard_cog_add) is dynamically typed.
-module = ["architect.adapters.dashboard"]
-disable_error_code = ["untyped-decorator"]
-
-[[tool.mypy.overrides]]
 # Same gap as architect.adapters.commands above: Red is absent from the
 # lightweight CI type environment, so its decorators (and the
 # CommandsMixin.architect_group.group(...) nesting) leak Any, and the
@@ -255,4 +250,16 @@ disable_error_code = ["arg-type", "no-any-return", "untyped-decorator"]
 # above: `commands.Cog` resolves to Any without Red's real Cog metaclass
 # installed.
 module = ["painter.painter"]
+disable_error_code = ["misc"]
+
+[[tool.mypy.overrides]]
+module = ["cctv.adapters.commands"]
+disable_error_code = ["no-any-return", "untyped-decorator"]
+
+[[tool.mypy.overrides]]
+module = ["cctv.adapters.dashboard"]
+disable_error_code = ["untyped-decorator"]
+
+[[tool.mypy.overrides]]
+module = ["cctv.cctv"]
 disable_error_code = ["misc"]

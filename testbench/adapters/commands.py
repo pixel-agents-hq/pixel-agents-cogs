@@ -3,7 +3,7 @@ only.
 
 Owner-only and guild-only: every corridor event needs a guild_id (from the
 invoking guild), and the whole point of this cog is seeing an event land
-on a real guild's floorplan canvas."""
+on a real guild's CCTV projection."""
 
 from __future__ import annotations
 

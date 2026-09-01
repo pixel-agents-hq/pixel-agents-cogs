@@ -93,8 +93,8 @@ Decided explicitly for this design, mirroring `agent-directory-design.md`'s
 
 ```mermaid
 flowchart TB
-    Arch["architect<br/><small>reply_sender(owner=\"Architect\",<br/>avatar_path=.../assets/avatar.png)</small>"]
-    Pico["pico<br/><small>reply_sender(owner=\"Pico\", ...)<br/>+ ConsultAgentTool footer override</small>"]
+    Arch["architect<br/><small>reply_sender(owner=&quot;Architect&quot;,<br/>avatar_path=.../assets/avatar.png)</small>"]
+    Pico["pico<br/><small>reply_sender(owner=&quot;Pico&quot;, ...)<br/>+ ConsultAgentTool footer override</small>"]
     Other["deskutils / toolbox / floorplan / ...<br/><small>reply_sender(owner=..., ...)</small>"]
     C["corridor<br/><small>CogBase.render_reply/send_reply<br/>(identity + footer_override params)<br/>+ shared A2A listener serving<br/>/&lt;agent_key&gt;/avatar.png</small>"]
 

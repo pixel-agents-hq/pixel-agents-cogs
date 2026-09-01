@@ -1,9 +1,8 @@
 """`[p]architect office ...`: Discord commands calling the *same*
 `OfficeLayoutService` methods the LLM tools use (`tools/office_tools.py`)
 -- one mutation surface, two callers, per
-docs/architect-semantic-ir-design.md sections 7/8. Owner-only: this
-mutates architect's live office layout and broadcasts to connected
-webview clients, the same risk tier as `[p]architect a2a host/port`.
+docs/architect-semantic-ir-design.md sections 7/8. Owner-only: this mutates
+the revisioned editor aggregate through Pixelagents.
 """
 
 from __future__ import annotations

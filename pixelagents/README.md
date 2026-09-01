@@ -1,85 +1,59 @@
 # pixelagents
 
-Vendors and builds the [Pixel Agents](https://github.com/pixel-agents-hq/pixel-agents)
-webview for other cogs — [`floorplan`](../floorplan) today — to serve.
+The Pixel Agents bundle, schema, and office-state boundary for this repository.
 
-`pixelagents` clones the pinned Pixel Agents commit and builds its webview
-with `npm`/`vite` into Red's per-cog data directory, the first time
-`cog_load` runs and on demand via `[p]pixelagents webview rebuild`. It owns
-nothing else — no dashboard, no Discord presence mirroring, no WebSocket
-protocol, no Pixel Index integration. `floorplan` depends on this cog
-(`required_cogs`) and reads the build's path/status through
-`PixelAgents.webview_bundle_status()`; it never triggers a build itself.
+Pixelagents has two responsibilities:
 
-Requires `git`, `node`, and `npm` on the bot host — see
-[Architecture.md](Architecture.md#building-webview_dist) if the build fails
-or a tool is missing. The cog stays loadable either way and the bot owner
-gets a DM. [`toolbox`](../toolbox) can install Node.js/npm on the host if
-they're missing.
+1. clone and build the pinned Pixel Agents webview into Red's writable per-cog
+   data directory; and
+2. expose the only schema-aware facade for the two revisioned office
+   aggregates persisted opaquely by Corridor.
 
-All commands are bot-owner only (`@commands.is_owner()`), the same
-reasoning [`toolbox`](../toolbox) uses: the built webview is one shared
-artifact on the host, not per-guild data, so a guild-scoped permission tier
-would be the wrong fit regardless of how it's granted.
+It owns no Dashboard route, WebSocket listener, Discord guild projection, or
+Pixel Index integration. CCTV serves the bundle; Floorplan consumes Pixel Index.
 
-## Why a separate cog just for this
+## Office-state facade
 
-Before [issue #21](https://github.com/pixel-agents-hq/pixel-agents-cogs/issues/21),
-vendoring, building, *and* serving the webview all lived in one Cog.
-Splitting the build out into its own cog isn't just tidiness — it's what
-makes the build reusable:
+The public facade selects one of two independent kinds: `discord` or `editor`.
+Both states contain `layout`, `seats`, and a monotonically increasing `revision`.
+Pixelagents provides reads, field-specific layout/seat mutations, and atomic
+watch-and-snapshot registration by delegating persistence to Corridor.
 
-- **pixelagents owns the distribution, not any one consumer of it.** It
-  clones upstream, runs `npm`/`vite`, and produces one `webview_dist` —
-  full stop. It has no idea who's going to serve that bundle, and it
-  doesn't need to.
-- **Any cog can depend on pixelagents and serve the same build.**
-  `floorplan` is the first consumer, not a privileged one. A future cog
-  could declare `pixelagents` in `required_cogs`, read
-  `PixelAgents.webview_bundle_status()` for the build's path, and serve the
-  exact same files under its own Dashboard route — no pixelagents code
-  change, no second build, no coordination beyond that one read-only call.
-  This is also why the build itself is asset-URL-relative rather than
-  rooted at any specific cog's route (see
-  [Architecture.md](Architecture.md#building-webview_dist)): a bundle baked
-  for one consumer's URL couldn't be correctly served by a second one.
-- **One build, one place to update.** When the pinned commit moves —
-  `[p]pixelagents webview setcommit`, or the daily `vendor-update.yml`
-  bump — every cog serving that build picks up the change the moment it
-  next reads `webview_bundle_status()`. There's no per-consumer build to
-  fall out of sync, and no risk of two cogs quietly serving two different
-  commits of the same office.
-- **A build failure (missing `git`/`node`/`npm`, a broken upstream commit)
-  is one problem in one place**, diagnosed via `webview_bundle_status()`
-  and retried with `[p]pixelagents webview rebuild` regardless of how many
-  cogs are waiting on the result — not a failure mode every consumer has to
-  reimplement its own handling for.
+- Discord layouts are validated against the Pixel Agents wire schema.
+- Editor layouts are additionally round-tripped through the Semantic IR and
+  furniture-style manifest.
+- Seat patches are normalized without replacing unrelated seat fields.
+- A missing state initializes lazily from the bundled default with empty seats.
+- Invalid persisted state raises an explicit validation error and is never
+  silently replaced.
 
-## Installing
+Consumers never write Corridor's aggregate directly. CCTV uses both kinds,
+Floorplan writes the Discord layout, and Architect/Painter write the editor
+layout.
 
-Requires [`corridor`](../corridor) (auto-loaded via `required_cogs`), purely
-for reply-formatting consistency — pixelagents holds no permission checks of
-its own:
+## Bundle build
 
-```
-[p]repo add pixel-agents-cogs https://github.com/pixel-agents-hq/pixel-agents-cogs
-[p]cog install pixel-agents-cogs pixelagents
-[p]load pixelagents
-```
+On load, Pixelagents checks the pinned upstream commit and builds the webview
+with `git`, `node`, `npm`, and Vite if necessary. Build output is stored under
+`cog_data_path`, not in the Downloader-managed package tree. A failed build does
+not prevent the cog loading; status remains available and the owner is notified
+best-effort.
+
+`webview_bundle_status()` exposes the built path, readiness, commit, and relative
+base marker. `furniture_style_manifest()` and `bundled_default_layout()` expose
+the generated schema inputs needed by the state facade and agent tools.
 
 ## Commands
 
+All commands are bot-owner scoped.
+
 | Command | Description |
 |---|---|
-| `[p]pixelagents webview commit` | Show which Pixel Agents commit the webview builds from |
-| `[p]pixelagents webview setcommit <commit>` | Pin webview builds to a specific commit or link |
-| `[p]pixelagents webview resetcommit` | Revert to the source-pinned default commit |
-| `[p]pixelagents webview rebuild` | Re-clone and rebuild the webview now |
+| `[p]pixelagents webview commit` | Show the effective upstream commit |
+| `[p]pixelagents webview setcommit <commit>` | Override the build commit |
+| `[p]pixelagents webview resetcommit` | Restore the source-pinned commit |
+| `[p]pixelagents webview rebuild` | Force a fresh clone/build |
 
-## Docs
-
-- [Architecture.md](Architecture.md) — the vendor pin, the build pipeline,
-  and the `webview_bundle_status()` cross-cog surface any consuming cog reads.
-- [`docs/contract-testing.md`](../docs/contract-testing.md) — how the
-  pinned Pixel Agents commit is verified in CI, across both this cog's
-  build and floorplan's `WebviewAssetProvider`.
+See [Architecture.md](Architecture.md),
+[`docs/cctv-design.md`](../docs/cctv-design.md), and
+[`docs/contract-testing.md`](../docs/contract-testing.md).

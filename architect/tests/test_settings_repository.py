@@ -8,9 +8,11 @@ import unittest
 import pytest
 
 from ..infrastructure.settings_repository import (
+    CONFIG_IDENTIFIER,
     DEFAULT_DEBUG_LOGGING,
     DEFAULT_MAX_TOOL_CALLS,
     DEFAULT_SYSTEM_PROMPT,
+    GLOBAL_DEFAULTS,
     RedArchitectRepository,
 )
 
@@ -25,6 +27,8 @@ class TestRedArchitectRepository(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(settings.max_tool_calls, DEFAULT_MAX_TOOL_CALLS)
         self.assertEqual(settings.system_prompt, DEFAULT_SYSTEM_PROMPT)
         self.assertEqual(settings.debug_logging, DEFAULT_DEBUG_LOGGING)
+        self.assertEqual(self.repository.config._global_data, GLOBAL_DEFAULTS)
+        self.assertNotEqual(CONFIG_IDENTIFIER, 4172636869746374)
 
     async def test_set_max_tool_calls_persists(self) -> None:
         await self.repository.set_max_tool_calls(3)
@@ -58,22 +62,3 @@ class TestRedArchitectRepository(unittest.IsolatedAsyncioTestCase):
         settings = await self.repository.global_settings()
 
         self.assertTrue(settings.debug_logging)
-
-    async def test_legacy_layout_defaults_to_none(self) -> None:
-        self.assertIsNone(await self.repository.legacy_layout())
-
-    async def test_legacy_layout_reads_whatever_the_raw_config_still_holds(self) -> None:
-        # Nothing writes the old key anymore (docs/painter-design.md part
-        # A) -- simulate a pre-migration install through the raw Config
-        # escape hatch, the same way test_layout_seeding.py's migration
-        # tests do.
-        await self.repository.config.layout.set({"tiles": [1, 2, 3]})
-
-        self.assertEqual(await self.repository.legacy_layout(), {"tiles": [1, 2, 3]})
-
-    async def test_clear_legacy_layout(self) -> None:
-        await self.repository.config.layout.set({"tiles": [1, 2, 3]})
-
-        await self.repository.clear_legacy_layout()
-
-        self.assertIsNone(await self.repository.legacy_layout())

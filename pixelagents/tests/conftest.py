@@ -857,7 +857,16 @@ def write_fake_vite_build(build_out_dir: Path) -> None:
         encoding="utf-8",
     )
     (assets / "default-layout-1.json").write_text(
-        json.dumps({"version": 1, "cols": 1, "rows": 1, "layoutRevision": 1, "tiles": [255]}),
+        json.dumps(
+            {
+                "version": 1,
+                "cols": 1,
+                "rows": 1,
+                "layoutRevision": 1,
+                "tiles": [255],
+                "furniture": [],
+            }
+        ),
         encoding="utf-8",
     )
     decoded = {

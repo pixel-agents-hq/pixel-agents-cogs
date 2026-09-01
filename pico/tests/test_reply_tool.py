@@ -131,10 +131,8 @@ class TestReplyToolHandler(unittest.IsolatedAsyncioTestCase):
 
 class TestReplyToolPublishesAgentReplied(unittest.IsolatedAsyncioTestCase):
     """The reply tool is now a direct corridor bus publisher, closing the
-    loop into floorplan's canvas rendering without going through floorplan's
-    own on_message listener (which now explicitly ignores this bot's own
-    messages to avoid a duplicate publish -- see
-    floorplan/adapters/discord_gateway.py)."""
+    loop into CCTV's Discord projection without waiting for Discord's own
+    message event to echo the bot's reply."""
 
     async def test_successful_send_publishes_agent_replied(self) -> None:
         corridor = FakeCorridor()

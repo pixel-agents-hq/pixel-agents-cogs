@@ -1,7 +1,7 @@
 # corridor
 
-A central, shared permission system — plus shared reply-style formatting —
-that every other cog in this repo depends on instead of reinventing its own.
+A central provider for permissions, reply formatting, LLM/A2A infrastructure,
+events, tool registries, and revisioned office-state persistence.
 
 `corridor` owns one guild-wide `Config` store for two things every cog
 otherwise needs and would end up rebuilding: **who is allowed to run a
@@ -18,10 +18,9 @@ different, CI-only package).
 
 ## Installing
 
-corridor has no dependencies of its own. Other cogs in this repo (currently
-`floorplan`, `pixelagents`, `toolbox`) declare it via `required_cogs` and auto-load it
-through `dependency_loader.ensure_corridor_loaded()` if it isn't already
-running, so you don't need to load it manually — but you can:
+corridor has no cogs as dependencies. Every other runtime cog in this repository
+declares it via `required_cogs` and resolves it at load time, so it normally
+starts automatically. It can also be loaded directly:
 
 ```
 [p]load corridor
@@ -59,6 +58,24 @@ command, its description from the callback docstring, parameter
 descriptions from their names, and availability from the command's native
 checks; every value can still be overridden explicitly. See
 [`docs/corridor-tool-registry-design.md`](../docs/corridor-tool-registry-design.md).
+
+## Revisioned office state
+
+Corridor persists two independent opaque aggregates, `discord` and `editor`.
+Each contains a Pixel Agents layout, avatar-seat records, and a monotonically
+increasing revision. Corridor deliberately does not interpret either JSON
+schema; [`pixelagents`](../pixelagents) provides the validated public facade.
+
+The persistence service supports idempotent initialization, complete reads,
+field-specific layout/seat updates, and atomic watch-and-snapshot registration.
+Every successful field mutation preserves the other field, advances the
+revision, then publishes a complete `OfficeStateChanged` after releasing the
+state lock. Subscribers are awaited sequentially with exception isolation and a
+five-second timeout. A failed subscriber never rolls back persisted state.
+
+Office state has a fresh Config identity and no migration/fallback path from the
+former Floorplan, Architect, or Pixelagents stores. Its generated contract is
+committed as [`office_state.yaml`](office_state.yaml).
 
 ## What a dependent cog calls
 

@@ -27,6 +27,7 @@ import subprocess
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
 from .furniture_style_builder import MANIFEST_SCHEMA_VERSION, build_furniture_style_manifest
 
@@ -59,7 +60,7 @@ _BUILT_MANIFEST_VERSION_MARKER = ".built_manifest_version"
 # Building relative instead lets any consuming cog serve the exact same
 # bundle under its own route -- each just injects a `<base href>` for its
 # own `/third-party/<cog>/static/` at serve time (see
-# floorplan/infrastructure/webview.py::WebviewAssetProvider.base_href).
+# cctv/infrastructure/webview.py::WEBVIEW_BASE_PATH).
 # Bare "./", not "./static/": the "static" path segment is a routing
 # artifact of Red Dashboard's third-party static route
 # (`/third-party/<cog>/static/<asset_path>`), which the consuming cog's
@@ -176,7 +177,7 @@ def is_up_to_date(webview_dist: Path, commit: str, base_path: str) -> bool:
 def built_commit(webview_dist: Path) -> str | None:
     """The commit `webview_dist` was actually built from, if known.
 
-    Used by `PixelAgentsBase.webview_bundle_status()` so floorplan can tell
+    Used by `PixelAgentsBase.webview_bundle_status()` so CCTV can tell
     a rebuild-to-a-different-commit apart from "still the same bundle" --
     same marker file `is_up_to_date` checks, just exposed for a reader
     outside this module.
@@ -210,6 +211,25 @@ def built_manifest_version(webview_dist: Path) -> int | None:
         return int(raw)
     except ValueError:
         return None
+
+
+def load_bundled_default_layout(webview_dist: Path) -> dict[str, object]:
+    """Read the build-selected default layout without accepting traversal."""
+
+    assets = webview_dist / "assets"
+    index = json.loads((assets / "asset-index.json").read_text(encoding="utf-8"))
+    if not isinstance(index, dict):
+        raise ValueError("asset index is not an object")
+    name = index.get("defaultLayout")
+    if not isinstance(name, str) or not name:
+        raise ValueError("asset index has no defaultLayout")
+    candidate = (assets / name).resolve()
+    if candidate.parent != assets.resolve():
+        raise ValueError("defaultLayout resolves outside the assets directory")
+    raw = json.loads(candidate.read_text(encoding="utf-8"))
+    if not isinstance(raw, dict):
+        raise ValueError("bundled default layout is not an object")
+    return cast("dict[str, object]", raw)
 
 
 def _read_marker(marker: Path) -> str | None:

@@ -7,6 +7,7 @@ docs/corridor-pubsub-design.md for the full design rationale.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections import defaultdict
 from collections.abc import Awaitable, Callable
@@ -29,14 +30,24 @@ class EventBusService:
             defaultdict(list)
         )
 
-    async def publish(self, event: object) -> None:
+    async def publish(self, event: object, *, subscriber_timeout: float | None = None) -> None:
         """Await each subscriber registered for `type(event)`, in
         registration order, each isolated in its own try/except -- a
         raising handler is logged and dropped, never propagated here."""
 
         for owner, handler in list(self._subscribers.get(type(event), ())):
             try:
-                await handler(event)
+                if subscriber_timeout is None:
+                    await handler(event)
+                else:
+                    await asyncio.wait_for(handler(event), timeout=subscriber_timeout)
+            except TimeoutError:
+                log.error(
+                    "corridor: %s's handler for %s exceeded %.1fs -- cancelled and dropped",
+                    owner,
+                    type(event).__name__,
+                    subscriber_timeout,
+                )
             except Exception:
                 log.exception(
                     "corridor: %s's handler for %s raised -- dropped, not propagated"

@@ -22,8 +22,6 @@ def _settings(max_tool_calls: int = 5, *, debug_logging: bool = False) -> Global
     return GlobalSettings(
         max_tool_calls=max_tool_calls,
         system_prompt="sys",
-        ws_host="127.0.0.1",
-        ws_port=8932,
         debug_logging=debug_logging,
     )
 

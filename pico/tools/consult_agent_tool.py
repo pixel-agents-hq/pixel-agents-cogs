@@ -48,8 +48,8 @@ tool's own announcements are not gated behind that choice.
 
 Alongside those Discord messages, this tool also publishes two
 `AgentReplied` events onto corridor's Pub/Sub bus
-(`corridor/domain/models.py`), so floorplan's office dashboard shows the
-same exchange as activity bubbles: the outgoing question attributed to
+(`corridor/domain/models.py`), so CCTV's Discord projection shows the same
+exchange as activity bubbles: the outgoing question attributed to
 pico's own Discord bot identity, the raw answer attributed to the
 consulted agent's *genuine* identity (`AgentRef.agent_key` --
 see `docs/office-agent-identity-design.md`, the same identity shape
@@ -256,7 +256,7 @@ class ConsultAgentTool:
             log.warning("pico: %s could not announce an A2A exchange", self.name, exc_info=True)
 
     async def _publish_agent_replied(self, *, agent: AgentRef, summary: str) -> None:
-        """Drives floorplan's office dashboard with the same exchange
+        """Drives CCTV's Discord projection with the same exchange
         `_announce` just posted to Discord -- `AgentReplied`, not
         `AgentToolStarted`, per that event's own docstring and
         docs/corridor-pubsub-design.md's mapping table (see this module's

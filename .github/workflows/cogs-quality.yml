@@ -252,9 +252,9 @@ jobs:
         run: python -m unittest discover -s contracts/tests
 
       - name: Check reply-channel compliance (respects corridor's ReplyMode)
-        # Scans corridor/floorplan/pixelagents/toolbox together in one pass
-        # (it's a cross-cog check, not scoped to matrix.lint_target) -- run
-        # it once rather than once per matrix leg.
+        # Scans every command-owning cog together in one pass (it's a
+        # cross-cog check, not scoped to matrix.lint_target) -- run it once
+        # rather than once per matrix leg.
         if: matrix.cog == 'corridor'
         run: python -m contracts.discord_replies.lint_reply_channel
 
@@ -289,7 +289,7 @@ jobs:
 
       - name: Check pixel-agents-consumer-contract.yaml is up to date
         # Offline -- pixelagents/contracts/outbound.py + application/office.py
-        # are plain-stdlib TypedDicts, no clone/floorplan deps needed. See
+        # are plain-stdlib TypedDicts, no clone/CCTV deps needed. See
         # .github/workflows/pixel-agents-contract-lint.yml for the dedicated,
         # narrower-triggered version of these same two checks.
         if: matrix.cog == 'pixelagents'

@@ -346,7 +346,7 @@ class TestConsultAgentToolAnnouncements(unittest.IsolatedAsyncioTestCase):
 
 class TestConsultAgentToolOfficeVisualization(unittest.IsolatedAsyncioTestCase):
     """Alongside the Discord announcements, the tool also publishes
-    `AgentReplied` events so floorplan's office dashboard shows the same
+    `AgentReplied` events so CCTV's Discord projection shows the same
     exchange as activity bubbles -- see this tool's own module docstring
     and docs/office-agent-identity-design.md."""
 

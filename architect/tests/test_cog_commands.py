@@ -307,8 +307,7 @@ class TestPresencePublishing(unittest.IsolatedAsyncioTestCase):
     own `register_agent`/`unregister_agent_owner` now publish
     AgentPresenceChanged as a side effect of architect registering/
     unregistering its A2A agent (see docs/agent-directory-design.md), the
-    same event shape floorplan's/architect's own subscribers already
-    consume for a genuine agent."""
+    same event shape CCTV consumes for a genuine agent."""
 
     async def test_cog_load_publishes_online_presence(self) -> None:
         bot = FakeBot()

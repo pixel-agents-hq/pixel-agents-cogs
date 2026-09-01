@@ -696,8 +696,7 @@ class CogBase:
     ) -> None:
         """A registered A2A agent's directory membership doubles as its
         office-canvas presence -- registering/unregistering publishes the
-        same `AgentPresenceChanged` shape floorplan's/architect's own
-        subscribers already consume for a genuine agent (see
+        same `AgentPresenceChanged` shape CCTV consumes for a genuine agent (see
         docs/office-agent-identity-design.md), so a registering cog no
         longer needs to hand-roll its own separate presence-publish calls
         at `cog_load`/`cog_unload`. `EventBusService.publish` never

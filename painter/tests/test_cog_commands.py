@@ -6,8 +6,7 @@ test_a2a_server.py / test_settings_repository.py).
 Owner-gated commands are asserted by introspecting the `__is_owner__` tag
 the shared redbot stub (`corridor/testing.py`) attaches -- Red's real check
 machinery isn't exercised here, only which decorator each command carries.
-A parallel copy of architect/tests/test_cog_commands.py's shape, minus
-what only architect's own webview/WebSocket concerns need.
+A parallel copy of architect/tests/test_cog_commands.py's command shape.
 """
 
 from __future__ import annotations

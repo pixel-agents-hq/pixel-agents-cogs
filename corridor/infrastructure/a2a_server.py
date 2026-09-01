@@ -19,7 +19,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
+from typing import cast
 
 import uvicorn
 from a2a.server.request_handlers import DefaultRequestHandler
@@ -70,7 +71,7 @@ log = logging.getLogger("red.corridor")
 # to False here too, every time this module (re)loads, so a hot-reload of
 # this fix actually clears an already-poisoned process instead of only
 # preventing the next poisoning.
-AppStatus.disable_automatic_graceful_drain()  # type: ignore[no-untyped-call]
+cast(Callable[[], None], AppStatus.disable_automatic_graceful_drain)()
 AppStatus.should_exit = False
 
 

@@ -20,9 +20,9 @@ Also publishes `AgentReplied` after a successful call, same convention
 `ReplyTool`/`ConsultAgentTool` already follow -- pico is the one actually
 calling the tool (the registering cog, e.g. deskutils, only supplied the
 handler), so pico is the one that publishes, exactly the way it already
-publishes on their behalf for `send_reply`/A2A consults. corridor
-(floorplan) and architect's own dashboard render whatever the bus
-delivers; this adapter has no canvas-facing opinion of its own. See
+publishes on their behalf for `send_reply`/A2A consults. CCTV projects
+whatever the bus delivers; this adapter has no browser-facing opinion of
+its own. See
 docs/corridor-pubsub-design.md.
 """
 

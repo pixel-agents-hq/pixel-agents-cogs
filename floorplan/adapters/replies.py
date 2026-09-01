@@ -15,7 +15,7 @@ falling back to a hand-built discord.Embed that bypasses ReplyMode.
 A caller that already supplies a Discord Components V2 `view=` bypasses
 rendering entirely and is sent as-is: Discord rejects mixing Components V2
 with plain content or an embed, so `ReplyMode` structurally cannot apply to
-it -- see e.g. `cmd_settings`, `cmd_layout_search`.
+it -- see `cmd_layout_search`.
 """
 
 from __future__ import annotations
@@ -38,7 +38,7 @@ if TYPE_CHECKING:
     # replies.py -- same shape of module, same risk).
     from corridor.domain import ReplyField
 
-from .cog_base import PixelAgentsBase
+from .cog_base import FloorplanBase
 
 _REPLY_TITLE = "Pixel Agents"
 
@@ -49,7 +49,7 @@ _REPLY_TITLE = "Pixel Agents"
 AVATAR_PATH = Path(__file__).resolve().parent.parent / "assets" / "avatar.png"
 
 
-class ReplyMixin(PixelAgentsBase):
+class ReplyMixin(FloorplanBase):
     async def _reply(
         self,
         ctx: commands.Context,

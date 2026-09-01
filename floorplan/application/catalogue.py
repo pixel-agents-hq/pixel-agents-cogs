@@ -7,9 +7,6 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Generic, Protocol, TypeVar
 
-from pydantic import ValidationError
-
-from ..contracts.layout import OfficeLayout, RawOfficeLayout
 from ..contracts.pixel_index import LayoutDetail, LayoutListResponse
 
 LAYOUT_SEARCH_PAGE_SIZE = 5
@@ -83,11 +80,9 @@ class CatalogueRepository(Protocol):
 
     async def pixel_index_web_url(self) -> str: ...
 
-    async def set_layout(self, layout: RawOfficeLayout | None) -> None: ...
-
 
 CanEditLayout = Callable[[int], Awaitable[bool]]
-PublishLayout = Callable[[RawOfficeLayout], Awaitable[None]]
+ApplyLayout = Callable[[dict[str, object]], Awaitable[None]]
 
 
 class CatalogueService:
@@ -99,12 +94,12 @@ class CatalogueService:
         gateway: PixelIndexGateway,
         *,
         can_edit_layout: CanEditLayout,
-        publish_layout: PublishLayout,
+        apply_layout: ApplyLayout,
     ) -> None:
         self._repository = repository
         self._gateway = gateway
         self._can_edit_layout = can_edit_layout
-        self._publish_layout = publish_layout
+        self._apply_layout = apply_layout
 
     async def bases(self) -> CatalogueBases:
         return CatalogueBases(
@@ -140,7 +135,7 @@ class CatalogueService:
         return await self._gateway.detail(base_url, slug)
 
     async def load_layout(self, user_id: int, slug: str) -> CatalogueResult[str]:
-        """Authorize, validate, persist, and publish one indexed layout."""
+        """Authorize and apply one indexed layout through the state facade."""
 
         if not await self._can_edit_layout(user_id):
             return CatalogueResult(
@@ -163,8 +158,8 @@ class CatalogueService:
             )
 
         try:
-            layout = OfficeLayout.model_validate(detail.layout).to_raw()
-        except ValidationError as exc:
+            await self._apply_layout(detail.layout)
+        except (RuntimeError, TypeError, ValueError) as exc:
             return CatalogueResult(
                 error=CatalogueError(
                     CatalogueErrorCode.INVALID_LAYOUT,
@@ -173,8 +168,6 @@ class CatalogueService:
                 )
             )
 
-        await self._repository.set_layout(layout)
-        await self._publish_layout(layout)
         return CatalogueResult(value=f"Loaded `{detail.title or slug}` into the office.")
 
 
@@ -187,5 +180,6 @@ __all__ = [
     "CatalogueRepository",
     "CatalogueResult",
     "CatalogueService",
+    "ApplyLayout",
     "PixelIndexGateway",
 ]

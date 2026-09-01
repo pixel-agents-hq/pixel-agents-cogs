@@ -127,17 +127,15 @@ jobs:
             mypy_target: "testbench"
             extra_deps: "'a2a-sdk[http-server]' uvicorn 'mcp>=1.29,<2' 'typing-inspection<0.4.3'"
             pixel_index_contracts: false
-          # pixelagents shrank to a vendor+build utility cog (like toolbox) --
-          # no aiohttp/pydantic left, and no Pixel Index contracts of its own.
+          # pixelagents owns the vendor/build pipeline and validated office-state
+          # facade; it has no Pixel Index HTTP contract of its own.
           - cog: pixelagents
             test_target: "pixelagents/tests"
             lint_target: "pixelagents"
             mypy_target: "pixelagents"
             extra_deps: "'pyyaml>=6.0' 'jsonschema>=4.20'"
             pixel_index_contracts: false
-          # floorplan inherited the runtime half of the old pixelagents Cog:
-          # the dashboard, office WebSocket protocol, and Pixel Index
-          # integration, so it inherits that half's dependencies too.
+          # floorplan owns only Pixel Index configuration, browsing, and loading.
           # floorplan's tests also import corridor.adapters, which pulls in
           # corridor.infrastructure.A2AServer -- needs a2a-sdk[http-server]+
           # uvicorn for the same reason as corridor's own leg above.
@@ -285,11 +283,10 @@ jobs:
         run: python -m unittest discover -s contracts/pixel_index/tests
 
       - name: Test Pixel Agents contract reporting
-        # Exercises pixelagents' build pipeline *and* floorplan's
-        # WebviewAssetProvider consuming it (see contracts/pixel_agents/verify.py)
-        # -- needs floorplan's deps (pydantic, via this leg's Pixel Index
-        # contract install above), so it runs on the floorplan leg rather
-        # than pixelagents'. This discover also picks up
+        # Exercises pixelagents' build pipeline and CCTV's WebviewAssets
+        # consumer (see contracts/pixel_agents/verify.py). The Floorplan leg
+        # already installs the contract-tooling dependencies, so this reporting
+        # suite remains there. This discover also picks up
         # test_generate_consumer_contract.py/test_lint_outbound_contract.py
         # (below) automatically -- no separate step needed for those here.
         if: matrix.cog == 'floorplan'

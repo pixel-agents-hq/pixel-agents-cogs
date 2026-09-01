@@ -145,11 +145,9 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        # aiohttp/pydantic are what floorplan's own imports need (its
-        # WebviewAssetProvider pulls in floorplan/contracts/layout.py, a
-        # pydantic model) once contracts.pixel_agents.verify reaches it --
-        # see contracts/pixel_agents/verify.py's module docstring for the
-        # pixelagents-builds/floorplan-serves split. discord.py itself is not
+        # aiohttp/pydantic are what CCTV's serving adapter imports once
+        # contracts.pixel_agents.verify reaches it -- see that module's
+        # docstring for the pixelagents-builds/CCTV-serves split. discord.py itself is not
         # required: importing pixelagents.tests.conftest first (for its
         # redbot stub) also stubs `discord` in sys.modules before anything
         # does a real `import discord`. Matches the dependency set

@@ -1,10 +1,10 @@
 {
     "$schema": "https://raw.githubusercontent.com/Cog-Creators/Red-DiscordBot/V3/develop/schema/red_cog.schema.json",
     "name": "floorplan",
-    "short": "Serve the Pixel Agents office and mirror Discord presence into it",
-    "description": "Hosts the Pixel Agents office webview through the Red Web Dashboard and serves its WebSocket protocol directly, turning Discord guild presence into animated characters. Browses and loads Pixel Index layouts, and owns the office layout editor gated by corridor's Keyholder permission tier.",
-    "end_user_data_statement": "This cog transmits Discord user IDs, guild IDs, display names, presence status, and short message activity snippets to browsers connected to the Pixel Agents office. It stores one shared office layout and seat assignments globally.",
-    "install_msg": "Requires corridor and pixelagents (both auto-loaded). Configure who may edit the office layout via [p]corridorsettings (the Keyholder permission tier), then enable a guild with [p]floorplan enable.",
+    "short": "Browse and load Pixel Index office layouts",
+    "description": "Owns Pixel Index API/Web endpoint configuration, catalogue search and detail browsing, and loading a selected layout through pixelagents into the Discord CCTV aggregate.",
+    "end_user_data_statement": "This cog does not persistently store any data or metadata about users. It stores only bot-wide Pixel Index API and web endpoint URLs.",
+    "install_msg": "Requires corridor and pixelagents (both auto-loaded). Use [p]floorplan index to configure Pixel Index and [p]floorplan layout to browse layouts.",
     "author": ["Pixel Agents HQ Contributors"],
     "required_cogs": {
         "corridor": "https://github.com/pixel-agents-hq/pixel-agents-cogs",
@@ -12,13 +12,11 @@
     },
     "requirements": [
         "aiohttp",
-        "pydantic>=2.11.3,<2.12",
-        "typing-inspection<0.4.3"
+        "pydantic>=2.11.3,<2.14"
     ],
     "tags": [
         "floorplan",
-        "presence",
-        "office",
+        "pixel-index",
         "layouts"
     ],
     "min_bot_version": "3.5.24",

@@ -20,9 +20,8 @@ __all__ = ["Floorplan"]
 
 
 _DATA_STATEMENT = (
-    "This cog transmits Discord user IDs, guild IDs, display names, presence status, and "
-    "short message activity snippets to browsers connected to the Pixel Agents office. "
-    "It stores one shared office layout and seat assignments globally."
+    "This cog does not persistently store any data or metadata about users. "
+    "It stores only bot-wide Pixel Index API and web endpoint URLs."
 )
 
 try:
@@ -43,33 +42,11 @@ def __getattr__(name: str) -> object:
 
 
 async def setup(bot: Red) -> None:
-    """Load the canonical Cog class through Red's standard extension hook.
+    """Load dependencies without pre-loading Pixelagents as a Cog.
 
-    Both corridor and pixelagents are ensured *importable* here: floorplan's
-    adapters import each one's public API at module scope (`from
-    corridor.domain import ReplyField`, `from pixelagents.application.office
-    import OfficeService`), so both packages have to be genuinely resolvable
-    before `.floorplan` is imported below.
-
-    corridor is ensured via `ensure_corridor_loaded`, which fully loads it as
-    a registered Cog (`bot.load_extension` + `add_cog`) -- safe here because
-    the Downloader RPC smoke test (check-cogs.yml) tests corridor first,
-    before floorplan, so there is no later independent load of corridor left
-    to pollute.
-
-    pixelagents is instead ensured via corridor's generic `ensure_importable`
-    (pixelagents is not corridor's own dependent-loading concern -- this just
-    reuses the same package now that corridor is guaranteed loaded), which
-    stops short of a full Cog load. pixelagents is tested *after* floorplan
-    (alphabetically), so fully loading it here as a side effect would leave
-    it registered as already-loaded when the harness gets to testing it on
-    its own -- see `ensure_importable`'s docstring in
-    `corridor/dependency_loader.py` and
-    `test_setup_never_touches_pixelagents_either` in
-    `floorplan/tests/test_floorplan.py` for the incident this guards against.
-    pixelagents becoming a genuinely loaded Cog *instance* (needed for the
-    real webview-bundle-status calls) stays lazy, resolved on first actual
-    use by `cog_base.py::_sync_webview_assets` via corridor's `ensure_loaded`.
+    Floorplan's module imports require Corridor immediately. Pixelagents is
+    made importable here and fully loaded from ``Floorplan.cog_load`` when the
+    office-state facade is needed.
     """
 
     from .dependency_loader import ensure_corridor_loaded

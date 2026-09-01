@@ -30,6 +30,7 @@ from ..infrastructure.webview_build import (
     build_webview,
     built_base_path,
     built_commit,
+    load_bundled_default_layout,
     owner_notification_for,
 )
 
@@ -140,19 +141,8 @@ class PixelAgentsBase:
     def bundled_default_layout(self) -> dict[str, Any] | None:
         """Load the default selected by the generated asset index."""
 
-        assets = self._webview_dist_path() / "assets"
         try:
-            index = json.loads((assets / "asset-index.json").read_text("utf-8"))
-            name = index.get("defaultLayout")
-            if not isinstance(name, str) or not name:
-                raise ValueError("asset index has no defaultLayout")
-            candidate = (assets / name).resolve()
-            if candidate.parent != assets.resolve():
-                raise ValueError("defaultLayout resolves outside the assets directory")
-            raw = json.loads(candidate.read_text("utf-8"))
-            if not isinstance(raw, dict):
-                raise ValueError("bundled default layout is not an object")
-            return cast("dict[str, Any]", raw)
+            return cast("dict[str, Any]", load_bundled_default_layout(self._webview_dist_path()))
         except (OSError, TypeError, ValueError) as exc:
             log.warning("pixelagents: bundled default layout unavailable: %s", exc)
             return None

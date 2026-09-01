@@ -1,11 +1,8 @@
-"""Architecture constraints for the Floorplan Cog (the runtime half of the
-pre-issue-#21 combined pixelagents Cog -- see pixelagents/tests/test_architecture.py
-for the vendor+build half's own, much smaller boundary set)."""
+"""Architecture constraints for the Pixel Index-only Floorplan Cog."""
 
 from __future__ import annotations
 
 import ast
-from collections import Counter
 from pathlib import Path
 
 from redbot.core import commands
@@ -17,10 +14,16 @@ COMPOSED_ADAPTERS = (
     "admin_commands.py",
     "catalogue_commands.py",
     "cog_base.py",
+    "layout_tools.py",
+    "layout_views.py",
+    "replies.py",
+)
+REMOVED_RUNTIME_MODULES = (
     "dashboard.py",
     "discord_gateway.py",
+    "event_subscriptions.py",
     "office_gateway.py",
-    "replies.py",
+    "settings_panel.py",
 )
 
 
@@ -32,18 +35,19 @@ def production_modules() -> list[Path]:
     )
 
 
-def test_composition_entrypoint_is_genuinely_thin() -> None:
+def test_composition_entrypoint_is_thin() -> None:
     lines = (PACKAGE_ROOT / "floorplan.py").read_text(encoding="utf-8").splitlines()
-    assert len(lines) < 200
+    assert len(lines) < 50
 
 
-def test_split_did_not_create_a_replacement_adapter_monolith() -> None:
+def test_adapters_are_bounded_and_old_runtime_modules_are_gone() -> None:
     adapter_root = PACKAGE_ROOT / "adapters"
     counts = {
         name: len((adapter_root / name).read_text(encoding="utf-8").splitlines())
         for name in COMPOSED_ADAPTERS
     }
-    assert max(counts.values()) <= 260, counts
+    assert max(counts.values()) <= 320, counts
+    assert all(not (adapter_root / name).exists() for name in REMOVED_RUNTIME_MODULES)
 
 
 def test_framework_resources_have_one_owner() -> None:
@@ -56,7 +60,7 @@ def test_framework_resources_have_one_owner() -> None:
 
     assert config_factories == [PACKAGE_ROOT / "infrastructure" / "settings.py"]
     assert session_factories == [PACKAGE_ROOT / "infrastructure" / "pixel_index.py"]
-    assert task_factories == [PACKAGE_ROOT / "application" / "tasks.py"]
+    assert task_factories == []
 
 
 def test_cog_class_is_the_sole_public_export() -> None:
@@ -67,39 +71,21 @@ def test_cog_class_is_the_sole_public_export() -> None:
     assert issubclass(Floorplan, commands.Cog)
 
 
-def test_discord_cogmeta_reverse_mro_scan_finds_each_listener_once() -> None:
-    """Mirror discord.py 2.7 CogMeta's reversed-MRO listener discovery."""
-
-    discovered: dict[str, object] = {}
-    for base in reversed(Floorplan.__mro__):
-        for name, value in base.__dict__.items():
-            discovered.pop(name, None)
-            if getattr(value, "__cog_listener__", False):
-                discovered[name] = value
-
-    listener_names = [
-        listener_name
-        for value in discovered.values()
-        for listener_name in value.__cog_listener_names__
+def test_floorplan_declares_no_discord_listeners_or_dashboard_routes() -> None:
+    listeners = [
+        value
+        for base in Floorplan.__mro__
+        for value in base.__dict__.values()
+        if getattr(value, "__cog_listener__", False)
     ]
-    # on_member_join/on_member_remove/on_member_update/on_message/
-    # on_presence_update moved to corridor's own DiscordGatewayMixin --
-    # floorplan is a pure subscriber now, see docs/corridor-pubsub-design.md.
-    expected = {"on_dashboard_cog_add"}
-    assert set(listener_names) == expected
-    assert all(count == 1 for count in Counter(listener_names).values())
+    assert listeners == []
+    for name in ("dashboard_webview", "dashboard_session", "dashboard_static"):
+        assert not hasattr(Floorplan, name)
 
 
-def test_command_root_and_dashboard_routes_are_inherited_once() -> None:
+def test_command_root_is_inherited_once() -> None:
     root_owners = [base for base in Floorplan.__mro__ if "floorplan_group" in base.__dict__]
     assert len(root_owners) == 1
-
-    dashboard_names = {"dashboard_webview", "dashboard_session", "dashboard_static"}
-    for name in dashboard_names:
-        owners = [base for base in Floorplan.__mro__ if name in base.__dict__]
-        assert len(owners) == 1
-        method = getattr(Floorplan, name)
-        assert hasattr(method, "__dashboard_decorator_params__")
 
 
 def test_production_config_access_does_not_bypass_repository() -> None:

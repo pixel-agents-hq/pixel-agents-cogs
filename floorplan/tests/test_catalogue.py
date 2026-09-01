@@ -252,16 +252,12 @@ class MemoryCatalogueRepository:
     def __init__(self) -> None:
         self.api_url = "https://api.example"
         self.web_url = "https://web.example"
-        self.layout: dict[str, object] | None = None
 
     async def pixel_index_api_url(self) -> str:
         return self.api_url
 
     async def pixel_index_web_url(self) -> str:
         return self.web_url
-
-    async def set_layout(self, layout: dict[str, object] | None) -> None:
-        self.layout = layout
 
 
 class FakeGateway:
@@ -297,24 +293,26 @@ class TestCatalogueService(unittest.IsolatedAsyncioTestCase):
     ]:
         repository = MemoryCatalogueRepository()
         gateway = FakeGateway()
-        published: list[dict[str, object]] = []
+        applied: list[dict[str, object]] = []
 
         async def can_edit(_: int) -> bool:
             return authorized
 
-        async def publish(layout: dict[str, object]) -> None:
-            published.append(layout)
+        async def apply(layout: dict[str, object]) -> None:
+            if layout.get("cols") is True:
+                raise ValueError("cols must be an integer")
+            applied.append(layout)
 
         return (
             CatalogueService(
                 repository,
                 gateway,
                 can_edit_layout=can_edit,
-                publish_layout=publish,
+                apply_layout=apply,
             ),
             repository,
             gateway,
-            published,
+            applied,
         )
 
     async def test_search_reads_the_current_base_url_for_each_request(self) -> None:
@@ -331,18 +329,17 @@ class TestCatalogueService(unittest.IsolatedAsyncioTestCase):
         assert gateway.search_calls[1][1]["limit"] == 5
 
     async def test_unauthorized_load_does_not_fetch_or_persist(self) -> None:
-        service, repository, gateway, published = self.make_service(authorized=False)
+        service, _, gateway, applied = self.make_service(authorized=False)
 
         result = await service.load_layout(42, "office")
 
         assert result.error is not None
         assert result.error.code is CatalogueErrorCode.UNAUTHORIZED
         assert gateway.detail_calls == []
-        assert repository.layout is None
-        assert published == []
+        assert applied == []
 
     async def test_invalid_layout_is_rejected_by_the_canonical_contract(self) -> None:
-        service, repository, gateway, published = self.make_service()
+        service, _, gateway, applied = self.make_service()
         gateway.detail_result = CatalogueResult(
             value=layout_detail(
                 layout={"version": 1, "cols": True, "rows": 1, "tiles": [1], "furniture": []}
@@ -353,11 +350,10 @@ class TestCatalogueService(unittest.IsolatedAsyncioTestCase):
 
         assert result.error is not None
         assert result.error.code is CatalogueErrorCode.INVALID_LAYOUT
-        assert repository.layout is None
-        assert published == []
+        assert applied == []
 
-    async def test_valid_layout_is_preserved_persisted_and_published(self) -> None:
-        service, repository, gateway, published = self.make_service()
+    async def test_valid_layout_is_preserved_and_applied_once(self) -> None:
+        service, _, gateway, applied = self.make_service()
         raw_layout = {
             "version": 1,
             "cols": 1,
@@ -371,19 +367,17 @@ class TestCatalogueService(unittest.IsolatedAsyncioTestCase):
         result = await service.load_layout(42, "office")
 
         assert result.value == "Loaded `Office` into the office."
-        assert repository.layout == raw_layout
-        assert published == [raw_layout]
+        assert applied == [raw_layout]
 
-    async def test_gateway_error_is_propagated_without_persistence(self) -> None:
-        service, repository, gateway, published = self.make_service()
+    async def test_gateway_error_is_propagated_without_applying(self) -> None:
+        service, _, gateway, applied = self.make_service()
         error = CatalogueError(CatalogueErrorCode.HTTP_STATUS, "HTTP 404", status=404)
         gateway.detail_result = CatalogueResult(error=error)
 
         result = await service.load_layout(42, "missing")
 
         assert result.error is error
-        assert repository.layout is None
-        assert published == []
+        assert applied == []
 
 
 class TestCatalogueViewsAndCommands(unittest.IsolatedAsyncioTestCase):

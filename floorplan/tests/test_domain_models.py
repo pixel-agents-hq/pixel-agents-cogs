@@ -1,35 +1,25 @@
-"""Unit tests for framework-independent Floorplan settings values.
-
-Agent-visualization domain values (AgentKey, AgentSnapshot, PresenceStatus,
-etc.) moved to `pixelagents.domain` -- see
-`pixelagents/tests/test_domain_office.py` for their tests.
-"""
+"""Tests for Floorplan's framework-free endpoint value."""
 
 from __future__ import annotations
 
 import ast
 from pathlib import Path
 
-from floorplan.domain import GlobalSettings, GuildSettings, SettingsSnapshot
+import pytest
+
+from floorplan.domain import normalize_http_url
 
 
-def test_settings_snapshot_finds_a_guild_without_mutable_mappings() -> None:
-    global_settings = GlobalSettings(
-        ws_host="0.0.0.0",
-        ws_port=3210,
-        message_tool_clear_delay=2.0,
-        broadcast_rich_presence=True,
-        broadcast_messages=True,
-        pixel_index_api_url="https://api.example.test",
-        pixel_index_web_url="https://example.test",
+def test_normalize_http_url_trims_and_removes_trailing_slashes() -> None:
+    assert normalize_http_url(" https://index.example.test/path/// ") == (
+        "https://index.example.test/path"
     )
-    first = GuildSettings(guild_id=1, enabled=True, include_bots=False)
-    second = GuildSettings(guild_id=2, enabled=False, include_bots=True)
-    snapshot = SettingsSnapshot(global_settings=global_settings, guilds=(first, second))
 
-    assert snapshot.for_guild(1) is first
-    assert snapshot.for_guild(2) is second
-    assert snapshot.for_guild(3) is None
+
+@pytest.mark.parametrize("value", ["", "index.example.test", "ftp://index.example.test"])
+def test_normalize_http_url_rejects_non_http_urls(value: str) -> None:
+    with pytest.raises(ValueError):
+        normalize_http_url(value)
 
 
 def test_domain_package_has_no_framework_or_validation_imports() -> None:

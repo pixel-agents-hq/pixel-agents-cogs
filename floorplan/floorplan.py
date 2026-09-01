@@ -1,50 +1,15 @@
-"""Thin Floorplan Cog composition."""
+"""Thin Pixel Index-only Floorplan Cog composition."""
 
 from __future__ import annotations
 
-# `web` is a historical patch point used by integrations and contract tests.
-from aiohttp import web
 from redbot.core import commands
-
-from pixelagents.application.office import DEFAULT_PALETTE_COUNT, JS_MAX_SAFE, to_agent_id
 
 from .adapters.admin_commands import AdminCommandsMixin
 from .adapters.catalogue_commands import CatalogueCommandsMixin
-from .adapters.dashboard import DashboardMixin, dashboard_page
-from .adapters.discord_gateway import VISIBLE_STATUSES, DiscordGatewayMixin
-from .adapters.event_subscriptions import EventSubscriptionsMixin
-from .adapters.layout_views import LayoutBrowseView, LayoutDetailView, absolute_url
-from .adapters.office_gateway import OfficeGatewayMixin
 from .adapters.replies import ReplyMixin
-from .application import LAYOUT_SORT_CHOICES
 
-__all__ = ["Floorplan", "dashboard_page", "web"]
-
-# Stable names retained for downstream imports, same convention pixelagents
-# used before the split.
-_VISIBLE_STATUSES = VISIBLE_STATUSES
-_LAYOUT_SORT_CHOICES = LAYOUT_SORT_CHOICES
-_LayoutBrowseView = LayoutBrowseView
-_LayoutDetailView = LayoutDetailView
-_abs_url = absolute_url
-_JS_MAX_SAFE = JS_MAX_SAFE
-_PALETTE_COUNT = DEFAULT_PALETTE_COUNT
+__all__ = ["Floorplan"]
 
 
-def _discord_id_to_agent_id(user_id: int) -> int:
-    """Compatibility wrapper for the domain ID mapping."""
-
-    return to_agent_id(user_id)
-
-
-class Floorplan(
-    DashboardMixin,
-    OfficeGatewayMixin,
-    DiscordGatewayMixin,
-    EventSubscriptionsMixin,
-    ReplyMixin,
-    AdminCommandsMixin,
-    CatalogueCommandsMixin,
-    commands.Cog,
-):
-    """Serve the Pixel Agents office and mirror Discord presence into it."""
+class Floorplan(AdminCommandsMixin, CatalogueCommandsMixin, ReplyMixin, commands.Cog):
+    """Configure, browse, and load Pixel Index layouts."""

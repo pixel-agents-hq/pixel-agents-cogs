@@ -1,155 +1,79 @@
-"""Every Modal/View floorplan defines must respect Discord's component
-limits -- see `corridor/ui_limits.py` for what's checked and why
-(discord.py itself never validates these; a violation only surfaces at
-runtime as an opaque HTTPException / "didn't respond in time").
-
-Mirrors `corridor/tests/test_discord_ui_limits.py`: a hand-maintained
-factory registry cross-checked against every Modal/LayoutView subclass
-actually declared in `settings_panel.py`/`layout_views.py`, so a new one
-added without a factory fails the completeness test instead of silently
-going unchecked.
-"""
+"""Every Floorplan view must respect Discord component limits."""
 
 from __future__ import annotations
 
 import inspect
 import unittest
+from unittest.mock import MagicMock
 
 import discord
 
 from corridor import ui_limits
-from floorplan.adapters import layout_views, settings_panel
+from floorplan.adapters import layout_views
 from floorplan.adapters.layout_views import LayoutBrowseView, LayoutDetailView
-from floorplan.adapters.settings_panel import SettingsPanelView, SettingsValueModal
-from floorplan.models import LayoutDetail, LayoutListResponse
-from floorplan.tests.test_floorplan import _layout_detail, _layout_summary, _make_cog
-from floorplan.tests.test_settings_panel import (
-    global_settings,
-    guild_settings,
-    interaction,
-    settings_service,
-)
+from floorplan.application import CatalogueService
+from floorplan.contracts.pixel_index import LayoutDetail, LayoutListResponse
 
 
-def _settings_panel() -> SettingsPanelView:
-    return SettingsPanelView(
-        settings_service(),
-        owner_id=1,
-        guild_id=42,
-        global_settings=global_settings(),
-        guild_settings=guild_settings(),
-        runtime=None,
-    )
+def _service() -> MagicMock:
+    return MagicMock(spec=CatalogueService)
 
 
-async def _shown_modal(panel: SettingsPanelView, show: str) -> SettingsValueModal:
-    """Call one of the panel's `_show_*_modal` methods and capture the
-    modal instance it hands to `interaction.response.send_modal`."""
-    fake_interaction = interaction()
-    await getattr(panel, show)(fake_interaction)
-    return fake_interaction.response.send_modal.call_args.args[0]
+def _summary() -> dict[str, object]:
+    return {
+        "slug": "office",
+        "title": "Office",
+        "files": {"thumbnail": "/office.png"},
+    }
 
 
-def _layout_browse_view() -> LayoutBrowseView:
-    cog = _make_cog()
-    page = LayoutListResponse.model_validate(
-        {"total": 1, "layouts": [_layout_summary("office", "Office")], "nextCursor": None}
-    )
+def _browse_view() -> LayoutBrowseView:
+    page = LayoutListResponse.model_validate({"total": 1, "layouts": [_summary()]})
     return LayoutBrowseView(
-        cog._catalogue_service,
+        _service(),
         owner_id=1,
         query=None,
         tag=None,
         sort="newest",
         pages=[page],
         page_index=0,
-        api_base="https://pixel-index-api-staging.nntin.xyz",
-        web_base="https://pixel-index.vercel.app",
+        api_base="https://api.example.test",
+        web_base="https://index.example.test",
     )
 
 
-def _layout_detail_view() -> LayoutDetailView:
-    cog = _make_cog()
-    detail = LayoutDetail.model_validate(_layout_detail("office", title="Office"))
+def _detail_view() -> LayoutDetailView:
+    detail = LayoutDetail.model_validate(
+        {**_summary(), "layout": {"version": 1, "cols": 1, "rows": 1, "tiles": [1]}}
+    )
     return LayoutDetailView(
-        cog._catalogue_service,
+        _service(),
         owner_id=1,
         detail=detail,
-        api_base="https://pixel-index-api-staging.nntin.xyz",
-        web_base="https://pixel-index.vercel.app",
-        back=None,
+        api_base="https://api.example.test",
+        web_base="https://index.example.test",
     )
 
 
-class TestFactoryRegistryIsComplete(unittest.IsolatedAsyncioTestCase):
-    """Fails loudly if a new Modal/View is added without a factory below."""
-
-    async def asyncSetUp(self) -> None:
-        panel = _settings_panel()
-        self.modal_factories: dict[type, list[object]] = {
-            SettingsValueModal: [
-                await _shown_modal(panel, "_show_port_modal"),
-                await _shown_modal(panel, "_show_delay_modal"),
-                await _shown_modal(panel, "_show_api_url_modal"),
-                await _shown_modal(panel, "_show_web_url_modal"),
-            ],
-        }
-        self.view_factories: dict[type, list[object]] = {
-            SettingsPanelView: [panel],
-            LayoutBrowseView: [_layout_browse_view()],
-            LayoutDetailView: [_layout_detail_view()],
-        }
-
-    def _discovered_subclasses(self, module: object, base: type) -> set[type]:
-        return {
+class TestLayoutViews(unittest.TestCase):
+    def test_factory_registry_covers_every_declared_view(self) -> None:
+        discovered = {
             member
-            for _, member in inspect.getmembers(module, inspect.isclass)
-            if member.__module__ == module.__name__ and issubclass(member, base)
+            for _, member in inspect.getmembers(layout_views, inspect.isclass)
+            if member.__module__ == layout_views.__name__
+            and issubclass(member, discord.ui.LayoutView)
         }
+        assert discovered == {LayoutBrowseView, LayoutDetailView}
 
-    def test_every_modal_has_a_factory(self) -> None:
-        discovered = self._discovered_subclasses(settings_panel, discord.ui.Modal)
-        missing = discovered - set(self.modal_factories)
-        self.assertFalse(
-            missing,
-            f"No ui_limits factory registered for: {[c.__name__ for c in missing]}. "
-            "Add coverage to test_discord_ui_limits.py.",
-        )
-
-    def test_every_view_has_a_factory(self) -> None:
-        discovered = self._discovered_subclasses(
-            settings_panel, discord.ui.LayoutView
-        ) | self._discovered_subclasses(layout_views, discord.ui.LayoutView)
-        missing = discovered - set(self.view_factories)
-        self.assertFalse(
-            missing,
-            f"No ui_limits factory registered for: {[c.__name__ for c in missing]}. "
-            "Add coverage to test_discord_ui_limits.py.",
-        )
-
-    def test_every_registered_modal_instance_passes(self) -> None:
-        for modal_type, instances in self.modal_factories.items():
-            for instance in instances:
-                with self.subTest(modal=modal_type.__name__):
-                    violations = ui_limits.check_ui_tree(instance)
-                    self.assertEqual(
-                        violations,
-                        [],
-                        f"{modal_type.__name__} violates Discord component limits:\n"
-                        + ui_limits.format_violations(violations),
-                    )
-
-    def test_every_registered_view_instance_passes(self) -> None:
-        for view_type, instances in self.view_factories.items():
-            for instance in instances:
-                with self.subTest(view=view_type.__name__):
-                    violations = ui_limits.check_ui_tree(instance)
-                    self.assertEqual(
-                        violations,
-                        [],
-                        f"{view_type.__name__} violates Discord component limits:\n"
-                        + ui_limits.format_violations(violations),
-                    )
+    def test_every_view_passes_component_limits(self) -> None:
+        for view in (_browse_view(), _detail_view()):
+            violations = ui_limits.check_ui_tree(view)
+            self.assertEqual(
+                violations,
+                [],
+                f"{type(view).__name__} violates Discord component limits:\n"
+                + ui_limits.format_violations(violations),
+            )
 
 
 if __name__ == "__main__":

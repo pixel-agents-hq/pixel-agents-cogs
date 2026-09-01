@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""Verify the pixelagents+floorplan -> Pixel Agents (vendored webview) contract.
+"""Verify the pixelagents+CCTV -> Pixel Agents (vendored webview) contract.
 
 Consumer-driven contract check: pixelagents/infrastructure/webview_build.py clones
 pixel-agents-hq/pixel-agents at the commit pinned in
 pixelagents/infrastructure/webview_vendor.commit, builds its webview with npm/vite,
-and floorplan/infrastructure/webview.py's WebviewAssetProvider serves the result --
-pixelagents owns vendoring+building, floorplan owns serving what gets built (see
+and cctv/infrastructure/webview.py's WebviewAssets serves the result --
+pixelagents owns vendoring+building, CCTV owns serving what gets built (see
 pixelagents/adapters/cog_base.py::webview_bundle_status and
-floorplan/adapters/cog_base.py::_sync_webview_assets for the cross-cog handoff).
+cctv/adapters/cog_base.py::_sync_assets for the cross-cog handoff).
 This runs that exact production path -- not a reimplementation of it -- against
 the pinned commit and checks the same things a working office actually needs:
 every sprite family decodes, a default layout is available, and the built
@@ -37,26 +37,24 @@ import json
 import os
 import re
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 
 import pixelagents.tests.conftest  # noqa: F401  # stubs redbot before the imports below
-from floorplan.infrastructure.webview import WebviewAssetProvider
+from cctv.infrastructure.webview import WEBVIEW_BASE_PATH, WebviewAssets
 from pixelagents.infrastructure import webview_build
 
 from . import verify_outbound
 
 SPRITE_FAMILIES = ("characters", "floors", "walls", "carpets", "furniture")
 _BUNDLE_ASSET_RE = re.compile(r'(?:src|href)="([^"]+)"')
-# pixelagents builds relative asset URLs (RELATIVE_BASE_PATH) so any cog can
-# serve the same bundle; this mirrors the <base href> floorplan (the
-# reference consumer) injects at serve time.
-_SERVING_COG_BASE_PATH = "/third-party/floorplan/static/"
+# Pixelagents builds relative asset URLs; CCTV injects its own serving base.
 
 
 def _utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+    return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
 def _source_url(commit: str) -> str:
@@ -89,8 +87,7 @@ def write_result_document(path: str, document: dict) -> None:
     temporary.replace(destination)
 
 
-def _check_load_assets(provider: WebviewAssetProvider) -> tuple[bool, str]:
-    provider.load_assets()
+def _check_load_assets(provider: WebviewAssets) -> tuple[bool, str]:
     missing = [name for name in SPRITE_FAMILIES if not provider.assets.get(name)]
     if missing:
         return False, f"missing decoded sprite families: {', '.join(missing)}"
@@ -99,25 +96,22 @@ def _check_load_assets(provider: WebviewAssetProvider) -> tuple[bool, str]:
     return True, ""
 
 
-def _check_default_layout(provider: WebviewAssetProvider) -> tuple[bool, str]:
-    layout = provider.default_layout()
-    if layout is None:
-        return False, "no bundled default layout"
+def _check_default_layout(provider: WebviewAssets) -> tuple[bool, str]:
+    try:
+        layout = webview_build.load_bundled_default_layout(provider.root)
+    except (OSError, TypeError, ValueError) as exc:
+        return False, f"no bundled default layout: {exc}"
     if not layout.get("tiles"):
         return False, "bundled default layout has no tiles"
     return True, ""
 
 
-def _check_dashboard_bundle(provider: WebviewAssetProvider) -> tuple[bool, str]:
-    # provider.base_href stands in for whatever a real consuming cog injects
-    # at serve time (see floorplan/adapters/cog_base.py::WEBVIEW_BASE_PATH)
-    # -- set here so this exercises the same <base href> + relative-asset
-    # resolution a browser would, not just files being physically present.
-    response = provider.dashboard_webview_response()
+def _check_dashboard_bundle(provider: WebviewAssets) -> tuple[bool, str]:
+    response = provider.page_response("discord")
     if response.get("status") != 0:
         return False, str(response.get("error_message", "webview response was not servable"))
     source = str(response["web_content"]["source"])  # type: ignore[index]
-    if f'<base href="{provider.base_href}">' not in source:
+    if f'<base href="{WEBVIEW_BASE_PATH}">' not in source:
         return False, "index.html missing the expected <base href> injection"
     bundle_paths = [match for match in _BUNDLE_ASSET_RE.findall(source) if match.startswith("./")]
     if not bundle_paths:
@@ -151,8 +145,16 @@ def run(env_name: str) -> tuple[bool, str, list[dict]]:
                 )
             return False, source, checks
 
-        provider = WebviewAssetProvider(Path(tmp) / "webview_dist")
-        provider.base_href = _SERVING_COG_BASE_PATH
+        dist_path = Path(tmp) / "webview_dist"
+        provider = WebviewAssets()
+        provider.sync(
+            SimpleNamespace(
+                dist_path=dist_path,
+                ready=True,
+                detail="loaded",
+                built_commit=webview_build.built_commit(dist_path),
+            )
+        )
         checks = [{"name": "build", "status": "pass", "detail": ""}]
         overall_ok = True
         for name, check in (

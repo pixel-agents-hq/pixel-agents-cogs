@@ -1,6 +1,5 @@
-"""Typed contracts at the boundaries of the Pixel Agents application."""
+"""Typed contracts at the Pixel Index boundary."""
 
-from .layout import JsonValue, OfficeLayout, RawOfficeLayout
 from .pixel_index import (
     LayoutDetail,
     LayoutFiles,
@@ -8,38 +7,11 @@ from .pixel_index import (
     LayoutSummary,
     PublicAuthor,
 )
-from .websocket import (
-    AuthorizeMessage,
-    ClientMessage,
-    ClientMessageEnvelope,
-    ImportLayoutMessage,
-    InvalidClientMessageError,
-    RequestDiagnosticsMessage,
-    SaveAgentSeatsMessage,
-    SaveLayoutMessage,
-    SeatAssignmentPatch,
-    WebviewReadyMessage,
-    parse_client_message,
-)
 
 __all__ = [
-    "AuthorizeMessage",
-    "ClientMessage",
-    "ClientMessageEnvelope",
-    "ImportLayoutMessage",
-    "InvalidClientMessageError",
-    "JsonValue",
     "LayoutDetail",
     "LayoutFiles",
     "LayoutListResponse",
     "LayoutSummary",
-    "OfficeLayout",
     "PublicAuthor",
-    "RawOfficeLayout",
-    "RequestDiagnosticsMessage",
-    "SaveAgentSeatsMessage",
-    "SaveLayoutMessage",
-    "SeatAssignmentPatch",
-    "WebviewReadyMessage",
-    "parse_client_message",
 ]

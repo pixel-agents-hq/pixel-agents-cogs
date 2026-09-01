@@ -171,9 +171,15 @@ class CctvServer:
             )
             return
         state = pipeline.clients.get(socket)
-        if isinstance(message, _WRITE_MESSAGES) and not (state is not None and state.is_editor):
-            self._log.info("cctv/%s: unauthorized %s dropped", page, message.type)
-            return
+        if isinstance(message, _WRITE_MESSAGES):
+            # A ticket proves browser identity, not perpetual authorization.
+            # Re-check Discord writes so a guild disable, role removal, or
+            # permission change takes effect even on an already-open socket.
+            if page == "discord" and state is not None and state.user_id is not None:
+                state.is_editor = await self._authorize_safely(pipeline, state.user_id)
+            if state is None or not state.is_editor:
+                self._log.info("cctv/%s: unauthorized %s dropped", page, message.type)
+                return
         try:
             await pipeline.handle_message(socket, message)
         except Exception:

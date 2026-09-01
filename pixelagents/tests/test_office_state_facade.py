@@ -6,6 +6,7 @@ MemorySeats already uses."""
 
 from __future__ import annotations
 
+import asyncio
 import unittest
 from collections.abc import Callable
 from typing import TypeVar
@@ -70,6 +71,14 @@ class FakeOfficeStateBackend:
             await handler(OfficeStateChanged(state=updated))
         return updated
 
+    async def set_office_layout_if_empty(
+        self, kind: OfficeStateKind, layout: dict[str, object]
+    ) -> OfficeState:
+        current = self._states.setdefault(kind, self._blank(kind))
+        if current.layout:
+            return current
+        return await self.set_office_layout(kind, layout)
+
     async def mutate_office_seats(
         self, kind: OfficeStateKind, mutation: Callable[[dict], MutationResult]
     ) -> tuple[OfficeState, MutationResult]:
@@ -131,6 +140,41 @@ class TestLazySeeding(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(snapshot.layout, _VALID_DISCORD_LAYOUT)
 
+    async def test_a_concurrent_real_write_survives_a_racing_seed(self) -> None:
+        """`read()`'s outer `state.layout` check happens after corridor's
+        own lock has already been released -- a genuine write can land in
+        the gap between that stale read and the seed call this method
+        makes. The seed itself must not clobber it: `set_office_layout_if_empty`
+        re-checks emptiness atomically immediately before writing, so this
+        real write must survive."""
+
+        backend = FakeOfficeStateBackend()
+        read_returned = asyncio.Event()
+        may_continue = asyncio.Event()
+        original_read = backend.read_office_state
+
+        async def paused_read(kind: OfficeStateKind) -> OfficeState:
+            state = await original_read(kind)
+            read_returned.set()
+            await may_continue.wait()
+            return state
+
+        backend.read_office_state = paused_read  # type: ignore[method-assign]
+        facade = OfficeStateFacade(backend, default_layout=lambda: dict(_VALID_DISCORD_LAYOUT))
+
+        seed_task = asyncio.create_task(facade.read("discord"))
+        await asyncio.wait_for(read_returned.wait(), timeout=1.0)
+
+        # A genuine write lands in the gap between the stale outer read
+        # and the seed call about to run.
+        real_layout = {**_VALID_DISCORD_LAYOUT, "cols": 3, "tiles": [1, 1, 1]}
+        await backend.set_office_layout("discord", real_layout)
+        may_continue.set()
+
+        seeded = await asyncio.wait_for(seed_task, timeout=1.0)
+
+        self.assertEqual(seeded.layout, real_layout)
+
 
 class TestKindsAreIndependent(unittest.IsolatedAsyncioTestCase):
     async def test_seeding_one_kind_does_not_seed_the_other(self) -> None:
@@ -164,6 +208,25 @@ class TestDiscordWireSchemaValidation(unittest.IsolatedAsyncioTestCase):
     async def test_non_dict_is_rejected(self) -> None:
         with self.assertRaises(InvalidDiscordLayoutError):
             await self.facade.set_discord_layout("not a dict")  # type: ignore[arg-type]
+
+    async def test_boolean_version_is_rejected_despite_equaling_one(self) -> None:
+        """`bool` is a subclass of `int` and `True == 1` -- a naive
+        `!= 1` check would accept `version=True`."""
+
+        with self.assertRaises(InvalidDiscordLayoutError):
+            await self.facade.set_discord_layout({**_VALID_DISCORD_LAYOUT, "version": True})
+
+    async def test_boolean_cols_is_rejected_despite_equaling_one(self) -> None:
+        with self.assertRaises(InvalidDiscordLayoutError):
+            await self.facade.set_discord_layout(
+                {**_VALID_DISCORD_LAYOUT, "cols": True, "rows": 1, "tiles": [1]}
+            )
+
+    async def test_boolean_rows_is_rejected_despite_equaling_one(self) -> None:
+        with self.assertRaises(InvalidDiscordLayoutError):
+            await self.facade.set_discord_layout(
+                {**_VALID_DISCORD_LAYOUT, "cols": 1, "rows": True, "tiles": [1]}
+            )
 
 
 class TestEditorSemanticIrRoundTrip(unittest.IsolatedAsyncioTestCase):
@@ -225,6 +288,52 @@ class TestSeatShapeParityAcrossBothKinds(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result, "done")
         self.assertEqual(seats, {"-1": {"palette": 3}})
+
+
+class TestBulkSeatPatches(unittest.IsolatedAsyncioTestCase):
+    """`apply_seat_patches` is what a whole `saveAgentSeats` message (which
+    can name many agents at once) should use instead of one
+    `apply_seat_patch` call per agent -- one Config write/publish for the
+    whole batch, not N."""
+
+    async def test_applies_every_patch_in_one_mutation(self) -> None:
+        backend = FakeOfficeStateBackend()
+        facade = OfficeStateFacade(backend, default_layout=lambda: None)
+        patches = {
+            "-1": {"palette": 1, "seatId": "desk-1"},
+            "-2": {"palette": 2, "seatId": "desk-2"},
+        }
+
+        updated = await facade.apply_seat_patches("discord", patches)
+
+        self.assertEqual(updated.seats["-1"], {"palette": 1, "seatId": "desk-1"})
+        self.assertEqual(updated.seats["-2"], {"palette": 2, "seatId": "desk-2"})
+        # One mutation, one revision bump -- not one per agent.
+        self.assertEqual(updated.revision, 1)
+
+    async def test_one_invalid_patch_does_not_drop_the_others(self) -> None:
+        backend = FakeOfficeStateBackend()
+        facade = OfficeStateFacade(backend, default_layout=lambda: None)
+        patches = {
+            "-1": {"palette": 999},  # out of range for palette_count=6 -- dropped, not fatal
+            "-2": {"palette": 1},
+        }
+
+        updated = await facade.apply_seat_patches("discord", patches, palette_count=6)
+
+        self.assertEqual(updated.seats["-1"], {})
+        self.assertEqual(updated.seats["-2"], {"palette": 1})
+
+    async def test_preserves_an_untouched_agents_existing_seat(self) -> None:
+        backend = FakeOfficeStateBackend()
+        facade = OfficeStateFacade(backend, default_layout=lambda: None)
+        await facade.apply_seat_patch("discord", "-1", {"palette": 5})
+
+        await facade.apply_seat_patches("discord", {"-2": {"palette": 2}})
+
+        state = await facade.read("discord")
+        self.assertEqual(state.seats["-1"], {"palette": 5})
+        self.assertEqual(state.seats["-2"], {"palette": 2})
 
 
 if __name__ == "__main__":

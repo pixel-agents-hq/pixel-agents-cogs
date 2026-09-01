@@ -167,6 +167,106 @@ class TestPublishTimeout(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(updated.layout, {"cols": 1})
         self.assertEqual(len(healthy_received), 1)
 
+    async def test_a_slow_subscriber_does_not_block_a_concurrent_reader(self) -> None:
+        """docs/cctv-design.md §2.5's delivery rules: persist, release the
+        lock, *then* deliver. If the lock were instead held across
+        delivery, a concurrent reader would have to wait out the slow
+        subscriber's full delivery -- this proves it does not. Uses a
+        plain read (not a second write) so the assertion isolates lock
+        availability from the separate question of how long that second
+        call's *own* publish would take -- it would hit the very same
+        registered subscriber."""
+
+        service = OfficeStateService(RedOfficeStateRepository.create(cog=object()))
+        subscriber_started = asyncio.Event()
+        release_subscriber = asyncio.Event()
+
+        async def slow(event: OfficeStateChanged) -> None:
+            subscriber_started.set()
+            await release_subscriber.wait()
+
+        await service.watch("discord", slow, owner="Slow")
+
+        first = asyncio.create_task(service.set_layout("discord", {"cols": 1}))
+        await asyncio.wait_for(subscriber_started.wait(), timeout=1.0)
+
+        # The per-kind lock must already be free at this point -- a
+        # concurrent read must complete promptly even while `first`'s slow
+        # subscriber is still being awaited.
+        state = await asyncio.wait_for(service.read("discord"), timeout=1.0)
+        self.assertEqual(state.layout, {"cols": 1})
+
+        release_subscriber.set()
+        await asyncio.wait_for(first, timeout=1.0)
+
+    async def test_a_subscriber_that_reads_its_own_kind_does_not_deadlock(self) -> None:
+        """A subscriber calling back into `read()` (or any other
+        operation) for the *same* kind it was just notified about must
+        not deadlock against the writer that is about to release the
+        lock it's publishing under -- only reachable at all because
+        delivery now happens after the lock is released."""
+
+        service = OfficeStateService(RedOfficeStateRepository.create(cog=object()))
+        seen: list[int] = []
+
+        async def reentrant(event: OfficeStateChanged) -> None:
+            state = await service.read("discord")
+            seen.append(state.revision)
+
+        await service.watch("discord", reentrant, owner="Reentrant")
+
+        await asyncio.wait_for(service.set_layout("discord", {"cols": 1}), timeout=1.0)
+
+        self.assertEqual(seen, [1])
+
+
+class TestSetLayoutIfEmpty(unittest.IsolatedAsyncioTestCase):
+    def setUp(self) -> None:
+        self.service = OfficeStateService(RedOfficeStateRepository.create(cog=object()))
+
+    async def test_seeds_a_blank_aggregate(self) -> None:
+        updated = await self.service.set_layout_if_empty("discord", {"cols": 5})
+
+        self.assertEqual(updated.layout, {"cols": 5})
+        self.assertEqual(updated.revision, 1)
+
+    async def test_never_overwrites_an_already_seeded_layout(self) -> None:
+        await self.service.set_layout("discord", {"cols": 1})
+
+        updated = await self.service.set_layout_if_empty("discord", {"cols": 99})
+
+        self.assertEqual(updated.layout, {"cols": 1})
+        self.assertEqual(updated.revision, 1)
+
+    async def test_no_op_seed_does_not_publish(self) -> None:
+        await self.service.set_layout("discord", {"cols": 1})
+        received: list[OfficeStateChanged] = []
+        await self.service.watch("discord", _recorder(received), owner="Watcher")
+
+        await self.service.set_layout_if_empty("discord", {"cols": 99})
+
+        self.assertEqual(received, [])
+
+    async def test_two_concurrent_seed_calls_never_lose_either_ones_lock_hold(self) -> None:
+        """Both calls go through the same per-kind lock, so they can never
+        truly race each other -- whichever runs first seeds it, the
+        second sees it's no longer blank and no-ops. This is what makes
+        set_layout_if_empty a genuine improvement over a caller composing
+        its own read-then-conditionally-set: two callers hitting *this*
+        method concurrently can never both write, unlike two callers each
+        doing their own read() then set_office_layout()."""
+
+        first, second = await asyncio.gather(
+            self.service.set_layout_if_empty("discord", {"cols": 1}),
+            self.service.set_layout_if_empty("discord", {"cols": 2}),
+        )
+
+        # Exactly one of the two payloads won -- never a mix, and never
+        # both applied (revision would be 2, not 1).
+        self.assertIn(first.layout, ({"cols": 1}, {"cols": 2}))
+        self.assertEqual(first.layout, second.layout)
+        self.assertEqual(first.revision, 1)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable, Mapping
-from typing import Protocol, TypeVar
+from typing import Protocol, TypeGuard, TypeVar
 
 from corridor.domain import OfficeState, OfficeStateChanged, OfficeStateKind
 
@@ -38,6 +38,10 @@ class OfficeStateBackend(Protocol):
     async def read_office_state(self, kind: OfficeStateKind) -> OfficeState: ...
 
     async def set_office_layout(
+        self, kind: OfficeStateKind, layout: dict[str, object]
+    ) -> OfficeState: ...
+
+    async def set_office_layout_if_empty(
         self, kind: OfficeStateKind, layout: dict[str, object]
     ) -> OfficeState: ...
 
@@ -69,6 +73,15 @@ class OfficeLayoutNotSeededError(RuntimeError):
     named error, now retired along with that module)."""
 
 
+def _is_positive_int(value: object) -> TypeGuard[int]:
+    """`bool` is a subclass of `int` in Python (`isinstance(True, int)` is
+    `True`, and `True == 1`) -- excluded explicitly so a layout carrying
+    `version`/`cols`/`rows` as a JSON boolean can never slip past this
+    check by coincidentally comparing equal to an accepted integer."""
+
+    return isinstance(value, int) and not isinstance(value, bool) and value > 0
+
+
 def validate_discord_layout(layout: object) -> bool:
     """The Pixel Agents wire-schema structural check for the Discord
     aggregate's layout -- ported verbatim from floorplan's former
@@ -77,15 +90,16 @@ def validate_discord_layout(layout: object) -> bool:
     differently, through the Semantic IR codec itself
     (`load_editor_office`/`set_editor_layout`), not this function."""
 
-    if not isinstance(layout, dict) or layout.get("version") != 1:
+    if not isinstance(layout, dict):
+        return False
+    version = layout.get("version")
+    if isinstance(version, bool) or version != 1:
         return False
     cols = layout.get("cols")
     rows = layout.get("rows")
     tiles = layout.get("tiles")
     furniture = layout.get("furniture")
-    if not isinstance(cols, int) or cols <= 0:
-        return False
-    if not isinstance(rows, int) or rows <= 0:
+    if not _is_positive_int(cols) or not _is_positive_int(rows):
         return False
     if not isinstance(tiles, list) or len(tiles) != cols * rows:
         return False
@@ -154,17 +168,25 @@ class OfficeStateFacade:
         real bug caught by cctv's own live WebSocket tests: the editor
         aggregate's `revision` reached 1 from
         `EventSubscriptionsEditorMixin`'s own-bot-account seat
-        reconciliation before any layout read ever ran). Two callers
-        racing this concurrently both write the same bundled content --
-        harmless, the same last-write-wins tone every other office-state
-        write already accepts."""
+        reconciliation before any layout read ever ran).
+
+        The `state.layout` check here is only a fast-path -- `state` was
+        read (and corridor's per-kind lock released) before this method
+        was even called, so a genuine write could have landed in that gap
+        since. The actual seed decision goes through
+        `set_office_layout_if_empty`, which re-checks emptiness atomically
+        under corridor's lock immediately before writing, so a real
+        concurrent write can never be clobbered by a stale seed. Two
+        callers racing this concurrently both write the same bundled
+        content -- harmless, the same last-write-wins tone every other
+        office-state write already accepts."""
 
         if state.layout:
             return state
         default = self._default_layout()
         if default is None:
             return state
-        return await self._backend.set_office_layout(kind, default)
+        return await self._backend.set_office_layout_if_empty(kind, default)
 
     # --- Discord aggregate: wire-schema-validated raw layout ------------
 
@@ -221,6 +243,33 @@ class OfficeStateFacade:
 
         def apply(seats: SeatRecords) -> None:
             merge_seat_patch(seats, agent_id, palette_count, patch)
+
+        updated, _ = await self._backend.mutate_office_seats(kind, apply)
+        return updated
+
+    async def apply_seat_patches(
+        self,
+        kind: OfficeStateKind,
+        patches: Mapping[str, Mapping[str, object]],
+        *,
+        palette_count: int = DEFAULT_PALETTE_COUNT,
+    ) -> OfficeState:
+        """Validate and merge a whole batch of agents' seat/palette
+        patches in one `mutate_office_seats` call -- what a single
+        `saveAgentSeats` WebSocket message (which can name many agents at
+        once) should use instead of calling `apply_seat_patch` once per
+        agent. One bulk call means one Config read/write and one
+        `OfficeStateChanged` publish for the whole batch, not N of each --
+        avoiding both the redundant per-agent broadcast storm and the
+        window where a save that touches agents 1..N would otherwise
+        leave 1..k persisted (and already broadcast) if patching agent
+        k+1 raised. `merge_seat_patch` itself never raises (an invalid
+        field is dropped, not an error), so this batch is unconditionally
+        all-or-nothing in one atomic mutation."""
+
+        def apply(seats: SeatRecords) -> None:
+            for agent_id, patch in patches.items():
+                merge_seat_patch(seats, agent_id, palette_count, patch)
 
         updated, _ = await self._backend.mutate_office_seats(kind, apply)
         return updated

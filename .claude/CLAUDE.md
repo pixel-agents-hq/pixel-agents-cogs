@@ -32,8 +32,9 @@ load-bearing), `pixelagents` (vendors + builds the webview; also owns the
 Semantic IR domain model, Pixel Agents JSON codec, color palette, and the
 `OfficeStateFacade` — the one validated choke point every consumer
 reads/writes office layout/seats through, see `docs/cctv-design.md`),
-`floorplan` (mid-refactor: Pixel Index browsing/catalogue loading;
-dashboard/WebSocket hosting is moving to `cctv`, see `docs/cctv-design.md`),
+`floorplan` (Pixel Index browsing/catalogue loading only; no dashboard,
+WebSocket, or Discord-presence code of its own — `cctv` owns that
+entirely, see `docs/cctv-design.md`),
 `cctv` (the only dashboard-hosting cog: one aiohttp listener, two
 independent Pixel Agents pages — a live Discord-presence view and an open
 structural/color editor view — over Red Dashboard), `toolbox` (host

@@ -14,7 +14,7 @@ from collections.abc import Mapping
 
 from aiohttp import web
 
-from corridor.domain import OfficeStateChanged
+from corridor.domain import OfficeState, OfficeStateChanged
 from pixelagents.application.office import DEFAULT_PALETTE_COUNT
 from pixelagents.infrastructure.pixel_agents_adapter import decode
 
@@ -25,8 +25,9 @@ log = logging.getLogger("red.cctv")
 
 class OfficeGatewayEditorMixin(CogBase):
     """Requires `self._pixelagents`, `self._editor_office_service`,
-    `self._editor_client_hub`, `self._webview_assets`, `self._style_loader`
-    (all provided by `CogBase`)."""
+    `self._editor_client_hub`, `self._editor_state_lock`,
+    `self._editor_last_revision`, `self._webview_assets`,
+    `self._style_loader` (all provided by `CogBase`)."""
 
     async def cog_load(self) -> None:
         await super().cog_load()
@@ -41,17 +42,35 @@ class OfficeGatewayEditorMixin(CogBase):
         )
 
     async def _on_editor_state_changed(self, event: OfficeStateChanged) -> None:
+        """Serialized against `_on_webview_ready_editor` and revision-
+        guarded exactly like `OfficeGatewayDiscordMixin`'s identically-
+        shaped hook -- see that method's docstring."""
+
+        async with self._editor_state_lock:
+            if event.state.revision <= self._editor_last_revision:
+                return
+            self._editor_last_revision = event.state.revision
+            await self._broadcast_editor_state(event.state)
+
+    async def _broadcast_editor_state(self, state: OfficeState) -> None:
+        await self._editor_client_hub.broadcast({"type": "layoutLoaded", "layout": state.layout})
+        # See OfficeGatewayDiscordMixin._broadcast_discord_state -- a
+        # seat-only mutation must still reach every connected tab's
+        # avatar/palette display, not just layout changes.
         await self._editor_client_hub.broadcast(
-            {"type": "layoutLoaded", "layout": event.state.layout}
+            self._editor_office_service.existing_agents_message(state.seats)
         )
 
     async def _on_webview_ready_editor(self, socket: web.WebSocketResponse) -> None:
-        state = await self._pixelagents.office_state().read("editor")
-        messages = self._editor_office_service.bootstrap_messages(
-            assets=self._webview_assets.assets, seats=state.seats, layout=state.layout
-        )
-        for message in messages:
-            await self._editor_client_hub.send_to(socket, message)
+        async with self._editor_state_lock:
+            state = await self._pixelagents.office_state().read("editor")
+            if state.revision >= self._editor_last_revision:
+                self._editor_last_revision = state.revision
+            messages = self._editor_office_service.bootstrap_messages(
+                assets=self._webview_assets.assets, seats=state.seats, layout=state.layout
+            )
+            for message in messages:
+                await self._editor_client_hub.send_to(socket, message)
 
     async def _on_save_layout_editor(self, raw: dict[str, object]) -> None:
         """A whole-office replace from the browser's own drag-and-drop
@@ -77,13 +96,16 @@ class OfficeGatewayEditorMixin(CogBase):
         palette_count = max(
             len(characters) if isinstance(characters, (list, tuple)) else 0, DEFAULT_PALETTE_COUNT
         )
-        facade = self._pixelagents.office_state()
-        for agent_id, patch in incoming.items():
-            if not isinstance(patch, Mapping):
-                continue
-            await facade.apply_seat_patch(
-                "editor", str(agent_id), patch, palette_count=palette_count
-            )
+        patches = {
+            str(agent_id): patch
+            for agent_id, patch in incoming.items()
+            if isinstance(patch, Mapping)
+        }
+        if not patches:
+            return
+        await self._pixelagents.office_state().apply_seat_patches(
+            "editor", patches, palette_count=palette_count
+        )
 
 
 __all__ = ["OfficeGatewayEditorMixin"]

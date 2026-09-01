@@ -20,8 +20,6 @@ from .cog_base import CogBase
 
 log = logging.getLogger("red.cctv")
 
-_MESSAGE_ACTIVITY_CLEAR_DELAY = 2.0
-
 
 def _own_bot_account_key(bot_user_id: int) -> GenuineAgentKey:
     return GenuineAgentKey(agent_key=f"discord-bot-{bot_user_id}")
@@ -55,7 +53,8 @@ def _reply_identity(agent: AgentRef, own_bot_user_id: int | None) -> GenuineAgen
 
 class EventSubscriptionsEditorMixin(CogBase):
     """Requires `self._corridor`, `self._editor_office_service`, `self.bot`,
-    `self._create_background_task` (all provided by `CogBase`)."""
+    `self._create_background_task`, `self._repository` (all provided by
+    `CogBase`)."""
 
     async def cog_load(self) -> None:
         await super().cog_load()
@@ -109,13 +108,16 @@ class EventSubscriptionsEditorMixin(CogBase):
         if identity is None or not self._editor_office_service.is_tracked(identity):
             return
         await self._editor_office_service.send_genuine_agent_activity(identity, event.summary)
+        settings = await self._repository.global_settings()
         self._create_background_task(
-            self._clear_editor_activity_after_delay(identity),
+            self._clear_editor_activity_after_delay(identity, settings.editor_clear_delay),
             name=f"cctv-editor-agent-replied-clear-{identity.agent_key}",
         )
 
-    async def _clear_editor_activity_after_delay(self, identity: GenuineAgentKey) -> None:
-        await asyncio.sleep(_MESSAGE_ACTIVITY_CLEAR_DELAY)
+    async def _clear_editor_activity_after_delay(
+        self, identity: GenuineAgentKey, delay: float
+    ) -> None:
+        await asyncio.sleep(delay)
         await self._editor_office_service.clear_genuine_agent_activity(identity)
 
 

@@ -115,6 +115,18 @@ class CogBase:
         # shape architect's own former OfficeService construction used.
         self._editor_office_service = OfficeService(editor_seats, self._send_editor, logger=log)
 
+        # Serializes each pipeline's own bootstrap (one connecting socket)
+        # against its own live OfficeStateChanged delivery (broadcast to
+        # every socket) so the two can never interleave on the wire and
+        # leave a client displaying a stale snapshot after a newer one
+        # already arrived (docs/cctv-design.md §3.3/§3.4). Paired with a
+        # last-applied revision so either side drops an update that isn't
+        # strictly newer than what this pipeline already applied.
+        self._discord_state_lock = asyncio.Lock()
+        self._discord_last_revision = -1
+        self._editor_state_lock = asyncio.Lock()
+        self._editor_last_revision = -1
+
         self._background_tasks: set[asyncio.Task[object]] = set()
         self._websocket_server = WebSocketServer(
             discord=Pipeline(

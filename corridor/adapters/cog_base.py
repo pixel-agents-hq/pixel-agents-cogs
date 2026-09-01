@@ -478,6 +478,18 @@ class CogBase:
 
         return await self._office_state_service.set_layout(kind, layout)
 
+    async def set_office_layout_if_empty(
+        self, kind: OfficeStateKind, layout: dict[str, object]
+    ) -> OfficeState:
+        """Atomically seed `kind`'s `layout` only if it is still blank --
+        the check-and-write happens under one lock hold, so a concurrent
+        genuine write can never land between "read: still blank" and
+        "write: the default" the way it could if a caller composed
+        `read_office_state`/`set_office_layout` itself. Returns the
+        current aggregate unchanged (no publish) if it was already seeded."""
+
+        return await self._office_state_service.set_layout_if_empty(kind, layout)
+
     async def mutate_office_seats(
         self,
         kind: OfficeStateKind,

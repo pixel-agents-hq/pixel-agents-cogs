@@ -160,6 +160,9 @@ class FakeCorridor:
     async def set_office_layout(self, kind: str, layout: dict) -> Any:
         return await self._office_state_service.set_layout(kind, layout)
 
+    async def set_office_layout_if_empty(self, kind: str, layout: dict) -> Any:
+        return await self._office_state_service.set_layout_if_empty(kind, layout)
+
     async def mutate_office_seats(self, kind: str, mutation: Any) -> Any:
         return await self._office_state_service.mutate_seats(kind, mutation)
 

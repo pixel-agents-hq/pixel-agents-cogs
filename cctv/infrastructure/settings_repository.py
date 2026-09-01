@@ -10,6 +10,7 @@ identifiers, per docs/cctv-design.md §2.9).
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Any, cast
 
@@ -103,13 +104,13 @@ class RedCctvRepository:
         await self._config.port.set(value)
 
     async def set_discord_clear_delay(self, seconds: float) -> None:
-        if seconds < 0:
-            raise ValueError("Delay must be 0 or greater.")
+        if not math.isfinite(seconds) or seconds < 0:
+            raise ValueError("Delay must be a finite number, 0 or greater.")
         await self._config.discord_clear_delay.set(seconds)
 
     async def set_editor_clear_delay(self, seconds: float) -> None:
-        if seconds < 0:
-            raise ValueError("Delay must be 0 or greater.")
+        if not math.isfinite(seconds) or seconds < 0:
+            raise ValueError("Delay must be a finite number, 0 or greater.")
         await self._config.editor_clear_delay.set(seconds)
 
     async def set_broadcast_rich_presence(self, value: bool) -> None:

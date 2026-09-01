@@ -14,7 +14,7 @@ from typing import cast
 import discord
 from aiohttp import web
 
-from corridor.domain import OfficeStateChanged
+from corridor.domain import OfficeState, OfficeStateChanged
 from pixelagents.application.office import DEFAULT_PALETTE_COUNT
 from pixelagents.application.office_state import InvalidDiscordLayoutError
 
@@ -25,8 +25,10 @@ log = logging.getLogger("red.cctv")
 
 class OfficeGatewayDiscordMixin(CogBase):
     """Requires `self._pixelagents`, `self._discord_office_service`,
-    `self._discord_client_hub`, `self._webview_assets`, `self._corridor`,
-    `self._repository`, `self.bot` (all provided by `CogBase`)."""
+    `self._discord_client_hub`, `self._discord_state_lock`,
+    `self._discord_last_revision`, `self._webview_assets`,
+    `self._corridor`, `self._repository`, `self.bot` (all provided by
+    `CogBase`)."""
 
     async def cog_load(self) -> None:
         await super().cog_load()
@@ -41,22 +43,49 @@ class OfficeGatewayDiscordMixin(CogBase):
         )
 
     async def _on_discord_state_changed(self, event: OfficeStateChanged) -> None:
+        """Serialized against `_on_webview_ready_discord` via the same
+        lock, and only ever applied if strictly newer than whatever this
+        pipeline already broadcast or bootstrapped -- otherwise a live
+        update racing a bootstrap-in-progress could interleave on the
+        wire and leave a newly connecting client displaying the older of
+        the two (docs/cctv-design.md §3.3's "ignore if revision is not
+        newer" / §3.4's bootstrap lock)."""
+
+        async with self._discord_state_lock:
+            if event.state.revision <= self._discord_last_revision:
+                return
+            self._discord_last_revision = event.state.revision
+            await self._broadcast_discord_state(event.state)
+
+    async def _broadcast_discord_state(self, state: OfficeState) -> None:
+        await self._discord_client_hub.broadcast({"type": "layoutLoaded", "layout": state.layout})
+        # A seat-only mutation (saveAgentSeats) still publishes a complete
+        # OfficeStateChanged -- broadcast the seat effects too, or an
+        # avatar/palette change made in one tab would never reach another
+        # already-connected Discord-page tab (existingAgents carries each
+        # agent's palette/hueShift/seatId via agentMeta).
         await self._discord_client_hub.broadcast(
-            {"type": "layoutLoaded", "layout": event.state.layout}
+            self._discord_office_service.existing_agents_message(state.seats)
         )
 
     async def _on_webview_ready_discord(self, socket: web.WebSocketResponse) -> None:
         """Never broadcast -- send the bootstrap sequence to only the one
         connecting socket, re-reading current state fresh so a client
         that connects long after `cog_load` never sees a stale snapshot
-        from whenever cctv itself started (docs/cctv-design.md §2.4)."""
+        from whenever cctv itself started (docs/cctv-design.md §2.4).
+        Serialized against `_on_discord_state_changed` via the same lock
+        so a live update mid-bootstrap can never have its newer
+        `layoutLoaded` followed by this call's own, now-stale one."""
 
-        state = await self._pixelagents.office_state().read("discord")
-        messages = self._discord_office_service.bootstrap_messages(
-            assets=self._webview_assets.assets, seats=state.seats, layout=state.layout
-        )
-        for message in messages:
-            await self._discord_client_hub.send_to(socket, message)
+        async with self._discord_state_lock:
+            state = await self._pixelagents.office_state().read("discord")
+            if state.revision >= self._discord_last_revision:
+                self._discord_last_revision = state.revision
+            messages = self._discord_office_service.bootstrap_messages(
+                assets=self._webview_assets.assets, seats=state.seats, layout=state.layout
+            )
+            for message in messages:
+                await self._discord_client_hub.send_to(socket, message)
 
     async def _on_save_layout_discord(self, raw: dict[str, object]) -> None:
         try:
@@ -69,13 +98,20 @@ class OfficeGatewayDiscordMixin(CogBase):
         palette_count = max(
             len(characters) if isinstance(characters, (list, tuple)) else 0, DEFAULT_PALETTE_COUNT
         )
-        facade = self._pixelagents.office_state()
-        for agent_id, patch in incoming.items():
-            if not isinstance(patch, Mapping):
-                continue
-            await facade.apply_seat_patch(
-                "discord", str(agent_id), patch, palette_count=palette_count
-            )
+        patches = {
+            str(agent_id): patch
+            for agent_id, patch in incoming.items()
+            if isinstance(patch, Mapping)
+        }
+        if not patches:
+            return
+        # One bulk mutation for the whole incoming batch -- not one
+        # mutate_office_seats call (one Config write, one OfficeStateChanged
+        # publish) per agent, which would broadcast N times and leave a
+        # save that names many agents no more atomic than its slowest step.
+        await self._pixelagents.office_state().apply_seat_patches(
+            "discord", patches, palette_count=palette_count
+        )
 
     async def _authorize_discord_client(self, user_id: int) -> bool:
         return await self._can_edit_layout_user(user_id)

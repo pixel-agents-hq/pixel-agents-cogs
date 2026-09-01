@@ -20,10 +20,11 @@ from .cog_base import CogBase
 class CommandsMixin(CogBase):
     """Requires `self._repository`, `self._reply`, `self._pixelagents`,
     `self._websocket_server`, `self._discord_client_hub`,
-    `self._editor_client_hub`, `self._webview_assets`,
-    `self._sync_webview_assets`, `self._sync_all_guilds`,
-    `self._full_sync`, `self._despawn_guild` (all provided by `CogBase`
-    or its sibling mixins)."""
+    `self._editor_client_hub`, `self._discord_office_service`,
+    `self._webview_assets`, `self._sync_webview_assets`,
+    `self._sync_all_guilds`, `self._full_sync`, `self._despawn_guild`,
+    `self._authorize_discord_client` (all provided by `CogBase` or its
+    sibling mixins)."""
 
     @staticmethod
     def _guild(ctx: commands.Context) -> discord.Guild:
@@ -78,7 +79,9 @@ class CommandsMixin(CogBase):
         """Set the host the office server binds -- persist-only, reload to rebind."""
 
         await self._repository.set_host(host)
-        await self._reply.send_reply(ctx, f"Host set to `{host}`. Reload the cog to rebind.")
+        await self._reply.send_reply(
+            ctx, description=f"Host set to `{host}`. Reload the cog to rebind."
+        )
 
     @cctv_group.command(name="port")
     @commands.is_owner()
@@ -89,12 +92,14 @@ class CommandsMixin(CogBase):
         try:
             await self._repository.set_port(port)
         except ValueError:
-            await self._reply.send_reply(ctx, "Port must be between 1 and 65535.")
+            await self._reply.send_reply(ctx, description="Port must be between 1 and 65535.")
             return
         await self._reply.send_reply(
             ctx,
-            f"Port set to `{port}`. Reload the cog to rebind, and update your reverse proxy's "
-            "`/cctv/discord/ws` and `/cctv/editor/ws` routes to match.",
+            description=(
+                f"Port set to `{port}`. Reload the cog to rebind, and update your reverse "
+                "proxy's `/cctv/discord/ws` and `/cctv/editor/ws` routes to match."
+            ),
         )
 
     @cctv_group.command(name="discordcleardelay")
@@ -106,9 +111,11 @@ class CommandsMixin(CogBase):
         try:
             await self._repository.set_discord_clear_delay(seconds)
         except ValueError:
-            await self._reply.send_reply(ctx, "Delay must be 0 or greater.")
+            await self._reply.send_reply(ctx, description="Delay must be 0 or greater.")
             return
-        await self._reply.send_reply(ctx, f"Discord page clear delay set to `{seconds}s`.")
+        await self._reply.send_reply(
+            ctx, description=f"Discord page clear delay set to `{seconds}s`."
+        )
 
     @cctv_group.command(name="editorcleardelay")
     @commands.admin_or_permissions(administrator=True)
@@ -119,9 +126,11 @@ class CommandsMixin(CogBase):
         try:
             await self._repository.set_editor_clear_delay(seconds)
         except ValueError:
-            await self._reply.send_reply(ctx, "Delay must be 0 or greater.")
+            await self._reply.send_reply(ctx, description="Delay must be 0 or greater.")
             return
-        await self._reply.send_reply(ctx, f"Editor page clear delay set to `{seconds}s`.")
+        await self._reply.send_reply(
+            ctx, description=f"Editor page clear delay set to `{seconds}s`."
+        )
 
     @cctv_group.command(name="richpresence")
     @commands.admin_or_permissions(administrator=True)
@@ -130,7 +139,15 @@ class CommandsMixin(CogBase):
         """Set whether rich presence activity is broadcast to the Discord page."""
 
         await self._repository.set_broadcast_rich_presence(value)
-        await self._reply.send_reply(ctx, f"Rich presence broadcasting set to `{value}`.")
+        if not value:
+            # Persisting the flag alone only stops *future* presence
+            # updates from rendering -- whatever activity is already
+            # displayed on connected Discord pages stays visible until
+            # some other presence event happens to clear it. Clear it now.
+            await self._discord_office_service.clear_presence()
+        await self._reply.send_reply(
+            ctx, description=f"Rich presence broadcasting set to `{value}`."
+        )
 
     @cctv_group.command(name="messages")
     @commands.admin_or_permissions(administrator=True)
@@ -139,7 +156,7 @@ class CommandsMixin(CogBase):
         """Set whether Discord messages are broadcast as Discord-page tool bubbles."""
 
         await self._repository.set_broadcast_messages(value)
-        await self._reply.send_reply(ctx, f"Message broadcasting set to `{value}`.")
+        await self._reply.send_reply(ctx, description=f"Message broadcasting set to `{value}`.")
 
     @cctv_group.command(name="enable")
     @commands.guild_only()
@@ -149,8 +166,8 @@ class CommandsMixin(CogBase):
 
         guild = self._guild(ctx)
         await self._repository.set_guild_enabled(guild.id, True)
-        await self._reply.send_reply(ctx, "Enabled. Running full sync…")
-        await self._reply.send_reply(ctx, await self._full_sync(guild))
+        await self._reply.send_reply(ctx, description="Enabled. Running full sync…")
+        await self._reply.send_reply(ctx, description=await self._full_sync(guild))
 
     @cctv_group.command(name="disable")
     @commands.guild_only()
@@ -161,7 +178,18 @@ class CommandsMixin(CogBase):
         guild = self._guild(ctx)
         await self._repository.set_guild_enabled(guild.id, False)
         await self._despawn_guild(guild)
-        await self._reply.send_reply(ctx, "Disabled and despawned all tracked agents.")
+        # A keyholder already connected (and editing) via this guild may
+        # have no *other* enabled guild to authorize through -- without
+        # this, their socket keeps write access until it reconnects, even
+        # though _can_edit_layout_user would now say no. Ported from
+        # floorplan's own settings-change reauthorization (its
+        # `_reauthorize_editors_after_settings_change`), dropped when this
+        # cog was extracted; a keyholder role revoked directly in another
+        # guild's member list still isn't detectable here -- corridor has
+        # no event for that -- but this closes the one gap this command
+        # itself can cause.
+        await self._discord_client_hub.reauthorize(self._authorize_discord_client)
+        await self._reply.send_reply(ctx, description="Disabled and despawned all tracked agents.")
 
     @cctv_group.command(name="includebots")
     @commands.guild_only()
@@ -172,8 +200,10 @@ class CommandsMixin(CogBase):
 
         guild = self._guild(ctx)
         await self._repository.set_guild_include_bots(guild.id, value)
-        await self._reply.send_reply(ctx, f"include_bots set to `{value}`. Running sync…")
-        await self._reply.send_reply(ctx, await self._full_sync(guild))
+        await self._reply.send_reply(
+            ctx, description=f"include_bots set to `{value}`. Running sync…"
+        )
+        await self._reply.send_reply(ctx, description=await self._full_sync(guild))
 
     @cctv_group.command(name="sync")
     @commands.guild_only()
@@ -187,7 +217,7 @@ class CommandsMixin(CogBase):
                 ctx, "Guild is not enabled. Enable it first:", code=["[p]cctv enable"]
             )
             return
-        await self._reply.send_reply(ctx, await self._full_sync(guild))
+        await self._reply.send_reply(ctx, description=await self._full_sync(guild))
 
     @cctv_group.command(name="despawnall")
     @commands.guild_only()
@@ -197,7 +227,9 @@ class CommandsMixin(CogBase):
 
         guild = self._guild(ctx)
         await self._despawn_guild(guild)
-        await self._reply.send_reply(ctx, "Despawned all tracked agents for this guild.")
+        await self._reply.send_reply(
+            ctx, description="Despawned all tracked agents for this guild."
+        )
 
 
 __all__ = ["CommandsMixin"]

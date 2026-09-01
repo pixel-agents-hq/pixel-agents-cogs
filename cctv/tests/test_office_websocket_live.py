@@ -40,6 +40,14 @@ async def _next_layout_loaded(socket: aiohttp.ClientWebSocketResponse) -> object
     return None
 
 
+async def _next_existing_agents(socket: aiohttp.ClientWebSocketResponse) -> dict[str, object]:
+    async for raw in socket:
+        message = json.loads(raw.data)
+        if message.get("type") == "existingAgents":
+            return message
+    return {}
+
+
 class _LiveTestBase(unittest.IsolatedAsyncioTestCase):
     async def _start(self, *, port: int, corridor: FakeCorridor | None = None) -> Cctv:
         self._tmp = TemporaryDirectory()
@@ -164,6 +172,128 @@ class TestEditorPipeline(_LiveTestBase):
             layout = await _next_layout_loaded(socket)
 
         self.assertEqual(layout, _DEFAULT_LAYOUT)
+
+
+class TestSeatSavesBroadcastLive(_LiveTestBase):
+    """docs/cctv-design.md's "broadcast layout/seat effects" -- a
+    saveAgentSeats write publishes OfficeStateChanged exactly like a
+    layout write, and that live-delivery path must carry the updated
+    seat metadata to already-connected tabs, not just the layout."""
+
+    async def test_editor_seat_save_reaches_another_connected_tab(self) -> None:
+        from pixelagents.domain import GenuineAgentKey
+
+        cog = await self._start(port=_PORT + 7)
+        # existingAgents only ever reports seat metadata for a currently
+        # tracked agent -- seed one the same way a real A2A registration
+        # would, via the office service directly (that reconciliation
+        # itself is event_subscriptions_editor.py's job, not under test
+        # here).
+        await cog._editor_office_service.reconcile_genuine_agent(
+            GenuineAgentKey(agent_key="architect"), "architect", "online"
+        )
+        agent_id = str(cog._editor_office_service.genuine_agent_id("architect"))
+
+        async with (
+            aiohttp.ClientSession() as session,
+            session.ws_connect(f"http://127.0.0.1:{_PORT + 7}/cctv/editor/ws") as editor,
+            session.ws_connect(f"http://127.0.0.1:{_PORT + 7}/cctv/editor/ws") as viewer,
+        ):
+            await editor.send_str(
+                json.dumps({"type": "saveAgentSeats", "seats": {agent_id: {"palette": 2}}})
+            )
+            existing = await _next_existing_agents(viewer)
+
+        self.assertEqual(existing["agentMeta"][agent_id]["palette"], 2)
+
+    async def test_multi_agent_seat_save_applies_every_patch_in_one_batch(self) -> None:
+        from pixelagents.domain import GenuineAgentKey
+
+        cog = await self._start(port=_PORT + 8)
+        await cog._editor_office_service.reconcile_genuine_agent(
+            GenuineAgentKey(agent_key="architect"), "architect", "online"
+        )
+        await cog._editor_office_service.reconcile_genuine_agent(
+            GenuineAgentKey(agent_key="painter"), "painter", "online"
+        )
+        architect_id = str(cog._editor_office_service.genuine_agent_id("architect"))
+        painter_id = str(cog._editor_office_service.genuine_agent_id("painter"))
+
+        async with (
+            aiohttp.ClientSession() as session,
+            session.ws_connect(f"http://127.0.0.1:{_PORT + 8}/cctv/editor/ws") as editor,
+        ):
+            await editor.send_str(
+                json.dumps(
+                    {
+                        "type": "saveAgentSeats",
+                        "seats": {architect_id: {"palette": 1}, painter_id: {"palette": 2}},
+                    }
+                )
+            )
+            existing = await _next_existing_agents(editor)
+
+        self.assertEqual(existing["agentMeta"][architect_id]["palette"], 1)
+        self.assertEqual(existing["agentMeta"][painter_id]["palette"], 2)
+
+
+class TestReauthorizeOnGuildDisable(_LiveTestBase):
+    async def test_disabling_the_guild_revokes_an_already_authorized_sockets_write_access(
+        self,
+    ) -> None:
+        guild = FakeGuild(1)
+        member = FakeMember(7, guild=guild)
+        guild.add_member(member)
+        corridor = FakeCorridor(keyholders=frozenset({7}))
+        cog = await self._start(port=_PORT + 9, corridor=corridor)
+        await cog._repository.set_guild_enabled(guild.id, True)
+        cog.bot.guilds = [guild]
+        ticket = cog._tickets.mint(7)
+
+        async with (
+            aiohttp.ClientSession() as session,
+            session.ws_connect(
+                f"http://127.0.0.1:{_PORT + 9}/cctv/discord/ws?ticket={ticket}"
+            ) as socket,
+        ):
+            # Confirm the socket really did authorize before disabling.
+            still_editable_layout = {
+                "version": 1,
+                "cols": 2,
+                "rows": 1,
+                "tiles": [1, 1],
+                "furniture": [],
+            }
+            await socket.send_str(
+                json.dumps({"type": "saveLayout", "layout": still_editable_layout})
+            )
+            await socket.send_str(json.dumps({"type": "webviewReady"}))
+            layout = await _next_layout_loaded(socket)
+            assert isinstance(layout, dict)
+            self.assertEqual(layout["cols"], 2)
+
+            await cog.cmd_disable.callback(cog, _DisableContext(guild))
+
+            rejected_layout = {
+                "version": 1,
+                "cols": 3,
+                "rows": 1,
+                "tiles": [1, 1, 1],
+                "furniture": [],
+            }
+            await socket.send_str(json.dumps({"type": "saveLayout", "layout": rejected_layout}))
+            await socket.send_str(json.dumps({"type": "webviewReady"}))
+            layout_after = await _next_layout_loaded(socket)
+
+        assert isinstance(layout_after, dict)
+        self.assertEqual(layout_after["cols"], 2)  # unchanged -- the second save was dropped
+
+
+class _DisableContext:
+    """The narrow slice of `commands.Context` `cmd_disable` reads."""
+
+    def __init__(self, guild: FakeGuild) -> None:
+        self.guild = guild
 
 
 class TestOnePipelineNeverLeaksIntoTheOther(_LiveTestBase):

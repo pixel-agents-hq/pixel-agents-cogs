@@ -80,8 +80,8 @@ class OfficeStateService:
     async def set_layout(self, kind: OfficeStateKind, layout: dict[str, object]) -> OfficeState:
         async with self._locks[kind]:
             updated = await self._repository.set_layout(kind, layout)
-            await self._publish(kind, updated)
-            return updated
+        await self._publish(kind, updated)
+        return updated
 
     async def mutate_seats(
         self,
@@ -90,8 +90,28 @@ class OfficeStateService:
     ) -> tuple[OfficeState, MutationResult]:
         async with self._locks[kind]:
             updated, result = await self._repository.mutate_seats(kind, mutation)
-            await self._publish(kind, updated)
-            return updated, result
+        await self._publish(kind, updated)
+        return updated, result
+
+    async def set_layout_if_empty(
+        self, kind: OfficeStateKind, layout: dict[str, object]
+    ) -> OfficeState:
+        """Atomically seed `kind`'s `layout` only if it is still blank --
+        the check and the write happen under the same lock hold, unlike a
+        caller doing its own `read()` then conditionally calling
+        `set_layout()`, which has a real `await` gap between them: a
+        concurrent, genuine write could land in that gap and then be
+        clobbered by this stale seed. Returns the current aggregate
+        unchanged (no publish) if something had already seeded it by the
+        time this acquired the lock."""
+
+        async with self._locks[kind]:
+            current = await self._repository.get_or_create(kind)
+            if current.layout:
+                return current
+            updated = await self._repository.set_layout(kind, layout)
+        await self._publish(kind, updated)
+        return updated
 
     async def _publish(self, kind: OfficeStateKind, state: OfficeState) -> None:
         """Synchronous, awaited dispatch with per-subscriber isolation,
@@ -99,7 +119,13 @@ class OfficeStateService:
         additionally bounded to `PUBLISH_TIMEOUT_SECONDS`: a stuck
         subscriber is cancelled and logged, never blocks the writer (this
         runs after persistence already succeeded, see
-        docs/cctv-design.md §1.5/§2.5) or any other subscriber."""
+        docs/cctv-design.md §1.5/§2.5) or any other subscriber. Callers
+        invoke this only after releasing `kind`'s lock (see
+        docs/cctv-design.md §2.5's delivery rules: persist, release,
+        *then* deliver) -- holding the lock across delivery would let one
+        slow subscriber block every other reader/writer of `kind` for up
+        to `PUBLISH_TIMEOUT_SECONDS`, and would deadlock a subscriber that
+        itself reads or writes `kind` from inside its own handler."""
 
         event = OfficeStateChanged(state=state)
         for owner, handler in list(self._subscribers.get(kind, ())):

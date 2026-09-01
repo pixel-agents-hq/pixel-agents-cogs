@@ -38,7 +38,6 @@ class _Socket:
 class _PixelAgents:
     def __init__(self, state: OfficeState) -> None:
         self.state = state
-        self.set_layout_calls = 0
 
     async def office_state(self, kind: OfficeStateKind) -> OfficeState:
         assert kind == self.state.kind
@@ -47,7 +46,6 @@ class _PixelAgents:
     async def set_office_layout(
         self, kind: OfficeStateKind, layout: Mapping[str, object]
     ) -> OfficeState:
-        self.set_layout_calls += 1
         self.state = OfficeState(
             kind,
             deepcopy(dict(layout)),
@@ -103,10 +101,6 @@ class TestCctvPipeline(unittest.IsolatedAsyncioTestCase):
         )
         self.socket = _Socket()
         self.pipeline.clients.add(self.socket, is_editor=True)  # type: ignore[arg-type]
-        # A debounced layout save schedules a background flush task; cancel
-        # and flush it after each test so nothing is left pending across
-        # the event loop's teardown.
-        self.addAsyncCleanup(self.pipeline.close)
 
     async def test_bootstrap_orders_existing_agents_before_layout(self) -> None:
         await self.pipeline.seed_state(self.pixelagents.state)
@@ -149,83 +143,42 @@ class TestCctvPipeline(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(self.pixelagents.state.revision, 2)
 
-    async def test_layout_save_is_debounced_until_flushed(self) -> None:
+    async def test_layout_save_is_written_and_broadcast_immediately(self) -> None:
         from ..contracts import parse_client_message
 
         message = parse_client_message({"type": "saveLayout", "layout": _layout(2)})
         assert message is not None
 
         await self.pipeline.handle_message(self.socket, message)  # type: ignore[arg-type]
-        self.assertEqual(self.pixelagents.set_layout_calls, 0)
 
-        await self.pipeline.flush_pending_layout()
-
-        self.assertEqual(self.pixelagents.set_layout_calls, 1)
         self.assertEqual(self.pixelagents.state.layout["cols"], 2)
+        self.assertEqual(self.pixelagents.state.revision, 2)
 
-    async def test_rapid_layout_saves_collapse_to_one_write(self) -> None:
-        from ..contracts import parse_client_message
+    async def test_a_seat_only_revision_does_not_echo_layoutLoaded(self) -> None:
+        """A revision bump from an unrelated seat mutation (agent spawned,
+        palette assigned, ...) must not re-broadcast layoutLoaded -- an
+        editor client mid-edit has no other way to distinguish it from a
+        genuine external layout change, and the dirty-guard it relies on
+        client-side has a real gap right after Save. Only existingAgents
+        should go out for a seats-only change."""
 
-        for cols in (2, 3, 4):
-            message = parse_client_message({"type": "saveLayout", "layout": _layout(cols)})
-            assert message is not None
-            await self.pipeline.handle_message(self.socket, message)  # type: ignore[arg-type]
-
-        await self.pipeline.flush_pending_layout()
-
-        self.assertEqual(self.pixelagents.set_layout_calls, 1)
-        self.assertEqual(self.pixelagents.state.layout["cols"], 4)
-
-    async def test_flush_is_a_no_op_once_nothing_is_pending(self) -> None:
-        await self.pipeline.flush_pending_layout()
-
-        self.assertEqual(self.pixelagents.set_layout_calls, 0)
-
-    async def test_close_flushes_a_pending_layout_save(self) -> None:
-        from ..contracts import parse_client_message
-
-        message = parse_client_message({"type": "saveLayout", "layout": _layout(2)})
-        assert message is not None
-        await self.pipeline.handle_message(self.socket, message)  # type: ignore[arg-type]
-
-        await self.pipeline.close()
-
-        self.assertEqual(self.pixelagents.set_layout_calls, 1)
-
-    async def test_flushed_layout_save_excludes_the_writer_from_the_echo(self) -> None:
-        from ..contracts import parse_client_message
-
-        other_socket = _Socket()
-        self.pipeline.clients.add(other_socket, is_editor=True)  # type: ignore[arg-type]
-
-        message = parse_client_message({"type": "saveLayout", "layout": _layout(2)})
-        assert message is not None
-        await self.pipeline.handle_message(self.socket, message)  # type: ignore[arg-type]
-        await self.pipeline.flush_pending_layout()
-
-        await self.pipeline.state_changed(OfficeStateChanged(self.pixelagents.state))
-
-        # The writer's own socket never gets its own layout echoed back...
-        self.assertNotIn("layoutLoaded", [message["type"] for message in self.socket.messages])
-        # ...but every other connected client still does.
-        self.assertIn("layoutLoaded", [message["type"] for message in other_socket.messages])
-
-    async def test_a_later_revision_from_elsewhere_reaches_the_previous_writer_too(
-        self,
-    ) -> None:
-        from ..contracts import parse_client_message
-
-        message = parse_client_message({"type": "saveLayout", "layout": _layout(2)})
-        assert message is not None
-        await self.pipeline.handle_message(self.socket, message)  # type: ignore[arg-type]
-        await self.pipeline.flush_pending_layout()
-        await self.pipeline.state_changed(OfficeStateChanged(self.pixelagents.state))
-        self.socket.messages.clear()
-
-        externally_updated = OfficeState(
-            OfficeStateKind.DISCORD, _layout(3), self.pixelagents.state.seats, 99
+        await self.pipeline.seed_state(self.pixelagents.state)
+        seats_only = OfficeState(
+            OfficeStateKind.DISCORD, self.pixelagents.state.layout, {"1": {"palette": 0}}, 2
         )
-        await self.pipeline.state_changed(OfficeStateChanged(externally_updated))
+
+        await self.pipeline.state_changed(OfficeStateChanged(seats_only))
+
+        self.assertEqual(
+            [message["type"] for message in self.socket.messages],
+            ["existingAgents"],
+        )
+
+    async def test_a_genuine_layout_change_still_broadcasts_layoutLoaded(self) -> None:
+        await self.pipeline.seed_state(self.pixelagents.state)
+        layout_changed = OfficeState(OfficeStateKind.DISCORD, _layout(2), {}, 2)
+
+        await self.pipeline.state_changed(OfficeStateChanged(layout_changed))
 
         self.assertIn("layoutLoaded", [message["type"] for message in self.socket.messages])
 

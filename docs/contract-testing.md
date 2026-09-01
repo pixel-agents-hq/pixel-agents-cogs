@@ -240,11 +240,17 @@ and fails on any diff from the committed copy, instead of silently
 overwriting — so a change to `outbound.py` always shows up as a reviewable
 diff to this file in the same PR. Checked two ways:
 
-- **Offline**, every PR
-  ([`contracts/pixel_agents/lint_outbound_contract.py`](../contracts/pixel_agents/lint_outbound_contract.py)):
-  do `outbound.py`'s builders still produce exactly what we've committed
-  to? No clone needed — reuses `verify_outbound._capture_messages()`,
-  which drives `OfficeService` entirely in-memory.
+- **Offline**, every PR touching `pixelagents/contracts/outbound.py`,
+  `pixelagents/application/office.py`, or anything under
+  `contracts/pixel_agents/`
+  ([`.github/workflows/pixel-agents-contract-lint.yml`](../.github/workflows/pixel-agents-contract-lint.yml),
+  plus the same two steps in the `pixelagents` leg of `cogs-quality.yml`):
+  does `generate_consumer_contract.py --check` still match the committed
+  file, and do
+  [`contracts/pixel_agents/lint_outbound_contract.py`](../contracts/pixel_agents/lint_outbound_contract.py)'s
+  builders still produce exactly what we've committed to? No clone
+  needed — reuses `verify_outbound._capture_messages()`, which drives
+  `OfficeService` entirely in-memory.
 - **Live**, scheduled + PR-gated (a `consumer_contract_drift` check
   appended to `verify_outbound.py`'s existing checks): does upstream's
   actual, currently-pinned `core/asyncapi.yaml` still support every field
@@ -338,6 +344,10 @@ domain models:
 
 Both generators support `--check`; CI fails if the committed YAML differs from
 a fresh render. `lint_corridor_contract.py` additionally confirms every agent
-event remains cross-referenced in the Pub/Sub design document. The office-state
-contract has its own generator and unit tests because it deliberately is not an
-`Agent*` activity event and does not appear in Testbench's activity UI.
+event remains cross-referenced in the Pub/Sub design document, and
+`lint_office_state_contract.py` does the same job for `office_state.yaml`
+against `docs/cctv-design.md`'s text. The office-state contract has its own
+generator and unit tests because it deliberately is not an `Agent*` activity
+event and does not appear in Testbench's activity UI. All four checks — both
+generators' `--check` and both lint scripts — run in the `corridor` leg of
+`cogs-quality.yml`.

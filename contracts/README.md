@@ -92,7 +92,11 @@ doc's "Verifying this design: two committed contracts" section.
 | `corridor/generate_corridor_contract.py` | Thin CLI wrapper: renders and `--check`s/writes `../corridor/corridor.yaml` from `corridor.event_catalog.build_contract()` (**committed**, not gitignored — CI fails on drift instead of always overwriting) |
 | [`../corridor/corridor.yaml`](../corridor/corridor.yaml) | Every `Agent`-prefixed type in `corridor/domain/models.py`; generated, committed, reviewable. Lives inside `corridor/`, not here — see the bullet above |
 | `corridor/lint_corridor_contract.py` | CI lint: fails if a name declared in `corridor.yaml` isn't mentioned in `docs/corridor-pubsub-design.md`'s text (doc cross-reference only — structural correctness against real code is `generate_corridor_contract.py --check`'s job) |
+| `corridor/generate_office_state_contract.py` | Thin CLI wrapper: renders and `--check`s/writes `../corridor/office_state.yaml` from `corridor.office_state_catalog.build_contract()` (**committed**, not gitignored — CI fails on drift instead of always overwriting) |
+| [`../corridor/office_state.yaml`](../corridor/office_state.yaml) | `OfficeState`/`OfficeStateChanged`, generated, committed, reviewable. Deliberately separate from `corridor.yaml` because office state isn't an `Agent*` activity event and doesn't appear in Testbench's activity UI |
+| `corridor/lint_office_state_contract.py` | CI lint: fails if a name declared in `office_state.yaml` isn't mentioned in `docs/cctv-design.md`'s text (same doc-cross-reference role as `lint_corridor_contract.py`, but against `docs/cctv-design.md` instead of the Pub/Sub design doc) |
 | `discord_replies/lint_reply_channel.py` | CI lint: fails on a raw Discord send reachable from a command handler without going through corridor's `send_reply`/`render_reply` |
+| `ast_call_graph.py` | Shared AST call-graph crawling helpers (`index_functions`/`crawl_call_graph`) used by `discord_replies/lint_reply_channel.py` to follow `self.<name>(...)` calls across a package rather than just one function's own body |
 
 ## Running checks locally
 
@@ -109,6 +113,8 @@ python -m unittest discover -s contracts/pixel_agents/tests -v
 
 python -m contracts.corridor.generate_corridor_contract
 python -m contracts.corridor.lint_corridor_contract
+python -m contracts.corridor.generate_office_state_contract
+python -m contracts.corridor.lint_office_state_contract
 python -m unittest discover -s contracts/corridor/tests -v
 ```
 

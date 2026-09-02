@@ -231,7 +231,7 @@ every cog removal, does the cleanup for free.
 
 | Command | Permission | UI/service invoked |
 |---|---|---|
-| `[p]toolbox tools` | Bot owner | Opens `ToolSelectionView`: select/deselect a candidate command, toggle a tool's global enabled default |
+| `[p]toolbox tools [search]` | Bot owner | Opens `ToolSelectionView`: select/deselect a candidate command, toggle a tool's global enabled default. With `search`, only candidates whose qualified name contains it (case-insensitive) are shown |
 | `[p]toolbox tools guild` | Guild admin (`manage_guild` or Administrator) | Opens `ToolGuildOverrideView`: enable/disable, or reset to default, any currently registered tool's visibility for this guild |
 
 Both commands carry `@commands.guild_only()`, so neither panel can be opened
@@ -241,7 +241,13 @@ run `[p]toolbox tools` in.
 Candidates for `[p]toolbox tools` are enumerated with `bot.walk_commands()`
 and filtered by `list_candidate_commands`, the same way Red's own help
 formatter filters commands for `[p]help`: skip `hidden`, skip a command
-that's `not enabled`, skip one the invoking owner can't `can_run`. Each
+that's `not enabled`, skip one the invoking owner can't `can_run`. An
+optional `search` argument narrows this to commands whose qualified name
+contains it (case-insensitive substring match), checked before the
+hidden/enabled/can_run filters. `[p]toolbox tools guild` still resolves as
+the `guild` subcommand rather than a search term -- discord.py's group
+dispatch matches the first word against a registered subcommand name
+before falling through to the group's own callback. Each
 resulting row shows the command's qualified name, its `short_doc`, its
 current state (`already an @llm_tool` / `selected, enabled` / `selected,
 disabled` / `not selected`), and one action appropriate to that state. Both

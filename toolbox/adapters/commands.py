@@ -112,12 +112,13 @@ class CommandsMixin:
     @toolbox_group.group(name="tools", invoke_without_command=True)
     @commands.guild_only()
     @commands.is_owner()
-    async def tools_group(self, ctx: commands.Context) -> None:
+    async def tools_group(self, ctx: commands.Context, search: str | None = None) -> None:
         """Choose which Discord commands are exposed to the LLM as tools.
 
         Every command listed in `[p]help` you can run is a candidate --
         select one to turn it into an LLM tool, or toggle whether an
-        already-tool-eligible command is enabled by default. Use
+        already-tool-eligible command is enabled by default. Pass `search`
+        to only list candidates whose name contains it. Use
         `[p]toolbox tools guild` to override visibility for this server
         only.
         """
@@ -125,7 +126,7 @@ class CommandsMixin:
         if ctx.invoked_subcommand is not None:
             return
         selected = await self._tool_selection_service.list_selected()
-        candidates = await list_candidate_commands(ctx.bot.walk_commands(), ctx, selected)
+        candidates = await list_candidate_commands(ctx.bot.walk_commands(), ctx, selected, search)
         enabled_defaults = await self._tool_visibility_service.all_defaults()
         await ctx.send(view=ToolSelectionView(candidates, 0, ctx.author.id, enabled_defaults))
 

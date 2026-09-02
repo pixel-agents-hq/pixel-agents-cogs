@@ -259,12 +259,18 @@ agent binds anything of its own.
   `AgentPresenceChanged` directly, so a registering cog never hand-rolls
   a separate presence-publish call that could drift out of sync with its
   actual registration state.
-- **Topology stays hub-and-spoke.** Only pico holds an A2A client; every
-  other agent contributes an `AgentExecutor` for corridor to run and
-  never itself calls another agent. Corridor's directory is where
-  executors are registered and mounted -- it does not turn any other cog
-  into a second coordinator, and no agent in this repo delegates to
-  another agent.
+- **Topology stays hub-and-spoke, with one narrow, read-only exception.**
+  Pico holds the one A2A client used for general-purpose delegation; every
+  agent it reaches contributes an `AgentExecutor` for corridor to run and
+  never calls back into pico. Corridor's directory is where executors are
+  registered and mounted -- it does not turn any other cog into a second
+  general-purpose coordinator. The one exception is
+  `painter/tools/consult_architect_tool.py`: painter resolves architect's
+  registered URL itself via `corridor.list_agents()` and calls it
+  directly, peer-to-peer, bypassing pico entirely -- but that call is
+  strictly read-only by construction (see docs/painter-design.md): painter
+  has no tool that can ask architect to change anything, and architect has
+  no tool that accepts a color.
 - **Health is directory membership, not liveness.** A card in the
   directory means "this agent registered and hasn't unregistered," not
   "this agent is currently reachable." A dead-but-still-registered agent

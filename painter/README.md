@@ -45,5 +45,9 @@ optional `consult_architect` tool then becomes unavailable.
 | `recolor_furniture` | Recolor one furniture item |
 | `recolor_furniture_by_style` | Recolor matching furniture |
 
+Painter's LLM tool loop also adapts any MCP tools enabled for Painter in
+Corridor's agent-tool registry (e.g. Suggestionbox's `report_error`/
+`suggest_improvement`, gated per agent via `[p]suggestionbox agents`).
+
 See [Architecture.md](Architecture.md) and
 [`docs/cctv-design.md`](../docs/cctv-design.md).

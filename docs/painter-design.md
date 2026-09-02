@@ -534,8 +534,8 @@ the reflection filter would have been a worse fit than the direct hook.
 - [x] `architect/infrastructure/settings_repository.py` drops `layout()`/`set_layout()` (kept `legacy_layout()`/`clear_legacy_layout()` for migration), keeps the rest
 - [x] One-time migration on architect `cog_load` (`_migrate_legacy_layout`, self-guarding by state)
 - [x] `architect`'s `required_cogs` gains nothing new (already depends on pixelagents)
-- [ ] Update `pixelagents/Architecture.md` and `README.md` for the new IR/storage ownership
-- [ ] Update `docs/architecture.md` and `docs/AGENTS.md` dependency graph/descriptions
+- [x] Update `pixelagents/Architecture.md` and `README.md` for the new IR/storage ownership
+- [x] Update `docs/architecture.md` and `docs/AGENTS.md` dependency graph/descriptions
 - [x] All existing architect tests pass (import paths updated; `test_office_ir.py`/`test_pixel_agents_adapter.py`/`test_color_names.py`/`test_furniture_styles.py` moved to `pixelagents/tests/` since they test code that physically moved)
 - [x] New/updated pixelagents-side tests: moved suites above, plus `test_architecture.py`'s `test_framework_resources_have_one_owner_each`
 - [x] New architect-side tests: `TestLegacyLayoutMigration` (`test_layout_seeding.py`), updated `test_settings_repository.py`

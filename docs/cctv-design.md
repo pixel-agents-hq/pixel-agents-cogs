@@ -230,6 +230,9 @@ proxy exposes two distinct live paths:
 - `/cctv/discord/ws`
 - `/cctv/editor/ws`
 
+The same listener also answers `GET /cctv/health` with a JSON status snapshot,
+for a reverse proxy or uptime monitor that should not depend on Discord.
+
 One listener/router dispatches those paths to two independent pipelines. Each
 pipeline has its own `ClientHub`, `OfficeService`, current revision, bootstrap
 lock, and message handler. Only static assets and the TCP listener are shared.

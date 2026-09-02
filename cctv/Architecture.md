@@ -14,7 +14,7 @@ persists it.
 | `application/tasks.py` | Supervised delayed activity clears |
 | `infrastructure/settings.py` | Fresh CCTV Config identity |
 | `infrastructure/client_hub.py` | Per-page connections, editor flags, and broadcasts |
-| `infrastructure/server.py` | One aiohttp listener and two WebSocket routes |
+| `infrastructure/server.py` | One aiohttp listener, two WebSocket routes, and a JSON health endpoint |
 | `infrastructure/tickets.py` | Short-lived Discord-page browser identity tickets |
 | `infrastructure/webview.py` | Pixelagents bundle loading and per-page HTML rewriting |
 | `adapters/dashboard.py` | Discord/editor/session/static Dashboard routes |
@@ -93,6 +93,9 @@ authorization fails closed if Discord or Corridor lookups fail.
 
 Bundle, state, and listener failures become health reasons rather than load
 failures. Dashboard page access retries the bundle/state read, so repairs do not
-require a restart unless the listener itself must rebind. Shutdown removes all
-Corridor subscriptions, cancels supervised tasks, closes both hubs and the
-listener, and clears the pipelines.
+require a restart unless the listener itself must rebind. The listener also
+exposes `GET /cctv/health`, returning the same status/listener/assets/pipeline
+snapshot as `[p]cctv status` as JSON, for reverse-proxy or uptime-monitor checks
+that don't go through Discord. Shutdown removes all Corridor subscriptions,
+cancels supervised tasks, closes both hubs and the listener, and clears the
+pipelines.

@@ -33,6 +33,10 @@ default; route these public WebSocket paths to it:
 /cctv/editor/ws
 ```
 
+The same listener also serves `GET /cctv/health`, a JSON status endpoint
+(listener/assets/pipeline health) suitable for a reverse-proxy or uptime-monitor
+check outside Discord.
+
 The former `/ws`, `/architect/ws`, `/third-party/floorplan`, and
 `/third-party/architect` routes are intentionally absent. There are no redirects
 or compatibility aliases.

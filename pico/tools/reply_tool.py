@@ -18,7 +18,9 @@ from typing import Protocol
 
 from pydantic import BaseModel, Field
 
-from corridor.domain import AgentRef, AgentReplied, ReplyField
+from corridor.domain import AgentRef, ReplyField
+
+from .activity import publish_agent_replied
 
 log = logging.getLogger("red.pico")
 
@@ -131,23 +133,18 @@ class ReplyTool:
         return ReplyOutput(sent=True, message_id=message.id, error=None)
 
     async def _publish_agent_replied(self, raw_input: ReplyInput) -> None:
-        # A separate try/except from send_reply's above -- the message was
-        # already sent successfully by this point, so a corridor bus
+        # Separate from send_reply's own try/except above -- the message
+        # was already sent successfully by this point, so a corridor bus
         # failure here must never turn that into a reported tool failure.
         if self._bot_user_id is None:
             return
         summary = raw_input.content or raw_input.description or raw_input.title or ""
-        try:
-            await self._corridor.publish_event(
-                AgentReplied(
-                    agent=AgentRef(
-                        discord_user_id=self._bot_user_id, guild_id=self._guild_id, is_bot=True
-                    ),
-                    summary=summary,
-                )
-            )
-        except Exception as exc:
-            log.warning("pico: failed to publish AgentReplied: %s", exc)
+        await publish_agent_replied(
+            self._corridor,
+            AgentRef(discord_user_id=self._bot_user_id, guild_id=self._guild_id, is_bot=True),
+            summary,
+            tool_name=self.name,
+        )
 
 
 __all__ = [

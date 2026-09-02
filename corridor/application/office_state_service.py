@@ -15,9 +15,12 @@ from ..domain import (
     SeatRecords,
     copy_office_state,
 )
-from .event_bus_service import EventBusService
+from .event_bus_service import DEFAULT_SUBSCRIBER_TIMEOUT, EventBusService
 
-OFFICE_STATE_SUBSCRIBER_TIMEOUT = 5.0
+# Kept as its own name (rather than importing DEFAULT_SUBSCRIBER_TIMEOUT
+# directly at each call site below) since corridor/tests/test_office_state_service.py
+# patches this exact module attribute.
+OFFICE_STATE_SUBSCRIBER_TIMEOUT = DEFAULT_SUBSCRIBER_TIMEOUT
 OfficeStateHandler = Callable[[OfficeStateChanged], Awaitable[None]]
 MutationResult = TypeVar("MutationResult")
 

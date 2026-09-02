@@ -1,37 +1,19 @@
-"""Painter's Semantic IR adapter over the revisioned editor aggregate."""
+"""Re-exports pixelagents' shared `OfficeLayoutRepository`.
+
+Architect and painter both load/save the same `OfficeStateKind.EDITOR`
+aggregate through an identical decode/encode round trip, so the real
+implementation lives once in `pixelagents.infrastructure.office_layout_repository`
+(pixelagents already owns the Semantic IR domain model and codec) --
+this module keeps painter's own existing import path
+(`..infrastructure.office_layout_repository`) working unchanged, the same
+shim pattern `architect/domain/__init__.py` already uses for `Office`.
+"""
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
-from typing import Protocol
-
-from corridor.domain import OfficeState, OfficeStateKind
-from pixelagents.domain import Office
-from pixelagents.infrastructure.furniture_styles import FurnitureStyleManifest
-from pixelagents.infrastructure.pixel_agents_adapter import decode, encode
-
-
-class SupportsOfficeState(Protocol):
-    async def office_state(self, kind: OfficeStateKind) -> OfficeState: ...
-
-    async def set_office_layout(
-        self,
-        kind: OfficeStateKind,
-        layout: Mapping[str, object],
-    ) -> OfficeState: ...
-
-
-class OfficeLayoutRepository:
-    def __init__(self, pixelagents: Callable[[], SupportsOfficeState]) -> None:
-        self._pixelagents = pixelagents
-
-    async def load(self, styles: FurnitureStyleManifest) -> Office:
-        state = await self._pixelagents().office_state(OfficeStateKind.EDITOR)
-        return decode(state.layout, styles)
-
-    async def save(self, office: Office, styles: FurnitureStyleManifest) -> None:
-        raw = encode(office, styles)
-        await self._pixelagents().set_office_layout(OfficeStateKind.EDITOR, raw)
-
+from pixelagents.infrastructure.office_layout_repository import (
+    OfficeLayoutRepository,
+    SupportsOfficeState,
+)
 
 __all__ = ["OfficeLayoutRepository", "SupportsOfficeState"]

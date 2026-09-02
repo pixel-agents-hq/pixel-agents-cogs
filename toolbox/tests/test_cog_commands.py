@@ -15,12 +15,14 @@ import unittest
 from redbot.core.errors import CogLoadError
 
 from .. import setup
+from ..adapters.tool_panel import ToolSelectionView
 from ..application import NodeService
 from ..domain import NodeInstallation
 from ..infrastructure import NodeInstallError
 from ..toolbox import Toolbox
 from .conftest import FakeBot, FakeContext, FakeCorridor
 from .test_application_service import FakeNodeInstaller, FakeNodeRepository
+from .test_tool_registration_resync import _StubCommand
 
 
 def _descriptions(corridor: FakeCorridor) -> list[str | None]:
@@ -88,6 +90,59 @@ class TestNodeCommands(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             _descriptions(self.bot.corridor)[-1], "Node.js 20.17.0 (`/data/node/20.17.0`)"
         )
+
+
+class TestToolsGroupSearch(unittest.IsolatedAsyncioTestCase):
+    """`[p]toolbox tools [search]` -- the bare group callback, invoked
+    directly the same way TestNodeCommands exercises node_install/etc.
+    Real discord.py Group dispatch (does "guild" resolve to the `guild`
+    subcommand while any other word falls through here as `search`?) was
+    verified separately against the real discord.py library, since this
+    cog's stubbed `_FakeCommand` (installed by corridor.testing for the
+    whole suite) does not implement subcommand routing at all -- there is
+    nothing here for a stub-level test to meaningfully exercise."""
+
+    async def asyncSetUp(self) -> None:
+        self.bot = FakeBot()
+        self.cog = Toolbox(bot=self.bot)
+        self.cog._service = NodeService(FakeNodeRepository(), FakeNodeInstaller())
+        await self.cog.cog_load()
+        self.bot.walk_commands_result = [
+            _StubCommand(None, qualified_name="toolbox node install"),
+            _StubCommand(None, qualified_name="toolbox node uninstall"),
+            _StubCommand(None, qualified_name="toolbox tools guild"),
+        ]
+        self.ctx = FakeContext(bot=self.bot)
+
+    def _shown_candidates(self) -> list[str]:
+        view = self.ctx.sent_views[-1]
+        assert isinstance(view, ToolSelectionView)
+        return [candidate.qualified_name for candidate in view.candidates]
+
+    async def test_no_search_lists_every_candidate(self) -> None:
+        await self.cog.tools_group.callback(self.cog, self.ctx, None)
+
+        self.assertEqual(
+            self._shown_candidates(),
+            ["toolbox node install", "toolbox node uninstall", "toolbox tools guild"],
+        )
+
+    async def test_search_filters_to_matching_candidates(self) -> None:
+        await self.cog.tools_group.callback(self.cog, self.ctx, "node")
+
+        self.assertEqual(
+            self._shown_candidates(), ["toolbox node install", "toolbox node uninstall"]
+        )
+
+    async def test_search_is_case_insensitive(self) -> None:
+        await self.cog.tools_group.callback(self.cog, self.ctx, "NODE")
+
+        self.assertEqual(len(self._shown_candidates()), 2)
+
+    async def test_search_with_no_match_lists_nothing(self) -> None:
+        await self.cog.tools_group.callback(self.cog, self.ctx, "nonexistent")
+
+        self.assertEqual(self._shown_candidates(), [])
 
 
 class TestCogLoadReactivatesInstalledNode(unittest.IsolatedAsyncioTestCase):

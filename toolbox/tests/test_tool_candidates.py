@@ -128,5 +128,45 @@ class TestListCandidateCommands(unittest.IsolatedAsyncioTestCase):
         )
 
 
+class TestSearchFiltering(unittest.IsolatedAsyncioTestCase):
+    def _commands(self) -> list[_StubCommand]:
+        return [
+            _StubCommand(qualified_name="toolbox node install"),
+            _StubCommand(qualified_name="toolbox node uninstall"),
+            _StubCommand(qualified_name="toolbox tools guild"),
+        ]
+
+    async def test_no_search_returns_every_candidate(self) -> None:
+        candidates = await list_candidate_commands(
+            self._commands(), ctx=object(), selected=frozenset()
+        )
+
+        self.assertEqual(len(candidates), 3)
+
+    async def test_search_filters_to_matching_names(self) -> None:
+        candidates = await list_candidate_commands(
+            self._commands(), ctx=object(), selected=frozenset(), search="node"
+        )
+
+        self.assertEqual(
+            [candidate.qualified_name for candidate in candidates],
+            ["toolbox node install", "toolbox node uninstall"],
+        )
+
+    async def test_search_is_case_insensitive(self) -> None:
+        candidates = await list_candidate_commands(
+            self._commands(), ctx=object(), selected=frozenset(), search="NODE"
+        )
+
+        self.assertEqual(len(candidates), 2)
+
+    async def test_search_with_no_match_returns_no_candidates(self) -> None:
+        candidates = await list_candidate_commands(
+            self._commands(), ctx=object(), selected=frozenset(), search="nonexistent"
+        )
+
+        self.assertEqual(candidates, [])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -13,13 +13,32 @@ class FakeGuild:
         self.id = guild_id
 
 
-class FakeContext:
-    def __init__(self, guild_id: int | None = 12345) -> None:
-        self.guild = FakeGuild(guild_id) if guild_id is not None else None
-        self.sent: list[str] = []
+class FakeAuthor:
+    def __init__(self, author_id: int) -> None:
+        self.id = author_id
 
-    async def send(self, content: str = "") -> None:
+
+class FakeContext:
+    def __init__(
+        self, guild_id: int | None = 12345, *, author_id: int = 999, bot: Any = None
+    ) -> None:
+        self.guild = FakeGuild(guild_id) if guild_id is not None else None
+        self.author = FakeAuthor(author_id)
+        self.bot = bot
+        # Mirrors discord.py's own Context.invoked_subcommand -- real Group
+        # dispatch only calls a group's own callback when no subcommand
+        # matched, so this is always None for direct callback invocation
+        # the way this cog's tests call e.g. tools_group.callback(...).
+        self.invoked_subcommand: Any = None
+        self.sent: list[str] = []
+        # Positional `content=` calls (the common case elsewhere in this
+        # cog) leave the corresponding slot None here -- only tools_group's
+        # `ctx.send(view=...)` populates it.
+        self.sent_views: list[Any] = []
+
+    async def send(self, content: str = "", *, view: Any = None) -> None:
         self.sent.append(content)
+        self.sent_views.append(view)
 
     async def send_help(self) -> None:
         self.sent.append("__help__")

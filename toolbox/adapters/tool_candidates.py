@@ -8,6 +8,11 @@ plain iterable of command-like objects rather than a live Cog/Bot, so it's
 testable against small stand-ins the same way corridor's
 llm_tool_registration.py and toolbox's own tool_wrapping.py are -- a real
 `bot.walk_commands()` result satisfies the same shape.
+
+An optional `search` narrows the result to commands whose qualified name
+contains it (case-insensitive substring match) -- checked before the
+hidden/enabled/can_run filters so a non-matching command never pays for an
+awaited `can_run`.
 """
 
 from __future__ import annotations
@@ -32,13 +37,16 @@ class CandidateCommand:
 
 
 async def list_candidate_commands(
-    commands: Iterable[Any], ctx: Any, selected: frozenset[str]
+    commands: Iterable[Any], ctx: Any, selected: frozenset[str], search: str | None = None
 ) -> list[CandidateCommand]:
+    needle = search.lower() if search else None
     seen: set[str] = set()
     candidates: list[CandidateCommand] = []
     for command in commands:
         qualified_name = getattr(command, "qualified_name", None)
         if not isinstance(qualified_name, str) or not qualified_name or qualified_name in seen:
+            continue
+        if needle is not None and needle not in qualified_name.lower():
             continue
         if getattr(command, "hidden", False):
             continue

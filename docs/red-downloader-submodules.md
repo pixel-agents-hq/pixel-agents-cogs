@@ -26,14 +26,11 @@ HTTP and ship any assets needed by the cog in the cog package. A Pixel Index
 submodule is not required for that integration, and office-cogs has no git
 submodules and no `.gitmodules` file.
 
-The Pixel Agents webview asked the same question issue #7 raised for Pixel
-Index's vendoring: how does a top-level, build-time-only dependency reach an
-installed cog when Downloader will neither copy nor build one? A first pass
-at #7 tried a repo-root `vendor/pixel-agents` submodule with the built
-`webview_dist/` committed inside `pixelagents/` as the shipped artifact —
-consistent with "ship any assets needed by the cog in the cog package" above,
-and with the "Consequently" bullets below. That was superseded before merge:
-`webview_dist/` is not committed at all now. Instead,
+The Pixel Agents webview raises the same question as Pixel Index's
+vendoring: how does a top-level, build-time-only dependency reach an
+installed cog when Downloader will neither copy nor build one? office-cogs
+answers it without a submodule at all: no `webview_dist/` build output is
+committed anywhere in the repo. Instead,
 `pixelagents/infrastructure/webview_build.py` clones the pinned commit
 (`pixelagents/infrastructure/webview_vendor.commit`, shipped *inside*
 `pixelagents/` for the same "Downloader only copies this directory" reason
@@ -44,9 +41,10 @@ time, into `redbot.core.data_manager.cog_data_path(self)` rather than
 submodule question: there is no submodule, top-level or nested, for
 Downloader to mishandle, and the build runs where Downloader's copy step
 already can't reach — after install, inside the cog's own code. See
-`pixelagents/Architecture.md`, "Building `webview_dist`", for the full
-mechanism, and its "degrades gracefully when git/node/npm are missing"
-behavior, which a repo-root submodule could never have needed to think about.
+`pixelagents/Architecture.md`'s "Webview build" section for the full
+mechanism, including the `BuildOutcome` (`ok`/`missing_tools`/`status_line`)
+a failed build reports without ever failing `cog_load` itself — a case a
+repo-root submodule could never have needed to think about.
 
 ## What Downloader runs
 

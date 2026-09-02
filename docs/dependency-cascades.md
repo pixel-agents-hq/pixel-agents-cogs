@@ -1,5 +1,7 @@
 # Runtime dependency cascades: unload and refresh
 
+## Overview
+
 [`dependency-loading.md`](dependency-loading.md) covers how a dependent cog
 *acquires* a live reference to a dependency it needs
 (`ensure_loaded`/`ensure_importable`). This doc covers the other half: what
@@ -15,8 +17,8 @@ Same relationships as [`architecture.md`](architecture.md)'s own diagram —
 kept here too because the two runtime behaviors below only make sense in
 light of *where* `corridor` and `pixelagents` sit in it: both are two-hop
 hubs, not leaves, so a dependent five minutes into being loaded can still be
-sitting on a reference to a `corridor`/`pixelagents` instance that no longer
-exists.
+holding a reference to a `corridor`/`pixelagents` instance that has since
+been discarded and replaced.
 
 ```mermaid
 flowchart BT
@@ -139,9 +141,11 @@ doing in the gap.
 it (a stale Cog reference) isn't broken *yet* — it's only broken the next
 time it actually calls through that reference. That's a strictly better
 failure mode than being force-unloaded, provided something eventually hands
-the dependent the fresh instance. Until this was added, nothing did.
+the dependent the fresh instance — which is exactly what the push mechanism
+below does. Without it, a dependent has no way to notice `pixelagents` was
+replaced underneath it.
 
-### The incident this fixes
+### Example: a stale reference survives an unrelated reload
 
 `architect`'s hotreload (triggered by an unrelated file edit) ran `Red`'s
 own `_reload(["architect"])`. `cctv` had last resolved its own
@@ -308,3 +312,12 @@ see the four existing implementations. If it depends on `corridor` (every
 cog does), it needs the `register_dependent`/`unregister_dependent` pair in
 `cog_load`/`cog_unload`; the `.cookiecutter` template already generates
 this for you.
+
+## Related docs
+
+- [`dependency-loading.md`](dependency-loading.md) — how a dependent
+  acquires its `corridor`/`pixelagents` reference in the first place.
+- [`architecture.md`](architecture.md) — the full cross-cog dependency
+  graph reproduced at the top of this doc.
+- [`corridor.md`](corridor.md) — the permission/reply/A2A services that
+  make `corridor` the one dependency no cog can run without.

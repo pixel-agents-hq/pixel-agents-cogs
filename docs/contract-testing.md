@@ -42,7 +42,7 @@ can't drift from what the code actually depends on.
      shape change becomes a classified, user-safe error instead of a
      `KeyError`/`AttributeError` deep in a Discord view.
   2. **The contract generator at CI time** — same models, same meaning,
-     used to build the JSON Schema that gets checked against a live
+     feeding the JSON Schema that gets checked against a live
      environment.
 - [`contracts/pixel_index/endpoints.py`](../contracts/pixel_index/endpoints.py)
   — the part that genuinely can't be derived from code: which endpoints get
@@ -67,14 +67,15 @@ service, and models are reconciled with reality.
 
 #### Why generate instead of hand-write the schema
 
-An earlier version of this hand-wrote `contract.yaml`. It missed fields
-the integration actually reads (`furniture`, `visibleCols`, `areas`, `pets`,
-`seats` were absent from the first draft) simply because nobody re-read the
-whole file top-to-bottom while writing the YAML by hand. Generating the
-schema from the same models that parse the response at runtime means the
-contract can't fall out of sync with the code the way hand-maintained
-duplication can — there's exactly one description of "what we depend on,"
-and both the bot and the CI check read it.
+Hand-writing `contract.yaml` would mean maintaining a second description of
+the response shape by eye, alongside the pydantic models that already
+describe it — nothing would force the two to stay in sync as fields like
+`furniture`, `visibleCols`, `areas`, `pets`, or `seats` get added or
+dropped from what the integration reads. Generating the schema from the
+same models that parse the response at runtime means the contract can't
+fall out of sync with the code the way hand-maintained duplication can —
+there's exactly one description of "what we depend on," and both the bot
+and the CI check read it.
 
 ### Catching drift before it reaches contract.yaml
 
@@ -315,8 +316,8 @@ check uses.
 ### Status site
 
 Both contracts' results are published together — Pixel Index at the site
-root (unchanged from before this section existed, so existing links/badges
-keep working), Pixel Agents nested under `/pixel-agents/`:
+root, so its existing links/badges keep working unchanged, and Pixel
+Agents nested under `/pixel-agents/`:
 
 | Resource | URL |
 |---|---|

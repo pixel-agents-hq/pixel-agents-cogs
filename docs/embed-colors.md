@@ -1,103 +1,131 @@
 # Embed colors: a shared category scheme
 
-**Status: implemented.**
+## Overview
 
-## 1. Problem
+Every cog's `discord.Embed` replies are built at one shared place —
+`build_reply_payload` in `corridor/adapters/api.py` — so a `color` set
+there applies consistently across the whole repo instead of being a
+per-cog, one-off choice. Cogs are grouped into three visual categories,
+each mapped to one Discord accent color. A cog with no clear category gets
+no color at all — Discord's own default gray — rather than being forced
+into a bucket that doesn't fit. Uncategorized is a valid, deliberate choice
+for a cog, not a gap to close.
 
-Before this change, `discord.Embed` was constructed at exactly one place
-in the whole codebase -- `build_reply_payload`
-(`corridor/adapters/api.py`), shared by every cog's replies since
-docs/reply-identity-design.md consolidated embed-building there -- and it
-never set a `color`, so every cog's reply embeds rendered as Discord's own
-default gray. The only place in the codebase that set an explicit color at
-all was `floorplan/adapters/settings_panel.py`'s Components V2 settings
-panel (`discord.ui.Container(accent_colour=discord.Color.blurple())`), an
-isolated, one-off choice unrelated to the reply-embed pipeline. There was
-no scheme to preserve; this establishes one from scratch.
+```mermaid
+flowchart LR
+    Cog["A cog binds category=... once,<br/>at its own reply_sender()/render_reply() call"]
+    Cog --> Lookup["build_reply_payload() looks up<br/>REPLY_CATEGORY_COLORS.get(reply.category)"]
+    Lookup -->|category is AGENT/ROOM/FURNITURE| Colored["Embed gets that category's hex color"]
+    Lookup -->|category is None| Gray["Embed gets no color --<br/>Discord's own default gray"]
+```
 
-## 2. Decision
+## Domain model
 
-Cogs are grouped into three visual categories, each with one shared color.
-A cog with no clear category gets no color (Discord's default gray) rather
-than being forced into a bucket that doesn't fit:
+`corridor/domain/models.py` defines `ReplyCategory`, a `StrEnum` with three
+members, and a `category: ReplyCategory | None` field on `RenderedReply`.
+`None` means "no opinion" — the absence of a category, not a fourth
+category.
 
-| Category  | Color            | Hex       | Cogs                                   |
-|-----------|------------------|-----------|------------------------------------------|
-| Agent     | Discord blurple  | `#5865F2` | pico, architect, painter                 |
-| Room      | Discord teal     | `#1ABC9C` | corridor, floorplan, cctv                |
-| Furniture | Discord gold     | `#F1C40F` | toolbox, testbench, deskutils            |
-| *(none)*  | Discord default gray | —    | pixelagents, suggestionbox              |
+`corridor/domain/reply_colors.py` holds the actual mapping:
 
-deskutils' commands are utilities (time, text-counting, message-quoting) in
-the same vein as toolbox/testbench, so it's folded into Furniture. `painter`
-(a later, color-only A2A agent, added after this scheme shipped) followed
-architect into Agent, and `cctv` (the office dashboards extracted out of
-floorplan, see `docs/cctv-design.md`) followed floorplan into Room --
-both new cogs just passed `category=` at their own binding site, exactly
-as this design anticipated. pixelagents (vendors/builds the webview for
-CCTV to serve, with almost no chat-facing surface of its own) and
-`suggestionbox` (an MCP feedback server, likewise reply-light) still don't
-clearly fit Agent, Room, or Furniture -- rather than guess, both are left
-uncategorized. Either can be folded into a category later without any
-structural change: just pass `category=` at its own binding site (see
-§4).
+```python
+REPLY_CATEGORY_COLORS: dict[ReplyCategory, int] = {
+    ReplyCategory.AGENT: 0x5865F2,      # Discord blurple
+    ReplyCategory.ROOM: 0x1ABC9C,       # Discord teal
+    ReplyCategory.FURNITURE: 0xF1C40F,  # Discord gold
+}
+```
 
-The `floorplan/adapters/settings_panel.py` Container's `accent_colour` is
-a separate UI surface (Components V2, not a classic embed) and is out of
-scope here -- this scheme covers `discord.Embed` colors only.
+| Category  | Color           | Hex       |
+|-----------|-----------------|-----------|
+| Agent     | Discord blurple | `#5865F2` |
+| Room      | Discord teal    | `#1ABC9C` |
+| Furniture | Discord gold    | `#F1C40F` |
+| *(none)*  | Discord default gray | —   |
 
-## 3. Where the mapping lives
-
-`corridor/domain/models.py` adds `ReplyCategory` (a `StrEnum`: `AGENT`,
-`ROOM`, `FURNITURE`) and a `category: ReplyCategory | None` field on
-`RenderedReply`. `corridor/domain/reply_colors.py` holds the actual
-mapping, `REPLY_CATEGORY_COLORS: dict[ReplyCategory, int]` -- plain hex
-ints, not `discord.Colour`, matching this package's "zero framework
-imports" convention (see `agent_directory.py`'s docstring for the one
-deliberate exception). `corridor/adapters/api.py`'s `build_reply_payload`
-is the only place that turns a `category` into a real embed `color`, via
+Both the enum and the mapping live in `corridor/domain`, which has zero
+framework imports by design (see `agent_directory.py`'s docstring for the
+one deliberate exception) — `REPLY_CATEGORY_COLORS` stores plain hex ints,
+not `discord.Colour`. `corridor/adapters/api.py`'s `build_reply_payload` is
+the only place that turns a `category` into a real embed `color`, via
 `REPLY_CATEGORY_COLORS.get(reply.category)`.
 
-Both are corridor's to own: corridor already is "shared reply style and
-permission tiers for office-cogs" (`corridor/info.json`), and every
-category color is applied through corridor's one shared
-`build_reply_payload`.
+Both the enum and the mapping are corridor's to own: corridor already is
+"shared reply style and permission tiers for office-cogs"
+(`corridor/info.json`), and every category color is applied through
+corridor's one shared `build_reply_payload`.
 
-## 4. Why `category` is independent of `ReplyIdentity`
+## Category assignments
 
-`ReplyIdentity` (owner name + avatar) and `category` (embed color) are
-deliberately separate parameters throughout the reply pipeline
-(`ReplyService.render`, `CogBase.render_reply`/`send_reply`,
-`ReplySender`), not one derived from the other. A cog can bind one without
-the other -- pixelagents binds an identity with no category (stays
-uncategorized), and nothing stops a future cog from wanting a category
-with no author identity. Folding `category` into `ReplyIdentity` would
-make that impossible without a workaround.
+| Category  | Cogs                              |
+|-----------|------------------------------------|
+| Agent     | `pico`, `architect`, `painter`     |
+| Room      | `corridor`, `floorplan`, `cctv`    |
+| Furniture | `toolbox`, `testbench`, `deskutils` |
+| *(none)*  | `pixelagents`, `suggestionbox`     |
 
-Every cog binds its own category exactly once, at the one place it already
-binds everything else about how its replies render, so no call site ever
-repeats it:
+`deskutils`' commands are utilities (time, text-counting, message-quoting)
+in the same vein as `toolbox`/`testbench`, so it sits in Furniture.
+`painter` (a color-only A2A agent) and `cctv` (the office dashboards)
+each pass their own `category=` at their own binding site, exactly like
+every other cog in the table — adding a category to a new cog is always
+this same one-line change, never a structural one.
 
-- `ReplySender` (`corridor/adapters/reply_sender.py`) binds `category`
+`pixelagents` (vendors/builds the webview for CCTV to serve, with almost
+no chat-facing surface of its own) and `suggestionbox` (an MCP feedback
+server, likewise reply-light) don't clearly fit Agent, Room, or Furniture,
+so both stay uncategorized rather than being guessed into a bucket. Either
+can be folded into a category later without any structural change — just
+pass `category=` at its own binding site (see API below).
+
+Discord's Components V2 UI surfaces (e.g. `discord.ui.Container`'s
+`accent_colour`) are a separate rendering path from `discord.Embed` and
+are out of scope here — this scheme covers `discord.Embed` colors only.
+
+## API: how a cog binds its category
+
+`category` and `ReplyIdentity` (owner name + avatar) are independent
+parameters throughout the reply pipeline (`ReplyService.render`,
+`CogBase.render_reply`/`send_reply`, `ReplySender`) — one is never derived
+from the other. Every cog binds its own category exactly once, at the same
+place it already binds everything else about how its replies render, so no
+call site repeats it:
+
+- **`ReplySender`** (`corridor/adapters/reply_sender.py`) binds `category`
   once per cog, alongside `owner`/`avatar_path`, via
-  `CogBase.reply_sender(owner=..., avatar_path=..., category=...)`.
-  pico, architect, painter, testbench, toolbox, deskutils, and
+  `CogBase.reply_sender(owner=..., avatar_path=..., category=...)`. `pico`,
+  `architect`, `painter`, `testbench`, `toolbox`, `deskutils`, and
   **corridor itself** (bound in `CogBase.__init__`, since corridor is a
-  Room cog like floorplan) each pass their own category at that one
+  Room cog like `floorplan`) each pass their own category at that one
   binding site. corridor's own commands (`corridor/adapters/commands.py`)
   go through `self._reply.send_reply(...)` the same way every dependent
-  cog's commands go through their own bound `self._reply` -- not
-  `self.send_reply(...)` directly -- so `category=` is never repeated
+  cog's commands go through their own bound `self._reply` — not
+  `self.send_reply(...)` directly — so `category=` is never repeated
   across its reply call sites. `suggestionbox` also binds via
-  `reply_sender` but passes no `category`, staying uncategorized like
-  pixelagents below.
-- `floorplan/adapters/replies.py` and `cctv/adapters/replies.py` both
-  bypass `ReplySender` (each needs interaction-aware dispatch) but still
-  bind `category=ReplyCategory.ROOM` at the one `render_reply(...)` call
-  every one of their commands funnels through.
-- `pixelagents/adapters/replies.py` passes no `category`, so its replies
-  stay the default gray -- the same neutral default every omitted
+  `reply_sender` but passes no `category`, staying uncategorized.
+- **`floorplan/adapters/replies.py`** and **`cctv/adapters/replies.py`**
+  both bypass `ReplySender` (each needs interaction-aware dispatch) but
+  still bind `category=ReplyCategory.ROOM` at the one `render_reply(...)`
+  call every one of their commands funnels through.
+- **`pixelagents/adapters/replies.py`** passes no `category`, so its
+  replies stay the default gray — the same neutral default any omitted
   `category` argument produces, not a special case.
 
-`category` is `None` in `ReplyMode.TEXT` (no embed exists to color, same
-as `author_name`/`author_icon_attachment`).
+`category` is `None` in `ReplyMode.TEXT`, the same as
+`author_name`/`author_icon_attachment` — there's no embed to color in that
+mode.
+
+## Design rationale
+
+`category` is kept independent of `ReplyIdentity` rather than folded into
+it because the two answer different questions: identity is "who is
+sending this," color is "what visual bucket does this cog belong to." A
+cog can bind one without the other — `pixelagents` binds an identity with
+no category and stays uncategorized, and nothing stops a future cog from
+wanting a category with no author identity. Collapsing `category` into
+`ReplyIdentity` would make that combination impossible.
+
+Leaving a cog uncategorized is a first-class outcome of this design, not a
+placeholder waiting to be filled in: `pixelagents` and `suggestionbox`
+don't map cleanly onto "agent," "room," or "furniture," and forcing a fit
+would make the scheme less meaningful for the cogs that do fit cleanly.

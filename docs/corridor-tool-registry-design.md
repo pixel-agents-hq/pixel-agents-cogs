@@ -4,27 +4,58 @@
 
 Corridor hosts an in-process registry of tools that optional LLM consumers
 can discover without depending directly on the cogs that provide them.
-Today, Pico is the consumer and `deskutils_time` is a production example,
-but neither side imports the other:
+`pico` is the consumer; `deskutils_time` is a production example of a
+provided tool. Neither side imports the other — both depend only on
+corridor.
 
 ```mermaid
 flowchart LR
-    D["Providing cog<br/>for example deskutils"]
+    D["Providing cog<br/>e.g. deskutils, toolbox"]
     C["corridor<br/>ToolRegistryService"]
     P["pico<br/>tool-calling loop"]
 
     D -->|"register_llm_tools at cog_load"| C
-    P -->|"list_tools_for invoking context"| C
+    P -->|"list_tools_for(ctx) every turn"| C
     C -->|"permission-filtered RegisteredTool values"| P
 ```
 
-Both the provider and consumer depend only on Corridor. If Pico is absent,
-registrations remain inert. If a provider is absent, Pico simply receives
-fewer tools. The registry is process-scoped, while each invocation still
-receives the triggering Discord context and can perform guild-specific
-work.
+If pico is absent, registrations remain inert. If a provider is absent,
+pico simply receives fewer tools. The registry is process-scoped, while
+each invocation still receives the triggering Discord context and can
+perform guild-specific work.
 
-## Registry contract
+## Architecture
+
+Three modules own three separate concerns, each with a single
+responsibility:
+
+```mermaid
+flowchart TB
+    subgraph Domain["corridor/domain (zero framework imports)"]
+        Models["models.py<br/>RegisteredTool, ToolHandler,<br/>ToolAvailabilityCheck, ToolVisibilityFilter"]
+        LlmTools["llm_tools.py<br/>@llm_tool decorator, ToolDescription,<br/>infer_parameters, LLMToolSpec"]
+    end
+    subgraph Application["corridor/application"]
+        Registry["tool_registry_service.py<br/>ToolRegistryService -- register/unregister,<br/>owner tracking, visibility filters"]
+    end
+    subgraph Adapters["corridor/adapters"]
+        Registration["llm_tool_registration.py<br/>collect_registered_tools --<br/>scans a cog for @llm_tool callbacks"]
+        CogBase["cog_base.py<br/>register_llm_tools, register_tool,<br/>list_tools_for, on_cog_remove cleanup"]
+    end
+
+    LlmTools -->|LLMToolSpec marker on the callback| Registration
+    Registration -->|builds| Models
+    Registration -->|RegisteredTool| CogBase
+    CogBase --> Registry
+```
+
+`llm_tools.py` and `models.py` know nothing about discord.py or Red — a
+`RegisteredTool.handler` takes an opaque `ctx: object` and a plain JSON
+mapping, so the registry itself never needs a framework import. Only
+`llm_tool_registration.py`, at the adapter boundary, understands what a
+real Discord `Command` object looks like.
+
+## Domain model: the registry contract
 
 The shared contract is deliberately framework-neutral. Corridor's domain
 layer imports neither discord.py nor pydantic:
@@ -35,6 +66,7 @@ ToolHandler = Callable[
     Awaitable[Mapping[str, object]],
 ]
 ToolAvailabilityCheck = Callable[[object], Awaitable[bool]]
+ToolVisibilityFilter = Callable[[object, "RegisteredTool"], Awaitable[bool]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,20 +79,22 @@ class RegisteredTool:
     availability_check: ToolAvailabilityCheck | None = None
 ```
 
-- `name` is globally unique within the bot process.
-- `description` and `parameters` are sent to the LLM as the function-tool
-  description and input JSON Schema.
-- `handler(ctx, arguments)` receives the original Discord context and a
-  JSON-object-shaped mapping, then returns a JSON-object-shaped mapping.
-- `required_group` uses Corridor's permission-group keys. `None` means the
-  registry adds no group gate.
-- `availability_check(ctx)` is an optional second gate. Decorated commands
-  use it to run their native Red/discord.py checks when no explicit
-  `required_group` was supplied.
+| Field | Meaning |
+|---|---|
+| `name` | Globally unique within the bot process. |
+| `description` / `parameters` | Sent to the LLM as the function-tool description and input JSON Schema. |
+| `handler(ctx, arguments)` | Receives the original Discord context and a JSON-object-shaped mapping, returns one. |
+| `required_group` | A corridor permission-group key. `None` means the registry adds no group gate. |
+| `availability_check(ctx)` | An optional second gate — decorated commands use it to run their native Red/discord.py checks when no explicit `required_group` was supplied. |
 
 `Corridor.register_tool(tool, owner=...)` is the low-level API for tools
-that are not Discord commands. Most providers should use decorated command
-registration instead.
+that are not Discord commands. Most providers use decorated command
+registration instead (below). `register_tool_visibility_filter(predicate,
+owner=...)` installs one more gate `list_tools_for` evaluates for every
+tool, after `required_group`/`availability_check` — `toolbox` is the
+intended installer, layering owner-configured enable/disable and
+per-guild overrides on top of the registry without corridor persisting
+any of that state itself.
 
 ## Turning a Discord command into a tool
 
@@ -76,9 +110,9 @@ async def count_command(self, ctx: commands.Context, *, text: str) -> dict[str, 
 ```
 
 At registration this becomes `deskutils_count`, uses the cleaned docstring
-as its tool description, describes `text` as `value for text`, and uses the
-Discord command's own checks for availability. Supply any of the arguments
-when richer metadata or an explicit Corridor group is needed:
+as its tool description, describes `text` as `value for text`, and uses
+the Discord command's own checks for availability. Supply any of the
+arguments when richer metadata or an explicit corridor group is needed:
 
 ```python
 from typing import Annotated
@@ -129,25 +163,20 @@ async def project(
     }
 ```
 
-The callback remains one implementation for both invocation paths:
-
-- A human runs the Discord command; discord.py converts the arguments and
-  ignores the callback's return value.
-- An LLM calls the registered tool; Corridor invokes the same callback
-  with the same `ctx`, preserves its Discord side effects, and forwards its
-  returned mapping to the LLM.
-
-Decorated callbacks may return a string-keyed `Mapping[str, object]` for an
-informational tool result. Returning `None` produces the backward-compatible
-`{"status": "ok"}` acknowledgement. Any other return type, or a mapping
-with non-string keys, raises `TypeError` as an authoring error.
+The callback stays one implementation for both invocation paths: a human
+runs the Discord command (discord.py converts the arguments and ignores
+the callback's return value), or an LLM calls the registered tool
+(corridor invokes the same callback with the same `ctx`, preserving its
+Discord side effects, and forwards its returned mapping to the LLM).
+Returning a string-keyed `Mapping[str, object]` gives the LLM an
+informational result; returning `None` produces the acknowledgement
+`{"status": "ok"}`. Any other return type, or a mapping with non-string
+keys, raises `TypeError` as an authoring error.
 
 ## Input schema inference
 
 `llm_tool` skips the leading `self` and `ctx` parameters and infers an
 object schema from the remaining callback signature.
-
-Supported parameter types are:
 
 | Python annotation | JSON Schema type |
 |---|---|
@@ -155,17 +184,16 @@ Supported parameter types are:
 | `int` | `integer` |
 | `float` | `number` |
 | `bool` | `boolean` |
-| any supported type `| None` | the same schema type |
+| any supported type `\| None` | the same schema type |
 
-A parameter without a default is included in `required`; a parameter with
-a default is optional. Unsupported annotations fail immediately when the
-module is imported and the decorator runs.
-
-Parameters without a `ToolDescription` receive the generic description
-`value for <parameter name>`. `ToolDescription` remains the way to replace
-that text or add bounds/enums:
-
-Use one `ToolDescription` inside `typing.Annotated` to enrich a property:
+A parameter without a default is included in `required`; one with a
+default is optional. Unsupported annotations fail immediately when the
+module is imported and the decorator runs. Parameters without a
+`ToolDescription` receive the generic description `value for <parameter
+name>`. Use one `ToolDescription` inside `typing.Annotated` to enrich a
+property — required `description` text, numeric `minimum`/`maximum` for
+`int`/`float` parameters, and a non-empty tuple of primitive `enum` values
+matching the inferred JSON type:
 
 ```python
 amount: Annotated[
@@ -187,114 +215,56 @@ style: Annotated[
 ] = "compact"
 ```
 
-`ToolDescription` supports:
-
-- required `description` text;
-- numeric `minimum` and `maximum` for `int` or `float` parameters;
-- a non-empty tuple of primitive `enum` values matching the inferred JSON
-  type.
-
-The decorator rejects incompatible bounds, non-finite or reversed bounds,
-empty or duplicate enums, enum values of the wrong type, enum values
-outside configured bounds, and multiple `ToolDescription` objects on one
-parameter. Raw string metadata is not a description shorthand and is
-ignored.
-
-### Schema constraints are not runtime validation
-
-Pico intentionally passes registered input schemas through verbatim. Its
-synthetic pydantic input model uses `extra="allow"`; it does not reconstruct
-or enforce the schema. The schema guides the LLM, but model-generated
-arguments still arrive at the callback as raw JSON values.
-
-That has two practical consequences for every decorated callback:
-
-1. Validate expected types, ranges, and enum membership in the callback.
-2. Do not rely only on discord.py converters or `@commands.check`
-   decorators. Tool invocation calls `.callback(cog, ctx, **arguments)`
-   directly and bypasses Discord's dispatch/conversion/check pipeline.
-
-An explicit `required_group` filters tool visibility before the LLM call.
-When it is omitted, registration attaches a context-based availability
-check that calls `command.can_run(ctx, check_all_parents=True)`, covering
-global, cog, parent, disabled-command, and local checks. An explicit
-`require_permission` inside the callback remains appropriate for custom
-Corridor permissions and defense in depth because tool execution calls the
-callback directly.
-
 ### Why `Annotated` is stripped in place
 
 discord.py assigns its own converter meaning to `Annotated[X, metadata]`.
 If `ToolDescription` reached command construction, Discord would attempt
 to use it as a converter. `llm_tool` therefore reads the metadata for the
 LLM schema and replaces the callback's annotation with its bare type in
-`func.__annotations__` before the command decorator runs.
-
-Mutating the callback annotations, rather than temporarily overriding
+`func.__annotations__` before the command decorator runs. Mutating the
+callback's own annotations, rather than temporarily overriding
 `__signature__`, is required because hybrid-command construction and Cog
-copying repeatedly derive fresh command parameters. The in-place bare type
-survives every derivation and keeps prefix, slash-command, help, and tool
-schema behavior aligned.
+copying repeatedly derive fresh command parameters — the in-place bare
+type survives every derivation and keeps prefix, slash-command, help, and
+tool-schema behavior aligned; a transient `__signature__` override does
+not survive discord.py's own borrow-then-delete step while building a
+slash-command equivalent.
 
-## Registration, permissions, and cleanup
+## Key flows
 
-A providing cog owns registration for its lifetime:
+### Registration and cleanup
 
-```python
-async def cog_load(self) -> None:
-    self._corridor = await ensure_corridor_loaded(self.bot)
-    self._corridor.register_dependent("my_cog")
-    self._corridor.register_llm_tools(self, owner="MyCog")
+```mermaid
+sequenceDiagram
+    participant Cog as Providing cog
+    participant CB as corridor.CogBase
+    participant Reg as ToolRegistryService
 
+    Note over Cog: cog_load
+    Cog->>CB: register_llm_tools(self, owner="MyCog")
+    CB->>CB: collect_registered_tools(self) -- scan for @llm_tool callbacks
+    loop each decorated callback found
+        CB->>Reg: register(tool, owner="MyCog")
+    end
 
-async def cog_unload(self) -> None:
-    self._corridor.unregister_tool_owner("MyCog")
-    self._corridor.unregister_dependent("my_cog")
+    Note over Cog: cog_unload
+    Cog->>CB: unregister_tool_owner("MyCog")
+    CB->>Reg: unregister_owner("MyCog")
+
+    Note over CB: defensive fallback -- Red's cog_remove dispatch
+    CB->>Reg: unregister_owner(cog.qualified_name)
 ```
 
 `register_llm_tools` scans attributes exposing `.callback`, reads each
 `LLMToolSpec` marker, and registers one tool per callback identity.
-Re-registering the same name for the same owner replaces it. Registering
-the same name for another owner raises `ValueError` instead of shadowing.
+Re-registering the same name for the same owner replaces it;
+registering the same name for a *different* owner raises `ValueError`
+instead of shadowing. The owner string is the Cog class name, matching
+`cog.qualified_name`. Manual unload removes all tools for that owner, and
+corridor's `on_cog_remove` listener provides defensive cleanup if the
+provider's own teardown does not complete.
 
-The owner string is the Cog class name, matching `cog.qualified_name`.
-Manual unload removes all tools for that owner, and Corridor's
-`on_cog_remove` listener provides defensive cleanup if the provider's
-teardown does not complete.
-
-Consumers should call `await corridor.list_tools_for(ctx)`, not the
-unfiltered `list_tools()`. Corridor evaluates explicit groups against
-`ctx.author` and inferred command checks against the full context, omitting
-unauthorized tools from the LLM's vocabulary entirely. A check that raises
-is logged and fails closed for that tool without dropping other tools.
-
-### Externally-installed visibility filters
-
-`register_tool_visibility_filter(predicate, owner=...)` installs one more
-gate `list_tools_for` evaluates for every tool, after `required_group` and
-`availability_check`, following the same owner/cleanup convention as
-`register_tool` (including defensive removal from `on_cog_remove`). A
-predicate that returns `False` or raises omits only that tool; several
-installed filters all apply (a tool must pass every one). No filter
-installed changes nothing -- this is purely an extension point, unused by
-the registry itself. Toolbox is the intended (and, as of this writing,
-only) installer, layering owner-configured enable/disable and per-guild
-overrides on top of the registry without corridor persisting any of that
-state itself -- see `docs/toolbox-command-tool-toggle-design.md`.
-
-## Pico adaptation and invocation flow
-
-Pico adapts every allowed `RegisteredTool` into `CrossCogTool`:
-
-- The synthetic `Input.model_json_schema()` returns `parameters` verbatim.
-- The input model passes the JSON object through without enforcing its
-  constraints.
-- The output model accepts the provider's arbitrary string-keyed mapping
-  and serializes it as the tool-result message for the next LLM iteration.
-- A malformed registration is logged and skipped without taking down the
-  rest of the turn.
-
-For `deskutils_time`, one complete turn looks like this:
+### Tool lookup and invocation (pico)
 
 ```mermaid
 sequenceDiagram
@@ -316,37 +286,99 @@ sequenceDiagram
     P->>P: append mapping as the tool result and continue the bounded loop
 ```
 
-The time command deliberately both replies in Discord and returns semantic
-information. The Discord user gets the answer immediately, while the LLM
-receives the same computed values for context. Expected failures return
-`status="error"` with a stable code and readable message while preserving
-the command's normal Discord warning or denial behavior.
+The time command deliberately both replies in Discord and returns
+semantic information — the Discord user gets the answer immediately, and
+the LLM receives the same computed values for context. Expected failures
+return `status="error"` with a stable code and readable message while
+preserving the command's normal Discord warning or denial behavior.
+Pico adapts every allowed `RegisteredTool` into `CrossCogTool`: its
+synthetic input model passes the JSON object through without enforcing
+its constraints, and the output model accepts the provider's arbitrary
+string-keyed mapping and serializes it as the tool-result message for the
+next LLM iteration. A malformed registration is logged and skipped
+without taking down the rest of the turn. There is no output JSON Schema
+in `RegisteredTool` — only the input schema is advertised, so providers
+should keep result mappings small, stable, JSON-serializable, and
+self-explanatory.
 
-There is no output JSON Schema in `RegisteredTool`; only the input schema
-is advertised. Providers should therefore keep result mappings small,
-stable, JSON-serializable, and self-explanatory.
+## API / command reference
 
-## Author checklist
+| API | Called from | Purpose |
+|---|---|---|
+| `@corridor.domain.llm_tool(name=, description=, required_group=)` | module scope, decorating a command callback | Marks the callback for later registration; infers name/description/schema/availability from the command where not overridden. |
+| `corridor.register_llm_tools(self, owner=...)` | `cog_load` | Scans `self` and registers every `@llm_tool`-decorated command found. |
+| `corridor.register_tool(tool, owner=...)` | `cog_load` | Registers one hand-built `RegisteredTool`, not backed by a Discord command. |
+| `corridor.unregister_tool_owner(owner)` | `cog_unload` | Removes every tool registered under `owner`. |
+| `corridor.unregister_tool(name)` | anywhere | Removes one tool by name, regardless of owner. |
+| `corridor.register_tool_visibility_filter(predicate, owner=...)` | `cog_load` | Installs an additional visibility gate evaluated for every tool. |
+| `corridor.unregister_visibility_filter_owner(owner)` | `cog_unload` | Removes `owner`'s installed filter. |
+| `corridor.list_tools()` | anywhere | Every registered tool, unfiltered. |
+| `await corridor.list_tools_for(ctx)` | pico's tool-calling loop | Every tool `ctx.author` is currently allowed to invoke. |
 
-When adding a decorated command:
+## Validation & error handling
 
-1. Put `@llm_tool()` immediately above the callback and below the Discord
-   command decorator.
-2. Confirm the inferred qualified-command name is globally distinctive;
-   override `name` only when it is not.
-3. Use only supported primitive input annotations and add one
-   `ToolDescription` wherever the name/type is insufficient.
-4. Treat schema constraints as guidance and validate raw tool arguments in
-   the callback.
-5. Let native Discord checks be inferred, or pair an explicit
-   `required_group` with the same callback permission check.
-6. Send Discord output through Corridor and return an informational mapping
-   when the LLM needs to know what happened.
-7. Return structured error mappings for expected failures; reserve raised
-   exceptions for authoring/programming errors.
-8. Test the inferred schema, callback behavior, mapping output, permission
-   denial, invalid raw arguments, registration lifecycle, and real
-   discord.py annotation/converter compatibility.
+`list_tools_for` evaluates three gates in order, short-circuiting on the
+first failure for that tool — a failure never removes other tools from
+the list:
 
-The generated cog template contains no-input, bounded-integer, and string-
-enum command examples following this checklist.
+```mermaid
+flowchart TD
+    Start(["for each RegisteredTool"]) --> Group{"required_group set?"}
+    Group -- yes --> GroupCheck{"capabilities_satisfy(ctx.author, required_group)?"}
+    Group -- no --> Avail
+    GroupCheck -- no --> Omit(["omit this tool"])
+    GroupCheck -- yes --> Avail{"availability_check set?"}
+    Avail -- yes --> AvailRun{"availability_check(ctx)<br/>raises or returns False?"}
+    Avail -- no --> Vis
+    AvailRun -- yes --> Omit
+    AvailRun -- no --> Vis{"every installed<br/>ToolVisibilityFilter passes?"}
+    Vis -- no, or one raises --> Omit
+    Vis -- yes --> Include(["include in list_tools_for result"])
+```
+
+A check that raises is logged (`log.warning`, with `exc_info=True`) and
+fails closed for that tool only. Schema constraints (`minimum`/`maximum`/
+`enum`) are guidance for the LLM, never runtime validation: pico's
+synthetic input model uses `extra="allow"` and does not reconstruct or
+enforce the schema, and tool invocation calls `.callback(cog, ctx,
+**arguments)` directly, bypassing Discord's dispatch/conversion/check
+pipeline entirely. Every decorated callback must therefore validate
+expected types, ranges, and enum membership itself, and should not rely
+only on discord.py converters or `@commands.check` decorators for
+protection against a malformed tool call.
+
+## Design rationale
+
+**A plain JSON-Schema dict, not pydantic, as the parameter contract.**
+Corridor's domain layer has zero framework imports; requiring every
+provider to build a pydantic model would force a dependency the registry
+itself doesn't need and couple the contract to one consumer's (pico's)
+internal implementation choice. A consumer that wants richer typing
+adapts this shape at its own boundary instead.
+
+**Mutating `__annotations__` in place, not overriding `__signature__`.**
+Only the former survives every future re-derivation of the callback's
+signature that discord.py performs during Cog copying and hybrid-command
+construction — verified directly against a real production incident
+where a `__signature__` override did not survive that path.
+
+**Inferred metadata with explicit overrides, not one or the other.** Most
+tools are a thin wrapper around an existing, well-named, well-documented
+Discord command — inferring name/description/availability from it avoids
+duplicating that metadata. An explicit `required_group`/`name`/
+`description` argument remains available for the tools where the command
+metadata isn't the right LLM-facing text.
+
+**Per-agent tool gating lives in the registering cog, not corridor.**
+`toolbox`'s enable/disable panel and per-guild overrides are installed as
+a `ToolVisibilityFilter`, a predicate corridor merely evaluates — corridor
+itself persists none of that state. The registry's job is discovery and
+dispatch; deciding *which* discovered tools an operator wants active is
+policy that belongs with the cog that owns the policy UI.
+
+**Owner-scoped collision policy, not silent shadowing.** Re-registering
+the same tool name under the *same* owner is a normal `cog_load` re-run
+and overwrites; the same name from a *different* owner is treated as a
+real authoring conflict and raises `ValueError` — a naming collision
+between two cogs is a bug to surface immediately, not a runtime ambiguity
+to resolve by insertion order.

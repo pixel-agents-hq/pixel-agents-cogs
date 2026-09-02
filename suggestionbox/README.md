@@ -8,9 +8,9 @@ tools server exposing two tools -- `report_error` and
 channel. Two kinds of caller reach these tools: a genuinely external MCP
 client (a coding-agent CLI, an IDE integration) connects to
 suggestionbox's own MCP endpoint directly; a registered A2A agent in
-corridor's `AgentDirectoryService` (`architect` today, more later) reaches
-the same tools from its own in-process tool-calling loop, mediated
-entirely by corridor's `AgentToolServerRegistry` + MCP client. See
+corridor's `AgentDirectoryService` (`architect` and `painter` today, more
+later) reaches the same tools from its own in-process tool-calling loop,
+mediated entirely by corridor's `AgentToolServerRegistry` + MCP client. See
 [`docs/suggestionbox-design.md`](../docs/suggestionbox-design.md) for the
 full design.
 
@@ -68,7 +68,7 @@ See [`docs/suggestionbox-design.md`](../docs/suggestionbox-design.md) for
 the full design: why corridor gained a new `AgentToolServerRegistry` and
 MCP client rather than reusing `ToolRegistryService`, the ctx-less
 `render_channel_reply`/`send_channel_reply` primitives corridor gained for
-this cog's proactive channel posts, and how architect's own tool loop
-consults `corridor.list_agent_tools_for("architect")` fresh every A2A
-turn. See [`docs/corridor.md`](../docs/corridor.md) for how `required_cogs`
-and corridor's dependency-loading work in general.
+this cog's proactive channel posts, and how architect's and painter's own
+tool loops each consult `corridor.list_agent_tools_for(<their own agent
+key>)` fresh every A2A turn. See [`docs/corridor.md`](../docs/corridor.md)
+for how `required_cogs` and corridor's dependency-loading work in general.

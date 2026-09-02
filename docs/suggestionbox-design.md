@@ -4,6 +4,14 @@
 > modules predate CCTV and are superseded by
 > [`cctv-design.md`](cctv-design.md). The MCP and agent-tool design is unchanged.
 
+> §6 below was written when architect was the only A2A agent adopting this
+> pattern. `painter` (see [`painter-design.md`](painter-design.md)) has
+> since done the same thing -- its own `cog_base.py`/`tools/agent_tool_server.py`
+> are a parallel copy of architect's, consulting
+> `corridor.list_agent_tools_for("painter")` fresh every A2A turn, same as
+> described below. Left un-generalized here since the mechanism §6
+> describes didn't change; only the number of agents using it did.
+
 **Status: implemented.** See the implementation checklist (§10) and this
 repo's own PRs for what actually landed; a follow-up review pass may note
 small deviations from the plan below (e.g. `render_channel_reply` reusing
@@ -274,6 +282,20 @@ module docstring). `call_tool(base_url, name, arguments)` invokes
 `ClientSession.call_tool` and converts the MCP `CallToolResult`'s content
 blocks back into the plain JSON-object-shaped mapping `RegisteredTool.
 handler` already promises its callers.
+
+> **Correction (post-implementation):** this landed differently. The
+> shipped `McpClientPool` (`corridor/infrastructure/mcp_client.py`) is
+> stateless and holds no per-server session at all — `list_tools`/
+> `call_tool` each open and tear down their own
+> `streamable_http_client`/`ClientSession` pair per call, deliberately
+> *not* mirroring `LiteLLMClient`'s reused-session shape, per that
+> module's own docstring: a registered server's tools are called rarely
+> enough (an agent reporting one error) that the connection-setup cost is
+> a good trade for never needing reconnect-on-drop or session-id
+> bookkeeping across arbitrarily long idle gaps. `AgentToolServerRegistry.
+> register()` accordingly only fetches and caches a `tools/list` snapshot
+> at registration time; it holds no live connection to close later, so
+> `unregister()`/`unregister_owner()` just drop that cached entry.
 
 Corridor's `info.json` gains `mcp` (the official Python SDK) as a
 `requirements` entry, the same way it already gained `a2a-sdk[http-server]`

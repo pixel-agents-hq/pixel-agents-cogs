@@ -163,3 +163,11 @@ each package's own `Architecture.md` (where present) covers its specifics.
   source model and regenerate. See [`docs/contract-testing.md`](../docs/contract-testing.md).
 - If you fix a piece of documented drift while building or touching
   contract tests, fix it in the same PR rather than only flagging it.
+- **Markdown docs describe current behavior only, and must stay
+  synced with the code.** When you change code a tracked `.md` file
+  describes, update that doc in the same change. A doc marked "not
+  implemented"/"planned" is exempt until it ships. If a doc and the code
+  disagree, the code wins -- read it, then fix the doc.
+- **Never narrate history in a doc.** No "Update:", "Correction:", "as
+  of X", "used to", "superseded by" -- state the current fact only; git
+  history is the changelog.

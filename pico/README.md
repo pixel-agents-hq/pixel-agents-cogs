@@ -14,7 +14,7 @@ see [Cross-cog tools](#cross-cog-tools) below.
 
 ## Installing
 
-Requires [`corridor`](../corridor) (auto-loaded via `required_cogs`):
+Requires [`corridor`](../corridor) (auto-loaded on `cog_load` via `dependency_loader.ensure_corridor_loaded()` -- `required_cogs` is only a Downloader install hint):
 
 ```
 [p]repo add pixel-agents-cogs https://github.com/pixel-agents-hq/pixel-agents-cogs

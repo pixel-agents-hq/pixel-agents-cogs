@@ -7,7 +7,7 @@ and safe quotes of messages the invoking member can access.
 
 ## Installing
 
-Requires [`corridor`](../corridor) (auto-loaded via `required_cogs`):
+Requires [`corridor`](../corridor) (auto-loaded on `cog_load` via `dependency_loader.ensure_corridor_loaded()` -- `required_cogs` is only a Downloader install hint):
 
 ```
 [p]repo add pixel-agents-cogs https://github.com/pixel-agents-hq/pixel-agents-cogs
@@ -23,7 +23,7 @@ Nothing to configure -- deskutils has no persistent settings.
 |---|---|
 | `[p]deskutils time [timezone]` | Show the current time: Discord's native timestamp markup (auto-localized per viewer) plus explicit UTC. Pass an IANA `timezone` (e.g. `America/New_York`) to also show it explicitly in that zone. Requires the `employee` permission tier (unrestricted by default). |
 | `[p]deskutils count <text>` | Count all characters (including whitespace) and whitespace-delimited words in text. |
-| `[p]deskutils quote [message-link]` | Quote the replied-to message, or a same-server message supplied by link, with its author and source link. |
+| `[p]deskutils quote [message-link]` | Quote the replied-to message, or a same-server message supplied by link, with its author and source link. Server-only (not usable in DMs). |
 
 All three commands are registered as Corridor LLM tools, so
 if [`pico`](../pico) is installed, loaded, and enabled for a guild, a user

@@ -1,104 +1,106 @@
 # Office agent identity: genuine agents alongside Discord accounts
 
-> **Status: implemented.** Written after discovering that architect's
-> `AgentPresenceChanged(agent=ARCHITECT_AGENT_REF, ...)` (see
-> `docs/corridor-pubsub-design.md`) was published successfully but
-> silently dropped by floorplan's subscriber, since
-> `pixelagents.domain.office`'s `AgentKey`/`AgentSnapshot`/`OfficeService`
-> were Discord-snowflake-shaped by construction and had no representation
-> for an agent that isn't a Discord account at all. Every item in the
-> "Implementation checklist" below has landed.
->
-> **Consumer topology updated by [`cctv-design.md`](cctv-design.md).** CCTV now
-> owns both rosters and uses this same identity model. The Discord page includes
-> enabled-guild members plus registered agents; the editor page includes
-> registered agents plus the bot account. Former Floorplan/Architect subscriber
-> paths below are historical.
->
-> **Extended by architect's own dashboard consuming this too.** Originally
-> this doc only covered floorplan's canvas gaining genuine-agent support.
-> `architect/adapters/presence_subscription.py` now reconciles the same
-> `AgentPresenceChanged` events onto architect's own, separate
-> `OfficeService` instance (`docs/architect-design.md` §5/§9 item 11),
-> plus one entry with no corridor/`AgentDirectoryService` involvement at
-> all: the bot's own Discord account, represented as a synthetic
-> `GenuineAgentKey`, since it was never an A2A agent. `AgentPresenceChanged`
-> is now also published by corridor itself (`register_agent`/
-> `unregister_agent_owner`/`unregister_agent`), not just by architect's own
-> `cog_load`/`cog_unload` — see `docs/agent-directory-design.md`.
-> `reconcile_genuine_agent`'s own signature and folding behavior
-> (described below) are unchanged by this — only a second consumer was
-> added.
+## Overview
 
-## Motivation
+CCTV's office canvas (`cctv/`, see `docs/cctv-design.md`) renders every
+entity a guild might see as "present" in one shared roster: real Discord
+members, and A2A agents that have no Discord account at all (architect,
+painter). Both kinds are identified, reconciled, and rendered through the
+same `AgentPresenceChanged` event and the same `OfficeService`
+(`pixelagents/application/office.py`) — a Discord member and a genuine
+agent are structurally different identities, but neither gets a special
+canvas, a special wire message, or a per-guild copy of anything.
 
-architect is the first **genuine agent**: an LLM agent reachable over A2A,
-with no Discord account and no guild scope. It won't be the last — more
-agents will join over A2A/agent cards. Today, the only way an entity shows
-up on floorplan's office canvas is by being a Discord guild member
-(human or bot). Genuine agents need a real place in that model, not a
-one-off workaround bolted onto architect specifically — this needs to be
-a clean, reusable identity concept from the start, since "many
-expansions" are coming.
+A **genuine agent** is an LLM agent reachable over A2A, registered into
+corridor's `AgentDirectoryService`. It has no Discord snowflake and no
+guild scope — it's visible on the canvas unconditionally, the moment it
+registers, everywhere the canvas is rendered. Registering it (via
+`corridor.register_agent`) is the only step its own cog performs; presence
+publishing and canvas visibility follow automatically.
 
-## The surprising part: there is already only one canvas
+## There is only one canvas
 
-Before designing anything, it's worth stating a finding that simplifies
-this considerably. It reads as though floorplan renders one *isolated*
-office canvas per guild — it does not:
+`OfficeService` is instantiated once per pixelagents-backed pipeline
+(`cctv/adapters/cog_base.py`'s `_create_pipelines`, one per
+`OfficeStateKind` — `DISCORD` and `EDITOR`), not once per guild. Its
+outward-facing methods take no guild parameter and apply no guild filter:
+a human present in two guilds is one merged entry on the canvas, keyed by
+their bare Discord user ID. A genuine agent, having no guild membership at
+all, needs exactly one entry — never a per-guild replica, never a fan-out
+step.
 
-- `OfficeService` (`pixelagents/application/office.py`) is instantiated
-  **once per floorplan Cog process**
-  (`floorplan/adapters/cog_base.py::PixelAgentsBase.__init__`), shared
-  across every guild floorplan serves — not one instance per guild.
-- Its outward-facing methods (`existing_agents_message`,
-  `bootstrap_messages`, and the `_send` broadcast callback `OfficeService`
-  is constructed with) take **no guild parameter** and apply **no guild
-  filter**. `_representative_agents()` collapses the whole
-  `self._agents: dict[(guild_id, user_id), ...]` down to one roster keyed
-  by bare `user_id` (`office.py`), before any of that data reaches a
-  browser.
-- `ClientHub` (`floorplan/infrastructure/client_hub.py`) has no concept of
-  guild at all — `ClientState` tracks only `socket`/`user_id`/`is_editor`.
-  `ClientHub.broadcast()` sends to every connected socket, unconditionally.
-- `to_agent_id(user_id)` (`pixelagents/application/office.py`) derives the
-  webview-safe agent ID from the bare Discord `user_id` alone — no guild
-  dimension. A human present in two guilds already renders as **one**
-  merged agent, today, by design (`is_user_active_in_other_guild` guards
-  `spawn`/`close` from double-emitting for exactly this reason).
+## Architecture
 
-So floorplan already renders **one global, cross-guild-merged office**,
-not N per-guild dashboards. This is confirmed intentional —
-`floorplan/Architecture.md` describes a single, public, unauthenticated
-dashboard page with no guild-context parameter.
+Two independent publishers feed the same `AgentPresenceChanged` event
+into corridor's event bus:
 
-**Consequence for this design:** "architect appears in every guild" does
-not require any per-guild replication, fan-out, or synthetic per-guild
-identity. It only requires that a genuine agent be representable in the
-one shared roster at all. Once that's true, it's visible to every
-connected browser exactly the way any Discord member already is — for
-free. This ruled out the fan-out approach discussed before this doc
-(previously "Option 1") — it was solving a per-guild problem that doesn't
-actually exist.
+- **`corridor/adapters/discord_gateway.py`'s `DiscordGatewayMixin`**
+  normalizes raw Discord gateway callbacks (`on_member_update`,
+  `on_presence_update`, `on_member_join`, `on_member_remove`) into
+  `AgentPresenceChanged`, for every guild member — humans, other bots,
+  and the bot's own account alike. It publishes unconditionally: no
+  guild-enabled or include-bots filtering happens here, since corridor is
+  a leaf package with no knowledge of any subscriber's display policy.
+  The bot's own account gets no special identity — it's a real Discord
+  member with a real snowflake, `_presence_event` only forces its status
+  to `"online"` rather than reading the bot's own (usually absent)
+  presence.
+- **`corridor/adapters/cog_base.py`'s `CogBase.register_agent` /
+  `unregister_agent_owner` / `unregister_agent`** publish
+  `AgentPresenceChanged` for a genuine agent's directory membership
+  itself — registering *is* going online, unregistering (explicitly, or
+  via `on_cog_remove`'s defensive cleanup when a registrant's cog is
+  pulled without a clean `cog_unload`) *is* going offline. No agent cog
+  calls `publish_event` for its own presence.
+
+Both land on the same corridor event bus, and cctv's one subscriber
+resolves whichever identity shape the event carries:
+
+```mermaid
+flowchart TB
+    subgraph Corridor["corridor"]
+        GW["DiscordGatewayMixin<br/><small>on_member_update / on_presence_update /<br/>on_member_join / on_member_remove</small>"]
+        RA["CogBase.register_agent /<br/>unregister_agent_owner / unregister_agent"]
+        Bus["EventBusService"]
+    end
+
+    GW -- "AgentPresenceChanged<br/>(AgentRef: discord_user_id + guild_id)" --> Bus
+    RA -- "AgentPresenceChanged<br/>(AgentRef: agent_key, no snowflake)" --> Bus
+
+    Bus -- dispatch --> Sub["cctv: CctvBase<br/>._on_agent_presence_changed"]
+    Sub -- "_office_identity(event.agent)" --> Branch{"AgentKey or<br/>GenuineAgentKey?"}
+
+    Branch -- AgentKey --> Disc["discord_pipeline.reconcile_discord<br/><small>gated on guild.enabled</small>"]
+    Branch -- AgentKey --> Edit1["editor_pipeline.reconcile_discord<br/><small>only when identity.user_id == bot.user.id</small>"]
+    Branch -- GenuineAgentKey --> Disc2["discord_pipeline.reconcile_genuine_agent"]
+    Branch -- GenuineAgentKey --> Edit2["editor_pipeline.reconcile_genuine_agent"]
+
+    Disc --> OS["OfficeService<br/>(pixelagents/application/office.py)"]
+    Edit1 --> OS
+    Disc2 --> OS
+    Edit2 --> OS
+```
+
+A genuine agent reaches both the Discord-roster page and the editor page
+unconditionally (it has no guild to gate against). A Discord identity
+reaches the editor page only when it's the bot's own account — every
+other Discord member appears on the Discord-roster page alone.
 
 ## The three categories
 
-| | Identity | Guild scope | `is_bot`/headless | corridor `AgentRef` shape |
+| | Identity | Guild scope | `is_bot` | `AgentRef` shape |
 |---|---|---|---|---|
-| **(a) Discord user account** | `AgentKey(guild_id, user_id)` — a real Discord snowflake | Per-guild membership (merged across guilds into one canvas entry, per above) | `is_bot=False`, rendered as a normal sprite | `discord_user_id`/`guild_id` set, `is_bot=False` |
-| **(b) Discord bot account** | `AgentKey(guild_id, user_id)` — same shape as (a), e.g. pico's own bot login | Same as (a) — a bot is a guild member like any other | `is_bot=True`, rendered headless/"ghost" (`isHeadless`) | `discord_user_id`/`guild_id` set, `is_bot=True` |
-| **(c) Genuine agent** | **no Discord snowflake at all** — architect, and future A2A agents | None — not a guild member, visible on the one shared canvas unconditionally | Not modeled via `is_bot` (see below) | `discord_user_id=None`, `guild_id=None`, `is_bot=True`, `agent_key="architect"` |
+| **(a) Discord user account** | `AgentKey(guild_id, user_id)` | Per-guild membership, merged cross-guild into one canvas entry | `False` | `discord_user_id`/`guild_id` set, `agent_key=None` |
+| **(b) Discord bot account** (including this bot's own account) | `AgentKey(guild_id, user_id)` — same shape as (a) | Same as (a) | `True`, rendered headless/"ghost" | `discord_user_id`/`guild_id` set, `agent_key=None` |
+| **(c) Genuine agent** | `GenuineAgentKey(agent_key)` — no Discord snowflake | None — visible on the one shared canvas unconditionally | `True` (not a rendering flag here, just the value corridor's own presence-publisher sets) | `discord_user_id=None`, `guild_id=None`, `agent_key="architect"` (etc.) |
 
-(a) and (b) are **the same identity shape** today — `is_bot` is a rendering
-flag on top of an otherwise-identical Discord-account identity. That's
-correct and doesn't change. (c) is structurally different: it isn't a
-Discord account with a flag toggled, it's a different *kind* of entity
-with no snowflake to key off at all. Modeling it as
-`AgentKey(guild_id=None, user_id=None)` (or reusing `is_bot=True` as a
-stand-in) would be the wrong shape — `AgentKey`'s fields are
-non-nullable `SnowflakeId`s for a reason, and "genuine agent" isn't "a bot
-with no ID," it's a category of its own. This doc gives it a real,
-parallel identity type instead of overloading `AgentKey`.
+(a) and (b) are the same identity shape — `is_bot` is a rendering flag on
+top of an otherwise-identical Discord-account identity. (c) is
+structurally different: it isn't a Discord account with a flag toggled,
+it's a different *kind* of entity with no snowflake to key off at all.
+`AgentKey`'s fields are non-nullable Discord snowflakes by construction,
+so a genuine agent gets its own parallel identity type rather than
+`AgentKey(guild_id=None, user_id=None)` or an overloaded `is_bot`.
 
 ```mermaid
 flowchart TB
@@ -110,122 +112,68 @@ flowchart TB
     Root --> Genuine["Genuine agent<br/><small>GenuineAgentKey(agent_key)</small>"]
 
     Discord --> Human["(a) Discord user account<br/><small>is_bot=False</small>"]
-    Discord --> Bot["(b) Discord bot account<br/><small>is_bot=True, headless</small>"]
+    Discord --> Bot["(b) Discord bot account<br/><small>is_bot=True, headless<br/>(includes this bot's own account)</small>"]
 
-    Genuine --> Architect["architect<br/><small>agent_key=&quot;architect&quot;</small>"]
-    Genuine --> More["(future A2A agents)<br/><small>agent_key=&quot;...&quot;</small>"]
+    Genuine --> Architect["architect<br/><small>agent_key='architect'</small>"]
+    Genuine --> Painter["painter<br/><small>agent_key='painter'</small>"]
+    Genuine --> More["(future A2A agents)<br/><small>agent_key='...'</small>"]
 
     class Human,Bot discordish
-    class Architect,More genuine
+    class Architect,Painter,More genuine
 ```
 
-## Domain model changes
+## Domain model / schema
 
-### `pixelagents/domain/office.py`: a parallel identity type
+**`pixelagents/domain/office.py`** — the identity types `OfficeService`
+accepts:
 
 ```python
 @dataclass(frozen=True, slots=True)
+class AgentKey:
+    guild_id: SnowflakeId
+    user_id: SnowflakeId
+
+
+@dataclass(frozen=True, slots=True)
 class GenuineAgentKey:
-    """Identity of a genuine agent -- one with no Discord account, e.g.
-    architect. Parallel to AgentKey, never a variant of it: AgentKey's
-    fields are real Discord snowflakes by construction, and a genuine
-    agent doesn't have one to supply. `agent_key` is a short, stable slug
-    ("architect") -- see corridor's AgentRef.agent_key, the field this is
-    built from."""
+    """Identity of a genuine agent -- one with no Discord account.
+    `agent_key` is a short, stable slug ("architect"), built from
+    corridor's AgentRef.agent_key."""
 
     agent_key: str
 
 
-# The identity shape every OfficeService entry point that used to take
-# only AgentKey now accepts -- is_tracked, highlight_agent,
-# unhighlight_agent, start_tool_activity, set_status, send_message_activity,
-# clear_message_activity.
-OfficeIdentity = AgentKey | GenuineAgentKey
+OfficeIdentity: TypeAlias = AgentKey | GenuineAgentKey
 ```
 
-### Webview agent-ID derivation: disjoint by sign, not by registry
+Every `OfficeService` entry point that once took only `AgentKey` accepts
+`OfficeIdentity`: `is_tracked`, `highlight_agent`, `unhighlight_agent`,
+`start_tool_activity`, `set_status`. Two pairs stay Discord-only vs.
+genuine-only rather than sharing one signature, since only a genuine agent
+has no real Discord message to key an activity bubble off of:
+`send_message_activity`/`clear_message_activity` (Discord,
+`MessageSnapshot`-keyed) vs. `reconcile_genuine_agent`/
+`close_genuine_agent`/`send_genuine_agent_activity`/
+`clear_genuine_agent_activity` (genuine, `GenuineAgentKey`-keyed).
 
-`to_agent_id(user_id)` (`pixelagents/application/office.py`) always
-returns a **negative** JS-safe integer (`-(user_id % JS_MAX_SAFE or
-JS_MAX_SAFE)`). Genuine agents get a **positive** JS-safe integer instead,
-derived from a stable hash of `agent_key`:
+**Webview agent-ID derivation is disjoint by sign, not by registry.**
+`to_agent_id(user_id)` always returns a negative JS-safe integer. A
+genuine agent gets a positive one instead, derived from a stable hash of
+its `agent_key`:
 
 ```python
 def to_genuine_agent_id(agent_key: str) -> int:
-    """Positive JS-safe integer, disjoint from to_agent_id's negative
-    range by construction -- no collision registry needed. A stable hash
-    (not Python's randomized hash()) so the same agent_key always maps to
-    the same webview ID across restarts."""
-
     digest = hashlib.sha256(agent_key.encode()).digest()
     mapped = int.from_bytes(digest[:8], "big") % JS_MAX_SAFE
     return mapped if mapped != 0 else JS_MAX_SAFE
 ```
 
-Disjointness by sign is deliberately simpler than trying to carve out a
-sub-range of one shared ID space: zero risk of a genuine agent's ID ever
-colliding with a real Discord user's, with no coordination required as
-more genuine agents are added.
+Disjointness by sign needs no collision registry: a genuine agent's ID can
+never collide with a real Discord user's, and adding a third or fourth
+genuine agent requires no coordination — each is hashed independently.
 
-### `OfficeService`: a second, parallel roster
-
-`OfficeService` gains a second internal store, alongside `self._agents`:
-
-```python
-self._genuine_agents: dict[str, GenuineAgentState] = {}
-# GenuineAgentState: display_name, status ("online"/"offline"/...),
-# activities -- mirrors what self._agents holds for Discord agents,
-# minus anything guild-specific (there is none to hold).
-```
-
-New methods, mirroring the existing Discord-agent ones but without the
-cross-guild merge logic (a genuine agent has exactly one entry, full
-stop — there's no second guild's copy to reconcile against):
-
-- `reconcile_genuine_agent(agent_key, display_name, status, activities)` —
-  spawns/updates/closes based on `status`, the same shape as `reconcile()`
-  for a Discord `AgentPresenceChanged`. `status="offline"` closes it,
-  exactly like a Discord member going offline or leaving.
-- `is_tracked`/`highlight_agent`/`unhighlight_agent`/`start_tool_activity`/
-  `set_status`/`send_message_activity`/`clear_message_activity` change
-  their parameter type from `AgentKey` to `OfficeIdentity`, branching
-  internally (`isinstance(identity, GenuineAgentKey)`) only where the two
-  paths differ (agent-ID derivation, and skipping the guild-merge checks
-  that don't apply).
-
-`_representative_agents()`'s output (consumed by `existing_agents_message`/
-`bootstrap_messages`) is extended to fold `self._genuine_agents` into the
-same roster every connecting browser already receives — no separate
-bootstrap path, no separate wire message type. A genuine agent is just
-another entry in `agents`/`agentMeta`/`folderNames`, keyed by its positive
-`to_genuine_agent_id(agent_key)` instead of a negative Discord-derived one.
-
-### `externalAgents`/`isHeadless`: an open question, deliberately not locked here
-
-Every Discord-derived agent is unconditionally `isExternal=True` today —
-the load-bearing comment in `office.py` explains why: this office
-projection only ever mirrors real Discord accounts, which are external to
-whatever "native" agent concept the webview's upstream wire protocol
-(`core/asyncapi.yaml`, pixel-agents-hq/pixel-agents) originally modeled.
-A genuine agent is arguably the *opposite* case — an actual LLM agent,
-closer to what the wire protocol's `isExternal=False` path was designed
-for than a mirrored Discord human ever was. Recommendation for v1:
-**reuse `isExternal=True`/`isHeadless=True`** (the same ghost rendering a
-Discord bot gets) as the safe, already-shipped default, and revisit with
-upstream pixel-agents once there's real visual feedback on whether a
-genuine agent deserves its own distinct treatment — the same
-"verify against the real wire protocol, file findings upstream" process
-`docs/corridor-pubsub-design.md`'s original design review followed. Not
-resolved in this doc; flagged so it isn't silently decided by whichever
-value is easiest to type at implementation time.
-
-## corridor's `AgentRef` gains `agent_key`
-
-`ARCHITECT_AGENT_REF = AgentRef(discord_user_id=None, guild_id=None,
-is_bot=True)` (`architect/adapters/cog_base.py`) was a placeholder — it
-has no way to distinguish one genuine agent from a second one that also
-has no Discord account. corridor's `AgentRef` (the schema source of truth
-for this bus, per `docs/corridor-pubsub-design.md`) gains a new field:
+**`corridor/domain/models.py`'s `AgentRef`** — the wire shape both
+publishers above construct:
 
 ```python
 @dataclass(frozen=True, slots=True)
@@ -234,131 +182,160 @@ class AgentRef:
     guild_id: int | None
     is_bot: bool
     agent_key: str | None = None
-    """A stable slug identifying a genuine agent (e.g. "architect").
-    Required (non-None) exactly when discord_user_id/guild_id are both
-    None; must be None whenever they're set -- an AgentRef is either a
-    Discord account (identified by its snowflakes) or a genuine agent
-    (identified by agent_key), never a mix of both identity schemes."""
 ```
 
-Additive field, default `None` — every existing `AgentRef(...)`
-construction site (floorplan's subscriber guards, pico's `ReplyTool`,
-testbench's manual UI) is unaffected. `ARCHITECT_AGENT_REF` becomes:
+`agent_key` is set exactly when `discord_user_id`/`guild_id` are both
+`None`, and `None` whenever they're set — an `AgentRef` is either a
+Discord account (identified by its snowflakes) or a genuine agent
+(identified by `agent_key`), never a mix of both identity schemes.
+
+**`AgentPresenceChanged`** — one full presence snapshot per change, for
+either identity shape:
 
 ```python
-ARCHITECT_AGENT_REF = AgentRef(
-    discord_user_id=None, guild_id=None, is_bot=True, agent_key="architect"
-)
+@dataclass(frozen=True, slots=True)
+class AgentPresenceChanged:
+    agent: AgentRef
+    display_name: str
+    status: Literal["online", "idle", "dnd", "offline"]
+    activities: tuple[AgentActivity, ...] = ()
 ```
 
-## floorplan's subscriber: resolve an identity instead of dropping one
+One rich event per presence change, not four granular ones
+(join/leave/status/activity-change): every one of those needs the same
+full-snapshot reconstruction to call `reconcile()`/`reconcile_genuine_agent()`
+anyway, so a granular split would only add event types without adding
+information. `status="offline"` covers both a real Discord
+offline/invisible status *and* a member actually leaving the guild — there
+is no separate "member left" event.
 
-The former `_agent_key()` (`floorplan/adapters/event_subscriptions.py`)
-returned `AgentKey | None`, and every handler treated `None` as "nothing
-to do." It's now `_office_identity()`, an `OfficeIdentity | None`
-resolver:
+`cctv/adapters/cog_base.py`'s `_office_identity` is the one resolver every
+subscriber handler calls before dispatching:
 
 ```python
 def _office_identity(agent: AgentRef) -> OfficeIdentity | None:
     if agent.guild_id is not None and agent.discord_user_id is not None:
-        return AgentKey(guild_id=agent.guild_id, user_id=agent.discord_user_id)
+        return AgentKey(agent.guild_id, agent.discord_user_id)
     if agent.agent_key is not None:
-        return GenuineAgentKey(agent_key=agent.agent_key)
-    return None  # neither shape present -- malformed AgentRef, not a real case
+        return GenuineAgentKey(agent.agent_key)
+    return None  # neither shape present -- malformed AgentRef
 ```
 
-Each `_on_agent_*` handler dispatches to the Discord-shaped or
-genuine-agent-shaped `OfficeService` call based on `type(identity)`,
-instead of unconditionally calling the Discord-only methods. The
-`None` case (an `AgentRef` with no Discord identity *and* no
-`agent_key`) becomes the actual "nothing to render" case — no longer the
-common path architect's every event took.
+## Key flows
+
+A registered agent's presence, from `cog_load` through to the canvas:
 
 ```mermaid
 sequenceDiagram
-    participant Arch as architect
-    participant C as corridor<br/>(EventBusService)
-    participant FP as floorplan<br/>(subscriber)
+    participant Arch as architect (cog_load)
+    participant C as corridor (CogBase)
+    participant Bus as EventBusService
+    participant Cctv as cctv (CctvBase)
     participant OS as OfficeService
-    participant Hub as ClientHub
-    participant B as Every connected browser<br/>(any guild)
 
-    Note over Arch: cog_load
-    Arch->>C: publish_event(AgentPresenceChanged(<br/>ARCHITECT_AGENT_REF, status="online"))
-    C->>FP: dispatch(event)
-    FP->>FP: _office_identity(event.agent)<br/>-> GenuineAgentKey("architect")
-    FP->>OS: reconcile_genuine_agent("architect", "architect", "online", ())
-    OS->>Hub: broadcast(agentCreated, to_genuine_agent_id("architect"))
-    Hub->>B: push over every open socket
-    Note over B: architect now visible on the one<br/>shared canvas, regardless of guild
+    Arch->>C: register_agent(RegisteredAgent(<br/>agent_key="architect", avatar_path=...))
+    C->>C: card_with_url(...) rewrites the card's URL/icon_url,<br/>rebuilds A2A routes
+    C->>Bus: publish(AgentPresenceChanged(<br/>agent_key="architect", status="online"))
+    Bus->>Cctv: dispatch(event)
+    Cctv->>Cctv: _office_identity(event.agent)<br/>-> GenuineAgentKey("architect")
+    Cctv->>OS: reconcile_genuine_agent(identity, "architect", "online")
+    OS-->>Cctv: canvas updated -- both the Discord-roster<br/>and editor pages
+
+    Note over Arch,C: later, cog_unload (or a crash -- on_cog_remove catches it)
+    Arch->>C: unregister_agent_owner("architect")
+    C->>Bus: publish(AgentPresenceChanged(<br/>agent_key="architect", status="offline"))
+    Bus->>Cctv: dispatch(event)
+    Cctv->>OS: reconcile_genuine_agent(identity, ..., "offline")
+    OS-->>Cctv: architect closed on both pages
 ```
 
-## Path to more agents
+The bot's own Discord presence updates flow the identical event path, just
+resolving to the ordinary Discord identity shape instead:
 
-Today, architect hand-writes its own `_publish_presence`/`_publish_activity`
-in `architect/adapters/cog_base.py`. That's fine for the first genuine
-agent; it isn't a pattern worth making every future one re-derive.
-**Recommendation, not designed in full here:** once a second genuine
-agent exists, extract a small reusable helper (plausibly living in
-corridor, since corridor already owns the event schema) that a new
-A2A-agent cog can adopt with a few lines — given an `agent_key` and
-`display_name`, wire the load/unload presence publish and an activity
-callback for its own tool loop, the same shape `ToolLoopService.run`'s
-`on_activity` already established for architect. Deferred until there's a
-second real caller to design the extraction point against, rather than
-guessing its shape from one example.
+```mermaid
+sequenceDiagram
+    participant D as Discord gateway
+    participant GW as corridor (DiscordGatewayMixin)
+    participant Bus as EventBusService
+    participant Cctv as cctv (CctvBase)
 
-Separately, and explicitly **out of scope for this doc**: nothing here
-designs *discovery* of genuine agents (how pico or a human finds a second
-A2A agent's endpoint) — that was, at the time this doc was written, a
-bot-owner manually pasting a URL into Red config (`[p]pico architecturl
-<url>`), with no existing agent-identity registry anywhere in this codebase
-to build on. That discovery story has since been solved: see
-`docs/agent-directory-design.md` for corridor's `AgentDirectoryService`,
-which pico now queries (`list_agents()`) instead of reading one
-owner-configured URL. A different problem from the one this doc solves
-(making a *known* genuine agent visible on the canvas) either way.
+    D->>GW: on_presence_update(before, after=bot's own member)
+    GW->>GW: _presence_event(after, bot_user_id)<br/>-> status forced "online"
+    GW->>Bus: publish(AgentPresenceChanged(AgentRef(<br/>discord_user_id=bot_id, guild_id, is_bot=True)))
+    Bus->>Cctv: dispatch(event)
+    Cctv->>Cctv: _office_identity(event.agent)<br/>-> AgentKey(guild_id, bot_id)
+    Cctv->>Cctv: reconcile_discord on discord_pipeline<br/>(if that guild is enabled)
+    Cctv->>Cctv: identity.user_id == bot.user.id<br/>-> also reconcile_discord on editor_pipeline
+```
+
+## API reference
+
+**`corridor.adapters.cog_base.CogBase`** (reached through
+`self._corridor` in a dependent cog):
+
+- `async register_agent(agent: RegisteredAgent, *, owner: str) -> None` —
+  rewrites the card's URL/`icon_url`, stores it, rebuilds A2A routes, and
+  publishes `AgentPresenceChanged(status="online")` for it.
+- `async unregister_agent_owner(owner: str) -> None` — removes every agent
+  `owner` registered and publishes `status="offline"` for each.
+- `async unregister_agent(agent_key: str) -> None` — removes one agent by
+  key and publishes `status="offline"` for it, a no-op if absent.
+- `list_agents() -> tuple[RegisteredAgent, ...]` — every currently
+  registered agent; pico calls this once per turn to build one
+  `consult_<agent_key>` tool per entry.
+- `watch_agent_events(subscriptions, *, owner) -> tuple[RegisteredAgent, ...]`
+  — subscribes to the given `(event_type, handler)` pairs and snapshots
+  the directory in one event-loop turn, so cctv's startup never misses an
+  agent that registered between the subscribe call and the snapshot read.
+
+**`pixelagents.application.office.OfficeService`** — the genuine-agent
+surface: `reconcile_genuine_agent(identity, display_name, status,
+activities=())`, `close_genuine_agent(identity)`,
+`send_genuine_agent_activity(identity, content)`,
+`clear_genuine_agent_activity(identity)`, plus the shared
+`OfficeIdentity`-typed `is_tracked`/`highlight_agent`/`unhighlight_agent`/
+`start_tool_activity`/`set_status`.
+
+## Design rationale
+
+**Presence-publishing lives in corridor's `register_agent`, not in each
+agent's own `cog_load`/`cog_unload`.** A registered A2A agent's directory
+membership *is* its office-canvas presence — there is no independent
+"presence" concept to hand-roll. Publishing it at the one place that
+already knows the full lifecycle (`register_agent`, `unregister_agent_owner`,
+`unregister_agent`, and the defensive `on_cog_remove` path) means a
+registering cog cannot forget to publish, cannot publish a stale snapshot,
+and cannot leak an "online" agent behind after its own `cog_unload` throws
+partway through — `on_cog_remove` fires unconditionally regardless.
+`architect/adapters/cog_base.py` and `painter/adapters/cog_base.py` both
+confirm this: neither has a `_publish_presence` method of its own: each
+calls `corridor.register_agent(...)` and corridor does the rest.
+
+**Activity-publishing does not live there — each agent hand-writes its
+own `_publish_activity` today.** `architect/adapters/cog_base.py` and
+`painter/adapters/cog_base.py` each define their own
+`_publish_activity(summary: str)`, publishing `AgentReplied(agent=<their
+own AGENT_REF>, summary=summary)` directly onto corridor's bus, wrapped in
+its own try/except. Unlike presence — one shape, one trigger
+(registered/unregistered) — an activity event fires many times per turn
+with content only the agent's own tool-execution loop has (what it just
+said, which tool it just ran), so there is no shared lifecycle moment for
+corridor to hook the way `register_agent` hooks presence. Each agent
+publishing its own `AgentReplied` at the moment it actually has something
+to report is the current, complete design, not a placeholder for a future
+extraction.
 
 ## Non-goals
 
-- **No per-guild fan-out or replication.** Ruled out by the "only one
-  canvas" finding above — a genuine agent needs exactly one entry, not
-  one per guild.
+- **No per-guild fan-out or replication.** A genuine agent needs exactly
+  one canvas entry, not one per guild — see "There is only one canvas"
+  above.
 - **No change to how Discord user/bot accounts are identified or
   rendered.** `AgentKey`/`is_bot`/headless semantics for (a) and (b) are
-  unchanged; this doc only adds a third, parallel identity shape.
-- **No A2A agent discovery/registry design.** See "Path to more agents"
-  above.
-- **No `isExternal`/`isHeadless` value locked in for genuine agents** —
-  ships with the same safe default a Discord bot gets, revisited with
-  upstream pixel-agents once there's real visual feedback.
-
-## Implementation checklist
-
-- [x] `pixelagents/domain/office.py`: `GenuineAgentKey`, `OfficeIdentity` union.
-- [x] `pixelagents/application/office.py`: `to_genuine_agent_id`,
-      `self._genuine_agents` store, `reconcile_genuine_agent`/
-      `close_genuine_agent`, and the `OfficeIdentity`-typed variants of
-      `is_tracked`/`highlight_agent`/`unhighlight_agent`/
-      `start_tool_activity`/`set_status`. `send_message_activity`/
-      `clear_message_activity` stayed `MessageSnapshot`/`AgentKey`-shaped
-      (Discord-only); genuine agents got parallel
-      `send_genuine_agent_activity`/`clear_genuine_agent_activity`
-      instead, since they have no real Discord message to key off.
-      Genuine agents fold into `existing_agents_message`/
-      `bootstrap_messages`'s roster.
-- [x] `corridor/domain/models.py`: `AgentRef.agent_key: str | None = None`;
-      regenerated `corridor/corridor.yaml`
-      (`corridor/event_catalog.py::build_contract()`).
-- [x] `architect/adapters/cog_base.py`: `ARCHITECT_AGENT_REF` gained
-      `agent_key="architect"`.
-- [x] `floorplan/adapters/event_subscriptions.py`: `_agent_key` became
-      `_office_identity` (returns `OfficeIdentity | None`); each
-      `_on_agent_*` handler dispatches on the resolved identity's type.
-- [x] Updated `docs/corridor-pubsub-design.md`'s guild-scoping note to
-      describe the resolved behavior instead of an open gap.
-- [x] Tests: `pixelagents` application tests for the new identity, ID
-      derivation, and roster folding (`TestGenuineAgents`); floorplan
-      subscriber tests for genuine-agent dispatch
-      (`TestGenuineAgentDispatch`); architect's presence/activity tests
-      assert `agent.agent_key == "architect"`.
+  unchanged by any of the above; genuine agents add a third, parallel
+  identity shape alongside them.
+- **No `isExternal`/`isHeadless` distinction for genuine agents.** A
+  genuine agent renders with the same `isExternal=True`/`isHeadless=True`
+  ghost treatment a Discord bot gets — the safe, already-shipped default,
+  not a value locked in as a deliberate design statement about what a
+  genuine agent visually *should* be.

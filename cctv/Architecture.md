@@ -1,27 +1,62 @@
 # CCTV architecture
 
-CCTV owns one aiohttp listener with two isolated Pixel Agents pipelines. It is a
-state observer and browser adapter; Pixelagents validates state and Corridor
-persists it.
+CCTV is a state observer and browser adapter: it renders and transports
+office state, but never owns the schema. Pixelagents validates every write
+and provides the office-state facade; Corridor persists the two aggregates
+and publishes their change events.
 
-## Components
+## Overview
 
 | Component | Responsibility |
 |---|---|
-| `domain/settings.py` | Immutable global and per-guild display settings |
-| `contracts/websocket.py` | Validated client message parsing |
+| `domain/settings.py` | Immutable global and per-guild display-settings values |
+| `contracts/websocket.py` | Pydantic-validated parsing of every inbound client message |
 | `application/pipeline.py` | Per-page revision ordering, bootstrap, writes, roster, and activity projection |
-| `application/tasks.py` | Supervised delayed activity clears |
-| `infrastructure/settings.py` | Fresh CCTV Config identity |
-| `infrastructure/client_hub.py` | Per-page connections, editor flags, and broadcasts |
-| `infrastructure/server.py` | One aiohttp listener and two WebSocket routes |
+| `application/tasks.py` | Supervised, cancellable delayed activity clears |
+| `infrastructure/settings.py` | CCTV's own Red Config identity for listener/display settings |
+| `infrastructure/client_hub.py` | Per-page connection registry, editor flags, and broadcasts |
+| `infrastructure/server.py` | One aiohttp listener: two WebSocket routes plus a JSON health route |
 | `infrastructure/tickets.py` | Short-lived Discord-page browser identity tickets |
-| `infrastructure/webview.py` | Pixelagents bundle loading and per-page HTML rewriting |
-| `adapters/dashboard.py` | Discord/editor/session/static Dashboard routes |
-| `adapters/cog_base.py` | Atomic watches, initial scans, event projection, lifecycle, and health |
+| `infrastructure/webview.py` | Pixelagents bundle loading and per-page HTML/WebSocket-target rewriting |
+| `adapters/dashboard.py` | Discord/editor/session/static Dashboard route registrations |
+| `adapters/cog_base.py` | Dependency wiring, atomic startup watches, pub/sub projection, lifecycle, health |
 | `adapters/commands.py` | Listener, guild, display, delay, and status commands |
 
-## Startup ordering
+```mermaid
+flowchart TB
+    subgraph Cctv["cctv"]
+        direction TB
+        Adapters["adapters<br/>dashboard routes, commands, cog_base"]
+        Application["application<br/>pipeline, tasks"]
+        Infrastructure["infrastructure<br/>server, client_hub, tickets, webview, settings"]
+        Domain["domain<br/>settings"]
+        Adapters --> Application
+        Adapters --> Infrastructure
+        Application --> Domain
+        Application --> Infrastructure
+    end
+
+    Corridor["corridor<br/><small>event bus: OfficeStateChanged + Agent* events<br/>keyholder capability check</small>"]
+    Pixelagents["pixelagents<br/><small>office-state facade<br/>webview bundle</small>"]
+    Discord["Discord gateway cache"]
+    Browser["Browser (Discord / editor page)"]
+
+    Adapters -->|watch_agent_events, capabilities_satisfy| Corridor
+    Application -->|office_state, set_office_layout,<br/>mutate_office_seats, watch_office_state| Pixelagents
+    Pixelagents -->|persist / atomic watch| Corridor
+    Infrastructure -->|webview_bundle_status, static assets| Pixelagents
+    Adapters -->|guild + member scan| Discord
+    Infrastructure -->|2 WebSocket routes, GET /cctv/health,<br/>Dashboard HTTP| Browser
+```
+
+Corridor and Pixelagents are the only cross-cog dependencies. `cog_base.py`
+loads both on demand via `corridor.dependency_loader.ensure_loaded`, never
+through a module-scope import, so a reload ordering that runs before either
+dependency is loaded cannot crash the module.
+
+## Key flows
+
+### Startup
 
 ```mermaid
 sequenceDiagram
@@ -31,68 +66,60 @@ sequenceDiagram
     participant D as Discord cache
 
     C->>C: load global and guild settings
-    C->>P: watch discord state
+    C->>P: watch_office_state(discord, handler)
     P->>R: atomic watch + snapshot
-    R-->>C: current discord state
-    C->>P: watch editor state
+    R-->>C: current discord OfficeState
+    C->>P: watch_office_state(editor, handler)
     P->>R: atomic watch + snapshot
-    R-->>C: current editor state
-    C->>R: atomic agent-event watch + current A2A roster
-    R-->>C: registered agents
-    C->>D: scan enabled guilds without yielding
-    C->>C: seed both rosters and start one listener
+    R-->>C: current editor OfficeState
+    C->>R: watch_agent_events(6 Agent* handlers) + list_agents()
+    R-->>C: current A2A roster
+    C->>D: scan enabled guilds (no await in between)
+    C->>C: seed both pipelines, start the listener
 ```
 
-There is one long-lived state watcher per aggregate, not one per browser. A
-writer cannot land between subscription and snapshot because Corridor performs
-both under its state lock. Agent event registration and the current A2A roster
-are similarly atomic; CCTV then scans the Discord cache without an intervening
-await.
+Each aggregate has exactly one long-lived watcher for CCTV's lifetime, not
+one per browser connection. Corridor performs subscribe-and-snapshot under
+its office-state lock, so no writer can land in the gap between them.
+Agent-event subscription and the current A2A roster are captured the same
+way, and CCTV's Discord cache scan runs immediately after with no
+intervening `await`, so no presence change can be missed at startup.
 
-## Pipeline isolation and revisions
+### Browser connect and live update
 
 ```mermaid
-flowchart TB
-    Listener["CctvServer :3210"]
-    DiscordRoute["/cctv/discord/ws"]
-    EditorRoute["/cctv/editor/ws"]
-    DiscordPipe["Discord pipeline<br/>hub + lock + revision + OfficeService"]
-    EditorPipe["Editor pipeline<br/>hub + lock + revision + OfficeService"]
-    DiscordState["discord OfficeState"]
-    EditorState["editor OfficeState"]
+sequenceDiagram
+    participant B as Browser
+    participant S as CctvServer
+    participant Pi as CctvPipeline
+    participant PA as pixelagents
+    participant Co as corridor
 
-    Listener --> DiscordRoute --> DiscordPipe --> DiscordState
-    Listener --> EditorRoute --> EditorPipe --> EditorState
+    B->>S: WebSocket connect (/cctv/discord/ws or /cctv/editor/ws)
+    S->>S: resolve ticket (discord page only)
+    S-->>Pi: register client (user_id, is_editor)
+    B->>S: {"type": "webviewReady"}
+    S->>Pi: handle_message
+    Pi->>PA: office_state(kind)
+    PA->>Co: read current aggregate
+    Co-->>Pi: complete OfficeState
+    Pi-->>B: assets, settings, existing agents, layout
+
+    Note over Co,Pi: Later -- any writer mutates this aggregate
+    Co->>Pi: OfficeStateChanged(state), awaited (5s subscriber timeout)
+    Pi->>Pi: ignore if revision <= applied revision
+    Pi-->>B: layoutLoaded (only if layout changed) + existing-agents broadcast
 ```
 
-Each `OfficeStateChanged` contains the complete post-write aggregate. A pipeline
-ignores an event whose revision is not newer than the state it has already
-applied. On `webviewReady`, it reads the current state again and serializes that
-bootstrap with live event application, preventing late clients from receiving a
-stale startup snapshot.
+A pipeline never trusts its own startup snapshot for a late-connecting
+client: `webviewReady` always re-reads the current aggregate and
+serializes that read against concurrent event application under the
+pipeline's lock, so a client that connects mid-write still bootstraps from
+a consistent state. `layoutLoaded` is only rebroadcast when the layout
+field itself changed -- most revision bumps are seat-only (an agent spawned,
+despawned, or was assigned a palette) and would otherwise race the editor's
+own unsaved-changes guard.
 
-Browser layout and seat writes use Pixelagents' field-specific facade. A layout
-write preserves seats; a seat write preserves layout. The Discord route drops
-writes unless its connection is authorized. The editor route marks every
-connection as an editor by design.
-
-## Projection policy
-
-The Discord pipeline includes members from enabled guilds, subject to the
-per-guild `include_bots` setting, plus every registered A2A agent. Rich presence
-and messages use global display toggles. The editor pipeline includes every
-registered A2A agent and the bot's own Discord identity. Agent activities route
-to either or both pipelines based on those rosters and use independent clear
-delays.
-
-Changing guild enablement or include-bots performs a full reconciliation.
-Disabling a guild despawns its roster and reauthorizes Discord clients. Browser
-authorization fails closed if Discord or Corridor lookups fail.
-
-## Failure and shutdown
-
-Bundle, state, and listener failures become health reasons rather than load
-failures. Dashboard page access retries the bundle/state read, so repairs do not
-require a restart unless the listener itself must rebind. Shutdown removes all
-Corridor subscriptions, cancels supervised tasks, closes both hubs and the
-listener, and clears the pipelines.
+See [`docs/cctv-design.md`](../docs/cctv-design.md) for the full domain
+model, the WebSocket/HTTP route reference, and validation/error-handling
+detail.

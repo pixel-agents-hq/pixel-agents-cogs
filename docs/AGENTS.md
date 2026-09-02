@@ -14,7 +14,7 @@ together in one place.
 | [`cctv`](../cctv) | Owns both Pixel Agents Dashboard pages, one two-route WebSocket listener, Discord/registered-agent projection, browser authorization, display settings, and per-page live pipelines. | [cctv/README.md](../cctv/README.md) |
 | [`floorplan`](../floorplan) | Owns Pixel Index API/Web configuration, catalogue browsing, and loading selected layouts into the Discord aggregate. | [floorplan/README.md](../floorplan/README.md) |
 | [`toolbox`](../toolbox) | Bot-owner Node.js/npm installation on the host, plus a Components v2 panel (`[p]toolbox tools`) for turning any `[p]help`-listed command into an LLM tool corridor's registry offers to pico. | [toolbox/README.md](../toolbox/README.md) |
-| [`pico`](../pico) | An LLM-backed Discord presence: decides whether to react to a message, then acts only via a bounded tool-calling loop (never a raw LLM text send). The sole A2A coordinator -- delegates a sub-task to whichever agents (`architect`, or any future one) are currently registered in corridor's agent directory, via one `consult_<agent_key>` tool per entry. | [pico/README.md](../pico/README.md) |
+| [`pico`](../pico) | An LLM-backed Discord presence: decides whether to react to a message, then acts only via a bounded tool-calling loop (never a raw LLM text send). The sole A2A coordinator -- delegates a sub-task to whichever agents (`architect`, `painter`, or any future one) are currently registered in corridor's agent directory, via one `consult_<agent_key>` tool per entry. | [pico/README.md](../pico/README.md) |
 | [`architect`](../architect) | A2A-only LLM agent registered on Corridor's shared listener. Performs structural mutations against Pixelagents' revisioned editor aggregate and owns no browser transport. | [architect/README.md](../architect/README.md) |
 | [`painter`](../painter) | A2A-only color agent using the same editor aggregate as Architect. Its surface cannot add, remove, move, or resize structure and has no direct browser notification hook. | [painter/README.md](../painter/README.md) |
 | [`suggestionbox`](../suggestionbox) | Runs its own MCP tools server (`report_error`/`suggest_improvement`) that posts to a bot-owner-configured Discord channel. Registers into corridor's `AgentToolServerRegistry` so a registered A2A agent's own tool loop (`architect`, `painter` today) can call the same tools, gated per agent by a Components v2 toggle panel (`[p]suggestionbox agents`). See `docs/suggestionbox-design.md`. | [suggestionbox/README.md](../suggestionbox/README.md) |
@@ -28,7 +28,7 @@ editor aggregate. See [`docs/cctv-design.md`](cctv-design.md).
 
 See [`docs/architecture.md`](architecture.md) for Mermaid diagrams of how
 these packages depend on and relate to each other — the dependency graph,
-an ownership map, cross-package runtime data flow for floorplan and pico,
+an ownership map, office-state/CCTV-browser/agent-event runtime data flow,
 and the CI-only relationships `contracts/` adds on top of all of it.
 
 ## Internal layering
@@ -45,8 +45,12 @@ package's own `Architecture.md` (where present) covers its specifics.
 ## Before making any change
 
 - **corridor is load-bearing infrastructure, not an optional dependency.**
-  Every other cog declares it in `required_cogs` and auto-loads it via
-  `dependency_loader.ensure_corridor_loaded()`. Permission checks go
+  Every other cog declares it in `required_cogs` and auto-loads it. Most
+  cogs do this via their own local `dependency_loader.ensure_corridor_loaded()`
+  wrapper; `cctv` is the one exception, calling
+  `corridor.dependency_loader.ensure_loaded(bot, "corridor", "Corridor")`
+  directly with no local wrapper of its own (a known fragility — see
+  [`docs/dependency-loading.md`](dependency-loading.md)). Permission checks go
   through `corridor.require_permission(ctx, group_key)`; replies go through
   `corridor.send_reply(...)`, never a raw `ctx.send`/`interaction.response.send_message`.
   `contracts/discord_replies/lint_reply_channel.py` runs in CI and fails a
@@ -68,13 +72,13 @@ package's own `Architecture.md` (where present) covers its specifics.
 - **`info.json` fields are matched case-sensitively by Red.** Use the
   lowercase keys from Red's `red_cog_repo.schema.json` /
   `red_cog.schema.json` — an uppercase key silently no-ops instead of
-  erroring (this bit the root `info.json` once; see git history around
-  "fix(repo): correct root info.json to Red's repo schema").
+  erroring.
 - **`corridor/ui_limits.py`** is a pure, framework-agnostic checker for
   Discord's undocumented-at-runtime component limits (modal title length,
   button label length, etc.), imported as `from corridor import ui_limits`
-  by both `corridor`'s and `floorplan`'s UI test suites. It has no
-  `discord`/`redbot` import of its own — keep it that way if you touch it.
+  by UI test suites across multiple cogs (`corridor`, `floorplan`,
+  `toolbox`, `suggestionbox`, `testbench`). It has no `discord`/`redbot`
+  import of its own — keep it that way if you touch it.
 
 ## Local quality gate
 
@@ -140,8 +144,9 @@ Index lint/verify steps — see [`contracts/README.md`](../contracts/README.md).
   and the mutation/validation service both callers share.
 - [`docs/agent-directory-design.md`](agent-directory-design.md) — corridor
   as the one shared A2A listener + agent directory every A2A-reachable
-  agent (`architect`, and any future one) registers into, and how pico
-  discovers/consults them dynamically instead of a hardcoded per-agent URL.
+  agent (`architect`, `painter`, and any future one) registers into, and
+  how pico discovers/consults them dynamically instead of a hardcoded
+  per-agent URL.
 - [`docs/suggestionbox-design.md`](suggestionbox-design.md) — `suggestionbox`'s
   MCP feedback server, corridor's `AgentToolServerRegistry` + MCP client
   bridging it into a registered A2A agent's own tool loop, and the

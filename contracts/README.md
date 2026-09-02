@@ -4,6 +4,8 @@ Consumer-driven contract testing — verifies this repo's assumptions about
 external services (Pixel Index, Pixel Agents) against their real
 environments. **Not a runtime-loaded cog.**
 
+## Overview
+
 `contracts` is a separate top-level package that exists purely for CI. Its
 `info.json` declares `"type": "SHARED_LIBRARY"` specifically so Red's
 Downloader excludes it from cog discovery — without that marker, Red would
@@ -84,15 +86,21 @@ doc's "Verifying this design: two committed contracts" section.
 | `pixel_index/verify.py` | Regenerates the contract, calls each endpoint for real, validates the response |
 | `pixel_index/lint_endpoints.py` | CI lint: fails if a called endpoint isn't registered in `endpoints.py` |
 | `pixel_index/lint_model_usage.py` | CI lint: fails if a field read on a contract model isn't modeled (via mypy) |
+| `pixel_index/generate_status_site.py` | Renders `verify.py`'s per-environment JSON results into the published status site (HTML page, versioned JSON API, Shields-compatible badge documents) |
 | `pixel_agents/verify.py` | Runs a real webview build against the pinned commit and checks the result |
 | `pixel_agents/verify_outbound.py` | Captures real outbound messages and validates them against the vendor schema, our own committed contract, and (live) checks the contract itself against the vendor schema |
+| `pixel_agents/generate_status_site.py` | Renders `verify.py`'s result into the `pixel-agents/` subtree nested under the same published status site |
 | `pixel_agents/generate_consumer_contract.py` | Builds `pixel-agents-consumer-contract.yaml` from `pixelagents.contracts.outbound`'s TypedDicts (**committed**, not gitignored — CI fails on drift instead of always overwriting) |
 | `pixel_agents/pixel-agents-consumer-contract.yaml` | The subset of wire `ServerMessage` schemas `pixelagents.contracts.outbound` actually builds; generated, committed, reviewable |
 | `pixel_agents/lint_outbound_contract.py` | CI lint: fails if a captured outbound message violates the committed consumer contract (offline) |
 | `corridor/generate_corridor_contract.py` | Thin CLI wrapper: renders and `--check`s/writes `../corridor/corridor.yaml` from `corridor.event_catalog.build_contract()` (**committed**, not gitignored — CI fails on drift instead of always overwriting) |
 | [`../corridor/corridor.yaml`](../corridor/corridor.yaml) | Every `Agent`-prefixed type in `corridor/domain/models.py`; generated, committed, reviewable. Lives inside `corridor/`, not here — see the bullet above |
 | `corridor/lint_corridor_contract.py` | CI lint: fails if a name declared in `corridor.yaml` isn't mentioned in `docs/corridor-pubsub-design.md`'s text (doc cross-reference only — structural correctness against real code is `generate_corridor_contract.py --check`'s job) |
+| `corridor/generate_office_state_contract.py` | Thin CLI wrapper: renders and `--check`s/writes `../corridor/office_state.yaml` from `corridor.office_state_catalog.build_contract()` (**committed**, not gitignored — CI fails on drift instead of always overwriting) |
+| [`../corridor/office_state.yaml`](../corridor/office_state.yaml) | `OfficeState`/`OfficeStateChanged`, generated, committed, reviewable. Deliberately separate from `corridor.yaml` because office state isn't an `Agent*` activity event and doesn't appear in Testbench's activity UI |
+| `corridor/lint_office_state_contract.py` | CI lint: fails if a name declared in `office_state.yaml` isn't mentioned in `docs/cctv-design.md`'s text (same doc-cross-reference role as `lint_corridor_contract.py`, but against `docs/cctv-design.md` instead of the Pub/Sub design doc) |
 | `discord_replies/lint_reply_channel.py` | CI lint: fails on a raw Discord send reachable from a command handler without going through corridor's `send_reply`/`render_reply` |
+| `ast_call_graph.py` | Shared AST call-graph crawling helpers (`index_functions`/`crawl_call_graph`) used by `discord_replies/lint_reply_channel.py` to follow `self.<name>(...)` calls across a package rather than just one function's own body |
 
 ## Running checks locally
 
@@ -109,11 +117,17 @@ python -m unittest discover -s contracts/pixel_agents/tests -v
 
 python -m contracts.corridor.generate_corridor_contract
 python -m contracts.corridor.lint_corridor_contract
+python -m contracts.corridor.generate_office_state_contract
+python -m contracts.corridor.lint_office_state_contract
 python -m unittest discover -s contracts/corridor/tests -v
 ```
 
-## Docs
+## Related docs
 
-See [`docs/contract-testing.md`](../docs/contract-testing.md) for the full
-methodology, why the contract is generated instead of hand-written, how to
-read a CI result, and the status site URLs.
+- [`docs/contract-testing.md`](../docs/contract-testing.md) -- the full
+  methodology, why the contract is generated instead of hand-written, how
+  to read a CI result, and the status site URLs.
+- [`docs/corridor-pubsub-design.md`](../docs/corridor-pubsub-design.md) --
+  the Pub/Sub domain model `corridor.yaml` is generated from.
+- [`docs/cctv-design.md`](../docs/cctv-design.md) -- the office-state
+  model `office_state.yaml` is generated from.

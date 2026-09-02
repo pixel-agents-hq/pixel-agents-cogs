@@ -25,12 +25,18 @@ what changes how you should act.
 
 Packages: `corridor` (shared permissions/reply-rendering/LLM
 connection/A2A listener/MCP client bridging a registered agent-tool server
-into a registered A2A agent's own tool loop — hidden but load-bearing),
-`pixelagents` (vendors + builds the webview; also owns the Semantic IR
-domain model, Pixel Agents JSON codec, color palette, and the shared
-office-layout Config store `architect`/`painter` both read/write —
-see `docs/painter-design.md` part A), `floorplan` (serves it,
-mirrors Discord presence), `toolbox` (host Node.js install + LLM tool
+into a registered A2A agent's own tool loop — hidden but load-bearing, and
+owner of the actual office-state `Config` store underneath everything
+below), `pixelagents` (vendors + builds the webview; also owns the
+Semantic IR domain model, Pixel Agents JSON codec, color palette, and the
+schema-validating office-state facade `architect`/`painter`/`floorplan`/
+`cctv` all read/write through — corridor persists the data, pixelagents is
+the one schema-aware surface onto it, not a Config store of its own; see
+`docs/painter-design.md` part A), `floorplan` (Pixel Index catalogue
+browser: search/view layouts, loads an authorized one into the shared
+editor aggregate), `cctv` (renders the live office canvas from corridor's
+pub/sub event bus and serves the webview pixelagents builds — see
+`docs/cctv-design.md`), `toolbox` (host Node.js install + LLM tool
 toggle panel), `pico` (LLM Discord presence, sole A2A coordinator),
 `architect` (second LLM agent, A2A-only, owns every structural layout
 mutation), `painter` (third LLM agent, A2A-only, owns every color
@@ -54,6 +60,7 @@ work around it.
 python -m pytest -q corridor/
 python -m pytest -q floorplan/tests
 python -m pytest -q pixelagents/tests
+python -m pytest -q cctv/tests
 python -m pytest -q toolbox/
 python -m pytest -q pico/
 python -m pytest -q architect/
@@ -63,9 +70,9 @@ python -m pytest -q testbench/
 python -m pytest -q deskutils/
 
 # lint/format/types run fine across all cogs at once:
-python -m ruff format --check corridor floorplan pixelagents toolbox pico architect painter suggestionbox testbench deskutils
-python -m ruff check corridor floorplan pixelagents toolbox pico architect painter suggestionbox testbench deskutils
-python -m mypy corridor floorplan pixelagents toolbox pico architect painter suggestionbox testbench deskutils
+python -m ruff format --check corridor floorplan pixelagents cctv toolbox pico architect painter suggestionbox testbench deskutils
+python -m ruff check corridor floorplan pixelagents cctv toolbox pico architect painter suggestionbox testbench deskutils
+python -m mypy corridor floorplan pixelagents cctv toolbox pico architect painter suggestionbox testbench deskutils
 
 # CI-only contract/lint checks:
 python -m unittest discover -s contracts/tests
@@ -76,8 +83,9 @@ A single test: `python -m pytest -q corridor/tests/test_reply_sender.py::TestRep
 
 `corridor`'s suite (and pico's `test_architect_client.py`) binds a real
 loopback A2A listener — not network-mocked — so a sandboxed environment
-needs `127.0.0.1` loopback binding allowed. `floorplan`'s suite additionally
-needs `pip install -r contracts/pixel_index/requirements.txt`.
+needs `127.0.0.1` loopback binding allowed. `cctv`'s suite also binds a
+real loopback aiohttp listener for the same reason. `floorplan`'s suite
+additionally needs `pip install -r contracts/pixel_index/requirements.txt`.
 
 See [`.github/workflows/cogs-quality.yml`](../.github/workflows/cogs-quality.yml)
 for the exact per-cog dependency matrix if a test run fails on a missing
@@ -132,9 +140,10 @@ each package's own `Architecture.md` (where present) covers its specifics.
   every cached module on each load/reload attempt, including moments the
   dependency isn't loaded yet — a bare top-level import crashes with
   `ModuleNotFoundError` before `setup()` runs. Put runtime-only cross-cog
-  imports inside the function body that needs them instead. This already
-  broke production once (`docs/dependency-loading.md`, `pixelagents/__init__.py`
-  docstring has the trace).
+  imports inside the function body that needs them instead. See
+  `docs/dependency-loading.md` and the `pixelagents/__init__.py` module
+  docstring for the full mechanical trace of how a cached module gets
+  re-executed at the wrong moment.
 - **Two trees, one writable.** The installed package tree is read-only at
   runtime — never write into a cog's own source directory. Anything a cog
   writes (config, build output, downloaded binaries) goes under
@@ -144,7 +153,8 @@ each package's own `Architecture.md` (where present) covers its specifics.
   Red's schema — an uppercase key silently no-ops rather than erroring.
 - **`corridor/ui_limits.py` has no discord/redbot import and must stay
   that way** — it's a pure Discord-component-limit checker imported by
-  both corridor's and floorplan's UI tests.
+  UI test suites across multiple cogs (corridor, floorplan, toolbox,
+  suggestionbox, testbench).
 - **Contract files under `contracts/` are generated, not hand-written**
   (from the same models/dataclasses the runtime code uses) — some are
   gitignored build artifacts (`pixel_index/contract.yaml`), others are
@@ -153,3 +163,11 @@ each package's own `Architecture.md` (where present) covers its specifics.
   source model and regenerate. See [`docs/contract-testing.md`](../docs/contract-testing.md).
 - If you fix a piece of documented drift while building or touching
   contract tests, fix it in the same PR rather than only flagging it.
+- **Markdown docs describe current behavior only, and must stay
+  synced with the code.** When you change code a tracked `.md` file
+  describes, update that doc in the same change. A doc marked "not
+  implemented"/"planned" is exempt until it ships. If a doc and the code
+  disagree, the code wins -- read it, then fix the doc.
+- **Never narrate history in a doc.** No "Update:", "Correction:", "as
+  of X", "used to", "superseded by" -- state the current fact only; git
+  history is the changelog.

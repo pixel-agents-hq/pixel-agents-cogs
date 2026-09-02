@@ -57,3 +57,62 @@ jobs:
               --input "${markdown_file}" \
               --output "${output_file}"
           done < <(git ls-files -z -- '*.md')
+
+      - name: Render Mermaid diagrams as GitHub's own Markdown view decodes them
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # github.com's file/PR view converts Markdown to HTML and hands the
+          # resulting DOM text (with entities like &quot;/&lt;/&gt; already
+          # decoded) to its client-side mermaid renderer -- mmdc's own
+          # Markdown parser does NOT decode entities before extracting a
+          # ```mermaid``` fence, so a diagram using an entity to smuggle a
+          # literal quote or angle bracket past mmdc's parser still breaks on
+          # github.com even though the step above renders it fine. Extract
+          # every fence, HTML-decode it the same way, and render the decoded
+          # text directly to catch that class of bug here instead of on a
+          # viewer's screen.
+          chrome_path="$(command -v google-chrome-stable || command -v google-chrome || command -v chromium)"
+          puppeteer_config="${RUNNER_TEMP}/mermaid-puppeteer.json"
+          diagram_root="${RUNNER_TEMP}/mermaid-diagrams-decoded"
+          render_root="${RUNNER_TEMP}/mermaid-rendered-decoded"
+
+          python3 - "${diagram_root}" <<'PYEOF'
+          import html
+          import pathlib
+          import re
+          import subprocess
+          import sys
+
+          diagram_root = pathlib.Path(sys.argv[1])
+          fence_re = re.compile(r"```mermaid\n(.*?)```", re.DOTALL)
+
+          files = subprocess.run(
+              ["git", "ls-files", "-z", "--", "*.md"],
+              capture_output=True, check=True, text=True,
+          ).stdout.split("\0")[:-1]
+
+          count = 0
+          for md_path in files:
+              text = pathlib.Path(md_path).read_text(encoding="utf-8")
+              for i, match in enumerate(fence_re.finditer(text), start=1):
+                  decoded = html.unescape(match.group(1))
+                  out_dir = diagram_root / md_path
+                  out_dir.mkdir(parents=True, exist_ok=True)
+                  (out_dir / f"{i}.mmd").write_text(decoded, encoding="utf-8")
+                  count += 1
+          print(f"Extracted {count} mermaid diagram(s) for decoded-entity rendering.")
+          PYEOF
+
+          if [ -d "${diagram_root}" ]; then
+            while IFS= read -r -d '' mmd_file; do
+              output_file="${render_root}/${mmd_file#"${diagram_root}"/}.svg"
+              mkdir -p "$(dirname "${output_file}")"
+              echo "Rendering (decoded) ${mmd_file}"
+              mmdc \
+                --puppeteerConfigFile "${puppeteer_config}" \
+                --input "${mmd_file}" \
+                --output "${output_file}"
+            done < <(find "${diagram_root}" -name '*.mmd' -print0)
+          fi

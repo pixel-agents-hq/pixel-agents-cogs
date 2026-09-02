@@ -1,132 +1,99 @@
 # suggestionbox: an MCP feedback server, mediated by corridor for A2A agents
 
-> Browser-listener examples naming the former Floorplan/Architect WebSocket
-> modules predate CCTV and are superseded by
-> [`cctv-design.md`](cctv-design.md). The MCP and agent-tool design is unchanged.
+## 1. Overview
 
-**Status: implemented.** See the implementation checklist (§10) and this
-repo's own PRs for what actually landed; a follow-up review pass may note
-small deviations from the plan below (e.g. `render_channel_reply` reusing
-corridor's existing `default_prefix()` helper instead of skipping prefix
-substitution outright, and an unrelated `typing-inspection<0.4.3`
-packaging pin discovered while wiring CI) -- this doc is left as originally
-written rather than retouched to match, so a review comparing the two is
-meaningful.
+`suggestionbox` is an MCP (Model Context Protocol) tools server exposing
+two tools -- `report_error` and `suggest_improvement` -- that post to a
+bot-owner-configured Discord channel. It gives every A2A agent registered
+in corridor's `AgentDirectoryService` (`architect`, `painter`) a channel
+to say "I misunderstood a tool" or "this took far more reasoning than it
+should have" mid tool-loop, and gives anything else that speaks MCP --
+a coding-agent CLI or IDE integration working on this repository -- a
+structured way to report a bug or friction point into the same Discord
+channel.
 
-## 1. Problem
-
-Architect (and any future A2A agent registered in corridor's
-`AgentDirectoryService`) has no channel to say "I misunderstood a tool" or
-"this took far more reasoning than it should have" — feedback about its own
-operation just evaporates at the end of the tool loop. Separately, an
-external coding agent working on this very repository (a Claude Code
-session, or similar tooling) has no structured way to report a bug or
-friction point it hit into this project's own Discord either.
-
-`suggestionbox` is a new cog that answers both with one MCP (Model Context
-Protocol) tools server exposing two tools — `report_error` and
-`suggest_improvement` — that post to a bot-owner-configured Discord channel.
 Two different kinds of caller reach it:
 
 1. **Genuinely external MCP clients** (a coding-agent CLI, an IDE
-   integration — anything that speaks MCP and is pointed at this bot's
+   integration -- anything that speaks MCP and is pointed at this bot's
    host) connect straight to suggestionbox's own MCP endpoint.
-2. **A2A agents already registered in corridor** (architect today, more
-   later) reach the same two tools through their own in-process
-   tool-calling loop, mediated entirely by corridor.
+2. **A2A agents already registered in corridor** (`architect`, `painter`)
+   reach the same two tools through their own in-process tool-calling
+   loop, mediated entirely by corridor.
 
-The design work is almost entirely in path 2: nothing in this repo speaks
-MCP anywhere today (`grep -ri mcp` across every cog and every `info.json`
-returns nothing), corridor's LLM client is a bespoke OpenAI-compatible
-`aiohttp` POST to LiteLLM's `/chat/completions` (`corridor/infrastructure/
-llm_client.py`), and architect's `ToolLoopService` only ever calls a fixed,
-pydantic-typed `Sequence[ToolSpec]` built once in `CogBase.__init__`
-(`architect/adapters/cog_base.py:108-119`) — it never consults corridor's
-existing `ToolRegistryService`/`list_tools_for(ctx)` the way pico does,
-because architect has no `commands.Context` to filter against at all: it's
-driven by A2A `RequestContext`, not a Discord command invocation.
+Corridor runs a real MCP client end to end -- even for an in-process A2A
+agent's own consumption -- rather than a protocol shortcut (e.g.
+suggestionbox's handlers registered a second time as a plain corridor
+`RegisteredTool`). That keeps exactly one implementation of "what does
+`report_error` mean," and every caller, internal or external, goes
+through the identical protocol surface.
+
+## 2. Architecture
 
 ```mermaid
 flowchart LR
-    Ext["External MCP client<br/><small>e.g. a Claude Code session<br/>working on this repo</small>"]
-    SB["suggestionbox<br/><small>MCP server: report_error,<br/>suggest_improvement</small>"]
-    C["corridor<br/><small>MCP client + new<br/>AgentToolServerRegistry</small>"]
-    Arch["architect<br/><small>ToolLoopService</small>"]
+    subgraph SBox["suggestionbox"]
+        MCP["MCP server (FastMCP)<br/>report_error, suggest_improvement"]
+        Panel["Components v2 panel<br/>[p]suggestionbox agents"]
+        Cfg["Config: mcp_host/port,<br/>feedback channel,<br/>mcp_enabled_agents"]
+    end
+
+    subgraph Corridor["corridor"]
+        Registry["AgentToolServerRegistry<br/>owner, base_url, agent_allowed,<br/>cached tools/list"]
+        Client["McpClientPool<br/>stateless MCP client"]
+    end
+
+    Ext["External MCP client<br/><small>coding-agent CLI, IDE</small>"]
+    Arch["architect<br/>ToolLoopService"]
+    Paint["painter<br/>ToolLoopService"]
     Chan["configured Discord channel"]
 
-    Ext -- "MCP over HTTP" --> SB
-    SB -- "same two tools, real MCP server" --> C
-    C -- "list_agent_tools_for('architect')<br/>each turn" --> Arch
-    Arch -- "tool call" --> C
-    C -- "MCP tools/call" --> SB
-    SB -- "corridor.send_channel_reply" --> Chan
+    Ext -- "MCP over HTTP" --> MCP
+    MCP -.->|"register_mcp_server<br/>at cog_load"| Registry
+    Registry --> Client
+    Client -- "MCP over HTTP<br/>(fresh connection per call)" --> MCP
+    Arch -- "list_agent_tools_for('architect')<br/>each A2A turn" --> Registry
+    Paint -- "list_agent_tools_for('painter')<br/>each A2A turn" --> Registry
+    Panel -- "toggles mcp_enabled_agents" --> Cfg
+    Cfg -. "agent_allowed(agent_key)" .-> Registry
+    MCP -- "corridor.send_channel_reply" --> Chan
 ```
 
-## 2. Locked decisions
+`AgentToolServerRegistry` is a third corridor registry, parallel to
+`ToolRegistryService` and `AgentDirectoryService`, not a reuse of either:
 
-Decided explicitly for this design (mirroring the "Locked decisions"
-convention in `architect-design.md`/`agent-directory-design.md`):
+- `ToolRegistryService` filters by a live `commands.Context`
+  (`required_group`/`can_run`) -- neither architect nor painter has one,
+  since each is driven by an A2A `RequestContext`, not a Discord command
+  invocation.
+- `AgentDirectoryService` stores A2A-reachable agents -- the opposite
+  direction of this data flow (agents *offering* themselves to pico, not
+  agents *consuming* a tool server).
 
-- **Real MCP end to end, not a protocol shortcut.** suggestionbox runs an
-  actual MCP server (via the official `mcp` Python SDK's `FastMCP`, HTTP
-  transport). Corridor runs an actual MCP *client* (`mcp.client.
-  streamable_http` + `ClientSession`) against it — even for architect's
-  in-process consumption. This was a deliberate choice over the cheaper
-  "dual registration" alternative (suggestionbox's handlers registered
-  twice: once behind real MCP, once as a plain corridor `RegisteredTool`)
-  specifically so there is exactly one implementation of "what does
-  `report_error` mean" and every caller, internal or external, is proven
-  to go through the identical protocol surface.
-- **A new corridor registry, parallel to `ToolRegistryService`/
-  `AgentDirectoryService`, not a reuse of either.** `ToolRegistryService`
-  filters by a live `commands.Context` (`required_group`/`can_run`)
-  architect doesn't have; `AgentDirectoryService` stores A2A-reachable
-  agents, the opposite direction of this data flow (agents *offering*
-  themselves to pico, not agents *consuming* a tool server). This is a
-  third, genuinely different shape — corridor holding a live MCP client
-  session per registered server, gated per `agent_key` — so it gets its
-  own service, `AgentToolServerRegistry`, following the same
-  register/unregister_owner/list convention the other two already
-  establish.
-- **Visibility is the registering server's own concern, not a third-party
-  filter hook.** Toolbox's `ToolVisibilityFilter` precedent
-  (`docs/toolbox-command-tool-toggle-design.md`) exists because *other*
-  cogs opine on tools they don't own. Here there is exactly one owner
-  per registered MCP server, deciding which agents may use its own tools
-  — so the gate is a plain callable supplied at registration time
-  (`RegisteredMcpServer.agent_allowed`), not a second registration step.
-- **The per-agent toggle is global (bot-wide), owner-only, and off by
-  default for a newly-registered agent.** Matches `AgentDirectoryService`/
-  `ToolRegistryService` both being one-per-bot-process, not one-per-guild;
-  matches toolbox's global tool-selection panel being
-  `@commands.is_owner()`-gated; and defaults closed so a bot owner must
-  deliberately opt each agent in, consistent with this repo's general bias
-  toward explicit grants for cross-cutting capability surface.
-- **The feedback destination is one global channel, not per-guild.**
-  Neither an external MCP client (no Discord identity at all) nor an A2A
-  agent's own `AgentRef` (architect's is `guild_id=None`, see
-  `corridor/adapters/cog_base.py`'s `ARCHITECT_AGENT_REF`) carries guild
-  context to key a per-guild channel choice off of. `[p]suggestionbox
-  channel <#channel>` is bot-owner-only and stores exactly one
-  `(guild_id, channel_id)` pair in global Config.
-- **Two distinct tools, not one generic `submit_feedback`.** `report_error`
-  and `suggest_improvement` get their own schemas — a caller (human-written
-  agent prompt or external tool) should not have to encode "which kind of
-  feedback is this" as a free-text field when MCP already lets each tool
-  advertise its own shape.
-- **No auth/signing on the MCP transport**, mirroring
-  `agent-directory-design.md` §7's identical non-goal for A2A — the same
-  trusted-network assumption applies here; if suggestionbox's MCP endpoint
-  is ever exposed outside a trusted network, that's its own follow-up
-  design.
+`AgentToolServerRegistry` holds a live MCP client's cached tool list per
+registered server, gated per `agent_key` rather than per Discord
+permission group -- following the same
+`register`/`unregister_owner`/`unregister`/`list_*` convention the other
+two registries already establish.
 
-## 3. `suggestionbox`: the MCP server, Discord command, and Config
+Visibility is the registering server's own concern, not a third-party
+filter hook: toolbox's `ToolVisibilityFilter`
+(`docs/toolbox-command-tool-toggle-design.md`) exists because *other*
+cogs opine on tools they don't own. Here there is exactly one owner per
+registered MCP server, deciding which agents may use its own tools -- so
+the gate is a plain callable supplied at registration time
+(`RegisteredMcpServer.agent_allowed`), not a second registration step.
 
-Scaffolded from `.cookiecutter/cog-cookiecutter` (standard `domain/`/
-`application/`/`infrastructure/`/`adapters/` layering, its own rolled
-Config identifier from the post-gen hook).
+suggestionbox runs its own MCP listener rather than folding into
+corridor's shared A2A `Starlette` app: MCP and A2A are different wire
+protocols serving different audiences, and there is exactly one
+MCP-serving cog. It binds its own `aiohttp`/uvicorn listener the way
+architect's and floorplan's own websocket listeners do, on a host/port it
+owns itself (`127.0.0.1:8934` by default), started from its own
+`cog_load` and restarted whenever `[p]suggestionbox mcp host/port`
+changes.
 
-### The two tools
+## 3. Domain model / schema
 
 ```python
 # suggestionbox/domain/feedback.py -- pure logic, no discord/redbot/mcp import
@@ -138,9 +105,9 @@ class Severity(StrEnum):
 @dataclass(frozen=True, slots=True)
 class ErrorReport:
     source: str          # free text identifying the reporter -- "architect",
-                          # "claude-code session on pixel-agents-cogs", etc.
-                          # MCP carries no caller identity of its own on this
-                          # transport, so the schema asks for it explicitly.
+                          # "painter", "a Claude Code session on this repo",
+                          # etc. Neither transport carries a stronger caller
+                          # identity, so the schema asks for it explicitly.
     what_happened: str
     expected: str
     actual: str
@@ -154,45 +121,22 @@ class ImprovementSuggestion:
     suggestion: str
 ```
 
-`FeedbackService` (application layer) turns either into a rendered Discord
-message via a new corridor primitive (§5) and returns a small
-JSON-serializable status mapping — same "informational mapping back to the
-caller" convention `corridor-tool-registry-design.md`'s `deskutils_time`
-example already sets. An unconfigured channel is an expected failure
-(`LLMSettings.ready`'s own "stay silent/idle until configured" precedent),
-reported back as an MCP tool error, not a raised exception.
+`FeedbackService` (application layer) turns either into a rendered
+Discord message via corridor's `send_channel_reply` and returns a small
+JSON-serializable status mapping -- the same "informational mapping back
+to the caller" convention `corridor-tool-registry-design.md`'s
+`deskutils_time` example sets. An unconfigured channel is an expected
+failure, reported back as a structured `{"status": "error", ...}` result,
+not a raised exception.
 
-### The MCP server itself
-
-`suggestionbox/infrastructure/mcp_server.py` wraps `mcp.server.fastmcp.
-FastMCP`, registering `report_error`/`suggest_improvement` as its two
-tools (docstrings/pydantic field descriptions become the MCP tool
-descriptions/schemas the SDK generates automatically — no hand-written
-JSON Schema, unlike corridor's `RegisteredTool.parameters`). Runs over
-MCP's Streamable HTTP transport (not `stdio`: this is a long-running cog
-inside the bot process, not a spawnable subprocess) on a host/port
-suggestionbox owns itself — mirroring architect's/floorplan's own
-pre-centralization pattern of a cog binding its own `aiohttp`/websocket
-listener (`architect/infrastructure/websocket.py`,
-`floorplan/infrastructure/websocket.py`), not corridor's shared A2A
-listener. This is deliberately *not* folded into corridor's shared A2A
-`Starlette` app (§7): MCP and A2A are different wire protocols serving
-different audiences, and there is exactly one MCP-serving cog today —
-the "N+1 duplicated ports" pressure that justified centralizing A2A
-(`agent-directory-design.md` §1) doesn't yet exist here. `[p]suggestionbox
-mcp host/port` (bot owner), same bind-probe-and-report-failure shape
-`corridor`'s `A2AServer`/`architect`'s former listener already use, started
-from suggestionbox's own `cog_load`.
-
-### The feedback-channel command
-
-```
-[p]suggestionbox channel <#channel>
-```
-
-Bot-owner-only (`@commands.is_owner()`). Stores `(ctx.guild.id,
-channel.id)` in global Config, overwriting any previous value — exactly
-one destination process-wide, per the locked decision above.
+The MCP server itself (`suggestionbox/infrastructure/mcp_server.py`)
+wraps `mcp.server.fastmcp.FastMCP`, registering `report_error`/
+`suggest_improvement` as its two tools; docstrings and the function
+signatures become the MCP tool descriptions/schemas the SDK generates
+automatically -- no hand-written JSON Schema, unlike corridor's
+`RegisteredTool.parameters`. It runs `stateless_http=True`: each MCP
+request is independent, matching corridor's `McpClientPool` opening a
+fresh connection per call rather than holding one open.
 
 ### Config shape
 
@@ -207,204 +151,173 @@ GLOBAL_DEFAULTS = {
 }
 ```
 
-No per-guild Config at all — every piece of this cog's own state is
-global, consistent with §2's locked decisions.
+Every piece of this cog's own state is global -- no per-guild Config at
+all. Neither an external MCP client (no Discord identity at all) nor an
+A2A agent's own `AgentRef` (architect's and painter's are both
+`guild_id=None`) carries guild context to key a per-guild channel choice
+off of, so `[p]suggestionbox channel <#channel>` is bot-owner-only and
+stores exactly one `(guild_id, channel_id)` pair in global Config, and
+the per-agent toggle is likewise global, owner-only, and off by default
+for a newly-registered agent.
 
-## 4. corridor: `AgentToolServerRegistry` + a real MCP client
-
-### The registry
+### `RegisteredMcpServer`
 
 ```python
-# corridor/application/agent_tool_server_registry.py
-# same register/unregister_owner/unregister/list shape
-# ToolRegistryService/AgentDirectoryService already follow.
+# corridor/domain/agent_tool_server.py
+AgentAllowedCheck = Callable[[str], Awaitable[bool]]
 
 @dataclass(frozen=True, slots=True)
 class RegisteredMcpServer:
-    """One MCP tools server another cog owns, registered into corridor so
-    an A2A agent's own tool loop can reach it without either cog importing
-    the other. `agent_allowed` is that owner's own gate -- see §2 on why
-    this isn't a separate filter-registration step the way toolbox's
-    ToolVisibilityFilter is."""
-
     owner: str
     base_url: str  # e.g. "http://127.0.0.1:8934/mcp"
-    agent_allowed: Callable[[str], Awaitable[bool]]  # agent_key -> may use this server
-
-
-class AgentToolServerRegistry:
-    """One registry per bot process, not per guild -- same scoping as
-    AgentDirectoryService/ToolRegistryService."""
-
-    def __init__(self, client_pool: McpClientPool) -> None: ...
-    async def register(self, server: RegisteredMcpServer, *, owner: str) -> None:
-        """Connects (or reconnects) `client_pool`'s session for this
-        server and caches its `tools/list` result -- registration means
-        'this server is reachable right now', the same 'not necessarily
-        still reachable later' caveat agent-directory-design.md §7
-        already accepts for A2A liveness."""
-
-    def unregister_owner(self, owner: str) -> None: ...
-    def unregister(self, base_url: str) -> None: ...
-    async def list_tools_for(self, agent_key: str) -> tuple[RegisteredTool, ...]:
-        """Every tool from every registered server whose `agent_allowed
-        (agent_key)` returns True, each wrapped as corridor's existing,
-        framework-neutral `RegisteredTool` (domain/models.py) -- the same
-        shape ToolRegistryService already hands consumers, reused rather
-        than inventing a fourth tool-description type. `handler` ignores
-        its `ctx` argument entirely (there is no Discord ctx for an A2A
-        call) and closes over `client_pool.call_tool(base_url, name,
-        arguments)` instead."""
+    agent_allowed: AgentAllowedCheck  # agent_key -> may use this server
 ```
 
-`CogBase` gains `register_mcp_server`/`unregister_mcp_server_owner`/
-`unregister_mcp_server`/`list_agent_tools_for`, plus `on_cog_remove`'s
-existing defensive cleanup gains `self._agent_tool_servers.unregister_owner
-(cog.qualified_name)` alongside the tool registry's and agent directory's
-own entries.
+`base_url` is that server's own Streamable HTTP endpoint. Corridor never
+rewrites it -- the registering cog binds and owns its own listener, so it
+already knows its own reachable address.
 
-### The MCP client
+## 4. Key flows
 
-`corridor/infrastructure/mcp_client.py`: one `mcp.client.streamable_http`
-session per registered server, opened at `register()`, closed at
-`unregister()`/`unregister_owner()` — the same "one reusable session per
-lifetime, idempotent start/close" shape `LiteLLMClient` already documents
-for exactly the same reason (`corridor/infrastructure/llm_client.py`'s own
-module docstring). `call_tool(base_url, name, arguments)` invokes
-`ClientSession.call_tool` and converts the MCP `CallToolResult`'s content
-blocks back into the plain JSON-object-shaped mapping `RegisteredTool.
-handler` already promises its callers.
+### An external MCP client calling a tool directly
 
-Corridor's `info.json` gains `mcp` (the official Python SDK) as a
-`requirements` entry, the same way it already gained `a2a-sdk[http-server]`
-+ `uvicorn` when it centralized the A2A listener.
+```mermaid
+sequenceDiagram
+    participant Ext as External MCP client
+    participant MCP as suggestionbox MCP server
+    participant Svc as FeedbackService
+    participant Chan as Discord channel
 
-## 5. corridor: a new ctx-less reply primitive
-
-Every existing `send_reply`/`render_reply` call site in this repo is
-reached from a live `commands.Context` (`render_reply` asserts `ctx.guild
-is not None` and calls `ctx.clean_prefix`; `send_rendered_reply` calls
-`ctx.send(...)` — `corridor/adapters/cog_base.py:185-253`,
-`corridor/adapters/api.py:113-123`). suggestionbox's post to its configured
-feedback channel is the first *proactive* Discord send in this codebase —
-triggered by an MCP tool call, not a Discord command or interaction, so
-there is no `ctx` to hand corridor at all.
-
-Rather than fabricate a fake `commands.Context` (the "no Discord ctx"
-case already trips up permission/tool-visibility code that assumes one
-exists — see `ToolLoopService`/A2A having exactly this same problem one
-layer up), corridor gains a parallel, explicit primitive:
-
-```python
-# corridor/adapters/cog_base.py
-async def render_channel_reply(
-    self, guild_id: int, *, title=None, description=None, content=None,
-    fields=(), code=(), identity=None, category=None,
-) -> RenderedReply:
-    """render_reply's twin for a caller with no live ctx -- same
-    ReplyMode/identity/category handling, keyed by an explicit guild_id
-    instead of ctx.guild.id. Skips `[p]` prefix substitution entirely:
-    there is no invoking command, so no real prefix to substitute -- a
-    literal `[p]` in text reaching this path is a caller bug, not
-    something to guess a default prefix for."""
-
-async def send_channel_reply(
-    self, channel: discord.abc.Messageable, guild_id: int, *, ..., 
-) -> discord.Message:
-    """send_reply's twin: renders via render_channel_reply, then sends
-    directly to `channel` (resolved by the caller from configured
-    guild_id/channel_id via bot.get_channel) instead of ctx.send."""
+    Ext->>MCP: tools/call report_error {source, what_happened, ...}
+    MCP->>MCP: validate severity, build ErrorReport
+    MCP->>Svc: report_error(report)
+    Svc->>Svc: lookup configured feedback_channel()
+    alt channel configured
+        Svc->>Chan: corridor.send_channel_reply(...)
+        Svc-->>MCP: {"status": "ok"}
+    else not configured
+        Svc-->>MCP: {"status": "error", "error": "not_configured", ...}
+    end
+    MCP-->>Ext: CallToolResult
 ```
 
-`contracts/discord_replies/lint_reply_channel.py` only starts its call-graph
-crawl from Red command handlers (`.command()`/`.group()`/
-`.hybrid_command()`/`.hybrid_group()` decorators) — an MCP tool handler has
-none of those, so it is invisible to the lint by construction, the same way
-Components V2 interaction callbacks already are (per that script's own
-"deliberately NOT flagged" section). This is a real, documented gap this
-design accepts rather than silently ignores: routing through
-`send_channel_reply` is enforced by convention/review for this cog, not by
-the existing static check. Extending the lint to also crawl MCP tool
-handlers is a reasonable, separate follow-up (§7), not required to ship
-this design.
+### An A2A agent's tool loop calling the same tool through corridor's bridge
 
-## 6. architect: consulting corridor's registry every turn
+```mermaid
+sequenceDiagram
+    participant Agent as architect/painter ToolLoopService
+    participant Corr as corridor.AgentToolServerRegistry
+    participant Pool as McpClientPool
+    participant MCP as suggestionbox MCP server
 
-Architect's own tool list is currently fixed once, in `CogBase.__init__`
-(`self._tools = [ReviewDesignTool(), BreakDownTaskTool(), *build_office_
-tools(...)]`), before `self._executor = ArchitectAgentExecutor(tools=self.
-_tools, ...)` is even built — corridor isn't resolved yet at `__init__`
-time. Two ways to add suggestionbox's tools on top of that were
-considered:
-
-- Mutate `self._tools` in place (it's a plain `list`, shared by reference
-  with the executor) once at `cog_load`, after `register_agent` gives
-  architect a live corridor reference. Cheapest change, but frozen at
-  load time — a bot owner flipping the new panel's toggle while architect
-  is already running would need a cog reload to take effect.
-- **Fetch fresh every turn (chosen).** `ArchitectAgentExecutor.execute()`
-  already resolves `settings`/`llm_settings` via callables evaluated per
-  call, not cached at construction (`settings: Callable[[], Awaitable[
-  GlobalSettings]]`, `llm_settings: Callable[[], Awaitable[LLMSettings]]`)
-  — this is the exact same shape pico's own `_agent_tools`/`_cross_cog_
-  tools` already use (`corridor.list_agents()`/`corridor.list_tools_for
-  (ctx)`, rebuilt every turn, per `corridor-tool-registry-design.md`).
-  Matching it here means the owner's toggle takes effect on architect's
-  very next A2A message, no reload required, and there's no local cache
-  to invalidate.
-
-```python
-# architect/adapters/cog_base.py -- __init__ keeps self._tools as today's
-# *fixed* office/placeholder tools only; a new callable is threaded
-# through instead of appending to that list.
-self._executor = ArchitectAgentExecutor(
-    tool_loop=self._tool_loop_service,
-    fixed_tools=self._tools,
-    mcp_tools=lambda: self._corridor.list_agent_tools_for("architect"),
-    settings=self._repository.global_settings,
-    llm_settings=lambda: self._corridor.llm_settings(),
-    publish_activity=self._publish_activity,
-)
+    Agent->>Corr: list_agent_tools_for(agent_key)
+    Corr-->>Agent: RegisteredTool(s) whose agent_allowed(agent_key) is True
+    Note over Agent: LLM turn picks report_error as a tool call
+    Agent->>Corr: RegisteredTool.handler(None, arguments)
+    Corr->>Pool: call_tool(base_url, "report_error", arguments)
+    Pool->>MCP: open streamable_http_client + ClientSession<br/>initialize(), call_tool(...)
+    MCP-->>Pool: CallToolResult
+    Pool->>Pool: close session
+    Pool-->>Corr: plain JSON-object mapping
+    Corr-->>Agent: RegisteredTool result
 ```
 
-`ArchitectAgentExecutor.execute()` builds `tools = [*self._fixed_tools,
-*await self._adapt(await self._mcp_tools())]` before calling `self.
-_tool_loop.run(..., tools=tools, ...)`. `_adapt` wraps each corridor
-`RegisteredTool` as architect's own `ToolSpec` — structurally identical to
-`pico/tools/cross_cog.py`'s `CrossCogTool` (synthetic `Input`/`Output`
-pydantic models with `extra="allow"`, `model_json_schema()` returning
-`tool.parameters` verbatim) but implementing architect's own `ToolSpec`
-Protocol instead of pico's. This is a **new, deliberately duplicated**
-adapter (`architect/tools/agent_tool_server.py`), not a shared import —
-matching `architect/tools/base.py`'s own documented precedent that
-architect's `ToolSpec` is "a deliberate parallel copy of pico/tools/
-base.py's ToolSpec ... not a shared import." Same per-entry try/except-
-and-skip shape `_cross_cog_tools`/`_agent_tools` already use, so one
-malformed tool from corridor never takes down architect's whole turn.
+`list_agent_tools_for` is fetched fresh every turn rather than cached at
+tool-loop construction time, so a bot owner flipping the Components v2
+toggle takes effect on that agent's very next A2A message with no cog
+reload. Both `architect/adapters/cog_base.py` and
+`painter/adapters/cog_base.py` build their own `_mcp_tools()` helper this
+way, each calling `corridor.list_agent_tools_for(<its own agent_key>)`
+(`"architect"` / `"painter"`) and adapting the result through its own
+`AgentToolServerTool` (`architect/tools/agent_tool_server.py`,
+`painter/tools/agent_tool_server.py` -- structurally identical, each
+implementing that cog's own `ToolSpec` Protocol rather than a shared
+import, matching architect's and painter's own precedent of deliberately
+parallel, non-shared tool-adapter code). `RegisteredTool.handler` takes
+an opaque per-invocation `ctx: object`; there is no Discord ctx for an
+A2A call, so both adapters pass `None`, and every handler reachable
+through `AgentToolServerRegistry` ignores that argument entirely.
 
-Any future A2A agent that registers into `AgentDirectoryService` gets this
-for free the moment its own `CogBase` follows the same
-`corridor.list_agent_tools_for(<its own agent_key>)` shape — nothing here
-is architect-specific beyond the one hardcoded `"architect"` string in its
-own `cog_load`.
+Each per-entry adaptation is wrapped in its own try/except-and-skip, so
+one malformed tool from corridor never takes down an agent's whole turn.
 
-## 7. The Components V2 panel: per-agent MCP access
+## 5. API / tool / command reference
+
+### MCP tools (suggestionbox's own server)
+
+| Tool | Fields | Returns |
+|---|---|---|
+| `report_error` | `source`, `what_happened`, `expected`, `actual`, `severity` (`low`\|`medium`\|`high`, default `medium`) | `{"status": "ok"}` or `{"status": "error", "error": ..., "message": ...}` |
+| `suggest_improvement` | `source`, `area`, `observation`, `suggestion` | `{"status": "ok"}` or `{"status": "error", "error": ..., "message": ...}` |
+
+`source` is free text identifying the reporter (`"architect"`,
+`"painter"`, or a description of an external tool/session) -- neither
+transport carries a stronger caller identity.
+
+### corridor primitives this design adds
+
+| Primitive | Shape | Purpose |
+|---|---|---|
+| `register_mcp_server(server, *, owner)` | `RegisteredMcpServer -> str \| None` | Registers a server, fetches and caches its `tools/list`; returns an error string on failure |
+| `unregister_mcp_server_owner(owner)` | `str -> None` | Drops every server registered by `owner` |
+| `unregister_mcp_server(base_url)` | `str -> None` | Drops one server by URL |
+| `list_agent_tools_for(agent_key)` | `str -> tuple[RegisteredTool, ...]` | Every tool from every registered server whose `agent_allowed(agent_key)` is `True`, fetched fresh on each call |
+| `render_channel_reply(guild_id, ...)` | `-> RenderedReply` | `render_reply`'s ctx-less twin, keyed by an explicit `guild_id` |
+| `send_channel_reply(channel, guild_id, ...)` | `-> discord.Message` | Renders via `render_channel_reply`, then sends directly to `channel` |
+
+`render_channel_reply`/`send_channel_reply` exist because every other
+`send_reply`/`render_reply` call site in this repo is reached from a live
+`commands.Context` (`render_reply` asserts `ctx.guild is not None` and
+calls `ctx.clean_prefix`; `send_rendered_reply` calls `ctx.send(...)`).
+suggestionbox's post to its configured feedback channel is a *proactive*
+Discord send -- triggered by an MCP tool call, not a Discord command or
+interaction, so there is no `ctx` to hand corridor. Rather than fabricate
+a fake `commands.Context`, corridor exposes this parallel, explicit
+primitive: same `ReplyMode`/identity/category handling, keyed by an
+explicit `guild_id` instead of `ctx.guild.id`, and it skips `[p]` prefix
+substitution entirely -- there is no invoking command, so a literal `[p]`
+reaching this path is a caller bug, not something to guess a default
+prefix for.
+
+`contracts/discord_replies/lint_reply_channel.py` only starts its
+call-graph crawl from Red command handlers (`.command()`/`.group()`/
+`.hybrid_command()`/`.hybrid_group()` decorators) -- an MCP tool handler
+has none of those, so it is invisible to the lint by construction, the
+same way Components v2 interaction callbacks already are. Routing
+through `send_channel_reply` is enforced by convention/review for this
+cog, not by the existing static check.
+
+### Discord commands
+
+| Command | Description |
+|---|---|
+| `[p]suggestionbox channel <#channel>` | Set the feedback channel (bot owner) |
+| `[p]suggestionbox mcp host <host>` | Set the MCP listener's bind host and restart it (bot owner) |
+| `[p]suggestionbox mcp port <port>` | Set the MCP listener's bind port and restart it (bot owner) |
+| `[p]suggestionbox agents` | Open the per-agent MCP access panel (bot owner) |
+
+### The Components v2 panel
 
 `suggestionbox/adapters/agent_access_panel.py`, a `discord.ui.LayoutView`
-structurally cloned from toolbox's `ToolSelectionView`/`ToolGuildOverrideView`
-(`toolbox/adapters/tool_panel.py`) — paginated rows (`corridor/ui_limits.py`'s
-existing helpers), one row per agent currently in `corridor.list_agents()`
-(the *existing* `AgentDirectoryService`, read-only from here), each a
-`Section`/`TextDisplay` + `ActionRow` toggle `Button`, rebuild-and-replace-
-view on click. Simpler than toolbox's two-tier panel: no per-guild override
-view at all, since §2 locks this toggle as global-only — just one page,
-one bot-owner-gated (`@commands.is_owner()`) view.
+structurally cloned from toolbox's `ToolSelectionView`
+(`toolbox/adapters/tool_panel.py`) -- paginated rows
+(`corridor/ui_limits.py`'s existing helpers), one row per agent currently
+in `corridor.list_agents()` (the *existing* `AgentDirectoryService`,
+read-only from here), each a `Section`/`TextDisplay` plus an `ActionRow`
+toggle `Button`, rebuild-and-replace-view on click. Simpler than
+toolbox's two-tier panel: no per-guild override view, since this toggle
+is global-only -- just one page, bot-owner-gated
+(`@commands.is_owner()`).
 
 ```
 ┌─────────────────────────────────────────────┐
-│ MCP tool access — 1 agent(s)                 │
+│ MCP tool access — 2 agent(s)                 │
 │                                               │
 │ architect                                    │
+│ May use suggestionbox's MCP tools: NO        │
+│ [ Enable ]                                   │
+│                                               │
+│ painter                                      │
 │ May use suggestionbox's MCP tools: NO        │
 │ [ Enable ]                                   │
 │                                               │
@@ -412,111 +325,149 @@ one bot-owner-gated (`@commands.is_owner()`) view.
 └─────────────────────────────────────────────┘
 ```
 
-Opened via `[p]suggestionbox agents` (bot owner). Toggling a row writes
-directly to suggestionbox's own `mcp_enabled_agents` Config dict — the
-same dict `RegisteredMcpServer.agent_allowed` (registered once, at
-suggestionbox's own `cog_load`) reads from on every corridor lookup, so no
-re-registration is needed when the owner flips a toggle; the *next* call to
-`list_tools_for(agent_key)` simply evaluates the closure fresh, matching
-§6's "no cache, fetched every turn" design on the architect side.
+Opened via `[p]suggestionbox agents`. Toggling a row writes directly to
+suggestionbox's own `mcp_enabled_agents` Config dict -- the same dict
+`RegisteredMcpServer.agent_allowed` (registered once, at suggestionbox's
+own `cog_load`) reads from on every corridor lookup, so no
+re-registration is needed when the owner flips a toggle; the *next* call
+to `list_tools_for(agent_key)` simply evaluates the closure fresh.
 
-## 8. Dependency graph
+## 6. Validation & error handling
 
-```mermaid
-flowchart BT
-    corridor["corridor<br/><small>+ AgentToolServerRegistry<br/>+ MCP client (new `mcp` dependency)</small>"]
-    suggestionbox["suggestionbox<br/><small>MCP server (FastMCP, new `mcp` dependency)<br/>owns its own listener + feedback channel Config</small>"]
-    architect["architect<br/><small>consults list_agent_tools_for('architect')<br/>every A2A turn</small>"]
+- **Invalid `severity`.** `report_error`'s own MCP handler validates
+  `severity` against `Severity`'s values before constructing an
+  `ErrorReport`, returning `{"status": "error", "error":
+  "invalid_severity", "message": ...}` rather than letting a bad enum
+  value reach the domain layer.
+- **No feedback channel configured.** `FeedbackService._submit` checks
+  `feedback_channel()` first and returns
+  `{"status": "error", "error": "not_configured", "message": ...}` if a
+  bot owner hasn't run `[p]suggestionbox channel` yet.
+- **Configured channel no longer reachable.** If `bot.get_channel(...)`
+  can't resolve the stored `channel_id` (deleted channel, bot removed
+  from the guild), the post fails closed with
+  `{"status": "error", "error": "channel_unavailable", "message": ...}`.
+- **MCP listener fails to bind.** `McpListener.start` never raises: a
+  bind failure (`OSError`, or the uvicorn server task failing before it
+  reports started) returns an error string. `cog_load` and
+  `[p]suggestionbox mcp host/port` both surface it -- `cog_load` DMs
+  every bot owner (best-effort, itself wrapped in try/except so a failed
+  DM can't fail cog load), the command replies with the error inline.
+  suggestionbox stays loaded either way; only report_error/
+  suggest_improvement become unreachable until the listener is fixed.
+- **Registering a server already owned by someone else.**
+  `AgentToolServerRegistry.register` raises `ValueError` if `base_url` is
+  already registered under a different `owner` -- a real authoring
+  conflict, not something to silently let one registration shadow the
+  other. Re-registering the same `base_url` under the *same* owner
+  re-fetches and overwrites, so a `cog_load` retry or a host/port change
+  is idempotent.
+- **A registered server can't be reached at registration time.**
+  `AgentToolServerRegistry.register` catches `McpRequestError` from
+  `McpClientPool.list_tools`, logs a warning, and returns the error
+  string instead of raising -- registration simply fails for that call.
+- **A registered server's `agent_allowed` check itself raises.**
+  `list_tools_for` catches any exception from an individual server's
+  `agent_allowed(agent_key)`, logs a warning, and omits that server's
+  tools rather than failing the whole lookup for every other registered
+  server.
+- **A tool call to a registered server fails or comes back flagged as an
+  error.** `McpClientPool.call_tool` raises `McpRequestError` on any
+  connection/protocol failure or `CallToolResult.isError`; the wrapping
+  `RegisteredTool.handler` built by `AgentToolServerRegistry._wrap_tool`
+  catches it and returns `{"status": "error", "error": str(exc)}` to the
+  calling agent's tool loop, rather than raising into it.
+- **One malformed adapted tool.** Both architect's and painter's
+  `_mcp_tools()` wrap each `AgentToolServerTool(...)` construction in its
+  own try/except, logging and skipping just that tool so one bad schema
+  never takes down the rest of that turn's tool list.
+- **No transport auth/signing.** Same trusted-network assumption as A2A:
+  if suggestionbox's MCP endpoint is ever exposed outside a trusted
+  network, that's its own follow-up design.
+- **No persistence beyond the Discord post itself.** The posted message
+  is the only record of a submission -- no Config-backed feedback log, no
+  list/query command.
+- **No scheduled re-check of a registered server's tool list.**
+  `register()` fetches `tools/list` once, at registration time. A
+  dead-but-still-registered server behaves like an unreachable A2A agent:
+  the next `call_tool` simply fails, surfaced as a tool error to whichever
+  agent's loop invoked it.
 
-    architect -->|required_cogs| corridor
-    suggestionbox -->|required_cogs| corridor
-    suggestionbox -.->|"register_mcp_server(RegisteredMcpServer)<br/>at cog_load, in-process"| corridor
-    corridor -.->|"MCP over HTTP<br/>(not required_cogs -- networked)"| suggestionbox
-    architect -.->|"list_agent_tools_for('architect')<br/>each A2A turn, in-process"| corridor
-```
+## 7. Design rationale
 
-`suggestionbox -> corridor` for registration is a normal `required_cogs`
-entry (in-process call, same as any other provider). `corridor ->
-suggestionbox` for the actual MCP traffic is deliberately *not* — same
-"networked, not coded" reasoning `agent-directory-design.md` §6 gives for
-`pico -> corridor`'s A2A edge, now applied to corridor calling out over
-MCP instead of a plain Python call.
+**Why a new `AgentToolServerRegistry` + MCP client, rather than reusing
+`ToolRegistryService`.** `ToolRegistryService` filters tools by a live
+`commands.Context` (`required_group`/`can_run`); architect and painter
+have no such context at all, since each is driven by an A2A
+`RequestContext`, not a Discord command invocation. `AgentDirectoryService`
+solves the opposite data-flow direction -- agents *offering* themselves to
+pico, not agents *consuming* a tool server. This is a genuinely third
+shape: corridor holding a live MCP client's cached tool list per
+registered server, gated per `agent_key`. Reusing either existing
+registry would mean bolting an unrelated filtering axis onto a service
+that isn't shaped for it; a small, parallel registry following the same
+register/unregister_owner/list convention keeps each registry's
+filtering semantics honest to what it actually stores.
 
-## 9. Out of scope for this pass
+**Why real MCP end to end, not a protocol shortcut.** suggestionbox runs
+an actual MCP server (the official `mcp` Python SDK's `FastMCP`, HTTP
+transport). Corridor runs an actual MCP *client*
+(`mcp.client.streamable_http` + `ClientSession`) against it -- even for
+an in-process A2A agent's own consumption. The cheaper alternative --
+registering suggestionbox's handlers a second time as a plain corridor
+`RegisteredTool` -- would mean two implementations of "what does
+`report_error` mean" that could drift. Going through real MCP for every
+caller, internal or external, proves both take the identical protocol
+surface.
 
-- **Any MCP transport auth/signing.** Same explicit non-goal as
-  `agent-directory-design.md` §7 for A2A — trusted-network assumption only.
-- **Persisting submitted feedback anywhere beyond the Discord message
-  itself.** Confirmed explicitly: the posted message is the only record;
-  no Config-backed feedback log, no list/query command.
-- **Per-guild scoping of anything in this design** — the MCP-access toggle,
-  the feedback channel, and suggestionbox's own Config are all global,
-  confirmed explicitly.
-- **A general-purpose MCP tool surface beyond error/feedback reporting.**
-  `report_error`/`suggest_improvement` are the only two tools; nothing here
-  is designed to make adding arbitrary future MCP tools to suggestionbox
-  free — a third tool is a new, small design decision of its own, not a
-  gap this pass tries to pre-empt.
-- **Centralizing MCP hosting into corridor's shared listener** the way A2A
-  was centralized. Revisit if and when a second cog wants to run its own
-  MCP server — the "N+1 duplicated ports" pressure that justified doing it
-  for A2A doesn't exist yet with exactly one provider.
-- **Extending `lint_reply_channel.py` to crawl MCP tool handlers.** Flagged
-  as a real, accepted gap in §5; worth a follow-up, not required to ship.
-- **Health-checking / re-fetching a registered MCP server's tool list on
-  a schedule.** `register()` fetches `tools/list` once, at registration —
-  a dead-but-still-registered server behaves like today's unreachable A2A
-  agent case: the next `call_tool` fails, surfaced as a tool error to
-  whichever agent's loop invoked it.
+**Why the MCP client is stateless.** `McpClientPool.list_tools`/
+`call_tool` each open and tear down their own
+`streamable_http_client`/`ClientSession` pair per call, rather than
+holding one reusable session open the way `LiteLLMClient` holds one
+reusable `aiohttp.ClientSession` for corridor's other outbound client.
+`LiteLLMClient` reuses a session because pico's and architect's chat
+completions are frequent, latency-sensitive traffic; a registered
+server's tools are called rarely -- an agent reporting one error, a bot
+owner running a suggestion through once -- so the per-call connection
+setup cost is a good trade for never needing reconnect-on-drop or
+session-id bookkeeping across arbitrarily long idle gaps.
+`AgentToolServerRegistry.register()` correspondingly only fetches and
+caches a `tools/list` snapshot at registration time; it holds no live
+connection to close later, so `unregister()`/`unregister_owner()` simply
+drop that cached entry.
 
-## 10. Implementation checklist
+**Why the per-agent toggle is a plain callable at registration time, not
+a third-party filter hook.** Toolbox's `ToolVisibilityFilter` exists
+because *other* cogs opine on tools they don't own. Here there is exactly
+one owner per registered MCP server, deciding which agents may use its
+own tools -- so `RegisteredMcpServer.agent_allowed` is supplied directly
+by the owning cog at registration time, not a second registration step
+some other cog could also hook into.
 
-1. Scaffold `suggestionbox` via `cookiecutter .cookiecutter/cog-cookiecutter`
-   (`cog_name=suggestionbox`).
-2. `suggestionbox/domain/feedback.py`: `Severity`, `ErrorReport`,
-   `ImprovementSuggestion`, pure dataclasses.
-3. `suggestionbox/application/feedback_service.py`: turns either into a
-   `corridor.send_channel_reply(...)` call against the configured channel;
-   returns a status mapping; fails closed (structured error, not a raised
-   exception) when unconfigured.
-4. `suggestionbox/infrastructure/mcp_server.py`: `FastMCP` instance,
-   `report_error`/`suggest_improvement` tools, Streamable HTTP transport,
-   bind-probe-and-report lifecycle mirroring corridor's `A2AServer`.
-5. `suggestionbox/infrastructure/settings_repository.py`: global Config
-   (`mcp_host`/`mcp_port`/`feedback_guild_id`/`feedback_channel_id`/
-   `mcp_enabled_agents`).
-6. `suggestionbox/adapters/commands.py`: `[p]suggestionbox channel
-   <#channel>`, `[p]suggestionbox mcp host/port` (bot owner).
-7. `suggestionbox/adapters/agent_access_panel.py`: the Components V2 panel
-   (§7), opened via `[p]suggestionbox agents`.
-8. `corridor/domain/agent_tool_server.py` (or extend `agent_directory.py`):
-   `RegisteredMcpServer` dataclass.
-9. `corridor/infrastructure/mcp_client.py`: `McpClientPool` wrapping
-   `mcp.client.streamable_http` + `ClientSession`, one session per
-   registered server, `call_tool`, idempotent connect/close.
-10. `corridor/application/agent_tool_server_registry.py`:
-    `AgentToolServerRegistry` (register/unregister_owner/unregister/
-    list_tools_for), wired into `CogBase.__init__`/`cog_load`/
-    `on_cog_remove`.
-11. `corridor/adapters/cog_base.py`: `render_channel_reply`/
-    `send_channel_reply` (§5); `register_mcp_server`/
-    `unregister_mcp_server_owner`/`unregister_mcp_server`/
-    `list_agent_tools_for`.
-12. Add `mcp` to both `corridor/info.json`'s and `suggestionbox/info.json`'s
-    `requirements`.
-13. `architect/tools/agent_tool_server.py`: the `CrossCogTool`-shaped
-    adapter from corridor's `RegisteredTool` to architect's `ToolSpec`.
-14. `architect/adapters/cog_base.py`/`architect/infrastructure/
-    a2a_server.py`: thread `mcp_tools` callable through
-    `ArchitectAgentExecutor`, fetched fresh in `execute()` (§6).
-15. Tests: `AgentToolServerRegistry` unit tests (register/collision/
-    unregister/list_tools_for gating, mirroring `tool_registry_service`'s
-    own test shape); `McpClientPool` against a real (not mocked) local
-    `FastMCP` test server, matching this repo's existing "loopback A2A is
-    real, not network-mocked" bar (`corridor`'s own test suite); a real
-    end-to-end test posting `report_error` through suggestionbox's MCP
-    server and asserting the Discord send happened; architect offering
-    zero extra tools when suggestionbox is absent or the toggle is off,
-    and the adapted tools appearing/disappearing on the very next A2A turn
-    after a toggle flip, with no cog reload in between.
-16. Update `docs/architecture.md`'s dependency graph and ownership map.
+**Why the toggle and feedback channel are global, not per-guild.**
+`AgentDirectoryService`/`ToolRegistryService` are both one-per-bot-process,
+not one-per-guild; toolbox's own global tool-selection panel is
+`@commands.is_owner()`-gated the same way. Defaulting a newly-registered
+agent to disabled matches this repo's general bias toward explicit grants
+for cross-cutting capability surface. Neither an external MCP client (no
+Discord identity at all) nor an A2A agent's own `AgentRef`
+(`guild_id=None` for both architect and painter) carries guild context to
+key a per-guild channel choice off of, so `[p]suggestionbox channel` is
+bot-owner-only and stores exactly one `(guild_id, channel_id)` pair.
+
+**Why tools are fetched fresh every A2A turn instead of cached at tool-loop
+construction.** Architect's and painter's tool loops resolve corridor only
+after `register_agent` gives them a live corridor reference at
+`cog_load` -- corridor isn't resolved yet at `__init__` time, when each
+cog's fixed tool list is built. Fetching `list_agent_tools_for(agent_key)`
+fresh inside `execute()` (the same shape pico's own
+`_agent_tools`/`_cross_cog_tools` already use for `corridor.list_agents()`/
+`corridor.list_tools_for(ctx)`) means a bot owner's toggle flip takes
+effect on that agent's very next A2A message, with no cog reload and no
+local cache to invalidate.
+
+**Why `report_error` and `suggest_improvement` are two distinct tools,
+not one generic `submit_feedback`.** Each gets its own schema -- a caller
+(a human-written agent prompt, or an external tool) shouldn't have to
+encode "which kind of feedback is this" as a free-text field when MCP
+already lets each tool advertise its own shape.

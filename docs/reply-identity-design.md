@@ -32,9 +32,9 @@ changes.
 
 ```mermaid
 flowchart TB
-    Arch["architect<br/><small>reply_sender(owner=&quot;Architect&quot;,<br/>avatar_path=architect/assets/avatar.png)</small>"]
-    Pico["pico<br/><small>reply_sender(owner=&quot;Pico&quot;, ...)<br/>+ ConsultAgentTool footer override</small>"]
-    Painter["painter<br/><small>reply_sender(owner=&quot;Painter&quot;,<br/>avatar_path=painter/assets/avatar.png)</small>"]
+    Arch["architect<br/><small>reply_sender(owner='Architect',<br/>avatar_path=architect/assets/avatar.png)</small>"]
+    Pico["pico<br/><small>reply_sender(owner='Pico', ...)<br/>+ ConsultAgentTool footer override</small>"]
+    Painter["painter<br/><small>reply_sender(owner='Painter',<br/>avatar_path=painter/assets/avatar.png)</small>"]
     Other["corridor itself / deskutils / toolbox /<br/>floorplan / pixelagents / testbench / ...<br/><small>reply_sender(owner=..., avatar_path=...)</small>"]
 
     subgraph C["corridor"]

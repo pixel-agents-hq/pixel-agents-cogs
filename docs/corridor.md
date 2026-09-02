@@ -44,7 +44,7 @@ flowchart TB
 
     Architect -->|register_agent| Dir
     Painter -->|register_agent| Dir
-    Pico -->|list_agents -> consult_&lt;agent_key&gt;| Dir
+    Pico -->|list_agents -> per-agent consult tool| Dir
 
     Suggestionbox["suggestionbox"] -->|register_mcp_server| McpBridge
     Architect -->|list_agent_tools_for| McpBridge
@@ -249,7 +249,7 @@ sequenceDiagram
     Cor->>Bus: publish(AgentPresenceChanged(status="online"))
 
     Note over Agent,Bus: later, an A2A client (pico) calls the mounted agent
-    Agent-->>Srv: JSON-RPC task at /<agent_key>/
+    Agent-->>Srv: JSON-RPC task at its own mounted path
 ```
 
 ## MCP tool-server bridge

@@ -66,7 +66,7 @@ sequenceDiagram
     participant G as GateService
     participant T as ToolLoopService
     participant R as ReplyTool
-    participant C as "consult_<agent_key> tool"
+    participant C as "per-agent consult tool"
     participant A as Consulted A2A agent
 
     D->>L: message

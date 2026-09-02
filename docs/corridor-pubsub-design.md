@@ -253,7 +253,7 @@ sequenceDiagram
 
     Note over Agent: A2A task received -- tool loop runs
     loop each tool call / thinking step
-        Agent->>C: publish_event(AgentReplied(agent, summary=<step label>))
+        Agent->>C: publish_event(AgentReplied(agent, summary=this step's label))
         C->>Sub: dispatch(event)
     end
 

@@ -43,7 +43,7 @@ instance right now, synchronously?
 flowchart TD
     Start["Cross-cog import or reference needed"] --> Q{"Need a live Cog<br/>instance right now?"}
     Q -->|Yes| EL["ensure_loaded(bot, package, cog_name)<br/>full load + registration"]
-    Q -->|"No -- only need<br/>import &lt;package&gt; to resolve"| EI["ensure_importable(bot, package)<br/>populates sys.modules only"]
+    Q -->|"No -- only need<br/>the package importable to resolve"| EI["ensure_importable(bot, package)<br/>populates sys.modules only"]
     EI --> Later["Full ensure_loaded happens later,<br/>once the Cog instance is actually needed"]
 ```
 

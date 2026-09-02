@@ -135,7 +135,7 @@ sequenceDiagram
         Svc->>P: set_office_layout(OfficeStateKind.DISCORD, layout)
         P->>P: validate Pixel Agents layout
         P-->>Svc: OfficeState at revision + 1 (seats unchanged)
-        Svc-->>V: CatalogueResult("Loaded `<title>` into the office.")
+        Svc-->>V: CatalogueResult("Loaded the layout into the office.")
         V-->>U: confirmation (ephemeral)
     end
 ```

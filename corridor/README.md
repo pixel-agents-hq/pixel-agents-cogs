@@ -38,7 +38,7 @@ flowchart TB
     AllCogs -->|send_reply / render_reply| Reply
     Pico["pico"] & Architect["architect"] & Painter["painter"] -->|llm_settings| LLM
     Architect & Painter -->|register_agent| A2A
-    Pico -->|consult_&lt;agent_key&gt; via list_agents| A2A
+    Pico -->|per-agent consult tool via list_agents| A2A
     Suggestionbox["suggestionbox"] -->|register_mcp_server| MCP
     Architect & Painter -->|list_agent_tools_for| MCP
     Corridor -->|publish presence/replies| Bus

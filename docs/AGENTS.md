@@ -72,13 +72,13 @@ package's own `Architecture.md` (where present) covers its specifics.
 - **`info.json` fields are matched case-sensitively by Red.** Use the
   lowercase keys from Red's `red_cog_repo.schema.json` /
   `red_cog.schema.json` — an uppercase key silently no-ops instead of
-  erroring (this bit the root `info.json` once; see git history around
-  "fix(repo): correct root info.json to Red's repo schema").
+  erroring.
 - **`corridor/ui_limits.py`** is a pure, framework-agnostic checker for
   Discord's undocumented-at-runtime component limits (modal title length,
   button label length, etc.), imported as `from corridor import ui_limits`
-  by both `corridor`'s and `floorplan`'s UI test suites. It has no
-  `discord`/`redbot` import of its own — keep it that way if you touch it.
+  by UI test suites across multiple cogs (`corridor`, `floorplan`,
+  `toolbox`, `suggestionbox`, `testbench`). It has no `discord`/`redbot`
+  import of its own — keep it that way if you touch it.
 
 ## Local quality gate
 

@@ -33,11 +33,9 @@ schema-validating office-state facade `architect`/`painter`/`floorplan`/
 `cctv` all read/write through — corridor persists the data, pixelagents is
 the one schema-aware surface onto it, not a Config store of its own; see
 `docs/painter-design.md` part A), `floorplan` (Pixel Index catalogue
-browser: search/view layouts, load an authorized one into the shared
-editor aggregate — no longer serves the webview or mirrors Discord
-presence, both moved to `cctv`), `cctv` (renders the live office canvas
-from corridor's pub/sub event bus and serves the webview pixelagents
-builds; extracted out of floorplan and architect — see
+browser: search/view layouts, loads an authorized one into the shared
+editor aggregate), `cctv` (renders the live office canvas from corridor's
+pub/sub event bus and serves the webview pixelagents builds — see
 `docs/cctv-design.md`), `toolbox` (host Node.js install + LLM tool
 toggle panel), `pico` (LLM Discord presence, sole A2A coordinator),
 `architect` (second LLM agent, A2A-only, owns every structural layout
@@ -142,9 +140,10 @@ each package's own `Architecture.md` (where present) covers its specifics.
   every cached module on each load/reload attempt, including moments the
   dependency isn't loaded yet — a bare top-level import crashes with
   `ModuleNotFoundError` before `setup()` runs. Put runtime-only cross-cog
-  imports inside the function body that needs them instead. This already
-  broke production once (`docs/dependency-loading.md`, `pixelagents/__init__.py`
-  docstring has the trace).
+  imports inside the function body that needs them instead. See
+  `docs/dependency-loading.md` and the `pixelagents/__init__.py` module
+  docstring for the full mechanical trace of how a cached module gets
+  re-executed at the wrong moment.
 - **Two trees, one writable.** The installed package tree is read-only at
   runtime — never write into a cog's own source directory. Anything a cog
   writes (config, build output, downloaded binaries) goes under
@@ -154,7 +153,8 @@ each package's own `Architecture.md` (where present) covers its specifics.
   Red's schema — an uppercase key silently no-ops rather than erroring.
 - **`corridor/ui_limits.py` has no discord/redbot import and must stay
   that way** — it's a pure Discord-component-limit checker imported by
-  both corridor's and floorplan's UI tests.
+  UI test suites across multiple cogs (corridor, floorplan, toolbox,
+  suggestionbox, testbench).
 - **Contract files under `contracts/` are generated, not hand-written**
   (from the same models/dataclasses the runtime code uses) — some are
   gitignored build artifacts (`pixel_index/contract.yaml`), others are

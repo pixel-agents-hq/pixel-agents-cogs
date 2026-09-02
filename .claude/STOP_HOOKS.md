@@ -15,12 +15,12 @@ like a real regression but isn't. `.github/workflows/cogs-quality.yml`
 avoids this by running each cog as its own CI job; running two or more
 together locally hits the exact same wall.
 
-This has happened more than once in this project: a huge, unrelated-looking
-failure list gets generated, gets read, and the conclusion is always the
-same — "run these separately" — after already paying for the tokens to
-generate and read that output. The guard below turns that into an
-immediate, one-line rejection *before* the command ever runs, so the
-expensive round trip never happens.
+Without a guard, the failure mode is always the same: a huge,
+unrelated-looking failure list gets generated and read before anyone
+notices the real cause, and the fix is always "run these separately" —
+after already paying for the tokens to generate and read that output. The
+guard below turns that into an immediate, one-line rejection *before* the
+command ever runs, so the expensive round trip never happens.
 
 ## How it works
 
@@ -118,14 +118,12 @@ Everything else is allowed, including:
 
 This repo's `.claude/` directory is excluded from git via a **local**
 `.git/info/exclude` entry (not `.gitignore`, so this doesn't affect other
-clones or contributors) — that exclusion was already in place, covering
-the agent-orchestrator's own session-tracking hooks
-(`activity-updater.sh`, `metadata-updater.sh`). Those hooks now live in
-`.claude/settings.local.json`, a Claude Code-recognized *local* settings
-file (personal overrides, never meant to be committed) — they still load
-and run exactly as before; Claude Code merges hooks from `settings.json`
-and `settings.local.json` per event, so both files' hooks are active at
-once.
+clones or contributors). That exclusion covers the agent-orchestrator's
+own session-tracking hooks (`activity-updater.sh`, `metadata-updater.sh`),
+which live in `.claude/settings.local.json`, a Claude Code-recognized
+*local* settings file (personal overrides, never meant to be committed).
+Claude Code merges hooks from `settings.json` and `settings.local.json`
+per event, so both files' hooks are active at once.
 
 `.claude/settings.json`, `.claude/hooks/check_pytest_scope.py`, and this
 file are force-added (`git add -f`, bypassing that local exclude) and

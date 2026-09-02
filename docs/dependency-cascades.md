@@ -155,7 +155,7 @@ instance. That old instance's `cog_unload()` had already set its
 every subsequent call through `cctv`'s stale reference hit:
 
 ```
-File ".../cctv/application/pipeline.py", line 160, in handle_message
+File ".../cctv/application/pipeline.py", line 168, in handle_message
     await self._pixelagents.mutate_office_seats(self.kind, merge)
 File ".../pixelagents/adapters/cog_base.py", line 146, in _states
     raise RuntimeError("pixelagents office-state facade is not loaded")

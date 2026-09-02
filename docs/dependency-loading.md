@@ -49,40 +49,65 @@ lock guards a build" below for why an asyncio lock couldn't have prevented
 this, and floorplan's `cog_base.py` for the current, plain `ensure_loaded`
 call that replaced it.
 
-## The CI smoke test, and the tradeoff we accept
+## The CI smoke test, and how it avoids the ordering trap
 
-The `.github/workflows/check-cogs.yml` job (`nntin/d-flows/actions/test-red-discordbot-downloader@v1`)
-loads and tests each cog **one at a time, in isolation, alphabetically**
-(`architect` → `corridor` → `deskutils` → `floorplan` → `pico` →
-`pixelagents` → `suggestionbox` → `testbench` → `toolbox`). After
-loading a cog, it checks whether Red reports it under `loaded_packages`
-(fresh load) or `alreadyloaded_packages` (Red already considered it
-loaded) — the latter is treated as a **failure** for that cog's own turn,
-because it isn't proof that cog's `[p]load` truly works from a clean
-state; it's proof some earlier cog silently dragged it in.
+The `.github/workflows/check-cogs.yml` job runs
+`.github/actions/test-red-discordbot-downloader-local` — a copy of
+`nntin/d-flows/actions/test-red-discordbot-downloader` vendored into this
+repo (pinned at `NNTin/d-flows@873892e7d5f5fa19737b93e01f608f52a8f65a0f`)
+so this repo can iterate on CI behavior without waiting on the upstream
+action. It installs and loads/unloads every non-shared-library cog in the
+repo, **alphabetically**: `architect` → `cctv` → `corridor` → `deskutils`
+→ `floorplan` → `painter` → `pico` → `pixelagents` → `suggestionbox` →
+`testbench` → `toolbox` (`contracts` is a `SHARED_LIBRARY`-type
+installable, so Downloader's own `available_cogs` excludes it from this
+list).
 
-Since `pixelagents` sorts *after* `floorplan`, and floorplan's `cog_load()`
-now does a plain, synchronous `ensure_loaded(bot, "pixelagents", ...)` (the
-same pattern used for corridor), the smoke test will very likely find
-pixelagents already loaded when it reaches pixelagents' own turn, and fail
-it. **This is a known, accepted tradeoff**, not an oversight: the
-alternative (a background/lazy load, i.e. the removed `LazyDependency`)
-traded a CI-only cosmetic failure for a real, reproducible production
-incident. Fixing the CI ordering assumption itself would mean changing the
-external `nntin/d-flows` action, which is out of scope for this repo — we
-design around its documented behavior, not against it.
+An earlier version of this smoke test loaded each cog once and treated it
+showing up under `alreadyloaded_packages` (Red already considered it
+loaded, e.g. because an earlier cog's own `cog_load()` pulled it in as a
+real dependency side effect) as a failure for that cog's own turn — since
+`pixelagents` sorts after `floorplan`, and floorplan's `cog_load()` does a
+plain, synchronous `ensure_loaded(bot, "pixelagents", ...)`, this reliably
+produced a false failure on pixelagents' turn. The current
+`test_downloader_cogs.py` (`exercise_cogs()`) fixes this at the root rather
+than accepting it: before testing a cog, it unconditionally
+`unload_quietly()`s that cog by name first (tolerating "was already
+unloaded" as a normal outcome, not an error — see
+`redbot.core.core_commands.CoreLogic._unload`'s `notloaded_packages`), so
+its own `load_cog()` check always sees a genuine, fresh load regardless of
+what an earlier cog's turn left loaded. A matrixed `unload_scope` input
+(`cog` vs. `cog-and-dependencies`) additionally forces every cog named in
+the target's `required_cogs` (transitively) unloaded first too, to also
+exercise a genuine cold-start dependency bootstrap rather than only ever
+warm-starting off whatever an earlier cog's turn left in place.
 
 ## corridor's bootstrap is unavoidably duplicated
 
 `ensure_corridor_loaded` (hand-rolled `find_cog`/`load_extension`, not
 going through `corridor.dependency_loader`) is duplicated verbatim in
 every dependent's own `dependency_loader.py` (`floorplan/`, `pixelagents/`,
-`toolbox/`, `pico/`, `deskutils/`, and the `.cookiecutter/cog-cookiecutter`
+`toolbox/`, `pico/`, `architect/`, `painter/`, `suggestionbox/`,
+`testbench/`, `deskutils/`, and the `.cookiecutter/cog-cookiecutter`
 template new cogs are generated from). This is structural, not an oversight: you cannot
 `from corridor.dependency_loader import ensure_loaded` before corridor
 itself is loaded and importable. Once corridor *is* loaded, every other
 cross-cog dependency goes through the shared `corridor.dependency_loader`
 tools above instead of each dependent hand-rolling its own pair.
+
+`cctv` is the one exception: it has no `cctv/dependency_loader.py` at all.
+Its `setup()` and `cog_load()` both do
+`from corridor.dependency_loader import ensure_loaded` directly, then call
+`ensure_loaded(bot, "corridor", "Corridor")` through it, instead of
+hand-rolling a local `ensure_corridor_loaded`. This only works because, in
+every path this repo currently exercises, something else has already
+caused `corridor` (and therefore `corridor.dependency_loader`) to be
+imported into `sys.modules` before cctv's own `setup()` runs; if cctv were
+ever the very first cog Red attempted to load in a fresh process, this
+import would raise `ModuleNotFoundError` before `ensure_loaded` had a
+chance to load corridor at all — the same landmine described below, just
+one step earlier in the sequence. Treat this as a known fragility specific
+to cctv, not a second supported pattern to copy into a new cog.
 
 ## Module-scope imports of an unloaded dependency are a landmine
 
@@ -102,11 +127,28 @@ annotations. Fix: move annotation-only cross-cog imports under
 `if TYPE_CHECKING:` (see `pixelagents/adapters/replies.py`,
 `floorplan/adapters/replies.py`); where a name is actually constructed at
 runtime (not just annotated), defer the import into the function body that
-needs it instead of module scope (see `floorplan/adapters/admin_commands.py`'s
-`cmd_status`, and the `ensure_corridor_loaded`/`ensure_loaded` imports
-inside `floorplan/adapters/cog_base.py`'s `cog_load()` rather than its
-top-level import block). `pixelagents/__init__.py`'s module docstring has
-the full mechanical trace of the incident.
+needs it instead of module scope — see the `ensure_corridor_loaded`/
+`ensure_loaded` imports inside `floorplan/adapters/cog_base.py`'s
+`cog_load()` rather than its top-level import block. `pixelagents/__init__.py`'s
+module docstring has the full mechanical trace of the incident.
+
+`floorplan/adapters/admin_commands.py` takes a different route to the same
+safety: its `ReplyField` (constructed, not just annotated, inside
+`cmd_status`) is imported at plain module scope, not deferred into the
+function body. That's only safe because `floorplan/__init__.py` wraps the
+whole `from .floorplan import Floorplan as Floorplan` chain — which
+transitively imports `admin_commands.py` — in a bare `try/except
+ImportError`, originally added so contract tooling can import the
+`floorplan` package without Red/discord.py installed. A corridor-import
+failure during a cache-refresh re-exec is caught by that same except
+clause and silently swallowed, leaving `Floorplan` unbound until
+`__getattr__` (or `setup()`, which redoes the import once corridor is
+actually loaded) resolves it lazily. This works today, but it's a broader,
+coarser safety net than the deferred-import pattern used elsewhere in this
+doc — don't assume a bare `except ImportError` wrapping an unrelated
+concern will always happen to sit between a module-scope cross-cog import
+and Red's loader; the deferred-import-in-the-function-body pattern is the
+one to copy for a new cog.
 
 **This can't be fixed by making corridor "not unloadable while dependents
 exist."** Red's own startup autoload order is not guaranteed — this

@@ -25,12 +25,20 @@ what changes how you should act.
 
 Packages: `corridor` (shared permissions/reply-rendering/LLM
 connection/A2A listener/MCP client bridging a registered agent-tool server
-into a registered A2A agent's own tool loop — hidden but load-bearing),
-`pixelagents` (vendors + builds the webview; also owns the Semantic IR
-domain model, Pixel Agents JSON codec, color palette, and the shared
-office-layout Config store `architect`/`painter` both read/write —
-see `docs/painter-design.md` part A), `floorplan` (serves it,
-mirrors Discord presence), `toolbox` (host Node.js install + LLM tool
+into a registered A2A agent's own tool loop — hidden but load-bearing, and
+owner of the actual office-state `Config` store underneath everything
+below), `pixelagents` (vendors + builds the webview; also owns the
+Semantic IR domain model, Pixel Agents JSON codec, color palette, and the
+schema-validating office-state facade `architect`/`painter`/`floorplan`/
+`cctv` all read/write through — corridor persists the data, pixelagents is
+the one schema-aware surface onto it, not a Config store of its own; see
+`docs/painter-design.md` part A), `floorplan` (Pixel Index catalogue
+browser: search/view layouts, load an authorized one into the shared
+editor aggregate — no longer serves the webview or mirrors Discord
+presence, both moved to `cctv`), `cctv` (renders the live office canvas
+from corridor's pub/sub event bus and serves the webview pixelagents
+builds; extracted out of floorplan and architect — see
+`docs/cctv-design.md`), `toolbox` (host Node.js install + LLM tool
 toggle panel), `pico` (LLM Discord presence, sole A2A coordinator),
 `architect` (second LLM agent, A2A-only, owns every structural layout
 mutation), `painter` (third LLM agent, A2A-only, owns every color
@@ -54,6 +62,7 @@ work around it.
 python -m pytest -q corridor/
 python -m pytest -q floorplan/tests
 python -m pytest -q pixelagents/tests
+python -m pytest -q cctv/tests
 python -m pytest -q toolbox/
 python -m pytest -q pico/
 python -m pytest -q architect/
@@ -63,9 +72,9 @@ python -m pytest -q testbench/
 python -m pytest -q deskutils/
 
 # lint/format/types run fine across all cogs at once:
-python -m ruff format --check corridor floorplan pixelagents toolbox pico architect painter suggestionbox testbench deskutils
-python -m ruff check corridor floorplan pixelagents toolbox pico architect painter suggestionbox testbench deskutils
-python -m mypy corridor floorplan pixelagents toolbox pico architect painter suggestionbox testbench deskutils
+python -m ruff format --check corridor floorplan pixelagents cctv toolbox pico architect painter suggestionbox testbench deskutils
+python -m ruff check corridor floorplan pixelagents cctv toolbox pico architect painter suggestionbox testbench deskutils
+python -m mypy corridor floorplan pixelagents cctv toolbox pico architect painter suggestionbox testbench deskutils
 
 # CI-only contract/lint checks:
 python -m unittest discover -s contracts/tests
@@ -76,8 +85,9 @@ A single test: `python -m pytest -q corridor/tests/test_reply_sender.py::TestRep
 
 `corridor`'s suite (and pico's `test_architect_client.py`) binds a real
 loopback A2A listener — not network-mocked — so a sandboxed environment
-needs `127.0.0.1` loopback binding allowed. `floorplan`'s suite additionally
-needs `pip install -r contracts/pixel_index/requirements.txt`.
+needs `127.0.0.1` loopback binding allowed. `cctv`'s suite also binds a
+real loopback aiohttp listener for the same reason. `floorplan`'s suite
+additionally needs `pip install -r contracts/pixel_index/requirements.txt`.
 
 See [`.github/workflows/cogs-quality.yml`](../.github/workflows/cogs-quality.yml)
 for the exact per-cog dependency matrix if a test run fails on a missing

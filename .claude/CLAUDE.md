@@ -42,7 +42,10 @@ toggle panel), `pico` (LLM Discord presence, sole A2A coordinator),
 mutation), `painter` (third LLM agent, A2A-only, owns every color
 mutation on the same shared layout — never structural), `suggestionbox`
 (MCP feedback server: report_error/suggest_improvement, per-agent gated),
-`testbench` (owner-only bus-event publisher for testing), `deskutils`
+`telephonepole` (dynamically registers third-party MCP servers, per-server
+and per-agent gated -- generalizes suggestionbox's self-registration
+pattern to any external MCP endpoint), `testbench` (owner-only bus-event
+publisher for testing), `deskutils`
 (small utilities), `contracts` (CI-only, not a runtime cog).
 
 ## Commands
@@ -66,13 +69,14 @@ python -m pytest -q pico/
 python -m pytest -q architect/
 python -m pytest -q painter/
 python -m pytest -q suggestionbox/
+python -m pytest -q telephonepole/
 python -m pytest -q testbench/
 python -m pytest -q deskutils/
 
 # lint/format/types run fine across all cogs at once:
-python -m ruff format --check corridor floorplan pixelagents cctv toolbox pico architect painter suggestionbox testbench deskutils
-python -m ruff check corridor floorplan pixelagents cctv toolbox pico architect painter suggestionbox testbench deskutils
-python -m mypy corridor floorplan pixelagents cctv toolbox pico architect painter suggestionbox testbench deskutils
+python -m ruff format --check corridor floorplan pixelagents cctv toolbox pico architect painter suggestionbox telephonepole testbench deskutils
+python -m ruff check corridor floorplan pixelagents cctv toolbox pico architect painter suggestionbox telephonepole testbench deskutils
+python -m mypy corridor floorplan pixelagents cctv toolbox pico architect painter suggestionbox telephonepole testbench deskutils
 
 # CI-only contract/lint checks:
 python -m unittest discover -s contracts/tests

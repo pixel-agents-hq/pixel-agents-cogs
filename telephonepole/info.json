@@ -1,0 +1,21 @@
+{
+    "$schema": "https://raw.githubusercontent.com/Cog-Creators/Red-DiscordBot/V3/develop/schema/red_cog.schema.json",
+    "name": "telephonepole",
+    "short": "Dynamically registers third-party MCP servers for registered A2A agents.",
+    "description": "Lets a bot owner register/unregister external MCP tools servers at runtime, making their tools available to a registered A2A agent's own tool loop, gated per server and per agent -- the same corridor AgentToolServerRegistry pattern suggestionbox uses for its own in-process server, generalized to any third-party MCP endpoint.",
+    "end_user_data_statement": "This cog does not persistently store any data or metadata about Discord users. It stores bot-owner-registered third-party MCP server names/URLs and a per-server, per-agent access list.",
+    "install_msg": "Requires corridor (auto-loaded). Register a third-party MCP server with [p]telephonepole add <name> <url> and grant a registered A2A agent access via [p]telephonepole agents <name> (all bot owner).",
+    "author": ["Pixel Agents HQ Contributors"],
+    "required_cogs": {"corridor": "https://github.com/pixel-agents-hq/pixel-agents-cogs"},
+    "requirements": [],
+    "tags": [
+        "mcp",
+        "telephonepole",
+        "agent-tools"
+    ],
+    "min_bot_version": "3.5.24",
+    "min_python_version": [3, 11, 0],
+    "hidden": false,
+    "disabled": false,
+    "type": "COG"
+}

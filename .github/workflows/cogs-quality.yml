@@ -14,6 +14,7 @@ on:
       - "deskutils/**/*.py"
       - "architect/**/*.py"
       - "suggestionbox/**/*.py"
+      - "telephonepole/**/*.py"
       - "painter/**/*.py"
       - "contracts/pixel_index/**"
       - "contracts/pixel_agents/**"
@@ -36,6 +37,7 @@ on:
       - "deskutils/**/*.py"
       - "architect/**/*.py"
       - "suggestionbox/**/*.py"
+      - "telephonepole/**/*.py"
       - "painter/**/*.py"
       - "contracts/pixel_index/**"
       - "contracts/pixel_agents/**"
@@ -217,6 +219,20 @@ jobs:
             test_target: "suggestionbox/"
             lint_target: "suggestionbox"
             mypy_target: "suggestionbox"
+            extra_deps: "aiohttp 'pydantic>=2.11.3,<2.12' 'a2a-sdk[http-server]' uvicorn 'mcp>=1.29,<2' 'typing-inspection<0.4.3'"
+            pixel_index_contracts: false
+          # telephonepole never runs its own MCP server or imports mcp
+          # types directly (it only registers external base_urls with
+          # corridor's AgentToolServerRegistry -- see application/service.py),
+          # but its conftest.py still imports corridor.testing to install
+          # the shared stub modules, which (like suggestionbox's own leg
+          # above) reaches corridor.infrastructure's whole eager import
+          # chain -- A2AServer (a2a-sdk[http-server] + uvicorn) and
+          # LiteLLMClient (aiohttp + pydantic) included.
+          - cog: telephonepole
+            test_target: "telephonepole/"
+            lint_target: "telephonepole"
+            mypy_target: "telephonepole"
             extra_deps: "aiohttp 'pydantic>=2.11.3,<2.12' 'a2a-sdk[http-server]' uvicorn 'mcp>=1.29,<2' 'typing-inspection<0.4.3'"
             pixel_index_contracts: false
           # painter registers an executor on corridor's listener, optionally

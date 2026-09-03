@@ -150,7 +150,7 @@ class TestLiteLLMClient(unittest.IsolatedAsyncioTestCase):
         client = LiteLLMClient(session_factory=lambda **kw: session)
 
         await client.complete(
-            base_url="https://x", api_key="k", model="m", messages=[], timeout=90.0
+            base_url="https://x", api_key="k", model="m", messages=[], timeout_seconds=90.0
         )
 
         _url, kwargs = session.calls[0]

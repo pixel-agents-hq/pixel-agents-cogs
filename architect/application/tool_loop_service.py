@@ -45,7 +45,7 @@ class ToolLLM(Protocol):
         messages: Sequence[ChatMessage],
         tools: Sequence[ToolSpecWire],
         tool_choice: str,
-        timeout: float | None = None,
+        timeout_seconds: float | None = None,
     ) -> ChatCompletionResponse: ...
 
 
@@ -132,7 +132,7 @@ class ToolLoopService:
                     messages=messages,
                     tools=wire_tools,
                     tool_choice="auto",
-                    timeout=request_timeout_seconds,
+                    timeout_seconds=request_timeout_seconds,
                 )
             except LLMRequestError as exc:
                 log.warning("architect: tool loop LLM call failed, stopping: %s", exc)

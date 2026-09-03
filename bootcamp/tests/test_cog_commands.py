@@ -64,22 +64,24 @@ class TestCreateRemoveListCommands(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(self.bot.corridor.replies[-1]["title"], "Could not remove agent")
 
-    async def test_list_reports_no_agents_initially(self) -> None:
+    async def test_list_opens_a_panel_with_no_agents_initially(self) -> None:
         await self.cog.list_agents.callback(self.cog, self.ctx)
 
-        self.assertEqual(
-            self.bot.corridor.replies[-1]["description"], "No custom agents exist yet."
-        )
+        self.assertEqual(len(self.ctx.sent), 1)
+        view = self.ctx.sent[0]["view"]
+        self.assertIsNotNone(view)
+        self.assertEqual(view.agents, [])
 
-    async def test_list_reports_every_created_agent(self) -> None:
+    async def test_list_opens_a_panel_listing_every_created_agent(self) -> None:
         await self.cog.create.callback(self.cog, self.ctx, "recruiter", system_prompt="p")
         await self.cog.create.callback(self.cog, self.ctx, "onboarder", system_prompt="p")
 
         await self.cog.list_agents.callback(self.cog, self.ctx)
 
-        description = self.bot.corridor.replies[-1]["description"]
-        self.assertIn("recruiter", description)
-        self.assertIn("onboarder", description)
+        view = self.ctx.sent[-1]["view"]
+        self.assertEqual(
+            sorted(agent.agent_key for agent in view.agents), ["onboarder", "recruiter"]
+        )
 
 
 class TestEditCommands(unittest.IsolatedAsyncioTestCase):

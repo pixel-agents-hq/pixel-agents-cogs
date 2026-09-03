@@ -136,7 +136,7 @@ class TestToolLoopService(unittest.IsolatedAsyncioTestCase):
             request_timeout_seconds=45.0,
         )
 
-        self.assertEqual(llm.calls[0]["timeout"], 45.0)
+        self.assertEqual(llm.calls[0]["timeout_seconds"], 45.0)
 
     async def test_omitted_request_timeout_seconds_forwards_none(self) -> None:
         llm = ScriptedLLM([_response(content="ok")])
@@ -152,7 +152,7 @@ class TestToolLoopService(unittest.IsolatedAsyncioTestCase):
             max_tool_calls=5,
         )
 
-        self.assertIsNone(llm.calls[0]["timeout"])
+        self.assertIsNone(llm.calls[0]["timeout_seconds"])
 
     async def test_executes_a_tool_call_and_returns_the_eventual_final_text(self) -> None:
         llm = ScriptedLLM(

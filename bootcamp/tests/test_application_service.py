@@ -122,17 +122,13 @@ class TestCreateAgent(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(error)
 
     async def test_rejects_a_non_positive_request_timeout_seconds(self) -> None:
-        error = await self.service.create_agent(
-            "recruiter", "prompt", request_timeout_seconds=0
-        )
+        error = await self.service.create_agent("recruiter", "prompt", request_timeout_seconds=0)
 
         self.assertIsNotNone(error)
         self.assertEqual(self.registrar.registered, [])
 
     async def test_rejects_a_bool_request_timeout_seconds(self) -> None:
-        error = await self.service.create_agent(
-            "recruiter", "prompt", request_timeout_seconds=True
-        )
+        error = await self.service.create_agent("recruiter", "prompt", request_timeout_seconds=True)
 
         self.assertIsNotNone(error)
 

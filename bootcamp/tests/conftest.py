@@ -22,13 +22,13 @@ class FakeContext:
     def __init__(self, guild_id: int = 12345, author_id: int = 1) -> None:
         self.guild = FakeGuild(guild_id)
         self.author = FakeMember(author_id)
-        self.sent: list[str] = []
+        self.sent: list[dict[str, Any]] = []
 
-    async def send(self, content: str = "") -> None:
-        self.sent.append(content)
+    async def send(self, content: str = "", *, view: Any = None) -> None:
+        self.sent.append({"content": content, "view": view})
 
     async def send_help(self) -> None:
-        self.sent.append("__help__")
+        self.sent.append({"content": "__help__", "view": None})
 
 
 class FakeLLMSettings:

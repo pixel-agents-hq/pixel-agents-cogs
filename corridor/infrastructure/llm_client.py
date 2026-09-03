@@ -156,15 +156,19 @@ class LiteLLMClient:
         messages: Sequence[ChatMessage],
         tools: Sequence[ToolSpecWire] | None = None,
         tool_choice: str | None = None,
-        timeout: float | None = None,
+        timeout_seconds: float | None = None,
     ) -> ChatCompletionResponse:
-        """`timeout`, when given, overrides this one request's total
-        timeout (connect/sock_read stay at the session's own constants) --
-        the session-wide `REQUEST_TIMEOUT_SECONDS` default otherwise
-        applies unchanged. aiohttp's per-request `timeout=` kwarg fully
-        replaces the session default rather than merging with it, so a
-        complete `ClientTimeout` is rebuilt here rather than only
-        overriding `total`."""
+        """`timeout_seconds`, when given, overrides this one request's
+        total timeout (connect/sock_read stay at the session's own
+        constants) -- the session-wide `REQUEST_TIMEOUT_SECONDS` default
+        otherwise applies unchanged. aiohttp's per-request `timeout=`
+        kwarg fully replaces the session default rather than merging with
+        it, so a complete `ClientTimeout` is rebuilt here rather than only
+        overriding `total`. (Named `timeout_seconds`, not `timeout`, on
+        this async method -- ruff's ASYNC109 flags a bare `timeout`
+        parameter as if it were manually reimplementing
+        `asyncio.timeout()`, which this isn't: the value is only ever
+        forwarded to aiohttp's own per-request timeout config below.)"""
 
         request = ChatCompletionRequest(
             model=model,
@@ -183,9 +187,11 @@ class LiteLLMClient:
             "json": body,
             "headers": {"Authorization": f"Bearer {api_key}"},
         }
-        if timeout is not None:
+        if timeout_seconds is not None:
             post_kwargs["timeout"] = aiohttp.ClientTimeout(
-                total=timeout, connect=CONNECT_TIMEOUT_SECONDS, sock_read=READ_TIMEOUT_SECONDS
+                total=timeout_seconds,
+                connect=CONNECT_TIMEOUT_SECONDS,
+                sock_read=READ_TIMEOUT_SECONDS,
             )
         try:
             session = await self._get_session()

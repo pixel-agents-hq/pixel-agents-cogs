@@ -122,7 +122,7 @@ class CogBase:
 
     async def cog_unload(self) -> None:
         if self._corridor is not None:
-            await self._corridor.unregister_agent_owner("painter")
+            await self._corridor.unregister_agent_owner("Painter")
             self._corridor.unregister_dependent("painter")
 
     async def refresh_pixelagents(self, pixelagents: Any) -> None:
@@ -149,7 +149,13 @@ class CogBase:
                 RegisteredAgent(
                     agent_key="painter", card=card, executor=self._executor, avatar_path=AVATAR_PATH
                 ),
-                owner="painter",
+                # Matches AgentDirectoryService.register's own documented
+                # convention (the cog's class name, same as
+                # unregister_agent_owner above and reply_sender's owner=
+                # a few lines up) -- CogBase.on_cog_remove's crash-safety
+                # fallback keys off cog.qualified_name ("Painter"), so a
+                # mismatched owner here would silently break that fallback.
+                owner="Painter",
             )
         except Exception:
             log.exception("painter: could not register with corridor's agent directory")

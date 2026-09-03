@@ -16,6 +16,7 @@ from redbot.core import commands
 from redbot.core.bot import Red
 
 from ..application import (
+    DEFAULT_SUBSCRIBER_TIMEOUT,
     AgentDirectoryService,
     AgentToolServerRegistry,
     EventBusService,
@@ -428,9 +429,13 @@ class CogBase:
         """Publish a corridor Discord-vocabulary event (`AgentReplied`,
         `AgentPresenceChanged`, ...) to every subscriber registered for its
         concrete type. See `EventBusService.publish` for delivery semantics
-        (synchronous, awaited dispatch, per-subscriber error isolation)."""
+        (synchronous, awaited dispatch, per-subscriber error isolation,
+        `DEFAULT_SUBSCRIBER_TIMEOUT`-bounded so a hung subscriber is
+        cancelled and logged rather than blocking this call forever --
+        same protection `OfficeStateService` already applies to
+        `OfficeStateChanged` on the same bus)."""
 
-        await self._event_bus.publish(event)
+        await self._event_bus.publish(event, subscriber_timeout=DEFAULT_SUBSCRIBER_TIMEOUT)
 
     def subscribe_event(
         self,

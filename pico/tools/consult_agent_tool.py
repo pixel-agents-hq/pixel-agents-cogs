@@ -72,9 +72,10 @@ from typing import Protocol
 
 from pydantic import BaseModel, Field
 
-from corridor.domain import AgentRef, AgentReplied, FooterOverride, ReplyField
+from corridor.domain import AgentRef, FooterOverride, ReplyField
 
 from ..infrastructure.architect_client import AgentAskResult, ArchitectRequestError
+from .activity import publish_agent_replied
 
 log = logging.getLogger("red.pico")
 
@@ -264,12 +265,7 @@ class ConsultAgentTool:
         `ReplyTool._publish_agent_replied` -- a bus failure must never fail
         the tool call or suppress the Discord announcement."""
 
-        try:
-            await self._corridor.publish_event(AgentReplied(agent=agent, summary=summary))
-        except Exception:
-            log.warning(
-                "pico: %s could not publish an AgentReplied event", self.name, exc_info=True
-            )
+        await publish_agent_replied(self._corridor, agent, summary, tool_name=self.name)
 
 
 _DEBUG_EVENT_TRUNCATE_LENGTH = 1500

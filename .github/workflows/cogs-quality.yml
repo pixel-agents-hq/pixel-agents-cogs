@@ -18,6 +18,7 @@ on:
       - "contracts/pixel_index/**"
       - "contracts/pixel_agents/**"
       - "contracts/corridor/**"
+      - "contracts/dependency_loading/**"
       - "corridor/corridor.yaml"
       - "docs/corridor-pubsub-design.md"
       - "pyproject.toml"
@@ -39,6 +40,7 @@ on:
       - "contracts/pixel_index/**"
       - "contracts/pixel_agents/**"
       - "contracts/corridor/**"
+      - "contracts/dependency_loading/**"
       - "corridor/corridor.yaml"
       - "docs/corridor-pubsub-design.md"
       - "pyproject.toml"
@@ -271,6 +273,16 @@ jobs:
         # rather than once per matrix leg.
         if: matrix.cog == 'corridor'
         run: python -m contracts.discord_replies.lint_reply_channel
+
+      - name: Check ensure_importable() targets guard their own package import
+        # Cross-cog for the same reason as the reply-channel check above --
+        # run once, not scoped to matrix.lint_target.
+        if: matrix.cog == 'corridor'
+        run: python -m contracts.dependency_loading.lint_lazy_defer_targets
+
+      - name: Test dependency-loading lint tooling
+        if: matrix.cog == 'corridor'
+        run: python -m unittest discover -s contracts/dependency_loading/tests
 
       - name: Check production typing
         # Scoped to this cog's own files: an unscoped `python -m mypy` would

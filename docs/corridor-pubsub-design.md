@@ -348,7 +348,7 @@ stateDiagram-v2
     [*] --> Dispatching: publish(event)
     Dispatching --> InvokeHandler: next (owner, handler) for type(event)
     InvokeHandler --> Success: handler(event) returns
-    InvokeHandler --> TimedOut: subscriber_timeout elapses (office state only)
+    InvokeHandler --> TimedOut: subscriber_timeout elapses
     InvokeHandler --> Raised: handler(event) raises
     Success --> Dispatching: more subscribers?
     TimedOut --> LogError: log.error, cancel, drop
@@ -363,10 +363,13 @@ isolation** — `EventBusService.publish` awaits each subscriber's handler
 in turn inside a `try`/`except`, logs and continues on failure, mirroring
 `ClientHub`'s per-socket isolation. A subscriber that raises never breaks
 the publisher's own turn, and one subscriber's failure never prevents
-dispatch to the next. `OfficeStateService` additionally passes a
-five-second `subscriber_timeout` when it publishes `OfficeStateChanged`
-through the same bus, so a hung watcher is cancelled and logged rather
-than blocking the mutation that triggered it forever.
+dispatch to the next. Every publish on this bus — `corridor.publish_event`
+(the six `AgentActivityEvent` types) and `OfficeStateService`'s own
+`OfficeStateChanged` publishes — passes the same
+`DEFAULT_SUBSCRIBER_TIMEOUT` (five seconds,
+`corridor/application/event_bus_service.py`), so a hung watcher is
+cancelled and logged rather than blocking the call that triggered it
+(a gateway listener, a tool call, or an office-state mutation) forever.
 
 Guild scoping is deliberately not the bus's job: every event's `AgentRef`
 carries `guild_id: int | None`, but `EventBusService` does not filter

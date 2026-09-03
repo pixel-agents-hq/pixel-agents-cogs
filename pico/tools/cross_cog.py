@@ -33,7 +33,9 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
-from corridor.domain import AgentRef, AgentReplied, RegisteredTool
+from corridor.domain import AgentRef, RegisteredTool
+
+from .activity import publish_agent_replied
 
 log = logging.getLogger("red.pico")
 
@@ -115,19 +117,12 @@ class CrossCogTool:
         # failure here must never turn that into a reported tool failure.
         if self._bot_user_id is None:
             return
-        try:
-            await self._corridor.publish_event(
-                AgentReplied(
-                    agent=AgentRef(
-                        discord_user_id=self._bot_user_id, guild_id=self._guild_id, is_bot=True
-                    ),
-                    summary=f"using tool {self.name}",
-                )
-            )
-        except Exception:
-            log.warning(
-                "pico: %s could not publish an AgentReplied event", self.name, exc_info=True
-            )
+        await publish_agent_replied(
+            self._corridor,
+            AgentRef(discord_user_id=self._bot_user_id, guild_id=self._guild_id, is_bot=True),
+            f"using tool {self.name}",
+            tool_name=self.name,
+        )
 
 
 __all__ = ["CrossCogTool"]

@@ -17,6 +17,14 @@ log = logging.getLogger("red.corridor")
 
 _EventT = TypeVar("_EventT")
 
+# Applied by CogBase.publish_event to every AgentActivityEvent, and by
+# OfficeStateService to every OfficeStateChanged, so a hung subscriber (e.g.
+# cctv stuck on a slow websocket broadcast) is cancelled and logged rather
+# than blocking the publisher -- gateway listener, tool call, or office-state
+# write -- forever. One shared constant rather than two independently
+# maintained "5.0"s.
+DEFAULT_SUBSCRIBER_TIMEOUT = 5.0
+
 
 class EventBusService:
     """Delivery is synchronous, awaited dispatch with per-subscriber error

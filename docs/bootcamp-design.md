@@ -41,7 +41,7 @@ flowchart LR
         Svc["BootcampService<br/>create_agent, remove_agent, restore_all"]
         Repo["RedBootcampRepository<br/>Config: agents"]
         Registrar["CorridorAgentRegistrar<br/>the only corridor.domain.RegisteredAgent /<br/>agent_executor import"]
-        Loop["ToolLoopService<br/>bootcamp's own bounded tool-calling loop"]
+        TL["ToolLoopService<br/>bootcamp's own bounded tool-calling loop"]
     end
 
     subgraph Corridor["corridor"]
@@ -58,12 +58,12 @@ flowchart LR
     Svc -- "register/unregister" --> Registrar
     Registrar -- "register_agent(RegisteredAgent(...,<br/>required_permission_group))" --> Dir
     Dir -- "rebuild_routes" --> A2A
-    Registrar -- "GenericAgentExecutor(tool_loop=Loop, ...)" --> Loop
+    Registrar -- "GenericAgentExecutor(tool_loop=TL, ...)" --> TL
     Pico -- "list_agents() each turn,<br/>capabilities_satisfy per agent" --> Dir
     Pico -- "A2A message/send to<br/>corridor:PORT/<agent_key>/" --> A2A
-    A2A -. "dispatches to that<br/>agent's GenericAgentExecutor" .-> Loop
-    Cmds -- "ask: run_agent(...) in-process,<br/>no A2A round-trip" --> Loop
-    Loop -- "list_agent_tools_for(agent_key)<br/>each turn" --> McpReg
+    A2A -. "dispatches to that<br/>agent's GenericAgentExecutor" .-> TL
+    Cmds -- "ask: run_agent(...) in-process,<br/>no A2A round-trip" --> TL
+    TL -- "list_agent_tools_for(agent_key)<br/>each turn" --> McpReg
     McpReg --> MCP
 ```
 
@@ -171,7 +171,7 @@ sequenceDiagram
     participant P as pico listener
     participant Corridor as corridor
     participant Exec as recruiter's<br/>GenericAgentExecutor
-    participant Loop as bootcamp's<br/>ToolLoopService
+    participant TL as bootcamp's<br/>ToolLoopService
 
     U->>P: message gates pico in
     P->>Corridor: list_agents()
@@ -180,8 +180,8 @@ sequenceDiagram
     alt satisfied
         P->>P: build consult_recruiter tool
         P->>Exec: A2A message/send to /recruiter/
-        Exec->>Loop: run(system_prompt, prompt, mcp_tools, max_tool_calls)
-        Loop-->>Exec: final text
+        Exec->>TL: run(system_prompt, prompt, mcp_tools, max_tool_calls)
+        TL-->>Exec: final text
         Exec-->>P: completed A2A Task
         P->>U: reply, via pico's own ReplyTool
     else not satisfied
@@ -204,7 +204,7 @@ sequenceDiagram
     participant Cmd as CommandsMixin.ask
     participant Cog as CogBase.run_agent
     participant Corridor as corridor
-    participant Loop as bootcamp's<br/>ToolLoopService
+    participant TL as bootcamp's<br/>ToolLoopService
 
     U->>Cmd: [p]bootcamp ask recruiter "Evaluate this resume."
     Cmd->>Cog: run_agent(ctx, "recruiter", prompt)
@@ -214,8 +214,8 @@ sequenceDiagram
         Corridor-->>U: "You don't have permission to do that."
     else allowed
         Cog->>Corridor: llm_settings() (not ready -> reply, stop)
-        Cog->>Loop: run(system_prompt, prompt, mcp_tools, max_tool_calls)
-        Loop-->>Cog: final text (or a non-final stop reason -> reply, stop)
+        Cog->>TL: run(system_prompt, prompt, mcp_tools, max_tool_calls)
+        TL-->>Cog: final text (or a non-final stop reason -> reply, stop)
         Cog-->>U: reply with the agent's answer
     end
 ```

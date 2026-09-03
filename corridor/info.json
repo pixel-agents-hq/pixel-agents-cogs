@@ -12,7 +12,8 @@
         "a2a-sdk[http-server]",
         "uvicorn",
         "mcp>=1.29,<2",
-        "typing-inspection<0.4.3"
+        "typing-inspection<0.4.3",
+        "anyio<4.15"
     ],
     "tags": ["shared", "settings", "permissions"],
     "min_bot_version": "3.5.24",

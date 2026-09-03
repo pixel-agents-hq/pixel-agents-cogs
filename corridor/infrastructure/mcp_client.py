@@ -45,6 +45,24 @@ its own `typing_extensions` floor to `>=4.15.0` (0.4.0-0.4.2 only need
 `>=4.12.0`) -- kept even though the `pydantic_core` incident above turned
 out to be the one actually observed in CI.
 
+A third incident, same root cause, hit `anyio` instead: `httpx` (pulled
+in by `a2a-sdk` and directly by `pico`/`painter`) and `mcp` both declare
+`anyio` with no upper bound at all. `anyio==4.15.0`'s
+`anyio/_core/_typedattr.py` (also `itertools.py`, `_backends/_trio.py`)
+unconditionally does `from typing_extensions import sentinel` on
+Python <3.15 -- that lowercase `sentinel()` factory (distinct from the
+`Sentinel` class the `pydantic_core` incident above hit) was only added
+in `typing_extensions` 4.16.0, so it fails to import against Red's
+pinned 4.13.2 for the same shadowing reason. Every cog whose own
+`requirements` list declares `a2a-sdk`, `httpx`, or `mcp` (`architect`,
+`corridor`, `painter`, `pico`, `suggestionbox`) now also pins
+`anyio<4.15`, for the same "stop this cog's own `pip install -U` from
+being the one that bumps the shared directory's `anyio` past what Red's
+`typing_extensions` can satisfy" reason `suggestionbox`'s `pydantic` pin
+exists -- confirmed by reproducing the full install order locally: any
+one of those cogs left unpinned re-resolves `anyio` back up to 4.15.0
+on its own turn, regardless of what an earlier cog's turn pinned it to.
+
 Opens a fresh `streamable_http_client`/`ClientSession` pair per call rather
 than holding one open across calls -- unlike `LiteLLMClient`'s one
 reusable `aiohttp.ClientSession` (reused because pico/architect's chat

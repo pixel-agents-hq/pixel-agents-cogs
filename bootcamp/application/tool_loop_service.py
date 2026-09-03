@@ -48,6 +48,7 @@ class ToolLLM(Protocol):
         messages: Sequence[ChatMessage],
         tools: Sequence[ToolSpecWire],
         tool_choice: str,
+        timeout: float | None = None,
     ) -> ChatCompletionResponse: ...
 
 
@@ -77,8 +78,13 @@ class ToolLoopService:
         debug: bool = False,
         on_activity: Callable[[str], Awaitable[None]] | None = None,
         on_debug_event: Callable[[str], Awaitable[None]] | None = None,
+        request_timeout_seconds: float | None = None,
     ) -> ToolLoopResult:
-        """`on_activity`, if given, is awaited once per "thinking" turn (the
+        """`request_timeout_seconds`, when given, overrides the shared LLM
+        connection's own default total-request timeout for every call this
+        run makes -- see `CustomAgent.request_timeout_seconds`.
+
+        `on_activity`, if given, is awaited once per "thinking" turn (the
         model's own text alongside a tool-calling turn) and once per tool
         call -- corridor's AgentReplied publish, in bootcamp's case (see
         docs/corridor-pubsub-design.md). Optional and defaults to a no-op
@@ -123,6 +129,7 @@ class ToolLoopService:
                     messages=messages,
                     tools=wire_tools,
                     tool_choice="auto",
+                    timeout=request_timeout_seconds,
                 )
             except LLMRequestError as exc:
                 log.warning("bootcamp: tool loop LLM call failed, stopping: %s", exc)

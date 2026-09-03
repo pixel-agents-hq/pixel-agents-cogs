@@ -38,6 +38,7 @@ class FakeAgentSettings:
     system_prompt: str = "sys"
     max_tool_calls: int = 5
     debug_logging: bool = False
+    request_timeout_seconds: float | None = None
 
 
 @dataclass
@@ -98,8 +99,11 @@ def _executor(
     llm_settings: LLMSettings | None = None,
     publish_activity: Any = None,
     mcp_tools: Any = None,
+    request_timeout_seconds: float | None = None,
 ) -> GenericAgentExecutor:
-    settings = FakeAgentSettings(debug_logging=debug_logging)
+    settings = FakeAgentSettings(
+        debug_logging=debug_logging, request_timeout_seconds=request_timeout_seconds
+    )
     resolved_llm_settings = llm_settings or LLMSettings(
         llm_base_url="https://example.test/", llm_api_key="sk-test", llm_model="test-model"
     )
@@ -179,6 +183,15 @@ class TestGenericAgentExecutor(unittest.IsolatedAsyncioTestCase):
         await executor.execute(FakeRequestContext("please help"), queue)  # type: ignore[arg-type]
 
         self.assertEqual(tool_loop.calls[0]["debug"], True)
+
+    async def test_execute_passes_request_timeout_seconds_through_to_the_tool_loop(self) -> None:
+        tool_loop = ScriptedToolLoop(FakeToolLoopResult(1, "final_text", "the answer"))
+        executor = _executor(tool_loop, request_timeout_seconds=45.0)
+        queue = FakeEventQueue()
+
+        await executor.execute(FakeRequestContext("please help"), queue)  # type: ignore[arg-type]
+
+        self.assertEqual(tool_loop.calls[0]["request_timeout_seconds"], 45.0)
 
     async def test_execute_fails_the_task_when_llm_is_not_configured(self) -> None:
         tool_loop = ScriptedToolLoop(FakeToolLoopResult(0, "final_text", "unused"))

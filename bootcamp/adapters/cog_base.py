@@ -289,6 +289,7 @@ class CogBase:
             max_tool_calls=agent.max_tool_calls,
             debug=agent.debug_logging,
             on_activity=lambda summary: self._publish_activity(agent_key, summary),
+            request_timeout_seconds=agent.request_timeout_seconds,
         )
         if result.stopped_reason != "final_text" or result.text is None:
             await self._reply.send_reply(

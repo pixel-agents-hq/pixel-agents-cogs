@@ -4,7 +4,8 @@
 
 `bootcamp` lets a bot owner create/remove/edit an open-ended set of custom
 LLM agents at runtime, each with its own system prompt, via
-`[p]bootcamp create/remove/list/permission/maxtoolcalls/debuglogging`.
+`[p]bootcamp create/remove/list/permission/maxtoolcalls/debuglogging/
+requesttimeout`.
 Every custom agent registers into corridor's shared `AgentDirectoryService`
 -- the same directory [`architect`](architect-design.md) and
 [`painter`](painter-design.md) each register their one singleton agent
@@ -37,7 +38,7 @@ creator sets via a corridor permission-group key
 ```mermaid
 flowchart LR
     subgraph BC["bootcamp"]
-        Cmds["Commands<br/>[p]bootcamp create/remove/list/<br/>permission/maxtoolcalls/debuglogging/ask"]
+        Cmds["Commands<br/>[p]bootcamp create/remove/list/<br/>permission/maxtoolcalls/debuglogging/<br/>requesttimeout/ask"]
         Svc["BootcampService<br/>create_agent, remove_agent, restore_all"]
         Repo["RedBootcampRepository<br/>Config: agents"]
         Registrar["CorridorAgentRegistrar<br/>the only corridor.domain.RegisteredAgent /<br/>agent_executor import"]
@@ -101,6 +102,7 @@ class CustomAgent:
     permission_group: str = "employee"  # gates *use*, both directly and through pico
     max_tool_calls: int = 8
     debug_logging: bool = False
+    request_timeout_seconds: float | None = None  # None = corridor's own default (30s)
 ```
 
 `agent_key` doubles as the display name and corridor's A2A mount path --
@@ -108,8 +110,20 @@ there is no separate `name`/`base_url` split like telephonepole's, since a
 bootcamp agent has no external URL identity to preserve across a rename.
 It must match `^[a-z][a-z0-9_]*$` and cannot be one of the reserved
 subcommand names (`create`, `remove`, `list`, `permission`,
-`maxtoolcalls`, `debuglogging`) -- both checked by `BootcampService.
-create_agent`, never by the dataclass itself.
+`maxtoolcalls`, `debuglogging`, `requesttimeout`) -- both checked by
+`BootcampService.create_agent`, never by the dataclass itself.
+
+`request_timeout_seconds` overrides corridor's shared LLM connection's own
+default total-request timeout (`REQUEST_TIMEOUT_SECONDS` in
+`corridor/infrastructure/llm_client.py`, 30s) for this one agent's calls,
+on both the direct-`ask` and pico/A2A paths -- unlike `max_tool_calls`/
+`debug_logging`, architect and painter have no way to configure this
+themselves; it's bootcamp-specific. Flows to `LiteLLMClient.complete`'s own `timeout` kwarg through
+`ToolLoopService.run`'s `request_timeout_seconds` parameter and corridor's
+shared `SupportsAgentSettings`/`SupportsToolLoop` protocols
+(`corridor/domain/agent_executor.py`) -- architect and painter carry a
+matching but always-`None`, unused field on their own `GlobalSettings`
+purely to keep satisfying that same shared protocol.
 
 Persisted in Red `Config` (global, not per-guild -- corridor's agent
 directory is process-wide, so a registered agent's own settings must be
@@ -117,7 +131,9 @@ too, same rationale telephonepole's `agent_access` uses):
 
 ```python
 GLOBAL_DEFAULTS = {
-    "agents": {},  # agent_key -> {system_prompt, permission_group, max_tool_calls, debug_logging}
+    # agent_key -> {system_prompt, permission_group, max_tool_calls,
+    # debug_logging, request_timeout_seconds}
+    "agents": {},
 }
 ```
 
@@ -135,7 +151,7 @@ sequenceDiagram
 
     Owner->>Cmd: [p]bootcamp create recruiter "You screen job applicants."
     Cmd->>Svc: create_agent("recruiter", "You screen...")
-    Svc->>Svc: validate agent_key, reserved names, prompt, max_tool_calls
+    Svc->>Svc: validate agent_key, reserved names, prompt,<br/>max_tool_calls, request_timeout_seconds
     Svc->>Svc: check not already persisted
     Svc->>Reg: register(CustomAgent(...))
     Reg->>Reg: build_agent_card + GenericAgentExecutor
@@ -192,7 +208,7 @@ sequenceDiagram
 An agent's `permission_group` is baked into corridor's stored
 `RegisteredAgent` snapshot at registration time -- `[p]bootcamp
 permission` re-registers to update it immediately; `[p]bootcamp
-maxtoolcalls`/`debuglogging` only touch `Config`, since
+maxtoolcalls`/`debuglogging`/`requesttimeout` only touch `Config`, since
 `GenericAgentExecutor`'s `settings` callable re-reads that agent's
 `CustomAgent` fresh every turn regardless.
 
@@ -233,11 +249,16 @@ genuine cross-cog boundary) while this stays a plain method call.
 |---|---|---|
 | `[p]bootcamp create <agent_key> <system_prompt...>` | bot owner | Create a custom agent, usable by everyone until narrowed |
 | `[p]bootcamp remove <agent_key>` | bot owner | Remove a custom agent |
-| `[p]bootcamp list` | bot owner | List every custom agent and its settings |
+| `[p]bootcamp list` | bot owner | Open a Components V2 panel listing every custom agent and its full settings |
 | `[p]bootcamp permission <agent_key> <group_key>` | bot owner | Set which corridor permission group gates use of an agent |
 | `[p]bootcamp maxtoolcalls <agent_key> <value>` | bot owner | Set an agent's per-turn tool-call budget |
 | `[p]bootcamp debuglogging <agent_key> <true\|false>` | bot owner | Toggle an agent's debug-event streaming |
+| `[p]bootcamp requesttimeout <agent_key> <seconds\|default>` | bot owner | Override an agent's LLM request timeout, or reset it to corridor's own default |
 | `[p]bootcamp ask <agent_key> <prompt...>` | that agent's own `permission_group` | Directly consult a custom agent |
+
+`create`'s `request_timeout_seconds` is likewise `default` or a positive
+number of seconds, settable at creation time and editable afterward with
+`requesttimeout`.
 
 `ask` is deliberately **not** decorated with `@commands.is_owner()`, and
 the top-level `bootcamp_group` callback carries no permission check either
@@ -262,8 +283,8 @@ never-raise convention:
 - **Reserved `agent_key`** -- one of the fixed subcommand names above;
   rejected so `[p]bootcamp <agent_key> ...` can never collide with a
   real subcommand.
-- **Empty `system_prompt`** / **non-positive `max_tool_calls`** --
-  rejected up front.
+- **Empty `system_prompt`** / **non-positive `max_tool_calls`** /
+  **non-positive `request_timeout_seconds`** -- rejected up front.
 - **Already exists** -- checked against bootcamp's own repository
   *before* calling the registrar, so a duplicate `create` never triggers
   a redundant registration attempt.

@@ -27,7 +27,7 @@ from ..domain import DEFAULT_MAX_TOOL_CALLS, DEFAULT_PERMISSION_GROUP, CustomAge
 # remove`, so `create_agent` rejects them up front rather than leaving that
 # ambiguity for Discord's own command dispatch to resolve arbitrarily.
 RESERVED_AGENT_KEYS = frozenset(
-    {"create", "remove", "list", "permission", "maxtoolcalls", "debuglogging"}
+    {"create", "remove", "list", "permission", "maxtoolcalls", "debuglogging", "requesttimeout"}
 )
 
 _AGENT_KEY_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
@@ -80,12 +80,14 @@ class BootcampService:
         permission_group: str = DEFAULT_PERMISSION_GROUP,
         max_tool_calls: int = DEFAULT_MAX_TOOL_CALLS,
         debug_logging: bool = False,
+        request_timeout_seconds: float | None = None,
     ) -> str | None:
         """Registers a fresh `CustomAgent` with corridor and, only on
         success, persists it. Returns an error string on failure (an
-        invalid/reserved/already-used `agent_key`, an empty prompt, or a
-        corridor-side registration failure), never raises -- same
-        never-raise convention corridor's own directory documents."""
+        invalid/reserved/already-used `agent_key`, an empty prompt, a
+        non-positive `request_timeout_seconds`, or a corridor-side
+        registration failure), never raises -- same never-raise convention
+        corridor's own directory documents."""
 
         if not _AGENT_KEY_PATTERN.match(agent_key):
             return (
@@ -98,6 +100,10 @@ class BootcampService:
             return "system_prompt must not be empty"
         if isinstance(max_tool_calls, bool) or max_tool_calls < 1:
             return "max_tool_calls must be a positive integer"
+        if request_timeout_seconds is not None and (
+            isinstance(request_timeout_seconds, bool) or request_timeout_seconds <= 0
+        ):
+            return "request_timeout_seconds must be a positive number, or omitted for the default"
         existing = await self._repository.get_agent(agent_key)
         if existing is not None:
             return (
@@ -110,6 +116,7 @@ class BootcampService:
             permission_group=permission_group,
             max_tool_calls=max_tool_calls,
             debug_logging=debug_logging,
+            request_timeout_seconds=request_timeout_seconds,
         )
         error = await self._register(agent)
         if error is not None:
@@ -153,6 +160,27 @@ class BootcampService:
         if isinstance(max_tool_calls, bool) or max_tool_calls < 1:
             return "max_tool_calls must be a positive integer"
         await self._repository.save_agent(replace(agent, max_tool_calls=max_tool_calls))
+        return None
+
+    async def set_request_timeout(
+        self, agent_key: str, request_timeout_seconds: float | None
+    ) -> str | None:
+        """`request_timeout_seconds=None` resets this agent back to
+        corridor's own default total-request timeout. Read fresh every
+        turn by the running executor, like `max_tool_calls`/
+        `debug_logging` above -- no re-registration needed for the change
+        to take effect."""
+
+        agent = await self._repository.get_agent(agent_key)
+        if agent is None:
+            return f"no custom agent named {agent_key!r} exists"
+        if request_timeout_seconds is not None and (
+            isinstance(request_timeout_seconds, bool) or request_timeout_seconds <= 0
+        ):
+            return "request_timeout_seconds must be a positive number, or omitted for the default"
+        await self._repository.save_agent(
+            replace(agent, request_timeout_seconds=request_timeout_seconds)
+        )
         return None
 
     async def set_debug_logging(self, agent_key: str, debug_logging: bool) -> str | None:

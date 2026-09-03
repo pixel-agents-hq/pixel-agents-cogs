@@ -34,6 +34,7 @@ class CorridorLLMClient:
         messages: Sequence[ChatMessage],
         tools: Sequence[ToolSpecWire] | None = None,
         tool_choice: str | None = None,
+        timeout: float | None = None,
     ) -> ChatCompletionResponse:
         corridor = self._corridor_ref()
         response = await corridor.llm_client().complete(
@@ -43,6 +44,7 @@ class CorridorLLMClient:
             messages=messages,
             tools=tools,
             tool_choice=tool_choice,
+            timeout=timeout,
         )
         return cast(ChatCompletionResponse, response)
 

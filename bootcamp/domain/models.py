@@ -45,13 +45,22 @@ class CustomAgent:
     and debug-event-streaming toggle, the same two settings architect's
     `GlobalSettings` carries -- just per-agent here instead of once
     process-wide, since bootcamp hosts an open-ended number of agents
-    rather than being one itself."""
+    rather than being one itself.
+
+    `request_timeout_seconds` overrides corridor's shared LLM connection's
+    own default total-request timeout (`REQUEST_TIMEOUT_SECONDS` in
+    `corridor/infrastructure/llm_client.py`, 30s) for this one agent's
+    calls -- unlike `max_tool_calls`/`debug_logging`, architect and painter
+    have no way to configure this themselves; it's bootcamp-specific.
+    `None` (the default) means "use corridor's own default," not "no
+    timeout."""
 
     agent_key: str
     system_prompt: str
     permission_group: str = DEFAULT_PERMISSION_GROUP
     max_tool_calls: int = DEFAULT_MAX_TOOL_CALLS
     debug_logging: bool = False
+    request_timeout_seconds: float | None = None
 
 
 __all__ = ["DEFAULT_MAX_TOOL_CALLS", "DEFAULT_PERMISSION_GROUP", "CustomAgent"]

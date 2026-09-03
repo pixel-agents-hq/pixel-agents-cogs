@@ -71,6 +71,7 @@ class TestCreateAgent(unittest.IsolatedAsyncioTestCase):
             permission_group="keyholder",
             max_tool_calls=3,
             debug_logging=True,
+            request_timeout_seconds=45.0,
         )
 
         self.assertIsNone(error)
@@ -79,6 +80,15 @@ class TestCreateAgent(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(stored.permission_group, "keyholder")
         self.assertEqual(stored.max_tool_calls, 3)
         self.assertTrue(stored.debug_logging)
+        self.assertEqual(stored.request_timeout_seconds, 45.0)
+
+    async def test_defaults_request_timeout_seconds_to_none(self) -> None:
+        error = await self.service.create_agent("recruiter", "prompt")
+
+        self.assertIsNone(error)
+        stored = await self.repository.get_agent("recruiter")
+        assert stored is not None
+        self.assertIsNone(stored.request_timeout_seconds)
 
     async def test_rejects_an_invalid_agent_key(self) -> None:
         for bad_key in ["Recruiter", "1recruiter", "recruiter!", "", "re cruiter"]:
@@ -108,6 +118,21 @@ class TestCreateAgent(unittest.IsolatedAsyncioTestCase):
 
     async def test_rejects_a_bool_max_tool_calls(self) -> None:
         error = await self.service.create_agent("recruiter", "prompt", max_tool_calls=True)
+
+        self.assertIsNotNone(error)
+
+    async def test_rejects_a_non_positive_request_timeout_seconds(self) -> None:
+        error = await self.service.create_agent(
+            "recruiter", "prompt", request_timeout_seconds=0
+        )
+
+        self.assertIsNotNone(error)
+        self.assertEqual(self.registrar.registered, [])
+
+    async def test_rejects_a_bool_request_timeout_seconds(self) -> None:
+        error = await self.service.create_agent(
+            "recruiter", "prompt", request_timeout_seconds=True
+        )
 
         self.assertIsNotNone(error)
 
@@ -189,6 +214,35 @@ class TestEditAgent(unittest.IsolatedAsyncioTestCase):
 
     async def test_set_max_tool_calls_rejects_non_positive_values(self) -> None:
         error = await self.service.set_max_tool_calls("recruiter", 0)
+
+        self.assertIsNotNone(error)
+
+    async def test_set_request_timeout_updates_config_without_re_registering(self) -> None:
+        error = await self.service.set_request_timeout("recruiter", 45.0)
+
+        self.assertIsNone(error)
+        self.assertEqual(self.registrar.registered, [])
+        stored = await self.repository.get_agent("recruiter")
+        assert stored is not None
+        self.assertEqual(stored.request_timeout_seconds, 45.0)
+
+    async def test_set_request_timeout_none_resets_to_the_default(self) -> None:
+        await self.service.set_request_timeout("recruiter", 45.0)
+
+        error = await self.service.set_request_timeout("recruiter", None)
+
+        self.assertIsNone(error)
+        stored = await self.repository.get_agent("recruiter")
+        assert stored is not None
+        self.assertIsNone(stored.request_timeout_seconds)
+
+    async def test_set_request_timeout_rejects_non_positive_values(self) -> None:
+        error = await self.service.set_request_timeout("recruiter", 0)
+
+        self.assertIsNotNone(error)
+
+    async def test_set_request_timeout_on_an_unknown_agent_is_an_error(self) -> None:
+        error = await self.service.set_request_timeout("ghost", 45.0)
 
         self.assertIsNotNone(error)
 

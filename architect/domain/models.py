@@ -9,8 +9,16 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True, slots=True)
 class GlobalSettings:
-    """Bot-owner settings for Architect's tool-calling loop."""
+    """Bot-owner settings for Architect's tool-calling loop.
+
+    `request_timeout_seconds` always stays `None` -- architect has no
+    per-agent settings surface of its own to configure it from. It exists
+    only so this dataclass keeps structurally satisfying corridor's shared
+    `SupportsAgentSettings` protocol (`corridor/domain/agent_executor.py`),
+    which bootcamp's own per-agent-configurable `CustomAgent` also
+    implements, this time with a real bot-owner-set override."""
 
     max_tool_calls: int
     system_prompt: str
     debug_logging: bool
+    request_timeout_seconds: float | None = None

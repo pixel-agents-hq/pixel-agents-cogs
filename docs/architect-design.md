@@ -89,7 +89,16 @@ class GlobalSettings:
     max_tool_calls: int
     system_prompt: str
     debug_logging: bool
+    request_timeout_seconds: float | None = None  # always None here -- see below
 ```
+
+`request_timeout_seconds` always stays `None` -- architect has no
+per-agent settings surface of its own to configure it from. It exists only
+so this dataclass keeps structurally satisfying corridor's shared
+`SupportsAgentSettings` protocol (`corridor/domain/agent_executor.py`),
+which [`bootcamp`](bootcamp-design.md)'s own per-agent-configurable
+`CustomAgent` also implements, this time with a real bot-owner-set
+override.
 
 Every LLM tool's `Output` wraps the IR into an LLM-facing summary rather
 than exposing the IR dataclasses on the wire:

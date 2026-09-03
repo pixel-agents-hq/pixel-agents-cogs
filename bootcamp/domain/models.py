@@ -53,7 +53,17 @@ class CustomAgent:
     calls -- unlike `max_tool_calls`/`debug_logging`, architect and painter
     have no way to configure this themselves; it's bootcamp-specific.
     `None` (the default) means "use corridor's own default," not "no
-    timeout."""
+    timeout."
+
+    `description` is this agent's own `AgentCard.description` -- the
+    LLM-facing text pico's `_agent_tools` hands the model as this agent's
+    `consult_<agent_key>` tool description (see docs/agent-directory-design.md),
+    i.e. the one thing pico's own LLM reads when deciding *whether* to
+    consult this agent at all. `None` (the default) falls back to a
+    truncated preview of `system_prompt` (`adapters/cog_base.py`'s
+    `_agent_description`) -- a creator should set this explicitly whenever
+    the system prompt doesn't front-load a clear statement of purpose in
+    its first ~200 characters, since that's a poor routing signal."""
 
     agent_key: str
     system_prompt: str
@@ -61,6 +71,7 @@ class CustomAgent:
     max_tool_calls: int = DEFAULT_MAX_TOOL_CALLS
     debug_logging: bool = False
     request_timeout_seconds: float | None = None
+    description: str | None = None
 
 
 __all__ = ["DEFAULT_MAX_TOOL_CALLS", "DEFAULT_PERMISSION_GROUP", "CustomAgent"]

@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import unittest
 
-from ..application.service import RESERVED_AGENT_KEYS, BootcampService
+from ..application.service import MAX_DESCRIPTION_LENGTH, RESERVED_AGENT_KEYS, BootcampService
 from ..domain import CustomAgent
 
 
@@ -68,6 +68,7 @@ class TestCreateAgent(unittest.IsolatedAsyncioTestCase):
         error = await self.service.create_agent(
             "recruiter",
             "You screen job applicants.",
+            description="Consult for anything about screening job applicants.",
             permission_group="keyholder",
             max_tool_calls=3,
             debug_logging=True,
@@ -77,10 +78,35 @@ class TestCreateAgent(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(error)
         stored = await self.repository.get_agent("recruiter")
         assert stored is not None
+        self.assertEqual(stored.description, "Consult for anything about screening job applicants.")
         self.assertEqual(stored.permission_group, "keyholder")
         self.assertEqual(stored.max_tool_calls, 3)
         self.assertTrue(stored.debug_logging)
         self.assertEqual(stored.request_timeout_seconds, 45.0)
+
+    async def test_defaults_description_to_none(self) -> None:
+        error = await self.service.create_agent("recruiter", "prompt")
+
+        self.assertIsNone(error)
+        stored = await self.repository.get_agent("recruiter")
+        assert stored is not None
+        self.assertIsNone(stored.description)
+
+    async def test_treats_an_empty_description_as_none(self) -> None:
+        error = await self.service.create_agent("recruiter", "prompt", description="")
+
+        self.assertIsNone(error)
+        stored = await self.repository.get_agent("recruiter")
+        assert stored is not None
+        self.assertIsNone(stored.description)
+
+    async def test_rejects_an_overlong_description(self) -> None:
+        error = await self.service.create_agent(
+            "recruiter", "prompt", description="x" * (MAX_DESCRIPTION_LENGTH + 1)
+        )
+
+        self.assertIsNotNone(error)
+        self.assertEqual(self.registrar.registered, [])
 
     async def test_defaults_request_timeout_seconds_to_none(self) -> None:
         error = await self.service.create_agent("recruiter", "prompt")
@@ -250,6 +276,38 @@ class TestEditAgent(unittest.IsolatedAsyncioTestCase):
         stored = await self.repository.get_agent("recruiter")
         assert stored is not None
         self.assertTrue(stored.debug_logging)
+
+    async def test_set_description_re_registers_with_the_new_value(self) -> None:
+        error = await self.service.set_description("recruiter", "When to consult this agent.")
+
+        self.assertIsNone(error)
+        self.assertEqual(
+            [a.description for a in self.registrar.registered], ["When to consult this agent."]
+        )
+        stored = await self.repository.get_agent("recruiter")
+        assert stored is not None
+        self.assertEqual(stored.description, "When to consult this agent.")
+
+    async def test_set_description_none_resets_to_the_auto_derived_default(self) -> None:
+        await self.service.set_description("recruiter", "When to consult this agent.")
+
+        error = await self.service.set_description("recruiter", None)
+
+        self.assertIsNone(error)
+        stored = await self.repository.get_agent("recruiter")
+        assert stored is not None
+        self.assertIsNone(stored.description)
+
+    async def test_set_description_rejects_an_overlong_value(self) -> None:
+        error = await self.service.set_description("recruiter", "x" * (MAX_DESCRIPTION_LENGTH + 1))
+
+        self.assertIsNotNone(error)
+        self.assertEqual(self.registrar.registered, [])
+
+    async def test_set_description_on_an_unknown_agent_is_an_error(self) -> None:
+        error = await self.service.set_description("ghost", "text")
+
+        self.assertIsNotNone(error)
 
 
 class TestRestoreAll(unittest.IsolatedAsyncioTestCase):

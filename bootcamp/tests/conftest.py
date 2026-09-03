@@ -57,6 +57,7 @@ class FakeCorridor:
         self._llm_settings = FakeLLMSettings(ready=llm_ready)
         self.agent_tools: dict[str, tuple[Any, ...]] = {}
         self.published_events: list[object] = []
+        self.permission_groups: tuple[Any, ...] = ()
 
     def register_dependent(self, extension_name: str) -> None:
         self.registered_dependents.add(extension_name)
@@ -109,6 +110,9 @@ class FakeCorridor:
     async def require_permission(self, ctx: object, group: object) -> bool:
         self.permission_checks.append(group)
         return self.allow_permission
+
+    async def list_permission_groups(self, guild_id: int) -> tuple[Any, ...]:
+        return self.permission_groups
 
     def reply_sender(
         self, *, owner: str, avatar_path: Any = None, category: Any = None
@@ -184,3 +188,12 @@ class FakeBot:
 
     async def send_to_owners(self, message: str) -> None:
         self.owner_messages.append(message)
+
+
+async def create_agent(cog: Any, agent_key: str, system_prompt: str, **kwargs: Any) -> str | None:
+    """Creates a custom agent directly through `BootcampService`, bypassing
+    the Components V2 create panel entirely -- used by tests that need "an
+    agent already exists" as setup, not by tests of the panel/modal
+    itself (see `test_create_agent_panel.py` for those)."""
+
+    return await cog._service.create_agent(agent_key, system_prompt, **kwargs)

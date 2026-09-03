@@ -45,6 +45,16 @@ _AGENT_DESCRIPTION_PROMPT_PREVIEW = 200
 
 
 def _agent_description(agent: CustomAgent) -> str:
+    """Prefers the creator's own `description` (this agent's AgentCard
+    description, and so the LLM-facing text pico's `_agent_tools` uses to
+    decide whether to consult it -- see `domain/models.py`'s own
+    docstring). Falls back to a truncated preview of `system_prompt` only
+    when no explicit description was set, so an agent created before this
+    field existed (or with it left blank) keeps a usable, non-empty
+    description rather than an empty string."""
+
+    if agent.description:
+        return agent.description
     prompt = agent.system_prompt.strip()
     if len(prompt) > _AGENT_DESCRIPTION_PROMPT_PREVIEW:
         prompt = prompt[:_AGENT_DESCRIPTION_PROMPT_PREVIEW] + "..."

@@ -20,7 +20,7 @@ CONFIG_IDENTIFIER = 3259522800
 
 GLOBAL_DEFAULTS: dict[str, object] = {
     # agent_key -> {system_prompt, permission_group, max_tool_calls,
-    # debug_logging, request_timeout_seconds}
+    # debug_logging, request_timeout_seconds, description}
     "agents": {},
 }
 
@@ -66,6 +66,7 @@ class RedBootcampRepository:
             "max_tool_calls": agent.max_tool_calls,
             "debug_logging": agent.debug_logging,
             "request_timeout_seconds": agent.request_timeout_seconds,
+            "description": agent.description,
         }
         await self._config.agents.set(agents)
 
@@ -83,6 +84,7 @@ def _agent_from_raw(agent_key: str, data: dict[str, object]) -> CustomAgent:
         max_tool_calls=cast(int, data.get("max_tool_calls", DEFAULT_MAX_TOOL_CALLS)),
         debug_logging=cast(bool, data.get("debug_logging", False)),
         request_timeout_seconds=cast("float | None", data.get("request_timeout_seconds")),
+        description=cast("str | None", data.get("description")),
     )
 
 

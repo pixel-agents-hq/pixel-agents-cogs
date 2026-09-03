@@ -22,12 +22,14 @@ Corridor's shared LLM connection must be configured (`[p]corridor llm endpoint/k
 
 | Command | Gate | Description |
 |---|---|---|
-| `[p]bootcamp create <agent_key> <system_prompt...>` | bot owner | Create a custom agent (usable by everyone until narrowed) |
+| `[p]bootcamp create` | bot owner | Open a Components V2 panel to create a custom agent -- key, system prompt, description, max tool calls, and request timeout in one modal, then who may use it right after |
 | `[p]bootcamp remove <agent_key>` | bot owner | Remove a custom agent |
 | `[p]bootcamp list` | bot owner | List every custom agent and its settings |
 | `[p]bootcamp permission <agent_key> <group_key>` | bot owner | Set which corridor permission group gates use of an agent |
 | `[p]bootcamp maxtoolcalls <agent_key> <value>` | bot owner | Set an agent's per-turn tool-call budget |
 | `[p]bootcamp debuglogging <agent_key> <true\|false>` | bot owner | Toggle an agent's debug-event streaming |
+| `[p]bootcamp requesttimeout <agent_key> <seconds\|default>` | bot owner | Override an agent's LLM request timeout, or reset it to corridor's own default |
+| `[p]bootcamp description <agent_key> <text\|default>` | bot owner | Set an agent's `AgentCard` description -- the text pico's LLM sees when deciding whether to consult it |
 | `[p]bootcamp ask <agent_key> <prompt...>` | that agent's own `permission_group` | Directly consult a custom agent |
 
 `agent_key` must start with a lowercase letter and contain only lowercase

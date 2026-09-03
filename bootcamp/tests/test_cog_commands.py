@@ -9,9 +9,10 @@ import unittest
 from redbot.core.errors import CogLoadError
 
 from .. import setup
+from ..adapters.create_agent_panel import CreateAgentPromptView
 from ..application.tool_loop_service import ToolLoopResult
 from ..bootcamp import Bootcamp
-from .conftest import FakeBot, FakeContext, FakeCorridor
+from .conftest import FakeBot, FakeContext, FakeCorridor, create_agent
 
 
 class FakeToolLoop:
@@ -36,23 +37,16 @@ class TestCreateRemoveListCommands(unittest.IsolatedAsyncioTestCase):
         await self.cog.cog_load()
         self.ctx = FakeContext()
 
-    async def test_create_registers_and_replies_with_the_new_agent(self) -> None:
-        await self.cog.create.callback(
-            self.cog, self.ctx, "recruiter", system_prompt="Screen applicants."
-        )
+    async def test_create_opens_the_create_agent_prompt_panel(self) -> None:
+        await self.cog.create.callback(self.cog, self.ctx)
 
-        self.assertIn("recruiter", self.bot.corridor.registered_agents)
-        self.assertEqual(self.bot.corridor.replies[-1]["title"], "Agent created")
-        self.assertIn("recruiter", self.bot.corridor.replies[-1]["description"])
-
-    async def test_create_reports_a_validation_error_without_registering(self) -> None:
-        await self.cog.create.callback(self.cog, self.ctx, "Not Valid", system_prompt="p")
-
-        self.assertEqual(self.bot.corridor.registered_agents, {})
-        self.assertEqual(self.bot.corridor.replies[-1]["title"], "Could not create agent")
+        self.assertEqual(len(self.ctx.sent), 1)
+        view = self.ctx.sent[0]["view"]
+        self.assertIsInstance(view, CreateAgentPromptView)
+        self.assertEqual(view.owner_id, self.ctx.author.id)
 
     async def test_remove_unregisters_and_replies(self) -> None:
-        await self.cog.create.callback(self.cog, self.ctx, "recruiter", system_prompt="p")
+        await create_agent(self.cog, "recruiter", "p")
 
         await self.cog.remove.callback(self.cog, self.ctx, "recruiter")
 
@@ -73,8 +67,8 @@ class TestCreateRemoveListCommands(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(view.agents, [])
 
     async def test_list_opens_a_panel_listing_every_created_agent(self) -> None:
-        await self.cog.create.callback(self.cog, self.ctx, "recruiter", system_prompt="p")
-        await self.cog.create.callback(self.cog, self.ctx, "onboarder", system_prompt="p")
+        await create_agent(self.cog, "recruiter", "p")
+        await create_agent(self.cog, "onboarder", "p")
 
         await self.cog.list_agents.callback(self.cog, self.ctx)
 
@@ -90,7 +84,7 @@ class TestEditCommands(unittest.IsolatedAsyncioTestCase):
         self.cog = Bootcamp(bot=self.bot)
         await self.cog.cog_load()
         self.ctx = FakeContext()
-        await self.cog.create.callback(self.cog, self.ctx, "recruiter", system_prompt="p")
+        await create_agent(self.cog, "recruiter", "p")
 
     async def test_permission_updates_the_required_group(self) -> None:
         await self.cog.permission.callback(self.cog, self.ctx, "recruiter", "keyholder")
@@ -126,9 +120,7 @@ class TestAskCommand(unittest.IsolatedAsyncioTestCase):
         self.cog = Bootcamp(bot=self.bot)
         await self.cog.cog_load()
         self.ctx = FakeContext()
-        await self.cog.create.callback(
-            self.cog, self.ctx, "recruiter", system_prompt="Screen applicants."
-        )
+        await create_agent(self.cog, "recruiter", "Screen applicants.")
 
     async def test_unknown_agent_replies_without_checking_permission(self) -> None:
         answer = await self.cog.run_agent(self.ctx, "ghost", "hello")
@@ -282,9 +274,8 @@ class TestCogUnloadTearsDownEveryAgent(unittest.IsolatedAsyncioTestCase):
         bot = FakeBot()
         cog = Bootcamp(bot=bot)
         await cog.cog_load()
-        ctx = FakeContext()
-        await cog.create.callback(cog, ctx, "recruiter", system_prompt="p")
-        await cog.create.callback(cog, ctx, "onboarder", system_prompt="p")
+        await create_agent(cog, "recruiter", "p")
+        await create_agent(cog, "onboarder", "p")
 
         await cog.cog_unload()
 
@@ -302,8 +293,7 @@ class TestRestoreOnLoad(unittest.IsolatedAsyncioTestCase):
         bot = FakeBot()
         first = Bootcamp(bot=bot)
         await first.cog_load()
-        ctx = FakeContext()
-        await first.create.callback(first, ctx, "recruiter", system_prompt="p")
+        await create_agent(first, "recruiter", "p")
         # Simulate a bot restart: a fresh cog instance, corridor's
         # in-memory directory wiped, but the same underlying Config store
         # (FakeBot's corridor.registered_agents is corridor's own state,
@@ -320,8 +310,7 @@ class TestRestoreOnLoad(unittest.IsolatedAsyncioTestCase):
         bot = FakeBot()
         first = Bootcamp(bot=bot)
         await first.cog_load()
-        ctx = FakeContext()
-        await first.create.callback(first, ctx, "recruiter", system_prompt="p")
+        await create_agent(first, "recruiter", "p")
         second = Bootcamp(bot=bot)
         second._repository = first._repository
 

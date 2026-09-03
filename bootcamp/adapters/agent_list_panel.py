@@ -91,12 +91,14 @@ class AgentListView(discord.ui.LayoutView):  # type: ignore[misc, unused-ignore]
 
     @staticmethod
     def _row_text(agent: CustomAgent) -> str:
+        description = agent.description or "(auto -- system prompt preview)"
         return (
             f"**{agent.agent_key}**\n"
             f"permission: `{agent.permission_group}` · "
             f"max_tool_calls: `{agent.max_tool_calls}` · "
             f"debug_logging: `{agent.debug_logging}` · "
-            f"request_timeout: `{_format_timeout(agent.request_timeout_seconds)}`"
+            f"request_timeout: `{_format_timeout(agent.request_timeout_seconds)}`\n"
+            f"description: {description}"
         )
 
     async def _on_prev(self, interaction: discord.Interaction) -> None:

@@ -369,6 +369,7 @@ def _install_discord() -> None:
     discord.ButtonStyle = types.SimpleNamespace(
         secondary="secondary", primary="primary", link="link", danger="danger"
     )
+    discord.TextStyle = types.SimpleNamespace(short="short", paragraph="paragraph")
     discord.Color = types.SimpleNamespace(blurple=lambda: None)
     discord.File = MagicMock
 

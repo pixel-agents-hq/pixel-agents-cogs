@@ -12,9 +12,9 @@ callback below must stay free of an `@commands.is_owner()` check too
 included).
 
 Replies go through corridor (this cog's `required_cogs` dependency) rather
-than `ctx.send()`/hand-rolled role checks -- except `list`, whose
-Components V2 panel is sent via a plain `ctx.send(view=...)`, the same
-lint-exempt convention `telephonepole`'s own `agents` command uses
+than `ctx.send()`/hand-rolled role checks -- except `list` and `create`,
+whose Components V2 panels are sent via a plain `ctx.send(view=...)`, the
+same lint-exempt convention `telephonepole`'s own `agents` command uses
 (Components V2 cannot be mixed with an embed/content, so it structurally
 cannot honor `ReplyMode`).
 """
@@ -27,31 +27,8 @@ from redbot.core import commands
 
 from ..application import BootcampService
 from .agent_list_panel import AgentListView
-
-# A bot owner may reset an agent's request_timeout_seconds back to "use
-# corridor's own default" with any of these literals, case-insensitively --
-# accepted by both `create`'s optional positional arg and `requesttimeout`.
-_TIMEOUT_DEFAULT_LITERALS = frozenset({"default", "none"})
-
-
-def _parse_request_timeout(raw: str) -> tuple[float | None, str | None]:
-    """Returns `(value, error)` -- exactly one is `None`. `value` is the
-    parsed `request_timeout_seconds` (`None` meaning "reset to corridor's
-    own default") on success; `error` is a user-facing message on
-    failure."""
-
-    if raw.strip().lower() in _TIMEOUT_DEFAULT_LITERALS:
-        return None, None
-    try:
-        value = float(raw)
-    except ValueError:
-        return None, (
-            f"{raw!r} is not a valid request_timeout_seconds -- give a positive number of "
-            "seconds, or `default` to use corridor's own default"
-        )
-    if value <= 0:
-        return None, "request_timeout_seconds must be a positive number, or `default`"
-    return value, None
+from .create_agent_panel import CreateAgentPromptView
+from .validation import parse_request_timeout
 
 
 class CommandsMixin:
@@ -71,41 +48,14 @@ class CommandsMixin:
 
     @bootcamp_group.command(name="create")
     @commands.is_owner()
-    async def create(
-        self,
-        ctx: commands.Context,
-        agent_key: str,
-        request_timeout_seconds: str = "default",
-        *,
-        system_prompt: str,
-    ) -> None:
-        """Create a custom agent, usable by everyone until narrowed with
-        `[p]bootcamp permission`. `request_timeout_seconds` is `default`
-        (corridor's own default) or a positive number of seconds --
-        editable later with `[p]bootcamp requesttimeout`."""
+    async def create(self, ctx: commands.Context) -> None:
+        """Open a Components V2 panel to create a custom agent -- its key,
+        system prompt, description, tool-call budget, and LLM request
+        timeout are set in one modal; who may use it is chosen right
+        after, from a follow-up panel."""
 
-        assert self._service is not None, "bootcamp: cog_load has not completed yet"
-        timeout_value, timeout_error = _parse_request_timeout(request_timeout_seconds)
-        if timeout_error is not None:
-            await self._reply.send_reply(
-                ctx, title="Could not create agent", description=timeout_error
-            )
-            return
-        error = await self._service.create_agent(
-            agent_key, system_prompt, request_timeout_seconds=timeout_value
-        )
-        if error is not None:
-            await self._reply.send_reply(ctx, title="Could not create agent", description=error)
-            return
-        await self._reply.send_reply(
-            ctx,
-            title="Agent created",
-            description=(
-                f"**{agent_key}** is now registered -- reachable via pico's own "
-                f"`consult_{agent_key}` tool and directly with "
-                f"`[p]bootcamp ask {agent_key} <prompt>`."
-            ),
-        )
+        view = CreateAgentPromptView(self, owner_id=ctx.author.id)
+        await ctx.send(view=view)
 
     @bootcamp_group.command(name="remove")
     @commands.is_owner()
@@ -187,7 +137,7 @@ class CommandsMixin:
         reset it to corridor's own default with `default`."""
 
         assert self._service is not None, "bootcamp: cog_load has not completed yet"
-        timeout_value, timeout_error = _parse_request_timeout(value)
+        timeout_value, timeout_error = parse_request_timeout(value)
         if timeout_error is not None:
             await self._reply.send_reply(
                 ctx, title="Could not update agent", description=timeout_error
@@ -202,6 +152,25 @@ class CommandsMixin:
             ctx,
             title="Agent updated",
             description=f"**{agent_key}**'s request_timeout_seconds is now {display}.",
+        )
+
+    @bootcamp_group.command(name="description")
+    @commands.is_owner()
+    async def description(self, ctx: commands.Context, agent_key: str, *, value: str) -> None:
+        """Set a custom agent's AgentCard description -- the text pico's
+        LLM sees when deciding whether to consult it. Give `default` to
+        reset it back to an auto-derived preview of the system prompt."""
+
+        assert self._service is not None, "bootcamp: cog_load has not completed yet"
+        new_description = None if value.strip().lower() == "default" else value
+        error = await self._service.set_description(agent_key, new_description)
+        if error is not None:
+            await self._reply.send_reply(ctx, title="Could not update agent", description=error)
+            return
+        await self._reply.send_reply(
+            ctx,
+            title="Agent updated",
+            description=f"**{agent_key}**'s description has been updated.",
         )
 
     @bootcamp_group.command(name="ask")

@@ -18,6 +18,7 @@ def test_custom_agent_holds_its_fields() -> None:
         max_tool_calls=3,
         debug_logging=True,
         request_timeout_seconds=45.0,
+        description="Consult for anything about screening job applicants.",
     )
 
     assert agent.agent_key == "recruiter"
@@ -26,6 +27,7 @@ def test_custom_agent_holds_its_fields() -> None:
     assert agent.max_tool_calls == 3
     assert agent.debug_logging is True
     assert agent.request_timeout_seconds == 45.0
+    assert agent.description == "Consult for anything about screening job applicants."
 
 
 def test_custom_agent_defaults_to_unrestricted_and_a_sane_tool_budget() -> None:
@@ -35,6 +37,7 @@ def test_custom_agent_defaults_to_unrestricted_and_a_sane_tool_budget() -> None:
     assert agent.max_tool_calls == DEFAULT_MAX_TOOL_CALLS
     assert agent.debug_logging is False
     assert agent.request_timeout_seconds is None
+    assert agent.description is None
 
 
 def test_custom_agent_is_frozen() -> None:

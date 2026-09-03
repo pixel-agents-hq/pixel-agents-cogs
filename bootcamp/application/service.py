@@ -27,10 +27,25 @@ from ..domain import DEFAULT_MAX_TOOL_CALLS, DEFAULT_PERMISSION_GROUP, CustomAge
 # remove`, so `create_agent` rejects them up front rather than leaving that
 # ambiguity for Discord's own command dispatch to resolve arbitrarily.
 RESERVED_AGENT_KEYS = frozenset(
-    {"create", "remove", "list", "permission", "maxtoolcalls", "debuglogging", "requesttimeout"}
+    {
+        "create",
+        "remove",
+        "list",
+        "permission",
+        "maxtoolcalls",
+        "debuglogging",
+        "requesttimeout",
+        "description",
+    }
 )
 
 _AGENT_KEY_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
+
+# A description is a concise, LLM-facing "when to use this agent" blurb --
+# not the full system prompt -- so it gets a much shorter cap than
+# system_prompt's own (unbounded here; Discord's modal TextInput caps it at
+# 4000 chars on the way in).
+MAX_DESCRIPTION_LENGTH = 500
 
 
 class AgentRepository(Protocol):
@@ -77,6 +92,7 @@ class BootcampService:
         agent_key: str,
         system_prompt: str,
         *,
+        description: str | None = None,
         permission_group: str = DEFAULT_PERMISSION_GROUP,
         max_tool_calls: int = DEFAULT_MAX_TOOL_CALLS,
         debug_logging: bool = False,
@@ -84,10 +100,10 @@ class BootcampService:
     ) -> str | None:
         """Registers a fresh `CustomAgent` with corridor and, only on
         success, persists it. Returns an error string on failure (an
-        invalid/reserved/already-used `agent_key`, an empty prompt, a
-        non-positive `request_timeout_seconds`, or a corridor-side
-        registration failure), never raises -- same never-raise convention
-        corridor's own directory documents."""
+        invalid/reserved/already-used `agent_key`, an empty prompt, an
+        overlong `description`, a non-positive `request_timeout_seconds`,
+        or a corridor-side registration failure), never raises -- same
+        never-raise convention corridor's own directory documents."""
 
         if not _AGENT_KEY_PATTERN.match(agent_key):
             return (
@@ -98,6 +114,8 @@ class BootcampService:
             return f"{agent_key!r} is a reserved bootcamp subcommand name; choose a different one"
         if not system_prompt.strip():
             return "system_prompt must not be empty"
+        if description is not None and len(description) > MAX_DESCRIPTION_LENGTH:
+            return f"description must be at most {MAX_DESCRIPTION_LENGTH} characters"
         if isinstance(max_tool_calls, bool) or max_tool_calls < 1:
             return "max_tool_calls must be a positive integer"
         if request_timeout_seconds is not None and (
@@ -113,6 +131,7 @@ class BootcampService:
         agent = CustomAgent(
             agent_key=agent_key,
             system_prompt=system_prompt,
+            description=description or None,
             permission_group=permission_group,
             max_tool_calls=max_tool_calls,
             debug_logging=debug_logging,
@@ -190,6 +209,28 @@ class BootcampService:
         await self._repository.save_agent(replace(agent, debug_logging=bool(debug_logging)))
         return None
 
+    async def set_description(self, agent_key: str, description: str | None) -> str | None:
+        """`description=None` (or an empty string) resets this agent back
+        to the auto-derived system-prompt-preview description
+        (`adapters/cog_base.py`'s `_agent_description`). Re-registers with
+        corridor so its stored `RegisteredAgent.card.description` reflects
+        the change immediately -- unlike `max_tool_calls`/`debug_logging`,
+        the description lives on the `AgentCard` corridor snapshots at
+        registration time, the same reason `set_permission_group` above
+        re-registers."""
+
+        agent = await self._repository.get_agent(agent_key)
+        if agent is None:
+            return f"no custom agent named {agent_key!r} exists"
+        if description is not None and len(description) > MAX_DESCRIPTION_LENGTH:
+            return f"description must be at most {MAX_DESCRIPTION_LENGTH} characters"
+        updated = replace(agent, description=description or None)
+        error = await self._register(updated)
+        if error is not None:
+            return error
+        await self._repository.save_agent(updated)
+        return None
+
     async def restore_all(self) -> dict[str, str]:
         """Re-registers every persisted agent with corridor -- corridor's
         in-memory `AgentDirectoryService` does not survive a bot restart
@@ -212,4 +253,10 @@ class BootcampService:
             return str(exc)
 
 
-__all__ = ["RESERVED_AGENT_KEYS", "AgentRegistrar", "AgentRepository", "BootcampService"]
+__all__ = [
+    "MAX_DESCRIPTION_LENGTH",
+    "RESERVED_AGENT_KEYS",
+    "AgentRegistrar",
+    "AgentRepository",
+    "BootcampService",
+]

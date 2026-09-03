@@ -45,12 +45,29 @@ class RegisteredAgent:
     author icon, see docs/reply-identity-design.md) -- corridor serves it
     at `/<agent_key>/avatar.png` on its shared A2A listener and sets the
     card's `icon_url` to that address, so a consulting agent (pico) can
-    show it as a `FooterOverride` distinct from its own author identity."""
+    show it as a `FooterOverride` distinct from its own author identity.
+
+    `required_permission_group`, when set, is a corridor permission-group
+    key (`corridor.domain.models.PermissionGroupDef.key`) gating who may
+    *consult* this agent through pico -- pico's own `_agent_tools`
+    (`pico/adapters/listener.py`) checks it via `corridor.
+    capabilities_satisfy(ctx.author, required_permission_group)` before
+    offering that agent's `consult_<agent_key>` tool for a given turn,
+    silently omitting the tool rather than building one a member isn't
+    allowed to use. `None` (the default) means "no gate" -- every
+    registering agent that never sets this field (architect, painter)
+    keeps its current, unrestricted behavior exactly. Added for
+    `bootcamp` (see docs/bootcamp-design.md), whose dynamically-created
+    agents are the first ones a bot owner may want to narrow to a
+    specific permission tier; corridor's own directory never reads this
+    field itself -- it's opaque state pico's tool-assembly step alone
+    interprets."""
 
     agent_key: str
     card: AgentCard
     executor: AgentExecutor
     avatar_path: Path | None = None
+    required_permission_group: str | None = None
 
 
 def card_with_url(card: AgentCard, url: str, *, icon_url: str | None = None) -> AgentCard:

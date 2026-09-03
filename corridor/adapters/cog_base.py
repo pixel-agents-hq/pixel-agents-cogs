@@ -667,6 +667,7 @@ class CogBase:
             card=card_with_url(agent.card, base, icon_url=icon_url),
             executor=agent.executor,
             avatar_path=agent.avatar_path,
+            required_permission_group=agent.required_permission_group,
         )
         self._agent_directory.register(rewritten, owner=owner)
         self._a2a_server.rebuild_routes(self._agent_directory.list_agents())

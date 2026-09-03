@@ -15,6 +15,7 @@ on:
       - "architect/**/*.py"
       - "suggestionbox/**/*.py"
       - "telephonepole/**/*.py"
+      - "bootcamp/**/*.py"
       - "painter/**/*.py"
       - "contracts/pixel_index/**"
       - "contracts/pixel_agents/**"
@@ -38,6 +39,7 @@ on:
       - "architect/**/*.py"
       - "suggestionbox/**/*.py"
       - "telephonepole/**/*.py"
+      - "bootcamp/**/*.py"
       - "painter/**/*.py"
       - "contracts/pixel_index/**"
       - "contracts/pixel_agents/**"
@@ -247,6 +249,21 @@ jobs:
             lint_target: "painter"
             mypy_target: "painter"
             extra_deps: "aiohttp 'pydantic>=2.11.3,<2.12' httpx 'a2a-sdk[http-server]' uvicorn 'mcp>=1.29,<2' 'typing-inspection<0.4.3' 'anyio<4.15'"
+            pixel_index_contracts: false
+          # bootcamp never runs its own MCP server or imports mcp types
+          # directly (it only builds a GenericAgentExecutor per custom
+          # agent and reads MCP tools already registered by suggestionbox/
+          # telephonepole), but its conftest.py still imports
+          # corridor.testing to install the shared stub modules, which
+          # (like telephonepole's own leg above) reaches corridor.
+          # infrastructure's whole eager import chain -- A2AServer
+          # (a2a-sdk[http-server] + uvicorn) and LiteLLMClient (aiohttp +
+          # pydantic) included.
+          - cog: bootcamp
+            test_target: "bootcamp/"
+            lint_target: "bootcamp"
+            mypy_target: "bootcamp"
+            extra_deps: "aiohttp 'pydantic>=2.11.3,<2.12' 'a2a-sdk[http-server]' uvicorn 'mcp>=1.29,<2' 'typing-inspection<0.4.3' 'anyio<4.15'"
             pixel_index_contracts: false
 
     steps:

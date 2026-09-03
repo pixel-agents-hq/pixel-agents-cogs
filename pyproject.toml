@@ -45,6 +45,7 @@ files = [
     "painter",
     "cctv",
     "telephonepole",
+    "bootcamp",
 ]
 exclude = [
     "^pixelagents/conftest\\.py$",
@@ -72,6 +73,8 @@ exclude = [
     "^cctv/tests/",
     "^telephonepole/conftest\\.py$",
     "^telephonepole/tests/",
+    "^bootcamp/conftest\\.py$",
+    "^bootcamp/tests/",
 ]
 
 [[tool.mypy.overrides]]
@@ -285,4 +288,18 @@ disable_error_code = ["no-any-return"]
 # above: `commands.Cog` resolves to Any without Red's real Cog metaclass
 # installed.
 module = ["telephonepole.telephonepole"]
+disable_error_code = ["misc"]
+
+[[tool.mypy.overrides]]
+# Same gap as pico.adapters.commands above, mirrored for bootcamp: Red is
+# absent from the lightweight CI type environment, so its decorators and
+# untyped Context leak Any.
+module = ["bootcamp.adapters.commands"]
+disable_error_code = ["arg-type", "no-any-return", "untyped-decorator"]
+
+[[tool.mypy.overrides]]
+# Same as toolbox.toolbox / corridor.corridor / pico.pico / architect.architect
+# above: `commands.Cog` resolves to Any without Red's real Cog metaclass
+# installed.
+module = ["bootcamp.bootcamp"]
 disable_error_code = ["misc"]

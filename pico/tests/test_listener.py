@@ -100,21 +100,27 @@ def _agent(
     url: str = "http://localhost:8931/architect/",
     icon_url: str = "",
     avatar_path: Path | None = None,
+    required_permission_group: str | None = None,
 ) -> SimpleNamespace:
     card = SimpleNamespace(
         description=f"{agent_key} agent.",
         supported_interfaces=[SimpleNamespace(url=url)],
         icon_url=icon_url,
     )
-    return SimpleNamespace(agent_key=agent_key, card=card, avatar_path=avatar_path)
+    return SimpleNamespace(
+        agent_key=agent_key,
+        card=card,
+        avatar_path=avatar_path,
+        required_permission_group=required_permission_group,
+    )
 
 
-class TestAgentTools(unittest.TestCase):
-    def test_returns_one_consult_tool_per_registered_agent(self) -> None:
+class TestAgentTools(unittest.IsolatedAsyncioTestCase):
+    async def test_returns_one_consult_tool_per_registered_agent(self) -> None:
         corridor = FakeCorridor()
         corridor.agents = [_agent("architect"), _agent("agent-n")]
 
-        tools = _agent_tools(
+        tools = await _agent_tools(
             corridor,
             corridor.reply_sender(owner="Pico"),
             ArchitectClient(),
@@ -126,10 +132,10 @@ class TestAgentTools(unittest.TestCase):
         self.assertEqual({tool.name for tool in tools}, {"consult_architect", "consult_agent-n"})
         self.assertTrue(all(isinstance(tool, ConsultAgentTool) for tool in tools))
 
-    def test_zero_registered_agents_yields_zero_tools(self) -> None:
+    async def test_zero_registered_agents_yields_zero_tools(self) -> None:
         corridor = FakeCorridor()
 
-        tools = _agent_tools(
+        tools = await _agent_tools(
             corridor,
             corridor.reply_sender(owner="Pico"),
             ArchitectClient(),
@@ -140,12 +146,91 @@ class TestAgentTools(unittest.TestCase):
 
         self.assertEqual(tools, [])
 
-    def test_a_malformed_agent_is_skipped_without_dropping_others(self) -> None:
+    async def test_a_malformed_agent_is_skipped_without_dropping_others(self) -> None:
         corridor = FakeCorridor()
-        broken = SimpleNamespace(agent_key="broken", card=None)  # .description access will raise
+        broken = SimpleNamespace(
+            agent_key="broken", card=None, required_permission_group=None
+        )  # .description access will raise
         corridor.agents = [broken, _agent("architect")]
 
-        tools = _agent_tools(
+        tools = await _agent_tools(
+            corridor,
+            corridor.reply_sender(owner="Pico"),
+            ArchitectClient(),
+            _ctx(),
+            guild_id=1,
+            bot_user_id=999,
+        )
+
+        self.assertEqual([tool.name for tool in tools], ["consult_architect"])
+
+    async def test_an_agent_with_no_required_group_is_never_permission_checked(self) -> None:
+        corridor = FakeCorridor()
+        corridor.agents = [_agent("architect")]
+
+        tools = await _agent_tools(
+            corridor,
+            corridor.reply_sender(owner="Pico"),
+            ArchitectClient(),
+            _ctx(),
+            guild_id=1,
+            bot_user_id=999,
+        )
+
+        self.assertEqual([tool.name for tool in tools], ["consult_architect"])
+        self.assertEqual(corridor.capabilities_checks, [])
+
+    async def test_an_agent_is_offered_when_the_member_satisfies_its_required_group(self) -> None:
+        corridor = FakeCorridor()
+        corridor.agents = [_agent("recruiter", required_permission_group="keyholder")]
+        corridor.allow_capabilities = True
+        ctx = _ctx()
+
+        tools = await _agent_tools(
+            corridor,
+            corridor.reply_sender(owner="Pico"),
+            ArchitectClient(),
+            ctx,
+            guild_id=1,
+            bot_user_id=999,
+        )
+
+        self.assertEqual([tool.name for tool in tools], ["consult_recruiter"])
+        self.assertEqual(corridor.capabilities_checks, [(ctx.author, "keyholder")])
+
+    async def test_an_agent_is_omitted_when_the_member_does_not_satisfy_its_required_group(
+        self,
+    ) -> None:
+        corridor = FakeCorridor()
+        corridor.agents = [_agent("recruiter", required_permission_group="keyholder")]
+        corridor.allow_capabilities = False
+
+        tools = await _agent_tools(
+            corridor,
+            corridor.reply_sender(owner="Pico"),
+            ArchitectClient(),
+            _ctx(),
+            guild_id=1,
+            bot_user_id=999,
+        )
+
+        self.assertEqual(tools, [])
+
+    async def test_a_permission_check_failure_omits_that_agent_without_dropping_others(
+        self,
+    ) -> None:
+        corridor = FakeCorridor()
+        corridor.agents = [
+            _agent("recruiter", required_permission_group="keyholder"),
+            _agent("architect"),
+        ]
+
+        async def _raising_check(member: object, group_key: str) -> bool:
+            raise RuntimeError("guild settings unavailable")
+
+        corridor.capabilities_satisfy = _raising_check  # type: ignore[method-assign]
+
+        tools = await _agent_tools(
             corridor,
             corridor.reply_sender(owner="Pico"),
             ArchitectClient(),

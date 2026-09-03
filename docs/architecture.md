@@ -1,7 +1,7 @@
 # Cross-cog architecture
 
 This document describes ownership and runtime data flow across the repository's
-eleven cogs plus the CI-only `contracts` package. Package-specific architecture
+thirteen cogs plus the CI-only `contracts` package. Package-specific architecture
 documents remain the source for internal layering.
 
 ## Runtime dependencies
@@ -21,6 +21,8 @@ flowchart BT
     Toolbox["toolbox"]
     Deskutils["deskutils"]
     Suggestionbox["suggestionbox"]
+    Telephonepole["telephonepole"]
+    Bootcamp["bootcamp"]
     Testbench["testbench"]
 
     Pixelagents --> Corridor
@@ -36,13 +38,21 @@ flowchart BT
     Toolbox --> Corridor
     Deskutils --> Corridor
     Suggestionbox --> Corridor
+    Telephonepole --> Corridor
+    Bootcamp --> Corridor
     Testbench --> Corridor
 ```
 
 Painter's optional A2A call to Architect and Pico's calls to registered agents
 are network interactions through Corridor's shared listener, not dependency
-edges. Suggestionbox similarly registers an MCP server with Corridor; a missing
-server removes those tools rather than preventing other cogs from loading.
+edges. Suggestionbox similarly registers an MCP server with Corridor, and
+Telephonepole registers an open-ended, bot-owner-managed set of third-party
+ones the same way; a missing server removes those tools rather than
+preventing other cogs from loading. Bootcamp registers an open-ended set of
+dynamically-created agents with Corridor's agent directory the same way
+Architect/Painter each register their one singleton agent -- a removed
+Bootcamp agent simply stops appearing in Pico's tool list, the same way an
+unloaded Architect/Painter would.
 
 All cogs in this repository are deployed from one synchronized revision.
 Mixed-version runtime protocols are unsupported and fail through ordinary import
@@ -68,6 +78,8 @@ Cog reference to them instead.
 | Toolbox | Host tooling and command-to-LLM-tool controls |
 | Deskutils | Small Discord utilities/LLM tools |
 | Suggestionbox | Feedback MCP server and agent-tool visibility controls |
+| Telephonepole | Runtime registration of third-party MCP servers and per-server, per-agent visibility controls |
+| Bootcamp | Runtime creation of custom LLM agents, each with its own system prompt and permission-group gate |
 | Testbench | Owner-only manual Corridor event publication |
 | Contracts | CI-only consumer and repository policy checks; not a Red cog |
 
@@ -137,10 +149,13 @@ still work. There is simply no browser surface.
 
 ## Agent and event flow
 
-Architect and Painter register agent cards/executors with Corridor. Pico builds
-its `consult_<agent>` tools fresh from that directory and sends A2A requests to
-Corridor's single listener. Registered-agent load/unload and activity events are
-published on Corridor's bus.
+Architect and Painter register agent cards/executors with Corridor, and
+Bootcamp registers one such pair per custom agent it creates at runtime. Pico
+builds its `consult_<agent>` tools fresh from that directory each turn --
+skipping any agent whose `required_permission_group` the triggering member
+doesn't satisfy, the gate Bootcamp's own agents use -- and sends A2A requests
+to Corridor's single listener. Registered-agent load/unload and activity
+events are published on Corridor's bus.
 
 Discord gateway publishers also live in Corridor. CCTV is the single office
 subscriber: it filters those events through its enabled-guild and display

@@ -80,6 +80,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 # pattern this check enforces).
 COG_PACKAGES = (
     "architect",
+    "bootcamp",
     "cctv",
     "corridor",
     "deskutils",
@@ -88,6 +89,7 @@ COG_PACKAGES = (
     "pico",
     "pixelagents",
     "suggestionbox",
+    "telephonepole",
     "testbench",
     "toolbox",
 )

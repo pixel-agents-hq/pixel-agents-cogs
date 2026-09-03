@@ -159,7 +159,16 @@ class CreateAgentPromptView(discord.ui.LayoutView):
             label="Create custom agent", style=discord.ButtonStyle.primary
         )
         cast(Any, button).callback = self._on_create
-        container.add_item(button)
+        # A Button (and a Select, see AgentAccessConfigView._build below)
+        # is not itself a valid direct child of a Container -- Discord
+        # rejects the message with "Invalid Form Body ... type must be
+        # one of (1, 9, 10, 12, 13, 14)" (ActionRow/Section/TextDisplay/
+        # MediaGallery/File/Separator) otherwise. It must be wrapped in an
+        # ActionRow first, the same convention every control in corridor's
+        # own settings_ui.py already follows.
+        row: discord.ui.ActionRow[CreateAgentPromptView] = discord.ui.ActionRow()
+        row.add_item(button)
+        container.add_item(row)
         self.add_item(container)
 
     async def _on_create(self, interaction: discord.Interaction) -> None:
@@ -206,10 +215,15 @@ class AgentAccessConfigView(discord.ui.LayoutView):
         container: discord.ui.Container[AgentAccessConfigView] = discord.ui.Container(
             discord.ui.TextDisplay(AgentListView._row_text(self.agent))
         )
-        container.add_item(self._permission_select())
-        row: discord.ui.ActionRow[AgentAccessConfigView] = discord.ui.ActionRow()
-        row.add_item(self._debug_toggle_button())
-        container.add_item(row)
+        # Both the Select and the Button need their own ActionRow -- see
+        # CreateAgentPromptView._build's comment on why a bare Select/Button
+        # cannot be added to a Container directly.
+        select_row: discord.ui.ActionRow[AgentAccessConfigView] = discord.ui.ActionRow()
+        select_row.add_item(self._permission_select())
+        container.add_item(select_row)
+        button_row: discord.ui.ActionRow[AgentAccessConfigView] = discord.ui.ActionRow()
+        button_row.add_item(self._debug_toggle_button())
+        container.add_item(button_row)
         self.add_item(container)
 
     def _permission_select(self) -> discord.ui.Select[AgentAccessConfigView]:

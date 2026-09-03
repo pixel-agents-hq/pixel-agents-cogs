@@ -52,7 +52,7 @@ class TestCreateAgentPromptView(unittest.IsolatedAsyncioTestCase):
     async def test_the_button_opens_the_create_agent_modal(self) -> None:
         view = CreateAgentPromptView(self.cog, owner_id=self.ctx.author.id)
         container = view.children[0]
-        button = container.children[1]
+        button = container.children[1].children[0]  # Container -> ActionRow -> Button
         interaction = discord.Interaction(
             guild=self.ctx.guild, user=self.ctx.author, client=self.bot
         )

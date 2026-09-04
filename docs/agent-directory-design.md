@@ -82,6 +82,7 @@ class RegisteredAgent:
     card: AgentCard          # real a2a-sdk protobuf message
     executor: AgentExecutor  # the a2a-sdk extension point
     avatar_path: Path | None = None
+    required_permission_group: str | None = None
 ```
 
 - **`agent_key`** -- the mount path segment (`/<agent_key>/`) and the
@@ -108,6 +109,19 @@ class RegisteredAgent:
   `icon_url` to that address, so a consulting agent can show it as a
   `FooterOverride` distinct from its own author identity (see
   `docs/reply-identity-design.md`).
+- **`required_permission_group`** -- an optional corridor permission-group
+  key (`PermissionGroupDef.key`, see `docs/corridor.md`'s Permissions
+  section) gating who may *consult* this agent through pico. Corridor's
+  own directory never reads this field -- it's opaque state pico's own
+  `_agent_tools` (`pico/adapters/listener.py`) alone interprets, checking
+  `corridor.capabilities_satisfy(ctx.author, required_permission_group)`
+  fresh every turn before offering that agent's `consult_<agent_key>` tool,
+  and silently omitting the tool (not an error) when the triggering
+  member doesn't satisfy it. `None` (architect/painter, and any agent that
+  never sets it) means no gate at all -- their existing unrestricted
+  behavior is unchanged. `bootcamp` (see `docs/bootcamp-design.md`) is the
+  first cog to set this, letting a bot owner narrow who may use each
+  dynamically-created custom agent.
 
 `AgentDirectoryService` stores `agent_key -> (owner, RegisteredAgent)` in
 one process-wide dict -- one directory per bot process, not per guild,
@@ -157,7 +171,8 @@ sequenceDiagram
     U->>P: message gates pico in
     P->>Corridor: list_agents()
     Corridor-->>P: every currently registered RegisteredAgent
-    P->>P: build one ConsultAgentTool per entry<br/>(name is consult_ plus the agent_key, description from card.description)
+    P->>Corridor: capabilities_satisfy(ctx.author, group)<br/>for each agent with required_permission_group set
+    P->>P: build one ConsultAgentTool per satisfied entry<br/>(name is consult_ plus the agent_key, description from card.description)
     P->>P: LLM call, tools include consult_architect, consult_painter, ...
     P->>Tool: consult_architect(prompt="...")
     Tool->>Tool: announce outgoing question to Discord + AgentReplied

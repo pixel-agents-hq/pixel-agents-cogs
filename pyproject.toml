@@ -44,6 +44,8 @@ files = [
     "suggestionbox",
     "painter",
     "cctv",
+    "telephonepole",
+    "bootcamp",
 ]
 exclude = [
     "^pixelagents/conftest\\.py$",
@@ -69,6 +71,10 @@ exclude = [
     "^painter/tests/",
     "^cctv/conftest\\.py$",
     "^cctv/tests/",
+    "^telephonepole/conftest\\.py$",
+    "^telephonepole/tests/",
+    "^bootcamp/conftest\\.py$",
+    "^bootcamp/tests/",
 ]
 
 [[tool.mypy.overrides]]
@@ -262,4 +268,38 @@ disable_error_code = ["untyped-decorator"]
 
 [[tool.mypy.overrides]]
 module = ["cctv.cctv"]
+disable_error_code = ["misc"]
+
+[[tool.mypy.overrides]]
+# Same gap as pico.adapters.commands above, mirrored for telephonepole: Red
+# is absent from the lightweight CI type environment, so its decorators are
+# dynamically typed.
+module = ["telephonepole.adapters.commands"]
+disable_error_code = ["untyped-decorator"]
+
+[[tool.mypy.overrides]]
+# `corridor.register_mcp_server` returns Any with Red/corridor's real Cog
+# absent from the lightweight CI type environment.
+module = ["telephonepole.adapters.cog_base"]
+disable_error_code = ["no-any-return"]
+
+[[tool.mypy.overrides]]
+# Same as toolbox.toolbox / corridor.corridor / pico.pico / architect.architect
+# above: `commands.Cog` resolves to Any without Red's real Cog metaclass
+# installed.
+module = ["telephonepole.telephonepole"]
+disable_error_code = ["misc"]
+
+[[tool.mypy.overrides]]
+# Same gap as pico.adapters.commands above, mirrored for bootcamp: Red is
+# absent from the lightweight CI type environment, so its decorators and
+# untyped Context leak Any.
+module = ["bootcamp.adapters.commands"]
+disable_error_code = ["arg-type", "no-any-return", "untyped-decorator"]
+
+[[tool.mypy.overrides]]
+# Same as toolbox.toolbox / corridor.corridor / pico.pico / architect.architect
+# above: `commands.Cog` resolves to Any without Red's real Cog metaclass
+# installed.
+module = ["bootcamp.bootcamp"]
 disable_error_code = ["misc"]

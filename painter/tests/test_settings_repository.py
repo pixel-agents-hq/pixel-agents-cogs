@@ -25,6 +25,7 @@ class TestRedPainterRepository(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(settings.max_tool_calls, DEFAULT_MAX_TOOL_CALLS)
         self.assertEqual(settings.system_prompt, DEFAULT_SYSTEM_PROMPT)
         self.assertEqual(settings.debug_logging, DEFAULT_DEBUG_LOGGING)
+        self.assertIsNone(settings.request_timeout_seconds)
 
     async def test_set_max_tool_calls_persists(self) -> None:
         await self.repository.set_max_tool_calls(3)

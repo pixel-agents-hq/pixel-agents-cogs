@@ -121,6 +121,39 @@ class TestToolLoopService(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.successful_tool_calls, 0)
         self.assertEqual(result.failed_tool_calls, 0)
 
+    async def test_forwards_request_timeout_seconds_to_each_llm_call(self) -> None:
+        llm = ScriptedLLM([_response(content="ok")])
+        service = ToolLoopService(llm)
+
+        await service.run(
+            base_url="https://x",
+            api_key="k",
+            model="m",
+            system_prompt="sys",
+            user_input="hi",
+            tools=[],
+            max_tool_calls=5,
+            request_timeout_seconds=45.0,
+        )
+
+        self.assertEqual(llm.calls[0]["timeout_seconds"], 45.0)
+
+    async def test_omitted_request_timeout_seconds_forwards_none(self) -> None:
+        llm = ScriptedLLM([_response(content="ok")])
+        service = ToolLoopService(llm)
+
+        await service.run(
+            base_url="https://x",
+            api_key="k",
+            model="m",
+            system_prompt="sys",
+            user_input="hi",
+            tools=[],
+            max_tool_calls=5,
+        )
+
+        self.assertIsNone(llm.calls[0]["timeout_seconds"])
+
     async def test_executes_a_tool_call_and_returns_the_eventual_final_text(self) -> None:
         llm = ScriptedLLM(
             [_response(tool_calls=[_tool_call("call-1")]), _response(content="done: hi")]

@@ -39,7 +39,12 @@ class _DummyExecutor(AgentExecutor):
         raise NotImplementedError
 
 
-def _agent(agent_key: str, *, avatar_path: Path | None = None) -> RegisteredAgent:
+def _agent(
+    agent_key: str,
+    *,
+    avatar_path: Path | None = None,
+    required_permission_group: str | None = None,
+) -> RegisteredAgent:
     card = AgentCard(
         name=agent_key,
         description="A test agent.",
@@ -55,7 +60,11 @@ def _agent(agent_key: str, *, avatar_path: Path | None = None) -> RegisteredAgen
         skills=[],
     )
     return RegisteredAgent(
-        agent_key=agent_key, card=card, executor=_DummyExecutor(), avatar_path=avatar_path
+        agent_key=agent_key,
+        card=card,
+        executor=_DummyExecutor(),
+        avatar_path=avatar_path,
+        required_permission_group=required_permission_group,
     )
 
 
@@ -551,6 +560,20 @@ class TestCorridorApi(unittest.IsolatedAsyncioTestCase):
 
         agents = self.corridor.list_agents()
         self.assertEqual(agents[0].card.icon_url, "")
+
+    async def test_register_agent_forwards_required_permission_group(self) -> None:
+        await self.corridor.register_agent(
+            _agent("recruiter", required_permission_group="keyholder"), owner="Bootcamp"
+        )
+
+        agents = self.corridor.list_agents()
+        self.assertEqual(agents[0].required_permission_group, "keyholder")
+
+    async def test_register_agent_leaves_required_permission_group_unset_by_default(self) -> None:
+        await self.corridor.register_agent(_agent("architect"), owner="Architect")
+
+        agents = self.corridor.list_agents()
+        self.assertIsNone(agents[0].required_permission_group)
 
     async def test_unregister_agent_owner_removes_only_that_owners_agents(self) -> None:
         await self.corridor.register_agent(_agent("architect"), owner="Architect")

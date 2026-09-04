@@ -14,6 +14,8 @@ on:
       - "deskutils/**/*.py"
       - "architect/**/*.py"
       - "suggestionbox/**/*.py"
+      - "telephonepole/**/*.py"
+      - "bootcamp/**/*.py"
       - "painter/**/*.py"
       - "contracts/pixel_index/**"
       - "contracts/pixel_agents/**"
@@ -36,6 +38,8 @@ on:
       - "deskutils/**/*.py"
       - "architect/**/*.py"
       - "suggestionbox/**/*.py"
+      - "telephonepole/**/*.py"
+      - "bootcamp/**/*.py"
       - "painter/**/*.py"
       - "contracts/pixel_index/**"
       - "contracts/pixel_agents/**"
@@ -95,14 +99,18 @@ jobs:
           # is a separate, narrower defensive pin for the same class of
           # incident (typing-inspection>=0.4.3 itself needs
           # typing_extensions>=4.15.0), kept even though the pydantic_core
-          # path above is the one actually observed in CI. See
-          # corridor/infrastructure/mcp_client.py's own docstring for the
-          # full incident writeup.
+          # path above is the one actually observed in CI. 'anyio<4.15' is
+          # a third, same-class pin: anyio 4.15.0 unconditionally imports
+          # the lowercase `sentinel` factory from typing_extensions (added
+          # in typing_extensions 4.16.0, distinct from the Sentinel class
+          # above), and httpx/mcp both declare anyio with no upper bound.
+          # See corridor/infrastructure/mcp_client.py's own docstring for
+          # the full incident writeup.
           - cog: corridor
             test_target: "corridor/"
             lint_target: "corridor"
             mypy_target: "corridor"
-            extra_deps: "aiohttp 'pydantic>=2.11.3,<2.12' 'pyyaml>=6.0' 'a2a-sdk[http-server]' uvicorn 'mcp>=1.29,<2' 'typing-inspection<0.4.3'"
+            extra_deps: "aiohttp 'pydantic>=2.11.3,<2.12' 'pyyaml>=6.0' 'a2a-sdk[http-server]' uvicorn 'mcp>=1.29,<2' 'typing-inspection<0.4.3' 'anyio<4.15'"
             pixel_index_contracts: false
           # toolbox's tests import corridor.adapters (tool registration/
           # panel wiring), which pulls in corridor.infrastructure.A2AServer --
@@ -112,7 +120,7 @@ jobs:
             test_target: "toolbox/"
             lint_target: "toolbox"
             mypy_target: "toolbox"
-            extra_deps: "'a2a-sdk[http-server]' uvicorn 'mcp>=1.29,<2' 'typing-inspection<0.4.3'"
+            extra_deps: "'a2a-sdk[http-server]' uvicorn 'mcp>=1.29,<2' 'typing-inspection<0.4.3' 'anyio<4.15'"
             pixel_index_contracts: false
           # testbench's schema comes from corridor.event_catalog.build_contract()
           # in-process (no YAML parsing at runtime) -- no pyyaml needed here,
@@ -127,7 +135,7 @@ jobs:
             test_target: "testbench/"
             lint_target: "testbench"
             mypy_target: "testbench"
-            extra_deps: "'a2a-sdk[http-server]' uvicorn 'mcp>=1.29,<2' 'typing-inspection<0.4.3'"
+            extra_deps: "'a2a-sdk[http-server]' uvicorn 'mcp>=1.29,<2' 'typing-inspection<0.4.3' 'anyio<4.15'"
             pixel_index_contracts: false
           # pixelagents owns the vendor/build pipeline and validated office-state
           # facade; it has no Pixel Index HTTP contract of its own. It also
@@ -148,7 +156,7 @@ jobs:
             test_target: "floorplan/tests"
             lint_target: "floorplan"
             mypy_target: "floorplan"
-            extra_deps: "aiohttp 'a2a-sdk[http-server]' uvicorn 'mcp>=1.29,<2' 'typing-inspection<0.4.3'"
+            extra_deps: "aiohttp 'a2a-sdk[http-server]' uvicorn 'mcp>=1.29,<2' 'typing-inspection<0.4.3' 'anyio<4.15'"
             pixel_index_contracts: true
           # cctv owns both live webviews and their aiohttp listener. Its
           # schema boundary comes from pixelagents' pydantic layout model.
@@ -167,7 +175,7 @@ jobs:
             test_target: "cctv/tests"
             lint_target: "cctv"
             mypy_target: "cctv"
-            extra_deps: "aiohttp 'pydantic>=2.11.3,<2.12' 'a2a-sdk[http-server]' uvicorn 'mcp>=1.29,<2' 'typing-inspection<0.4.3'"
+            extra_deps: "aiohttp 'pydantic>=2.11.3,<2.12' 'a2a-sdk[http-server]' uvicorn 'mcp>=1.29,<2' 'typing-inspection<0.4.3' 'anyio<4.15'"
             pixel_index_contracts: false
           # pico talks to aiohttp (LiteLLM proxy) and pydantic (wire/tool
           # models) like floorplan, plus httpx and a2a-sdk for its
@@ -181,7 +189,7 @@ jobs:
             test_target: "pico/"
             lint_target: "pico"
             mypy_target: "pico"
-            extra_deps: "aiohttp 'pydantic>=2.11.3,<2.12' httpx 'a2a-sdk[http-server]' uvicorn 'mcp>=1.29,<2' 'typing-inspection<0.4.3'"
+            extra_deps: "aiohttp 'pydantic>=2.11.3,<2.12' httpx 'a2a-sdk[http-server]' uvicorn 'mcp>=1.29,<2' 'typing-inspection<0.4.3' 'anyio<4.15'"
             pixel_index_contracts: false
           # deskutils only reads the system clock and stdlib zoneinfo itself,
           # but its LLM tool metadata tests import corridor.adapters.
@@ -194,7 +202,7 @@ jobs:
             test_target: "deskutils/"
             lint_target: "deskutils"
             mypy_target: "deskutils"
-            extra_deps: "'pydantic>=2.11.3,<2.12' 'a2a-sdk[http-server]' uvicorn 'mcp>=1.29,<2' 'typing-inspection<0.4.3'"
+            extra_deps: "'pydantic>=2.11.3,<2.12' 'a2a-sdk[http-server]' uvicorn 'mcp>=1.29,<2' 'typing-inspection<0.4.3' 'anyio<4.15'"
             pixel_index_contracts: false
           # architect registers an A2A executor on corridor's shared listener
           # and uses pixelagents' pydantic-backed editor-state boundary. Its
@@ -204,7 +212,7 @@ jobs:
             test_target: "architect/"
             lint_target: "architect"
             mypy_target: "architect"
-            extra_deps: "aiohttp 'pydantic>=2.11.3,<2.12' 'a2a-sdk[http-server]' uvicorn 'mcp>=1.29,<2' 'typing-inspection<0.4.3'"
+            extra_deps: "aiohttp 'pydantic>=2.11.3,<2.12' 'a2a-sdk[http-server]' uvicorn 'mcp>=1.29,<2' 'typing-inspection<0.4.3' 'anyio<4.15'"
             pixel_index_contracts: false
           # suggestionbox runs its own MCP server (mcp>=1.29,<2, pinned below
           # mcp 2.0's FastMCP->MCPServer rename -- see corridor/infrastructure/
@@ -217,7 +225,21 @@ jobs:
             test_target: "suggestionbox/"
             lint_target: "suggestionbox"
             mypy_target: "suggestionbox"
-            extra_deps: "aiohttp 'pydantic>=2.11.3,<2.12' 'a2a-sdk[http-server]' uvicorn 'mcp>=1.29,<2' 'typing-inspection<0.4.3'"
+            extra_deps: "aiohttp 'pydantic>=2.11.3,<2.12' 'a2a-sdk[http-server]' uvicorn 'mcp>=1.29,<2' 'typing-inspection<0.4.3' 'anyio<4.15'"
+            pixel_index_contracts: false
+          # telephonepole never runs its own MCP server or imports mcp
+          # types directly (it only registers external base_urls with
+          # corridor's AgentToolServerRegistry -- see application/service.py),
+          # but its conftest.py still imports corridor.testing to install
+          # the shared stub modules, which (like suggestionbox's own leg
+          # above) reaches corridor.infrastructure's whole eager import
+          # chain -- A2AServer (a2a-sdk[http-server] + uvicorn) and
+          # LiteLLMClient (aiohttp + pydantic) included.
+          - cog: telephonepole
+            test_target: "telephonepole/"
+            lint_target: "telephonepole"
+            mypy_target: "telephonepole"
+            extra_deps: "aiohttp 'pydantic>=2.11.3,<2.12' 'a2a-sdk[http-server]' uvicorn 'mcp>=1.29,<2' 'typing-inspection<0.4.3' 'anyio<4.15'"
             pixel_index_contracts: false
           # painter registers an executor on corridor's listener, optionally
           # calls architect over A2A/httpx, and uses pixelagents' editor-state
@@ -226,7 +248,22 @@ jobs:
             test_target: "painter/"
             lint_target: "painter"
             mypy_target: "painter"
-            extra_deps: "aiohttp 'pydantic>=2.11.3,<2.12' httpx 'a2a-sdk[http-server]' uvicorn 'mcp>=1.29,<2' 'typing-inspection<0.4.3'"
+            extra_deps: "aiohttp 'pydantic>=2.11.3,<2.12' httpx 'a2a-sdk[http-server]' uvicorn 'mcp>=1.29,<2' 'typing-inspection<0.4.3' 'anyio<4.15'"
+            pixel_index_contracts: false
+          # bootcamp never runs its own MCP server or imports mcp types
+          # directly (it only builds a GenericAgentExecutor per custom
+          # agent and reads MCP tools already registered by suggestionbox/
+          # telephonepole), but its conftest.py still imports
+          # corridor.testing to install the shared stub modules, which
+          # (like telephonepole's own leg above) reaches corridor.
+          # infrastructure's whole eager import chain -- A2AServer
+          # (a2a-sdk[http-server] + uvicorn) and LiteLLMClient (aiohttp +
+          # pydantic) included.
+          - cog: bootcamp
+            test_target: "bootcamp/"
+            lint_target: "bootcamp"
+            mypy_target: "bootcamp"
+            extra_deps: "aiohttp 'pydantic>=2.11.3,<2.12' 'a2a-sdk[http-server]' uvicorn 'mcp>=1.29,<2' 'typing-inspection<0.4.3' 'anyio<4.15'"
             pixel_index_contracts: false
 
     steps:

@@ -1,0 +1,22 @@
+{
+    "$schema": "https://raw.githubusercontent.com/Cog-Creators/Red-DiscordBot/V3/develop/schema/red_cog.schema.json",
+    "name": "bootcamp",
+    "short": "Dynamically create custom LLM agents with their own system prompt, registered as A2A agents.",
+    "description": "Lets a bot owner create/remove custom LLM agents at runtime, each with its own system prompt and corridor permission-group gate. Every created agent registers into corridor's shared AgentDirectoryService (making it consultable by pico's dynamic consult_<agent_key> tool, and visible on cctv, exactly like architect/painter), gets whatever MCP tools are currently granted to it via corridor's AgentToolServerRegistry (suggestionbox/telephonepole), and can also be invoked directly with [p]bootcamp <agent_key> <prompt>.",
+    "end_user_data_statement": "This cog sends A2A task messages and direct-invoke prompts it receives to corridor's configured LLM endpoint. It does not persistently store any data or metadata about Discord users.",
+    "install_msg": "Requires corridor (auto-loaded). Create a custom agent with [p]bootcamp create <agent_key> <system prompt> (bot owner), then consult it via pico or directly with [p]bootcamp <agent_key> <prompt>.",
+    "author": ["Pixel Agents HQ Contributors"],
+    "required_cogs": {"corridor": "https://github.com/pixel-agents-hq/pixel-agents-cogs"},
+    "requirements": [],
+    "tags": [
+        "bootcamp",
+        "llm",
+        "agent",
+        "a2a"
+    ],
+    "min_bot_version": "3.5.24",
+    "min_python_version": [3, 11, 0],
+    "hidden": false,
+    "disabled": false,
+    "type": "COG"
+}

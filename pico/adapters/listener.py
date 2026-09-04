@@ -86,7 +86,7 @@ class ListenerMixin:
             )
         ]
         tools.extend(
-            _agent_tools(
+            await _agent_tools(
                 self._corridor,
                 self._reply,
                 self._architect_client,
@@ -116,7 +116,7 @@ class ListenerMixin:
         )
 
 
-def _agent_tools(
+async def _agent_tools(
     corridor: Any,
     reply: Any,
     client: Any,
@@ -146,10 +146,35 @@ def _agent_tools(
     single hardcoded agent to be "not configured." One malformed entry's
     tool-building failure is logged and skipped rather than dropping
     every other agent's tool, same convention as `_cross_cog_tools`
-    below."""
+    below.
+
+    An agent whose `required_permission_group` is set (see
+    `corridor.domain.RegisteredAgent`'s own docstring -- bootcamp's
+    dynamically-created agents are the first to use this, see
+    docs/bootcamp-design.md) is silently omitted, same "skip rather than
+    surface an error" convention as a malformed entry above, when
+    `ctx.author` doesn't satisfy that group -- checked fresh via
+    `corridor.capabilities_satisfy` every turn, so a bot owner narrowing
+    or widening an agent's `permission_group` takes effect on the very
+    next message, no cog reload required. `None` (architect/painter,
+    which never set this field) means no gate at all."""
 
     tools: list[ToolSpec] = []
     for agent in corridor.list_agents():
+        if agent.required_permission_group is not None:
+            try:
+                allowed = await corridor.capabilities_satisfy(
+                    ctx.author, agent.required_permission_group
+                )
+            except Exception:
+                log.warning(
+                    "pico: could not check permission for agent %r, skipping",
+                    agent.agent_key,
+                    exc_info=True,
+                )
+                continue
+            if not allowed:
+                continue
         try:
             tools.append(
                 ConsultAgentTool(

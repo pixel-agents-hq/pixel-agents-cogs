@@ -88,6 +88,7 @@ class SupportsToolLoop(Protocol):
         debug: bool,
         on_activity: Callable[[str], Awaitable[None]] | None,
         on_debug_event: Callable[[str], Awaitable[None]],
+        request_timeout_seconds: float | None,
     ) -> ToolLoopResult: ...
 
 
@@ -98,6 +99,8 @@ class SupportsAgentSettings(Protocol):
     def max_tool_calls(self) -> int: ...
     @property
     def debug_logging(self) -> bool: ...
+    @property
+    def request_timeout_seconds(self) -> float | None: ...
 
 
 def build_agent_card(
@@ -276,6 +279,7 @@ class GenericAgentExecutor(AgentExecutor):
             debug=settings.debug_logging,
             on_activity=self._publish_activity,
             on_debug_event=_emit_debug,
+            request_timeout_seconds=settings.request_timeout_seconds,
         )
 
         if result.stopped_reason != "final_text" or result.text is None:

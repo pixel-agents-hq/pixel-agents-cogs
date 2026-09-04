@@ -27,6 +27,7 @@ class TestRedArchitectRepository(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(settings.max_tool_calls, DEFAULT_MAX_TOOL_CALLS)
         self.assertEqual(settings.system_prompt, DEFAULT_SYSTEM_PROMPT)
         self.assertEqual(settings.debug_logging, DEFAULT_DEBUG_LOGGING)
+        self.assertIsNone(settings.request_timeout_seconds)
         self.assertEqual(self.repository.config._global_data, GLOBAL_DEFAULTS)
         self.assertNotEqual(CONFIG_IDENTIFIER, 4172636869746374)
 

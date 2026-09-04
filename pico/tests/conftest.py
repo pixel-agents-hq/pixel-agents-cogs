@@ -76,9 +76,19 @@ class FakeCorridor:
         self.list_tools_for_calls: list[Any] = []
         self.agents: list[Any] = []
         self._llm_settings = FakeLLMSettings()
+        self.allow_capabilities = True
+        self.capabilities_checks: list[tuple[Any, str]] = []
 
     async def llm_settings(self) -> FakeLLMSettings:
         return self._llm_settings
+
+    async def capabilities_satisfy(self, member: Any, group_key: str) -> bool:
+        """Stands in for corridor.capabilities_satisfy -- used by
+        `_agent_tools` to gate a `RegisteredAgent.required_permission_group`.
+        See docs/bootcamp-design.md."""
+
+        self.capabilities_checks.append((member, group_key))
+        return self.allow_capabilities
 
     def register_dependent(self, extension_name: str) -> None:
         self.registered_dependents.add(extension_name)

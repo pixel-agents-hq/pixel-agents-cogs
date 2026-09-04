@@ -156,7 +156,20 @@ class LiteLLMClient:
         messages: Sequence[ChatMessage],
         tools: Sequence[ToolSpecWire] | None = None,
         tool_choice: str | None = None,
+        timeout_seconds: float | None = None,
     ) -> ChatCompletionResponse:
+        """`timeout_seconds`, when given, overrides this one request's
+        total timeout (connect/sock_read stay at the session's own
+        constants) -- the session-wide `REQUEST_TIMEOUT_SECONDS` default
+        otherwise applies unchanged. aiohttp's per-request `timeout=`
+        kwarg fully replaces the session default rather than merging with
+        it, so a complete `ClientTimeout` is rebuilt here rather than only
+        overriding `total`. (Named `timeout_seconds`, not `timeout`, on
+        this async method -- ruff's ASYNC109 flags a bare `timeout`
+        parameter as if it were manually reimplementing
+        `asyncio.timeout()`, which this isn't: the value is only ever
+        forwarded to aiohttp's own per-request timeout config below.)"""
+
         request = ChatCompletionRequest(
             model=model,
             messages=list(messages),
@@ -165,11 +178,24 @@ class LiteLLMClient:
         )
         body = request.model_dump(mode="json", exclude_none=True)
         url = f"{base_url.rstrip('/')}/chat/completions"
+        # aiohttp distinguishes "timeout not passed at all" (falls back to
+        # the session's own ClientTimeout) from `timeout=None` (disables
+        # timeout entirely) via a sentinel default -- so the kwarg is only
+        # added at all when a per-request override is actually requested,
+        # never passed through as an explicit None.
+        post_kwargs: dict[str, Any] = {
+            "json": body,
+            "headers": {"Authorization": f"Bearer {api_key}"},
+        }
+        if timeout_seconds is not None:
+            post_kwargs["timeout"] = aiohttp.ClientTimeout(
+                total=timeout_seconds,
+                connect=CONNECT_TIMEOUT_SECONDS,
+                sock_read=READ_TIMEOUT_SECONDS,
+            )
         try:
             session = await self._get_session()
-            async with session.post(
-                url, json=body, headers={"Authorization": f"Bearer {api_key}"}
-            ) as response:
+            async with session.post(url, **post_kwargs) as response:
                 if response.status != 200:
                     text = await response.text()
                     raise LLMRequestError(f"LiteLLM returned HTTP {response.status}: {text[:200]}")

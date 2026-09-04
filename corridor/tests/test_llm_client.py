@@ -9,9 +9,12 @@ import json
 import unittest
 from typing import Any
 
+import aiohttp
 import pytest
 
 from ..infrastructure.llm_client import (
+    CONNECT_TIMEOUT_SECONDS,
+    READ_TIMEOUT_SECONDS,
     ChatMessage,
     LiteLLMClient,
     LLMRequestError,
@@ -132,6 +135,30 @@ class TestLiteLLMClient(unittest.IsolatedAsyncioTestCase):
 
         url, _kwargs = session.calls[0]
         self.assertEqual(url, "https://litellm.example/chat/completions")
+
+    async def test_omitted_timeout_does_not_pass_a_per_request_override(self) -> None:
+        session = RecordingSession([FakeResponse(lines=_sse_lines())])
+        client = LiteLLMClient(session_factory=lambda **kw: session)
+
+        await client.complete(base_url="https://x", api_key="k", model="m", messages=[])
+
+        _url, kwargs = session.calls[0]
+        self.assertNotIn("timeout", kwargs)
+
+    async def test_given_timeout_overrides_only_this_request(self) -> None:
+        session = RecordingSession([FakeResponse(lines=_sse_lines())])
+        client = LiteLLMClient(session_factory=lambda **kw: session)
+
+        await client.complete(
+            base_url="https://x", api_key="k", model="m", messages=[], timeout_seconds=90.0
+        )
+
+        _url, kwargs = session.calls[0]
+        request_timeout = kwargs["timeout"]
+        assert isinstance(request_timeout, aiohttp.ClientTimeout)
+        self.assertEqual(request_timeout.total, 90.0)
+        self.assertEqual(request_timeout.connect, CONNECT_TIMEOUT_SECONDS)
+        self.assertEqual(request_timeout.sock_read, READ_TIMEOUT_SECONDS)
 
     async def test_parses_a_successful_response(self) -> None:
         session = RecordingSession([FakeResponse(lines=_sse_lines(content="hello there"))])

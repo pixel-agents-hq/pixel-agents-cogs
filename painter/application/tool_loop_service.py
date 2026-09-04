@@ -50,6 +50,7 @@ class ToolLLM(Protocol):
         messages: Sequence[ChatMessage],
         tools: Sequence[ToolSpecWire],
         tool_choice: str,
+        timeout_seconds: float | None = None,
     ) -> ChatCompletionResponse: ...
 
 
@@ -79,8 +80,17 @@ class ToolLoopService:
         debug: bool = False,
         on_activity: Callable[[str], Awaitable[None]] | None = None,
         on_debug_event: Callable[[str], Awaitable[None]] | None = None,
+        request_timeout_seconds: float | None = None,
     ) -> ToolLoopResult:
-        """`on_activity`, if given, is awaited once per "thinking" turn (the
+        """`request_timeout_seconds`, when given, overrides the shared LLM
+        connection's own default total-request timeout for every call this
+        run makes -- always `None` today (painter has no per-agent
+        settings surface of its own; this parameter exists only so
+        `GlobalSettings` keeps satisfying corridor's shared
+        `SupportsAgentSettings` protocol, which bootcamp's own
+        per-agent-configurable `CustomAgent` also implements).
+
+        `on_activity`, if given, is awaited once per "thinking" turn (the
         model's own text alongside a tool-calling turn) and once per tool
         call. `on_debug_event` is a separate, independent sink -- only
         ever awaited when `debug` is True, carrying full detail rather
@@ -114,6 +124,7 @@ class ToolLoopService:
                     messages=messages,
                     tools=wire_tools,
                     tool_choice="auto",
+                    timeout_seconds=request_timeout_seconds,
                 )
             except LLMRequestError as exc:
                 log.warning("painter: tool loop LLM call failed, stopping: %s", exc)

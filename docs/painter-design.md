@@ -103,7 +103,16 @@ class GlobalSettings:
     max_tool_calls: int
     system_prompt: str
     debug_logging: bool
+    request_timeout_seconds: float | None = None  # always None here -- see below
 ```
+
+`request_timeout_seconds` always stays `None` -- painter has no per-agent
+settings surface of its own to configure it from. It exists only so this
+dataclass keeps structurally satisfying corridor's shared
+`SupportsAgentSettings` protocol (`corridor/domain/agent_executor.py`),
+which [`bootcamp`](bootcamp-design.md)'s own per-agent-configurable
+`CustomAgent` also implements, this time with a real bot-owner-set
+override.
 
 Every color-read tool reports the exact current color through
 `pixelagents.infrastructure.color_summary.ColorSummary` -- a shape shared

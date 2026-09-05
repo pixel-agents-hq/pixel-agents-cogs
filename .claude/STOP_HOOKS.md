@@ -2,18 +2,48 @@
 
 ## The problem this solves
 
-Each cog directory in this repo (`corridor`, `architect`, `pico`, `toolbox`,
-`testbench`, `deskutils`, `floorplan`, `pixelagents`, ...) has its own
-`conftest.py` that installs a fake `sys.modules["redbot.core"]` / `discord`
-stub shaped for that cog specifically. These stubs are **mutually
-incompatible** — running more than one cog's test suite in the same
-`pytest` process means whichever cog's conftest runs first wins that stub
-for the rest of the process. Every other cog's tests then fail against the
-wrong stub shapes: `AttributeError`, `isinstance` checks against the wrong
-class, assertions on the wrong fake objects — a wall of failures that reads
-like a real regression but isn't. `.github/workflows/cogs-quality.yml`
-avoids this by running each cog as its own CI job; running two or more
-together locally hits the exact same wall.
+Every cog directory in this repo (`corridor`, `architect`, `pico`,
+`toolbox`, `testbench`, `deskutils`, `floorplan`, `pixelagents`, ...) has
+its own `conftest.py`, and all of them delegate to the same shared
+installer, `corridor.testing.install_stubs()`, for the base
+`sys.modules["redbot.core"]` / `discord` stub. That shared base is not
+where the conflict this guard prevents comes from.
+
+The actual source: two cogs' `conftest.py` files layer *additional*,
+cog-specific overrides on top of that shared base, and those layers
+**are** mutually incompatible with each other and with cogs that need the
+real thing. `pixelagents/tests/conftest.py` and
+`floorplan/tests/conftest.py` each fake `aiohttp` entirely
+(`sys.modules["aiohttp"] = ...`, since neither wants a real socket in its
+own unit tests) and `pixelagents/conftest.py`/`tests/conftest.py` also
+override `redbot.core.data_manager.cog_data_path` to pre-seed a fake
+`webview_dist`. But `corridor`'s suite (and pico's
+`test_architect_client.py`) binds a real loopback A2A listener, and
+cctv's suite binds a real loopback aiohttp listener — running either of
+those in the same `pytest` process as `pixelagents/tests` or
+`floorplan/tests` means whichever conftest's `sys.modules["aiohttp"]`
+assignment runs last silently wins for the rest of the process, breaking
+the other suite's real-network expectations. Every other cog's tests then
+fail in ways that read like a real regression but aren't: `AttributeError`,
+`isinstance` checks against the wrong class, assertions on the wrong fake
+objects. `.github/workflows/cogs-quality.yml` avoids this by running each
+cog as its own CI job; running two or more together locally hits the same
+wall.
+
+This guard is deliberately not scoped down to "only pixelagents/floorplan
+plus a real-network cog" — it blocks *any* two-cog combination, uniformly,
+because nothing here guarantees a future cog's `conftest.py` won't add its
+own conflicting layer the same way, and the cost of the guard (rejecting
+an uncommon combined-cog invocation) is far lower than the cost of
+re-deriving "these aren't real failures" from a wall of unrelated-looking
+output. `e2e/` proves multiple real cogs *can* run together in one
+process, but it does so by bypassing every cog's own `conftest.py`
+entirely — its own `e2e/conftest.py` calls `install_stubs()` directly and
+imports cog classes straight from their modules, so `pixelagents/tests/
+conftest.py`'s aiohttp-faking and `cog_data_path` override never load in
+the first place. That's a hand-authored exception with its own carefully
+chosen (non-faking) overrides, not evidence this guard can be dropped for
+ordinary per-cog test invocations.
 
 Without a guard, the failure mode is always the same: a huge,
 unrelated-looking failure list gets generated and read before anyone

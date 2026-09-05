@@ -2,10 +2,9 @@
 browser watches the real CCTV editor page update over a real WebSocket.
 
 Every boundary except the LLM API and the Discord gateway is real:
-- a real, network-cloned, npm/vite-built Pixel Agents webview
-  (`pixelagents.infrastructure.webview_build.ensure_webview_built`, the
-  same function `contracts/pixel_agents/verify.py` and
-  `vendor-update.yml`'s gate use -- not a reimplementation);
+- a real, network-cloned, npm/vite-built Pixel Agents webview, built by
+  `PixelAgents.cog_load()` itself (see `e2e/fixtures.py::construct_core_cogs`)
+  -- not pre-built by this test -- the same way a real bot host builds it;
 - real corridor, pixelagents, architect, and cctv cogs, `cog_load()`-ed
   together in one process (painter is deliberately not exercised here --
   see `e2e/README.md` for why one architect-driven scenario is enough to
@@ -25,29 +24,22 @@ CI job that runs this on a schedule.
 
 from __future__ import annotations
 
-import base64
-import json
-import logging
-import os
 import unittest
-from pathlib import Path
-from tempfile import TemporaryDirectory
-from typing import cast
-
-from aiohttp import web
 
 from architect.application import ToolLoopService
 from architect.architect import Architect
-from cctv.cctv import CCTV
-from cctv.infrastructure import settings as cctv_settings
-from cctv.infrastructure.webview import WEBVIEW_BASE_PATH
-from corridor.corridor import Corridor
-from pixelagents.infrastructure import webview_build
-from pixelagents.pixelagents import PixelAgents
 
-from .fixtures import FakeBot, ScriptedLLM, final_response, tool_call_response
-
-_LOG = logging.getLogger("e2e.live_office")
+from .fixtures import (
+    FakeBot,
+    ScriptedLLM,
+    capture_websocket_frames,
+    construct_core_cogs,
+    final_response,
+    real_webview_build_enabled,
+    start_frontend_app,
+    tool_call_response,
+    wait_for_frame,
+)
 
 # A 2x2 span deep inside the bundled default layout's floor-7 room (rows
 # 11-20, cols 1-9 in the pinned commit's default-layout-1.json) -- clear of
@@ -59,109 +51,28 @@ _PAINT_WIDTH, _PAINT_HEIGHT = 2, 2
 _PAINT_MATERIAL = 3
 
 
-def _real_webview_build_enabled() -> bool:
-    return os.environ.get("PIXELAGENTS_REAL_WEBVIEW_BUILD") == "1"
-
-
-async def _build_frontend_app(cctv_cog: CCTV, server: object) -> web.Application:
-    """A tiny, test-only aiohttp app that serves the real page/asset
-    responses `cctv.infrastructure.webview.WebviewAssets` already produces
-    in production (real Discord Dashboard integration serves these via
-    Red's RPC page-provider protocol instead of a plain HTTP route, which
-    is out of scope to stand up here) alongside the *real* WebSocket
-    handlers `CctvServer` binds in production -- reusing the same bound
-    methods, not reimplementing them, so this never drifts from what a
-    real client actually talks to."""
-
-    app = web.Application()
-    app.router.add_get("/cctv/discord/ws", server.handle_discord)  # type: ignore[attr-defined]
-    app.router.add_get("/cctv/editor/ws", server.handle_editor)  # type: ignore[attr-defined]
-    app.router.add_get("/cctv/health", server.handle_health)  # type: ignore[attr-defined]
-
-    assets = cctv_cog._assets  # noqa: SLF001
-
-    async def page_handler(request: web.Request) -> web.Response:
-        page = request.match_info["page"]
-        response = assets.page_response(page)
-        if response.get("status") != 0:
-            return web.Response(status=503, text=str(response.get("error_message")))
-        web_content = cast("dict[str, object]", response["web_content"])
-        return web.Response(text=str(web_content["source"]), content_type="text/html")
-
-    async def static_handler(request: web.Request) -> web.Response:
-        tail = request.match_info["tail"]
-        response = assets.static_response(tail)
-        if response.get("status") != 0:
-            return web.Response(status=404)
-        raw = cast("dict[str, object]", response["raw_response"])
-        body = base64.b64decode(cast(str, raw["body_base64"]))
-        # `web.Response(content_type=...)` rejects a charset baked into the
-        # value (it wants that split out separately), and WebviewAssets'
-        # content types (e.g. "text/javascript; charset=utf-8") already
-        # carry one -- set the header directly instead of fighting aiohttp's
-        # parsing of it.
-        return web.Response(body=body, headers={"Content-Type": str(raw["content_type"])})
-
-    app.router.add_get("/e2e/page/{page}", page_handler)
-    app.router.add_get(WEBVIEW_BASE_PATH + "{tail:.*}", static_handler)
-    return app
-
-
 @unittest.skipUnless(
-    _real_webview_build_enabled(),
+    real_webview_build_enabled(),
     "needs a real network clone+npm+vite build of the vendored webview; "
     "set PIXELAGENTS_REAL_WEBVIEW_BUILD=1 to run (see e2e/README.md)",
 )
 class TestArchitectPaintReachesTheLiveEditor(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
-        self._build_dir = TemporaryDirectory()
-        cache = os.environ.get("PIXELAGENTS_E2E_WEBVIEW_CACHE")
-        self._build_path = Path(cache) if cache else Path(self._build_dir.name)
-        if not cache:
-            self.addCleanup(self._build_dir.cleanup)
-
         self.bot = FakeBot()
 
-        self.corridor = Corridor(self.bot)
-        await self.corridor.cog_load()
-        self.bot.add_cog(self.corridor)
-        self.addAsyncCleanup(self.corridor.cog_unload)
-
-        self.pixelagents = PixelAgents(self.bot)
-        # Real clone+npm+vite build -- not a reimplementation of
-        # ensure_webview_built, the exact function cog_load() below also
-        # calls (and finds already up to date, so it doesn't rebuild).
-        webview_build.ensure_webview_built(self._build_path, logger=_LOG)
-        self.pixelagents._cog_data_dir = self._build_path  # noqa: SLF001
-        await self.pixelagents.cog_load()
-        self.bot.add_cog(self.pixelagents)
-        self.addAsyncCleanup(self.pixelagents.cog_unload)
+        cogs = await construct_core_cogs(
+            self.bot, add_cleanup=self.addCleanup, add_async_cleanup=self.addAsyncCleanup
+        )
+        self.corridor = cogs.corridor
+        self.pixelagents = cogs.pixelagents
+        self.cctv = cogs.cctv
 
         self.architect = Architect(self.bot)
         await self.architect.cog_load()
         self.bot.add_cog(self.architect)
         self.addAsyncCleanup(self.architect.cog_unload)
 
-        # Ephemeral port -- this suite owns its whole process, but a fixed
-        # default (3210) would still collide with a second e2e run on the
-        # same host.
-        cctv_settings.GLOBAL_DEFAULTS["listener_port"] = 0
-        self.cctv = CCTV(self.bot)
-        await self.cctv.cog_load()
-        self.bot.add_cog(self.cctv)
-        self.addAsyncCleanup(self.cctv.cog_unload)
-
-        server = self.cctv._server  # noqa: SLF001
-        assert server is not None
-
-        self._frontend_runner = web.AppRunner(await _build_frontend_app(self.cctv, server))
-        await self._frontend_runner.setup()
-        site = web.TCPSite(self._frontend_runner, "127.0.0.1", 0)
-        await site.start()
-        self.addAsyncCleanup(self._frontend_runner.cleanup)
-        raw_server = site._server  # noqa: SLF001
-        assert raw_server is not None
-        self._port = raw_server.sockets[0].getsockname()[1]  # type: ignore[attr-defined]
+        self._port = await start_frontend_app(self.cctv, add_async_cleanup=self.addAsyncCleanup)
 
     async def test_paint_tiles_broadcasts_the_new_material_to_a_real_browser(self) -> None:
         # Imported here, not at module scope, so this file (and the
@@ -173,21 +84,7 @@ class TestArchitectPaintReachesTheLiveEditor(unittest.IsolatedAsyncioTestCase):
             browser = await playwright.chromium.launch()
             self.addAsyncCleanup(browser.close)
             page = await browser.new_page()
-
-            frames: list[dict[str, object]] = []
-
-            def on_websocket(ws: object) -> None:
-                def on_frame(payload: str) -> None:
-                    try:
-                        message = json.loads(payload)
-                    except (TypeError, ValueError):
-                        return
-                    if isinstance(message, dict):
-                        frames.append(message)
-
-                ws.on("framereceived", on_frame)  # type: ignore[attr-defined]
-
-            page.on("websocket", on_websocket)
+            frames = capture_websocket_frames(page)
 
             await page.goto(f"http://127.0.0.1:{self._port}/e2e/page/editor")
 
@@ -229,12 +126,9 @@ class TestArchitectPaintReachesTheLiveEditor(unittest.IsolatedAsyncioTestCase):
             )
             self.assertEqual(result.tool_calls_made, 1)
 
-            layout_loaded = None
-            for _ in range(50):
-                layout_loaded = next((f for f in frames if f.get("type") == "layoutLoaded"), None)
-                if layout_loaded is not None:
-                    break
-                await page.wait_for_timeout(100)
+            layout_loaded = await wait_for_frame(
+                page, frames, lambda f: f.get("type") == "layoutLoaded"
+            )
 
             self.assertIsNotNone(
                 layout_loaded, "browser never received a layoutLoaded broadcast after painting"

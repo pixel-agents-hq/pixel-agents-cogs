@@ -1,6 +1,63 @@
-# Pytest scope guard
+# Stop hooks
 
-## The problem this solves
+This repo registers `PreToolUse` guards on Claude Code's `Bash` tool for
+commands with a known-bad, repeatable failure mode in this environment —
+one whose fix is always the same rewrite, never a real code change.
+Rediscovering that fix by reading the same wall of output a second time is
+a slow, repeatable waste; each guard below fails fast with the working
+command instead.
+
+## How it works
+
+`.claude/settings.json` registers each guard as its own entry under one
+`PreToolUse` hook on the `Bash` tool:
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          { "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/check_pytest_scope.py\"", "timeout": 5 },
+          { "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/check_gh_pr_edit.py\"", "timeout": 5 }
+        ]
+      }
+    ]
+  }
+}
+```
+
+`PreToolUse` runs **before** the Bash tool call executes, receiving the
+proposed command as JSON on stdin (`{"tool_name": "Bash", "tool_input":
+{"command": "..."}}`). Each script reads that command; if it decides the
+command should be blocked, it writes:
+
+```json
+{
+  "hookSpecificOutput": {
+    "hookEventName": "PreToolUse",
+    "permissionDecision": "deny",
+    "permissionDecisionReason": "<one-paragraph explanation + the working command to run instead>"
+  }
+}
+```
+
+Claude Code denies the tool call and shows `permissionDecisionReason`
+directly to the model in place of ever running the command — no command
+output, no huge failure list, just the reason and the fix. All guards are
+anchored to `$CLAUDE_PROJECT_DIR`, not the shell's current directory,
+since an earlier Bash call in the same session may have `cd`-ed elsewhere.
+
+Note this is *not* Claude Code's `Stop` hook event (which only fires after
+the model finishes a turn — too late to prevent an expensive command from
+running). "Stop the bad command" here means `PreToolUse` denying it before
+it starts, which is the mechanism that actually achieves "fail immediately"
+and "save tokens."
+
+## Pytest scope guard (`check_pytest_scope.py`)
+
+### The problem this solves
 
 Every cog directory in this repo (`corridor`, `architect`, `pico`,
 `toolbox`, `testbench`, `deskutils`, `floorplan`, `pixelagents`, ...) has
@@ -45,59 +102,7 @@ the first place. That's a hand-authored exception with its own carefully
 chosen (non-faking) overrides, not evidence this guard can be dropped for
 ordinary per-cog test invocations.
 
-Without a guard, the failure mode is always the same: a huge,
-unrelated-looking failure list gets generated and read before anyone
-notices the real cause, and the fix is always "run these separately" —
-after already paying for the tokens to generate and read that output. The
-guard below turns that into an immediate, one-line rejection *before* the
-command ever runs, so the expensive round trip never happens.
-
-## How it works
-
-`.claude/settings.json` registers a **`PreToolUse` hook on the `Bash`
-tool**, pointed at `.claude/hooks/check_pytest_scope.py`:
-
-```json
-{
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Bash",
-        "hooks": [
-          { "type": "command", "command": "python3 .claude/hooks/check_pytest_scope.py", "timeout": 5 }
-        ]
-      }
-    ]
-  }
-}
-```
-
-`PreToolUse` runs **before** the Bash tool call executes, receiving the
-proposed command as JSON on stdin (`{"tool_name": "Bash", "tool_input":
-{"command": "..."}}`). If the script decides the command should be
-blocked, it writes:
-
-```json
-{
-  "hookSpecificOutput": {
-    "hookEventName": "PreToolUse",
-    "permissionDecision": "deny",
-    "permissionDecisionReason": "<one-paragraph explanation + the per-cog commands to run instead>"
-  }
-}
-```
-
-Claude Code denies the tool call and shows `permissionDecisionReason`
-directly to the model in place of ever running the command — no test
-output, no huge failure list, just the reason and the fix.
-
-Note this is *not* Claude Code's `Stop` hook event (which only fires after
-the model finishes a turn — too late to prevent an expensive command from
-running). "Stop the bad command" here means `PreToolUse` denying it before
-it starts, which is the mechanism that actually achieves "fail immediately"
-and "save tokens."
-
-## What gets blocked
+### What gets blocked
 
 `check_pytest_scope.py` only looks at `Bash` tool calls, and only at
 commands that contain a `pytest` invocation (bare `pytest`, `python -m
@@ -132,7 +137,7 @@ Everything else is allowed, including:
   which flags consume the next token and doesn't mistake a flag's value
   for a test path.
 
-## If you need to change this
+### If you need to change this
 
 - The known-cogs list is not hardcoded — see `_discover_cogs()` in
   `check_pytest_scope.py` if the detection heuristic (conftest.py presence)
@@ -141,8 +146,49 @@ Everything else is allowed, including:
   pytest plugin adds a flag that takes a value and could be confused with
   a path; false positives there would show up as this hook blocking a
   legitimate single-cog command.
-- To disable temporarily, remove or comment out the `PreToolUse` entry in
+- To disable temporarily, remove or comment out its entry in
   `.claude/settings.json`, or delete `.claude/hooks/check_pytest_scope.py`.
+
+## `gh pr edit` guard (`check_gh_pr_edit.py`)
+
+### The problem this solves
+
+This environment's `gh` token is scoped to `read:user`, `repo`,
+`user:email`, `workflow`, and `write:packages` — it lacks `read:org` and
+`read:discussion`. `gh pr edit`'s underlying GraphQL mutation resolves a
+few fields (the acting user's `login`, an org's `name`, a discussion
+`slug`) on the way to the actual edit, even though the edit itself needs
+neither scope, so the whole call fails with a wall of "Your token has not
+been granted the required scopes..." text — every time, regardless of
+which PR or which fields are being edited. The fix is always the same:
+use the REST API directly instead, which never reaches that GraphQL path:
+
+```sh
+gh api repos/<owner>/<repo>/pulls/<number> -X PATCH \
+  -f title="..." -f body="..."
+```
+
+### What gets blocked
+
+`check_gh_pr_edit.py` looks at `Bash` tool calls whose command invokes
+`gh pr edit` (tolerating `gh`'s own global flags like `--repo`/`-R`
+before the subcommand). It extracts the PR number/URL/branch argument if
+one was given, and substitutes it directly into the suggested `gh api`
+command so the fix is copy-pasteable, not just a template. Everything
+else — `gh pr view`, `gh pr create`, `gh pr comment`, chained commands
+where only one side is `gh pr edit` — is unaffected.
+
+### If you need to change this
+
+- If this token's scopes ever change to include `read:org`/
+  `read:discussion`, `gh pr edit` would work again and this guard could be
+  deleted along with `check_gh_pr_edit.py`.
+- `_PR_EDIT_VALUE_FLAGS` may need a new entry if a future `gh` version adds
+  a value-taking flag to `pr edit`; a missing entry would show up as the
+  suggested command's PR reference being wrong (a flag's value mistaken
+  for the target) rather than a false block.
+- To disable temporarily, remove or comment out its entry in
+  `.claude/settings.json`, or delete `.claude/hooks/check_gh_pr_edit.py`.
 
 ## Where this lives (and where it doesn't)
 
@@ -155,7 +201,8 @@ which live in `.claude/settings.local.json`, a Claude Code-recognized
 Claude Code merges hooks from `settings.json` and `settings.local.json`
 per event, so both files' hooks are active at once.
 
-`.claude/settings.json`, `.claude/hooks/check_pytest_scope.py`, and this
-file are force-added (`git add -f`, bypassing that local exclude) and
-committed normally — they're genuinely project-level and belong in the
-repo, unlike the orchestrator's own session plumbing.
+`.claude/settings.json`, `.claude/hooks/check_pytest_scope.py`,
+`.claude/hooks/check_gh_pr_edit.py`, and this file are force-added
+(`git add -f`, bypassing that local exclude) and committed normally —
+they're genuinely project-level and belong in the repo, unlike the
+orchestrator's own session plumbing.

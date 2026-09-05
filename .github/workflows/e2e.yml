@@ -1,8 +1,10 @@
 name: "Multi-cog E2E"
 
-# e2e/ is not a cog -- it loads corridor, pixelagents, architect, and cctv
-# together as real, cog_load()-ed instances in one process against a real
-# built Pixel Agents webview, then drives a real Playwright browser against
+# e2e/ is not a cog -- it loads corridor, pixelagents, architect, cctv, and
+# floorplan together as real, cog_load()-ed instances in one process against
+# a real built Pixel Agents webview (and, for floorplan's scenario, Pixel
+# Index's real staging environment), then drives a real Playwright browser
+# -- including real UI interaction with the bundled webview itself -- against
 # cctv's real listener. See e2e/README.md for what this covers that no
 # per-cog unit test (mocked cross-cog boundaries) or contract check
 # (docs/contract-testing.md, one cog's boundary against upstream) does:
@@ -27,6 +29,7 @@ on:
       - "pixelagents/infrastructure/webview_vendor.commit"
       - "architect/**/*.py"
       - "cctv/**/*.py"
+      - "floorplan/**/*.py"
       - ".github/workflows/e2e.yml"
 
 permissions:
@@ -58,8 +61,9 @@ jobs:
           cache: "pip"
 
       - name: Install Python dependencies
-        # Union of what corridor/pixelagents/architect/cctv each need in
-        # cogs-quality.yml's matrix, plus playwright for the browser half.
+        # Union of what corridor/pixelagents/architect/cctv/floorplan each
+        # need in cogs-quality.yml's matrix, plus playwright for the
+        # browser half.
         run: |
           python -m pip install --upgrade pip
           python -m pip install pytest pytest-timeout playwright \

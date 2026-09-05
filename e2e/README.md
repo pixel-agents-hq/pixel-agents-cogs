@@ -18,11 +18,20 @@ Config and pub/sub, real cctv projection, real browser — actually
 cooperates end to end.
 
 - `test_live_office.py` — a real `paint_tiles` architect tool call reaches
-  a real browser over a real WebSocket broadcast.
+  a real browser over a real WebSocket broadcast (server -> browser).
 - `test_agent_activity.py` — corridor's agent-activity pub/sub
   (`AgentReplied`, `AgentToolStarted`, `AgentPresenceChanged`) reaches
   cctv's real discord/editor pipelines, published directly via
   `corridor.publish_event(...)` (no `Architect`/`Painter` cog needed).
+- `test_editor_ui_save.py` — a real browser paints a tile through the real
+  bundled webview's own UI (real toolbar clicks, real Save button) and the
+  write reaches the server (browser -> server, the direction none of the
+  above cover): a real `SaveLayoutMessage` over the real WebSocket, then a
+  real broadcast back confirming it landed.
+- `test_floorplan_discord_layout.py` — a real `Floorplan` cog loads a real
+  layout from Pixel Index's real staging environment onto the `DISCORD`
+  office-state kind (every other scenario here only ever writes `EDITOR`),
+  observed on cctv's discord pipeline.
 
 ## Running it
 

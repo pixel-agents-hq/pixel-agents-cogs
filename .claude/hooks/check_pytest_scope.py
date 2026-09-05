@@ -164,7 +164,10 @@ def main() -> int:
     if not isinstance(command, str) or not command.strip():
         return 0
 
-    known_cogs = _discover_cogs(os.getcwd())
+    # cwd can drift from the repo root (e.g. an earlier Bash call did `cd`
+    # into a cog dir); CLAUDE_PROJECT_DIR stays anchored to the repo root.
+    repo_root = os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
+    known_cogs = _discover_cogs(repo_root)
     if len(known_cogs) < 2:
         return 0  # nothing to conflict with in this checkout
 

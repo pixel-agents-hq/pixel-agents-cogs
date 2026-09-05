@@ -1,0 +1,91 @@
+name: "Multi-cog E2E"
+
+# e2e/ is not a cog -- it loads corridor, pixelagents, architect, and cctv
+# together as real, cog_load()-ed instances in one process against a real
+# built Pixel Agents webview, then drives a real Playwright browser against
+# cctv's real listener. See e2e/README.md for what this covers that no
+# per-cog unit test (mocked cross-cog boundaries) or contract check
+# (docs/contract-testing.md, one cog's boundary against upstream) does:
+# whether the whole chain actually cooperates.
+#
+# Gated the same way pixelagents/tests/test_webview_build.py::
+# TestRealWebviewBuild and contract-checks.yml's Pixel Agents job are: a
+# real network clone+npm+vite build, so this runs on a schedule (catching
+# upstream drift breaking the live loop) and on PRs touching the cogs this
+# wires together (catching our own regressions before merge) rather than
+# on every PR.
+
+on:
+  schedule:
+    - cron: "0 9 * * *"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "e2e/**"
+      - "corridor/**/*.py"
+      - "pixelagents/**/*.py"
+      - "pixelagents/infrastructure/webview_vendor.commit"
+      - "architect/**/*.py"
+      - "cctv/**/*.py"
+      - ".github/workflows/e2e.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  live-office:
+    name: Real cross-cog office loop
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install Python dependencies
+        # Union of what corridor/pixelagents/architect/cctv each need in
+        # cogs-quality.yml's matrix, plus playwright for the browser half.
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pytest pytest-timeout playwright \
+            aiohttp 'pydantic>=2.11.3,<2.12' 'a2a-sdk[http-server]' uvicorn \
+            'mcp>=1.29,<2' 'typing-inspection<0.4.3' 'anyio<4.15' \
+            'pyyaml>=6.0' 'jsonschema>=4.20'
+
+      - name: Install Playwright's Chromium
+        run: python -m playwright install --with-deps chromium
+
+      - name: Run the multi-cog e2e suite
+        env:
+          PIXELAGENTS_REAL_WEBVIEW_BUILD: "1"
+        run: python -m pytest -q e2e/
+
+      - name: Notify on failure
+        if: failure()
+        uses: nntin/d-flows/actions/discord-notify@v1
+        with:
+          webhook_url: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          message_type: "embed"
+          title: "❌ Multi-cog e2e test failed"
+          description: >-
+            The real corridor+pixelagents+architect+cctv cross-cog loop
+            (architect paints a tile, a real browser watches it arrive over
+            a real WebSocket) failed -- see the run for which step broke.
+          color: "15158332"
+          fields: >-
+            [{"name": "Run", "value": "[View run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})", "inline": true}]

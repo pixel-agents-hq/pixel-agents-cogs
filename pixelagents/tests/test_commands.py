@@ -48,7 +48,7 @@ class TestWebviewCommitCommand(unittest.IsolatedAsyncioTestCase):
     async def test_reports_the_default_pin_when_no_override_is_set(self) -> None:
         ctx = _context()
 
-        await self.cog.cmd_webview_commit(ctx)
+        await self.cog.cmd_webview_commit.callback(self.cog, ctx)
 
         message = ctx.send.await_args.kwargs["content"]
         self.assertIn(webview_build.pinned_commit(), message)
@@ -58,7 +58,7 @@ class TestWebviewCommitCommand(unittest.IsolatedAsyncioTestCase):
         ctx = _context()
         await self.cog._settings_repository.set_webview_commit_override("a" * 40)
 
-        await self.cog.cmd_webview_commit(ctx)
+        await self.cog.cmd_webview_commit.callback(self.cog, ctx)
 
         message = ctx.send.await_args.kwargs["content"]
         self.assertIn("a" * 40, message)
@@ -72,7 +72,7 @@ class TestWebviewSetCommitCommand(unittest.IsolatedAsyncioTestCase):
     async def test_accepts_a_raw_commit_hash(self) -> None:
         ctx = _context()
 
-        await self.cog.cmd_webview_setcommit(ctx, "a" * 40)
+        await self.cog.cmd_webview_setcommit.callback(self.cog, ctx, "a" * 40)
 
         self.assertEqual(await self.cog._settings_repository.webview_commit_override(), "a" * 40)
         self.assertIn("a" * 40, ctx.send.await_args.kwargs["content"])
@@ -81,8 +81,8 @@ class TestWebviewSetCommitCommand(unittest.IsolatedAsyncioTestCase):
         ctx = _context()
         commit = "3537e140c2094761beae748592aeb92ece8edfdd"
 
-        await self.cog.cmd_webview_setcommit(
-            ctx, f"https://github.com/pixel-agents-hq/pixel-agents/tree/{commit}"
+        await self.cog.cmd_webview_setcommit.callback(
+            self.cog, ctx, f"https://github.com/pixel-agents-hq/pixel-agents/tree/{commit}"
         )
 
         self.assertEqual(await self.cog._settings_repository.webview_commit_override(), commit)
@@ -90,7 +90,7 @@ class TestWebviewSetCommitCommand(unittest.IsolatedAsyncioTestCase):
     async def test_rejects_an_invalid_reference_without_mutating_settings(self) -> None:
         ctx = _context()
 
-        await self.cog.cmd_webview_setcommit(ctx, "not-a-commit")
+        await self.cog.cmd_webview_setcommit.callback(self.cog, ctx, "not-a-commit")
 
         self.assertIsNone(await self.cog._settings_repository.webview_commit_override())
         self.assertIn("commit hash", ctx.send.await_args.kwargs["content"])
@@ -104,7 +104,7 @@ class TestWebviewResetCommitCommand(unittest.IsolatedAsyncioTestCase):
         ctx = _context()
         await self.cog._settings_repository.set_webview_commit_override("a" * 40)
 
-        await self.cog.cmd_webview_resetcommit(ctx)
+        await self.cog.cmd_webview_resetcommit.callback(self.cog, ctx)
 
         self.assertIsNone(await self.cog._settings_repository.webview_commit_override())
         self.assertIn(webview_build.pinned_commit(), ctx.send.await_args.kwargs["content"])
@@ -155,7 +155,7 @@ class TestWebviewBuildSurfaces(unittest.IsolatedAsyncioTestCase):
         shutil.rmtree(self.cog._webview_dist_path())
 
         with patch.object(webview_build, "missing_tools", return_value=("git", "npm")):
-            await self.cog.cmd_webview_rebuild(ctx)
+            await self.cog.cmd_webview_rebuild.callback(self.cog, ctx)
 
         messages = [call.kwargs["content"] for call in ctx.send.await_args_list]
         self.assertTrue(any("Rebuilding" in m for m in messages))
@@ -180,7 +180,7 @@ class TestWebviewBuildSurfaces(unittest.IsolatedAsyncioTestCase):
             patch.object(webview_build, "_emit_decoded_assets"),
             patch.object(webview_build, "_sync_dist") as sync_dist,
         ):
-            await self.cog.cmd_webview_rebuild(ctx)
+            await self.cog.cmd_webview_rebuild.callback(self.cog, ctx)
         sync_dist.assert_called_once()
 
         messages = [call.kwargs["content"] for call in ctx.send.await_args_list]

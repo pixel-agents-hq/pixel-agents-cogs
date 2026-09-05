@@ -228,6 +228,11 @@ async def construct_core_cogs(
 
     webview_dir = _resolve_webview_dir(add_cleanup)
     _install_pixelagents_cog_data_path(webview_dir)
+    # The patch above is a process-global mutation of a module attribute --
+    # restore it once this test is done, so a later test in the same
+    # process (or a different suite sharing this interpreter) doesn't
+    # silently inherit a stale PixelAgents-specific cog_data_path.
+    add_cleanup(lambda: setattr(data_manager, "cog_data_path", _ORIGINAL_COG_DATA_PATH))
 
     corridor = Corridor(bot)
     await corridor.cog_load()
@@ -366,3 +371,16 @@ async def wait_for_frame(
             return match
         await page.wait_for_timeout(interval_ms)
     return None
+
+
+async def wait_for_bootstrap(page: Page, frames: list[dict[str, object]]) -> None:
+    """Waits for the real bootstrap `layoutLoaded` broadcast -- sent once
+    the page's own JS has opened its shimmed WebSocket and sent its own
+    `webviewReady` (`pixelagents/application/office.py::bootstrap_messages`
+    always ends with one, for both the discord and editor pipelines) --
+    then clears `frames`. A real readiness signal instead of a fixed sleep
+    that could be too short on a loaded CI runner."""
+
+    frame = await wait_for_frame(page, frames, lambda f: f.get("type") == "layoutLoaded")
+    assert frame is not None, "browser never received the bootstrap layoutLoaded"
+    frames.clear()

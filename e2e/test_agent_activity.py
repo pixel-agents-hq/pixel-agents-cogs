@@ -40,6 +40,7 @@ from .fixtures import (
     construct_core_cogs,
     real_webview_build_enabled,
     start_frontend_app,
+    wait_for_bootstrap,
     wait_for_frame,
 )
 
@@ -95,13 +96,8 @@ class TestAgentActivityReachesCctv(unittest.IsolatedAsyncioTestCase):
 
             await discord_page.goto(f"http://127.0.0.1:{self._port}/e2e/page/discord")
             await editor_page.goto(f"http://127.0.0.1:{self._port}/e2e/page/editor")
-            # Give each page's own JS time to open its (shimmed) WebSocket
-            # before publishing anything, so neither broadcast is sent to
-            # zero connected clients.
-            await discord_page.wait_for_timeout(500)
-            await editor_page.wait_for_timeout(500)
-            discord_frames.clear()
-            editor_frames.clear()
+            await wait_for_bootstrap(discord_page, discord_frames)
+            await wait_for_bootstrap(editor_page, editor_frames)
 
             # No sleep needed between these two publishes: EventBusService.
             # publish() awaits every subscriber synchronously (no detached
@@ -155,10 +151,8 @@ class TestAgentActivityReachesCctv(unittest.IsolatedAsyncioTestCase):
 
             await discord_page.goto(f"http://127.0.0.1:{self._port}/e2e/page/discord")
             await editor_page.goto(f"http://127.0.0.1:{self._port}/e2e/page/editor")
-            await discord_page.wait_for_timeout(500)
-            await editor_page.wait_for_timeout(500)
-            discord_frames.clear()
-            editor_frames.clear()
+            await wait_for_bootstrap(discord_page, discord_frames)
+            await wait_for_bootstrap(editor_page, editor_frames)
 
             # A genuine agent identity always targets both pipelines
             # (_event_targets), unconditionally -- no presence event needed

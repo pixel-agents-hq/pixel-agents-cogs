@@ -70,13 +70,23 @@ stub.
 ## Why only architect, not painter
 
 One architect-driven scenario (`paint_tiles`) is enough to prove the
-cross-cog loop cooperates — the mechanism a painter-driven scenario would
-exercise (`OfficeLayoutRepository` load/decode/mutate/encode/save,
-corridor `Config` write, `OfficeStateChanged`, cctv's pipeline, the real
-WebSocket broadcast) is identical to architect's; painter would only add
-a second, near-duplicate test of the same wiring. If painter's own tools
-ever diverge from that shared path, extend this suite with a second
-scenario then.
+cross-cog loop cooperates — the mechanism a painter-driven *mutation*
+scenario (`recolor_tiles` and friends) would exercise
+(`OfficeLayoutRepository` load/decode/mutate/encode/save, corridor
+`Config` write, `OfficeStateChanged`, cctv's pipeline, the real WebSocket
+broadcast) is identical to architect's `paint_tiles`; painter would only
+add a second, near-duplicate test of *that* wiring.
+
+This does **not** cover painter's `consult_architect` tool
+(`painter/tools/consult_architect_tool.py`), which goes through
+`painter/infrastructure/architect_client.py`'s real `a2a-sdk` client over
+`httpx` to corridor's real A2A listener — a genuinely different mechanism
+from anything this suite currently exercises. Corridor's own A2A listener
+is already running for real in every scenario here (`construct_core_cogs`
+calls `corridor.cog_load()`), but nothing sends it a real request; the
+real A2A request/response path is currently untested end-to-end. If
+painter's own *mutation* tools ever diverge from architect's shared path,
+extend this suite with a second scenario for those specifically.
 
 ## Adding a scenario
 

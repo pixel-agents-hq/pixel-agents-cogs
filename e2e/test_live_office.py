@@ -38,6 +38,7 @@ from .fixtures import (
     real_webview_build_enabled,
     start_frontend_app,
     tool_call_response,
+    wait_for_bootstrap,
     wait_for_frame,
 )
 
@@ -87,15 +88,7 @@ class TestArchitectPaintReachesTheLiveEditor(unittest.IsolatedAsyncioTestCase):
             frames = capture_websocket_frames(page)
 
             await page.goto(f"http://127.0.0.1:{self._port}/e2e/page/editor")
-
-            # Give the page's own JS time to open its (shimmed) WebSocket
-            # before triggering the mutation, so the broadcast isn't sent
-            # to zero connected clients.
-            await page.wait_for_timeout(500)
-            # The initial connection already received its own bootstrap
-            # layoutLoaded (the pre-paint state) -- only frames captured
-            # from here on can be the post-paint broadcast.
-            frames.clear()
+            await wait_for_bootstrap(page, frames)
 
             self.architect._tool_loop_service = ToolLoopService(  # noqa: SLF001
                 ScriptedLLM(

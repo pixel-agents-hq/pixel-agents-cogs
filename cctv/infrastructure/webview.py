@@ -105,6 +105,13 @@ class WebviewAssets:
         self.ready = False
         self.error: str | None = "Pixel Agents bundle has not been synchronized."
         self.built_commit: str | None = None
+        # Names of sprite families/catalogs that failed to decode on the
+        # most recent `_load_assets()` run -- populated even when `ready`
+        # stays True, since only a missing `characters` family currently
+        # flips that. Lets a caller (CctvBase) notify the bot owner about a
+        # degraded-but-serving webview instead of leaving it to a log line
+        # nobody watches. See `degraded_asset_notification()`.
+        self.degraded: tuple[str, ...] = ()
         self._log = logger or logging.getLogger(__name__)
 
     def sync(self, status: WebviewStatus) -> None:
@@ -181,14 +188,17 @@ class WebviewAssets:
 
     def _load_assets(self) -> None:
         loaded: dict[str, object] = {}
+        degraded: list[str] = []
         for name in ("characters", "floors", "walls", "carpets", "furniture"):
             path = self.resolve(f"assets/decoded/{name}.json")
             if path is None:
+                degraded.append(name)
                 continue
             try:
                 loaded[name] = cast(object, json.loads(path.read_text("utf-8")))
             except (OSError, UnicodeError, json.JSONDecodeError) as exc:
                 self._log.error("cctv: could not load decoded %s: %s", name, exc)
+                degraded.append(name)
         catalog = self.resolve("assets/furniture-catalog.json")
         if catalog is not None:
             try:
@@ -199,10 +209,16 @@ class WebviewAssets:
                         for entry in raw
                         if isinstance(entry, Mapping)
                     ]
+                else:
+                    degraded.append("furniture-catalog")
             except (OSError, UnicodeError, json.JSONDecodeError) as exc:
                 self._log.error("cctv: could not load furniture catalog: %s", exc)
+                degraded.append("furniture-catalog")
+        else:
+            degraded.append("furniture-catalog")
         self.assets.clear()
         self.assets.update(loaded)
+        self.degraded = tuple(degraded)
         if not self.assets.get("characters"):
             self.error = "The Pixel Agents decoded character assets are missing."
             self.ready = False
@@ -217,4 +233,28 @@ class WebviewAssets:
         return len(value) if isinstance(value, Sized) else 0
 
 
-__all__ = ["WEBVIEW_BASE_PATH", "WEBVIEW_CACHE_CONTROL", "WebviewAssets"]
+def degraded_asset_notification(degraded: tuple[str, ...]) -> str:
+    """DM text for `Red.send_to_owners` when `WebviewAssets.degraded` is
+    non-empty. Mirrors `pixelagents.infrastructure.webview_build.
+    owner_notification_for` -- a pure, framework-agnostic function the
+    caller passes through `corridor.substitute_default_prefix(...)` before
+    sending, since this module has no `ctx`/bot to resolve a real prefix
+    from. A missing/corrupt sprite family or furniture catalog degrades the
+    webview (missing sprites, blank furniture) without making it
+    unavailable, so it wouldn't otherwise surface anywhere but a log line."""
+
+    names = ", ".join(degraded)
+    return (
+        f"⚠️ The Pixel Agents webview is serving in a degraded state: {names} "
+        "failed to decode from the current build and will render missing or "
+        "blank. Run `[p]pixelagents webview rebuild` after investigating, or "
+        "check the logs."
+    )
+
+
+__all__ = [
+    "WEBVIEW_BASE_PATH",
+    "WEBVIEW_CACHE_CONTROL",
+    "WebviewAssets",
+    "degraded_asset_notification",
+]

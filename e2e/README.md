@@ -1,7 +1,9 @@
 # Multi-cog end-to-end tests
 
-Not a cog: no `info.json`, not installable, and not collected by any
-per-cog pytest invocation. This package loads corridor, pixelagents,
+Not a cog: `info.json` declares `"type": "SHARED_LIBRARY"` (same pattern
+as `contracts/`, see its own README) specifically so Red's Downloader
+excludes it from cog discovery, and it's not collected by any per-cog
+pytest invocation either. This package loads corridor, pixelagents,
 architect, and cctv as real, `cog_load()`-ed instances in one process
 against a real built Pixel Agents webview, drives architect through a
 scripted LLM double, and drives a real Playwright browser against cctv's

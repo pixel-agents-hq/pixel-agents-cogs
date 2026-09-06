@@ -44,7 +44,7 @@ painter), configured by a bot owner through `[p]corridor llm ...`:
 ```text
 [p]corridor llm endpoint https://litellm.nntin.xyz/   # already the default
 [p]corridor llm key <virtual key>                      # required, no default
-[p]corridor llm model <model name>                     # already defaults to chatgpt/gpt-6-astra
+[p]corridor llm model <model name>                     # already defaults to chatgpt/gpt-5.5
 ```
 
 Pico stays silent until `llm key` is set -- `llm model` already has a default

@@ -44,14 +44,36 @@ _VALUE_FLAGS = {
     "--dist",
 }
 
-# Rough, unquoted split on shell chaining operators (and newlines -- a
-# multi-line Bash tool call is just as sequential as `;`-joined commands)
+# Rough, unquoted split on shell chaining/piping operators (and newlines --
+# a multi-line Bash tool call is just as sequential as `;`-joined commands)
 # so a command with multiple SEPARATE pytest invocations (which don't share
 # a process, so don't conflict) isn't flagged for the union of cogs across
-# all of them. Doesn't understand quoting/subshells around these operators
-# -- a rare enough shape in practice that the simplification is worth the
-# size.
-_CHAIN_SPLIT_RE = re.compile(r"&&|\|\||;|\n")
+# all of them. `\|\|` before `\|` matters: Python's `re` alternation tries
+# each branch in order at a given position, so `||` would otherwise be cut
+# in half by the single-pipe branch. Doesn't understand quoting/subshells
+# around these operators -- a rare enough shape in practice (pytest's own
+# `-k` syntax has no use for a literal `|`) that the simplification is
+# worth the size.
+_CHAIN_SPLIT_RE = re.compile(r"&&|\|\||\||;|\n")
+
+# A redirection operator (`>`, `>>`, `<`), optionally prefixed by a source
+# fd number or `&` (`2>`, `&>`) -- shlex.split() has no concept of shell
+# redirection, so `2>&1`, `>out.log`, `2> err.log` would otherwise tokenize
+# as plain-looking words indistinguishable from a real positional argument
+# (exactly how `python3 -m pytest -q 2>&1 | head -5` used to slip past this
+# guard entirely: `2>&1` was treated as a test-path target, making the
+# "no path given" check below never fire).
+_REDIRECTION_RE = re.compile(r"^&?\d*(>{1,2}|<)")
+
+
+def _is_bare_redirection_operator(token: str) -> bool:
+    """True when `token` is *only* the operator (`>`, `2>`, `&>`, ...) with
+    no target fused onto it -- shlex then gives the target (a filename) as
+    a separate next token, which must also be skipped, the same way a
+    value-flag's value is. False for `2>&1`/`>out.log`-shaped tokens,
+    which are already self-contained."""
+
+    return bool(re.fullmatch(r"&?\d*(>{1,2}|<)", token))
 
 
 def _discover_cogs(root: str) -> set[str]:
@@ -77,9 +99,9 @@ def _discover_cogs(root: str) -> set[str]:
     return cogs
 
 
-def _cogs_and_targets_in_pytest_invocation(tokens: list[str], known_cogs: set[str]) -> tuple[
-    set[str], list[str]
-] | None:
+def _cogs_and_targets_in_pytest_invocation(
+    tokens: list[str], known_cogs: set[str]
+) -> tuple[set[str], list[str]] | None:
     """Returns (cogs_referenced, positional_targets) for one pytest
     invocation among `tokens`, or None if `tokens` doesn't invoke pytest at
     all. Only tokens after the "pytest" word are scanned -- everything
@@ -100,6 +122,10 @@ def _cogs_and_targets_in_pytest_invocation(tokens: list[str], known_cogs: set[st
             continue
         if token in _VALUE_FLAGS:
             skip_next = True
+            continue
+        if _REDIRECTION_RE.match(token):
+            if _is_bare_redirection_operator(token):
+                skip_next = True
             continue
         if token.startswith("-"):
             continue

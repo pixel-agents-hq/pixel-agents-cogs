@@ -130,12 +130,24 @@ Everything else is allowed, including:
   there's no real conflict.
 - **Separate, chained pytest invocations** — `pytest -q corridor &&
   pytest -q architect` runs each in its own process sequentially, so there
-  is no shared-stub conflict; the hook splits on `&&`/`||`/`;` and checks
-  each side independently.
+  is no shared-stub conflict; the hook splits on `&&`/`||`/`|`/`;` and
+  checks each side independently.
 - A `-k`/`-m`/other value-taking flag whose *value* happens to look like a
   cog name (e.g. `pytest -q architect -k corridor`) — the script tracks
   which flags consume the next token and doesn't mistake a flag's value
   for a test path.
+- Shell redirection (`pytest -q corridor 2>&1`, `pytest -q corridor >
+  out.log`) and piping the output of a single-cog invocation to another
+  command (`pytest -q corridor | tee out.log`) — the script recognizes
+  redirection operators (`>`, `>>`, `<`, with or without a source fd
+  number/`&`) and skips them (and, for a bare operator, the filename token
+  that follows) the same way it skips a value-flag's value, and a bare
+  `|` splits the chain the same way `&&`/`;` do. Without this, `python3 -m
+  pytest -q 2>&1 | head -5` (no real test path) used to slip past
+  undetected: `shlex.split()` has no concept of redirection, so `2>&1`
+  tokenized as a plain word indistinguishable from a real positional
+  argument, giving the "no path given" check a non-empty (but fake)
+  target list to see instead of an empty one.
 
 ### If you need to change this
 
@@ -146,6 +158,12 @@ Everything else is allowed, including:
   pytest plugin adds a flag that takes a value and could be confused with
   a path; false positives there would show up as this hook blocking a
   legitimate single-cog command.
+- `_REDIRECTION_RE`/`_is_bare_redirection_operator` cover `>`/`>>`/`<`
+  with an optional leading fd number or `&`; a shell redirection shape
+  outside that (rare in an agent-generated command) would show up as a
+  false *negative* — the guard silently missing a no-path/multi-cog
+  command — the same failure mode this whole section exists to close, so
+  treat a report of that as high priority.
 - To disable temporarily, remove or comment out its entry in
   `.claude/settings.json`, or delete `.claude/hooks/check_pytest_scope.py`.
 

@@ -5,7 +5,10 @@ panel directly.
 
 The `[p]corridor llm ...` group configures the one LLM connection shared by
 every LLM-backed dependent (pico, architect) -- moved here from pico's
-former `[p]pico llm ...` group, see docs/architect-design.md. The
+former `[p]pico llm ...` group, see docs/architect-design.md.
+`[p]corridor llm model` with no argument opens a Components V2 picker
+(`llm_settings_panel.py`) backed by a live, cached LiteLLM model list
+instead of requiring the model name to be typed out. The
 `[p]corridor a2a ...` group configures corridor's one shared A2A listener,
 used by every registered agent -- moved here from architect's former
 `[p]architect a2a ...` group, see docs/agent-directory-design.md. These
@@ -23,6 +26,7 @@ from typing import Any
 from redbot.core import commands
 
 from ..domain import ReplyField
+from .llm_settings_panel import LLMModelPanelView
 from .reply_sender import ReplySender
 from .settings_ui import SharedSettingsView
 
@@ -83,11 +87,19 @@ class CommandsMixin:
 
     @llm_group.command(name="model")
     @commands.is_owner()
-    async def llm_model(self, ctx: commands.Context, model: str) -> None:
-        """Set the model name passed to the LLM endpoint."""
+    async def llm_model(self, ctx: commands.Context, model: str | None = None) -> None:
+        """Set the model name passed to the LLM endpoint, or open a
+        Components V2 picker backed by LiteLLM's live model list when no
+        model is given."""
 
-        await self.set_llm_model(model)  # type: ignore[attr-defined]
-        await self._reply.send_reply(ctx, description=f"LLM model set to `{model}`.")
+        if model is not None:
+            await self.set_llm_model(model)  # type: ignore[attr-defined]
+            await self._reply.send_reply(ctx, description=f"LLM model set to `{model}`.")
+            return
+
+        settings = await self.llm_settings()  # type: ignore[attr-defined]
+        catalog = await self.model_catalog()  # type: ignore[attr-defined]
+        await ctx.send(view=LLMModelPanelView(settings, catalog, ctx.author.id))
 
     @corridor_group.group(name="a2a", invoke_without_command=True)
     @commands.is_owner()

@@ -29,7 +29,7 @@ CONFIG_IDENTIFIER = 0x636F72726964  # "corrid" in hex
 # architect share one LLM connection, so it lives wherever every dependent
 # already reaches through required_cogs.
 DEFAULT_LLM_BASE_URL = "https://litellm.nntin.xyz/"
-DEFAULT_LLM_MODEL = "chatgpt/gpt-5.4"
+DEFAULT_LLM_MODEL = "chatgpt/gpt-5.5"
 
 # Moved here from architect (see docs/agent-directory-design.md) -- there is
 # now exactly one A2A listener process-wide, owned by corridor, not one per

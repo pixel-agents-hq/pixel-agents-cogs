@@ -260,3 +260,177 @@ class TestLiteLLMClient(unittest.IsolatedAsyncioTestCase):
         await client.close()
 
         self.assertTrue(session.closed)
+
+
+class FakeJsonResponse:
+    """`session.get(...)` counterpart to `FakeResponse` -- plain
+    (non-streaming) JSON body via `.json(content_type=None)`, matching
+    `list_models`'s use of aiohttp's `GET` (no SSE reassembly needed)."""
+
+    def __init__(self, status: int = 200, payload: object = None, *, text: str = "") -> None:
+        self.status = status
+        self._payload = payload
+        self.text_body = text
+
+    async def json(self, content_type: object = None) -> object:
+        return self._payload
+
+    async def text(self) -> str:
+        return self.text_body
+
+    async def __aenter__(self) -> FakeJsonResponse:
+        return self
+
+    async def __aexit__(self, *args: object) -> bool:
+        return False
+
+
+class GetRecordingSession:
+    """Same shape as `RecordingSession`, but for `session.get(...)` --
+    `list_models`/`_model_modes` never POST, so a separate minimal fake
+    keeps this independent of the streaming-specific `RecordingSession`
+    above."""
+
+    def __init__(self, responses: list[FakeJsonResponse | Exception], **kwargs: object) -> None:
+        self.responses = responses
+        self.calls: list[tuple[str, dict[str, object]]] = []
+        self.closed = False
+
+    def get(self, url: str, **kwargs: object) -> FakeJsonResponse:
+        self.calls.append((url, kwargs))
+        response = self.responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return response
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+class TestLiteLLMClientListModels(unittest.IsolatedAsyncioTestCase):
+    async def test_lists_model_ids_from_v1_models(self) -> None:
+        session = GetRecordingSession(
+            [
+                FakeJsonResponse(
+                    payload={"data": [{"id": "chatgpt/gpt-6-astra"}, {"id": "gpt-4o"}]}
+                ),
+                FakeJsonResponse(status=404),  # /model/info unavailable
+            ]
+        )
+        client = LiteLLMClient(session_factory=lambda **kw: session)
+
+        models = await client.list_models(base_url="https://litellm.example/", api_key="sk-test")
+
+        self.assertEqual(models, ["chatgpt/gpt-6-astra", "gpt-4o"])
+        list_url, list_kwargs = session.calls[0]
+        self.assertEqual(list_url, "https://litellm.example/v1/models")
+        self.assertEqual(list_kwargs["headers"], {"Authorization": "Bearer sk-test"})
+
+    async def test_strips_a_trailing_slash_from_the_base_url(self) -> None:
+        session = GetRecordingSession(
+            [FakeJsonResponse(payload={"data": []}), FakeJsonResponse(status=404)]
+        )
+        client = LiteLLMClient(session_factory=lambda **kw: session)
+
+        await client.list_models(base_url="https://litellm.example", api_key="k")
+
+        list_url, _ = session.calls[0]
+        self.assertEqual(list_url, "https://litellm.example/v1/models")
+
+    async def test_drops_models_matching_the_embedding_name_heuristic(self) -> None:
+        session = GetRecordingSession(
+            [
+                FakeJsonResponse(
+                    payload={
+                        "data": [
+                            {"id": "text-embedding-3-small"},
+                            {"id": "cohere/embed-english-v3.0"},
+                            {"id": "gpt-4o"},
+                        ]
+                    }
+                ),
+                FakeJsonResponse(status=404),
+            ]
+        )
+        client = LiteLLMClient(session_factory=lambda **kw: session)
+
+        models = await client.list_models(base_url="https://x", api_key="k")
+
+        self.assertEqual(models, ["gpt-4o"])
+
+    async def test_drops_models_by_declared_mode_from_model_info(self) -> None:
+        session = GetRecordingSession(
+            [
+                FakeJsonResponse(payload={"data": [{"id": "voyage-2"}, {"id": "gpt-4o"}]}),
+                FakeJsonResponse(
+                    payload={
+                        "data": [
+                            {"model_name": "voyage-2", "model_info": {"mode": "embedding"}},
+                            {"model_name": "gpt-4o", "model_info": {"mode": "chat"}},
+                        ]
+                    }
+                ),
+            ]
+        )
+        client = LiteLLMClient(session_factory=lambda **kw: session)
+
+        # "voyage-2" carries no naming hint at all -- only /model/info's
+        # declared mode can catch it (see llm_client.py's heuristic docstring).
+        models = await client.list_models(base_url="https://x", api_key="k")
+
+        self.assertEqual(models, ["gpt-4o"])
+
+    async def test_dedupes_and_sorts_model_ids(self) -> None:
+        session = GetRecordingSession(
+            [
+                FakeJsonResponse(payload={"data": [{"id": "b"}, {"id": "a"}, {"id": "b"}]}),
+                FakeJsonResponse(status=404),
+            ]
+        )
+        client = LiteLLMClient(session_factory=lambda **kw: session)
+
+        models = await client.list_models(base_url="https://x", api_key="k")
+
+        self.assertEqual(models, ["a", "b"])
+
+    async def test_non_200_on_v1_models_raises_llm_request_error(self) -> None:
+        session = GetRecordingSession([FakeJsonResponse(status=500, text="internal error")])
+        client = LiteLLMClient(session_factory=lambda **kw: session)
+
+        with pytest.raises(LLMRequestError):
+            await client.list_models(base_url="https://x", api_key="k")
+
+    async def test_model_info_failure_degrades_to_the_name_heuristic(self) -> None:
+        session = GetRecordingSession(
+            [
+                FakeJsonResponse(
+                    payload={"data": [{"id": "text-embedding-3-small"}, {"id": "gpt-4o"}]}
+                ),
+                ConnectionError("model/info unreachable"),
+            ]
+        )
+        client = LiteLLMClient(session_factory=lambda **kw: session)
+
+        models = await client.list_models(base_url="https://x", api_key="k")
+
+        self.assertEqual(models, ["gpt-4o"])
+
+    async def test_model_info_malformed_body_degrades_to_the_name_heuristic(self) -> None:
+        session = GetRecordingSession(
+            [
+                FakeJsonResponse(
+                    payload={"data": [{"id": "text-embedding-3-small"}, {"id": "gpt-4o"}]}
+                ),
+                FakeJsonResponse(
+                    payload={"data": [{"model_name": "gpt-4o", "model_info": "oops"}]}
+                ),
+            ]
+        )
+        client = LiteLLMClient(session_factory=lambda **kw: session)
+
+        # /model/info's whole response fails pydantic validation (model_info
+        # must be an object, not a bare string) -- _model_modes swallows that
+        # and returns {}, so the name heuristic alone decides.
+        models = await client.list_models(base_url="https://x", api_key="k")
+
+        self.assertEqual(models, ["gpt-4o"])

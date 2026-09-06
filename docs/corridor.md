@@ -204,6 +204,20 @@ and a model are set, so a consumer stays idle rather than guessing
 defaults for either. Per-agent behavior (max tool calls, system prompt)
 stays with each consuming cog — only the connection itself is shared.
 
+`[p]corridor llm model` with no argument opens a Components V2 picker
+(`corridor/adapters/llm_settings_panel.py`) instead of requiring the model
+name to be typed out. The option list comes from
+`ModelCatalogService` (`corridor/application/model_catalog_service.py`),
+which fronts `LiteLLMClient.list_models()` — LiteLLM's OpenAI-compatible
+`GET /v1/models`, enriched best-effort via `GET /model/info` to drop
+embedding models by their declared `mode` (falling back to an
+embedding-name heuristic when that endpoint isn't served) — behind a
+5-minute in-process cache keyed by the configured base URL. A failed
+refresh serves the last successfully fetched list when one exists, or
+falls back to just the currently-configured model otherwise, so the
+picker still opens if LiteLLM is briefly unreachable. Selecting an option
+calls the same `set_llm_model` the text command does.
+
 ## A2A agent directory and shared listener
 
 Corridor runs **one process-wide A2A listener**
@@ -406,7 +420,7 @@ sequenceDiagram
 | `[p]corridor` | anyone | Base group; shows help. |
 | `[p]corridor llm endpoint <url>` | bot owner | Sets the shared LiteLLM proxy base URL. |
 | `[p]corridor llm key <key>` | bot owner | Sets the shared LiteLLM virtual key; deletes the invoking message. |
-| `[p]corridor llm model <model>` | bot owner | Sets the model name passed to the LLM endpoint. |
+| `[p]corridor llm model [<model>]` | bot owner | Sets the model name passed to the LLM endpoint; with no argument, opens a Components V2 picker backed by LiteLLM's live model list. |
 | `[p]corridor a2a host <host>` | bot owner | Sets and live-restarts the shared A2A listener's bind host. |
 | `[p]corridor a2a port <port>` | bot owner | Sets and live-restarts the shared A2A listener's bind port. |
 | `[p]corridor status` | anyone | Shows LLM endpoint/model/key state, A2A listener host/port and running state, and every registered agent key. |

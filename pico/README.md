@@ -44,7 +44,7 @@ painter), configured by a bot owner through `[p]corridor llm ...`:
 ```text
 [p]corridor llm endpoint https://litellm.nntin.xyz/   # already the default
 [p]corridor llm key <virtual key>                      # required, no default
-[p]corridor llm model <model name>                     # already defaults to chatgpt/gpt-5.4
+[p]corridor llm model <model name>                     # already defaults to chatgpt/gpt-5.5
 ```
 
 Pico stays silent until `llm key` is set -- `llm model` already has a default
@@ -133,8 +133,8 @@ model's reply starts with "y".
 
 This is loose free-text parsing rather than schema-constrained structured output on
 purpose, not by omission: OpenAI-style `response_format: json_schema` was tried
-against `chatgpt/gpt-5.4` (LiteLLM's ChatGPT-subscription/Codex-backed provider, the
-model this deployment currently runs) and the backend silently ignores it -- the
+against `chatgpt/gpt-5.4` (LiteLLM's ChatGPT-subscription/Codex-backed provider,
+the model this deployment ran at the time) and the backend silently ignores it -- the
 outbound request does carry `text.format: {"type": "json_schema", ...}`, confirmed
 via LiteLLM debug logs, but every response chunk reports `text.format: {"type":
 "text"}` back and the model replies with ordinary conversational text, not JSON. No

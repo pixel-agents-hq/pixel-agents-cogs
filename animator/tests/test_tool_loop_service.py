@@ -100,6 +100,34 @@ class StatusTool:
         return StatusOutput(status="error" if raw_input.should_fail else "ok")
 
 
+class GetJobInput(BaseModel):
+    job_id: str
+
+
+class GetJobOutput(BaseModel):
+    status: str = "ok"
+    poll: int = 0
+
+
+class GetJobTool:
+    """A stub `get_job` -- real polls return a growing `logs` field, but
+    this only needs a distinct `poll` counter per call to tell responses
+    apart in an assertion."""
+
+    name = "get_job"
+    description = "Poll a job."
+    Input = GetJobInput
+    Output = GetJobOutput
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def handler(self, raw_input: BaseModel) -> BaseModel:
+        assert isinstance(raw_input, GetJobInput)
+        self.calls += 1
+        return GetJobOutput(poll=self.calls)
+
+
 def _tool_call(call_id: str, *, name: str = "echo", arguments: str = '{"text": "hi"}') -> ToolCall:
     return ToolCall(id=call_id, function=ToolCallFunction(name=name, arguments=arguments))
 
@@ -820,3 +848,156 @@ class TestAttachments(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result.stopped_reason, "final_text")
         self.assertIsNone(result.text)
+
+
+class TestGetJobTrimming(unittest.IsolatedAsyncioTestCase):
+    """Regression coverage for a real incident: an animated render's
+    repeated get_job polls each carried that job's full (verbose Blender)
+    log, and every earlier poll stayed in the turn's own chat history
+    forever -- eventually exceeding the model's context window. Only the
+    newest poll for a given job_id should still carry its real content by
+    the time the model sees it."""
+
+    async def test_an_earlier_poll_of_the_same_job_is_replaced_with_a_placeholder(self) -> None:
+        llm = ScriptedLLM(
+            [
+                _response(
+                    tool_calls=[_tool_call("call-1", name="get_job", arguments='{"job_id": "j1"}')]
+                ),
+                _response(
+                    tool_calls=[_tool_call("call-2", name="get_job", arguments='{"job_id": "j1"}')]
+                ),
+                _response(content="done"),
+            ]
+        )
+        service = ToolLoopService(llm)
+
+        await service.run(
+            base_url="https://x",
+            api_key="k",
+            model="m",
+            system_prompt="sys",
+            user_input="poll it",
+            tools=[GetJobTool()],
+            max_tool_calls=5,
+        )
+
+        # The 3rd LLM call is the one that finally sees both tool results.
+        tool_messages = [m for m in llm.calls[2]["messages"] if m.role == "tool"]
+        self.assertEqual(len(tool_messages), 2)
+        self.assertIn("superseded", tool_messages[0].content)
+        self.assertIn('"poll":2', tool_messages[1].content)
+
+    async def test_polls_of_different_job_ids_are_not_trimmed(self) -> None:
+        llm = ScriptedLLM(
+            [
+                _response(
+                    tool_calls=[_tool_call("call-1", name="get_job", arguments='{"job_id": "j1"}')]
+                ),
+                _response(
+                    tool_calls=[_tool_call("call-2", name="get_job", arguments='{"job_id": "j2"}')]
+                ),
+                _response(content="done"),
+            ]
+        )
+        service = ToolLoopService(llm)
+
+        await service.run(
+            base_url="https://x",
+            api_key="k",
+            model="m",
+            system_prompt="sys",
+            user_input="poll both",
+            tools=[GetJobTool()],
+            max_tool_calls=5,
+        )
+
+        tool_messages = [m for m in llm.calls[2]["messages"] if m.role == "tool"]
+        self.assertEqual(len(tool_messages), 2)
+        self.assertNotIn("superseded", tool_messages[0].content)
+        self.assertNotIn("superseded", tool_messages[1].content)
+
+    async def test_a_third_poll_supersedes_the_second_not_just_the_first(self) -> None:
+        llm = ScriptedLLM(
+            [
+                _response(
+                    tool_calls=[_tool_call("call-1", name="get_job", arguments='{"job_id": "j1"}')]
+                ),
+                _response(
+                    tool_calls=[_tool_call("call-2", name="get_job", arguments='{"job_id": "j1"}')]
+                ),
+                _response(
+                    tool_calls=[_tool_call("call-3", name="get_job", arguments='{"job_id": "j1"}')]
+                ),
+                _response(content="done"),
+            ]
+        )
+        service = ToolLoopService(llm)
+
+        await service.run(
+            base_url="https://x",
+            api_key="k",
+            model="m",
+            system_prompt="sys",
+            user_input="poll it",
+            tools=[GetJobTool()],
+            max_tool_calls=5,
+        )
+
+        tool_messages = [m for m in llm.calls[3]["messages"] if m.role == "tool"]
+        self.assertIn("superseded", tool_messages[0].content)
+        self.assertIn("superseded", tool_messages[1].content)
+        self.assertIn('"poll":3', tool_messages[2].content)
+
+    async def test_malformed_get_job_arguments_do_not_crash_the_loop(self) -> None:
+        llm = ScriptedLLM(
+            [
+                _response(tool_calls=[_tool_call("call-1", name="get_job", arguments="not json")]),
+                _response(content="done"),
+            ]
+        )
+        service = ToolLoopService(llm)
+
+        result = await service.run(
+            base_url="https://x",
+            api_key="k",
+            model="m",
+            system_prompt="sys",
+            user_input="poll it",
+            tools=[GetJobTool()],
+            max_tool_calls=5,
+        )
+
+        self.assertEqual(result.stopped_reason, "final_text")
+        self.assertEqual(result.text, "done")
+
+    async def test_a_non_get_job_tool_with_a_job_id_argument_is_never_trimmed(self) -> None:
+        """Trimming is scoped to the tool named `get_job` specifically, not
+        any tool call that happens to carry a `job_id` argument."""
+
+        llm = ScriptedLLM(
+            [
+                _response(
+                    tool_calls=[_tool_call("call-1", name="echo", arguments='{"text": "hi"}')]
+                ),
+                _response(
+                    tool_calls=[_tool_call("call-2", name="echo", arguments='{"text": "hi"}')]
+                ),
+                _response(content="done"),
+            ]
+        )
+        service = ToolLoopService(llm)
+
+        await service.run(
+            base_url="https://x",
+            api_key="k",
+            model="m",
+            system_prompt="sys",
+            user_input="echo twice",
+            tools=[EchoTool()],
+            max_tool_calls=5,
+        )
+
+        tool_messages = [m for m in llm.calls[2]["messages"] if m.role == "tool"]
+        self.assertNotIn("superseded", tool_messages[0].content)
+        self.assertNotIn("superseded", tool_messages[1].content)

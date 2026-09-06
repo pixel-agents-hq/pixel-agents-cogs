@@ -42,6 +42,14 @@ from ..tools.base import ToolSpec
 
 log = logging.getLogger("red.animator")
 
+# Shown in place of a superseded get_job poll's own result -- see
+# `run()`'s own handling of `_last_get_job_message_index` below. Kept short
+# and plain, matching every other non-JSON tool-error string `_execute`
+# already returns (e.g. "Error: unknown tool ...").
+_SUPERSEDED_GET_JOB_PLACEHOLDER = (
+    "(superseded by a later get_job poll for this job_id -- see the most recent one instead)"
+)
+
 
 class ToolLLM(Protocol):
     """The slice of LiteLLMClient (via CorridorLLMClient) this service
@@ -113,6 +121,18 @@ class ToolLoopService:
         successful_calls = 0
         failed_calls = 0
         attachments: list[Attachment] = []
+        # job_id -> index into `messages` of that job's most recent get_job
+        # tool-result message -- see the trimming step inside the tool-call
+        # loop below. A real incident: repeated get_job polls against one
+        # long-running animated render each carried that job's full
+        # (verbose Blender) log, and every earlier poll stayed in this
+        # turn's own history forever, multiplying an already-large payload.
+        # Only the newest poll for a given job is ever useful to the model
+        # -- earlier ones are collapsed to a short placeholder in place,
+        # not removed outright (removing a tool-role message entirely would
+        # leave its tool_call_id dangling against the assistant turn that
+        # requested it, which some providers reject).
+        last_get_job_message_index: dict[str, int] = {}
 
         while True:
             if calls_made >= max_tool_calls:
@@ -234,11 +254,36 @@ class ToolLoopService:
                     status_word = "ok" if succeeded else "error"
                     await on_debug_event(f"{call.function.name} -> [{status_word}] {result_text}")
                 messages.append(ChatMessage(role="tool", tool_call_id=call.id, content=result_text))
+                if call.function.name == "get_job":
+                    job_id = _extract_job_id(call.function.arguments)
+                    if job_id is not None:
+                        previous_index = last_get_job_message_index.get(job_id)
+                        if previous_index is not None:
+                            messages[previous_index].content = _SUPERSEDED_GET_JOB_PLACEHOLDER
+                        last_get_job_message_index[job_id] = len(messages) - 1
                 calls_made += 1
                 if succeeded:
                     successful_calls += 1
                 else:
                     failed_calls += 1
+
+
+def _extract_job_id(raw_arguments: str) -> str | None:
+    """Best-effort: `raw_arguments` is the model's own raw JSON-arguments
+    string for a `get_job` call (`{"job_id": "..."}`) -- malformed or
+    missing is a normal case here, not an error worth logging, since this
+    is only used to decide whether an earlier poll can be trimmed, never
+    to actually call the tool (that already happens, and already reports
+    its own error, in `_execute`)."""
+
+    try:
+        parsed = json.loads(raw_arguments)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    job_id = parsed.get("job_id")
+    return job_id if isinstance(job_id, str) else None
 
 
 def _wire_spec(tool: ToolSpec) -> ToolSpecWire:

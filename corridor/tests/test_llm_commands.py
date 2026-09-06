@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import unittest
 
+from ..adapters.llm_settings_panel import LLMModelPanelView
 from ..corridor import Corridor
 from ..domain import REPLY_CATEGORY_COLORS, ReplyCategory
 from .conftest import FakeBot, FakeContext, FakeGuild, FakeMember
@@ -73,6 +74,24 @@ class TestLLMCommands(unittest.IsolatedAsyncioTestCase):
 
     async def test_llm_model_updates_and_replies(self) -> None:
         await self.corridor.llm_model.callback(self.corridor, self.ctx, "gpt-test")
+
+        settings = await self.corridor.llm_settings()
+        self.assertEqual(settings.llm_model, "gpt-test")
+
+    async def test_llm_model_with_no_argument_opens_the_picker(self) -> None:
+        await self.corridor.llm_model.callback(self.corridor, self.ctx, None)
+
+        # No text reply -- the whole response is the Components V2 panel,
+        # same `ctx.send(view=...)` shape as `[p]corridorsettings`.
+        self.assertEqual(_descriptions(self.ctx), [None])
+        view = self.ctx.sent[-1]["view"]
+        self.assertIsInstance(view, LLMModelPanelView)
+        self.assertEqual(view.owner_id, self.member.id)
+
+    async def test_llm_model_with_no_argument_does_not_change_the_configured_model(self) -> None:
+        await self.corridor.llm_model.callback(self.corridor, self.ctx, "gpt-test")
+
+        await self.corridor.llm_model.callback(self.corridor, self.ctx, None)
 
         settings = await self.corridor.llm_settings()
         self.assertEqual(settings.llm_model, "gpt-test")

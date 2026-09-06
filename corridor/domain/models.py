@@ -33,6 +33,27 @@ class LLMSettings:
 
 
 @dataclass(frozen=True, slots=True)
+class ModelCatalogResult:
+    """The outcome of fetching LiteLLM's model catalogue for the
+    `[p]corridor llm model` picker (see ModelCatalogService). `models` is
+    always non-empty when a model is configured or a catalogue fetch has
+    ever succeeded -- only an unconfigured connection with no prior
+    successful fetch produces an empty tuple, which the picker UI must
+    render as "no models available" rather than crash on.
+
+    `error` is the human-readable reason the live LiteLLM fetch was not
+    used verbatim; `stale` distinguishes "serving last-known good results
+    because the refresh just failed" (`error` set, `models` from a past
+    success) from "the refresh failed and there was nothing cached to fall
+    back to" (`error` set, `models` is the static fallback below). Both
+    leave the picker usable rather than failing it outright."""
+
+    models: tuple[str, ...]
+    stale: bool
+    error: str | None
+
+
+@dataclass(frozen=True, slots=True)
 class A2ASettings:
     """Corridor's one shared A2A listener's bind address -- see
     docs/agent-directory-design.md. Moved here from architect's former

@@ -20,6 +20,7 @@ from ..application import (
     AgentDirectoryService,
     AgentToolServerRegistry,
     EventBusService,
+    ModelCatalogService,
     OfficeStateHandler,
     OfficeStateService,
     PermissionService,
@@ -35,6 +36,7 @@ from ..domain import (
     GuildSettings,
     IconPreference,
     LLMSettings,
+    ModelCatalogResult,
     OfficeState,
     OfficeStateKind,
     PermissionGroupDef,
@@ -103,6 +105,7 @@ class CogBase:
         # LLM at all, so the session opens lazily on first actual use
         # (matches pico's original lifecycle before this moved here).
         self._llm_client = LiteLLMClient(logger=log)
+        self._model_catalog_service = ModelCatalogService(self._llm_client)
         self._dependents: set[str] = set()
         # corridor is a Room cog like floorplan (docs/embed-colors.md) --
         # bound the same way every dependent cog binds its own identity via
@@ -195,6 +198,13 @@ class CogBase:
         lazily on first use and closed in `cog_unload`."""
 
         return self._llm_client
+
+    async def model_catalog(self, *, force_refresh: bool = False) -> ModelCatalogResult:
+        """The cached/degraded LiteLLM model catalogue backing the
+        `[p]corridor llm model` picker -- see ModelCatalogService."""
+
+        settings = await self._repository.llm_settings()
+        return await self._model_catalog_service.list_models(settings, force_refresh=force_refresh)
 
     async def capabilities_satisfy(self, member: discord.Member, group_key: str) -> bool:
         settings = await self._repository.guild_settings(member.guild.id)

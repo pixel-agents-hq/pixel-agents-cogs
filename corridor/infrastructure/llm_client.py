@@ -14,12 +14,21 @@ response dict before validating it through the same wire models a
 non-streaming call would produce. This works around a LiteLLM bug in its
 `chatgpt/*` (ChatGPT-subscription/Codex) provider: its non-streaming path
 returns an empty `output` array even when the model generated text, so
-`stream=False` requests fail every time. Streaming is unaffected."""
+`stream=False` requests fail every time. Streaming is unaffected.
+
+`list_models()` additionally fronts LiteLLM's OpenAI-compatible
+`GET /v1/models` (+ best-effort `GET /model/info` enrichment to drop
+embedding models by their declared mode) for the
+`[p]corridor llm model` picker -- see `ModelCatalogService`
+(`corridor/application/model_catalog_service.py`) for the caching/
+degradation layer built on top of it, ported down from tinytinkerer's
+edge (apps/edge/src/routes/models.ts, apps/edge/src/lib/models-cache.ts)."""
 
 from __future__ import annotations
 
 import json
 import logging
+import re
 from collections.abc import Callable, Sequence
 from typing import Any, Literal
 
@@ -104,6 +113,57 @@ class ChatCompletionResponse(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     choices: list[ChatCompletionChoice]
+
+
+class ModelListEntry(BaseModel):
+    """One entry of LiteLLM's OpenAI-compatible `GET /v1/models` catalogue."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    id: str
+    object: str | None = None
+    owned_by: str | None = None
+
+
+class ModelListResponse(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    data: list[ModelListEntry] = []
+
+
+class ModelInfoDetail(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    mode: str | None = None
+
+
+class ModelInfoEntry(BaseModel):
+    """One entry of LiteLLM's `GET /model/info` -- richer than
+    `/v1/models` (carries `mode`), but not every deployment/virtual key
+    serves it, so callers must treat a failure here as best-effort."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    model_name: str
+    model_info: ModelInfoDetail | None = None
+
+
+class ModelInfoResponse(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    data: list[ModelInfoEntry] = []
+
+
+# `/v1/models` carries no `mode`, so when `/model/info` is unavailable the
+# model NAME is the only embedding signal: match 'embedding' anywhere plus
+# 'embed' as a standalone token (e.g. cohere/embed-english-v3.0). Mirrors
+# tinytinkerer's apps/edge/src/routes/models.ts looksLikeEmbeddingModel.
+_EMBED_TOKEN_RE = re.compile(r"(^|[^a-z])embed($|[^a-z])")
+
+
+def _looks_like_embedding_model(model_id: str) -> bool:
+    lowered = model_id.lower()
+    return "embedding" in lowered or bool(_EMBED_TOKEN_RE.search(lowered))
 
 
 class LiteLLMClient:
@@ -213,6 +273,79 @@ class LiteLLMClient:
         except ValidationError as exc:
             raise LLMRequestError(f"LiteLLM response failed validation: {exc}") from exc
 
+    async def list_models(self, *, base_url: str, api_key: str) -> list[str]:
+        """The sorted, deduped, non-embedding model ids this virtual key
+        can use, for the `[p]corridor llm model` picker. GET
+        `{base_url}/v1/models` is required -- a failure there raises
+        `LLMRequestError`, same failure contract as `complete()`.
+        `{base_url}/model/info` enrichment (dropping embedding models by
+        their declared `mode` instead of the name heuristic) is best-
+        effort: older LiteLLM deployments or restricted keys may not serve
+        it, so any failure there is swallowed by `_model_modes` rather
+        than surfaced here. Mirrors tinytinkerer's
+        apps/edge/src/routes/models.ts model-list route."""
+
+        url = f"{base_url.rstrip('/')}/v1/models"
+        headers = {"Authorization": f"Bearer {api_key}"}
+        try:
+            session = await self._get_session()
+            async with session.get(url, headers=headers) as response:
+                if response.status != 200:
+                    text = await response.text()
+                    raise LLMRequestError(f"LiteLLM returned HTTP {response.status}: {text[:200]}")
+                try:
+                    payload = await response.json(content_type=None)
+                except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+                    raise LLMRequestError(f"LiteLLM returned invalid JSON: {exc}") from exc
+        except TimeoutError as exc:
+            raise LLMRequestError(f"LiteLLM request timed out: {exc}") from exc
+        except (aiohttp.ClientError, OSError) as exc:
+            raise LLMRequestError(f"Could not reach LiteLLM: {exc}") from exc
+
+        try:
+            catalogue = ModelListResponse.model_validate(payload)
+        except ValidationError as exc:
+            raise LLMRequestError(f"LiteLLM model list failed validation: {exc}") from exc
+
+        modes = await self._model_modes(base_url=base_url, api_key=api_key)
+        models: set[str] = set()
+        for entry in catalogue.data:
+            model_id = entry.id.strip()
+            if not model_id:
+                continue
+            mode = modes.get(model_id)
+            is_embedding = (
+                mode == "embedding" if mode is not None else _looks_like_embedding_model(model_id)
+            )
+            if not is_embedding:
+                models.add(model_id)
+        return sorted(models)
+
+    async def _model_modes(self, *, base_url: str, api_key: str) -> dict[str, str]:
+        """Best-effort `id -> mode` lookup from `/model/info` -- returns an
+        empty map on ANY failure (non-200, unreachable, timeout, malformed
+        body), never raises. Only called from `list_models`, which falls
+        back to the embedding-name heuristic when this comes back empty."""
+
+        url = f"{base_url.rstrip('/')}/model/info"
+        headers = {"Authorization": f"Bearer {api_key}"}
+        try:
+            session = await self._get_session()
+            async with session.get(url, headers=headers) as response:
+                if response.status != 200:
+                    return {}
+                payload = await response.json(content_type=None)
+            info = ModelInfoResponse.model_validate(payload)
+        except (TimeoutError, aiohttp.ClientError, OSError, json.JSONDecodeError, ValidationError):
+            return {}
+
+        modes: dict[str, str] = {}
+        for entry in info.data:
+            detail = entry.model_info
+            if detail is not None and detail.mode:
+                modes[entry.model_name.strip()] = detail.mode.strip().lower()
+        return modes
+
     @staticmethod
     async def _collect_stream(response: aiohttp.ClientResponse) -> dict[str, Any]:
         """Reassemble an SSE `chat/completions` stream into a single
@@ -281,6 +414,11 @@ __all__ = [
     "ChatMessage",
     "LLMRequestError",
     "LiteLLMClient",
+    "ModelInfoDetail",
+    "ModelInfoEntry",
+    "ModelInfoResponse",
+    "ModelListEntry",
+    "ModelListResponse",
     "ToolCall",
     "ToolCallFunction",
     "ToolFunctionSpec",

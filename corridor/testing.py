@@ -267,11 +267,13 @@ def _install_discord() -> None:
             *,
             placeholder: str = "",
             options: list[Any] | None = None,
+            disabled: bool = False,
             custom_id: str = "",
             **kwargs: object,
         ) -> None:
             self.placeholder = placeholder
             self.options = options or []
+            self.disabled = disabled
             self.custom_id = custom_id or _generate_custom_id()
             self.values: list[str] = []
             self.callback: Any = None

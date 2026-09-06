@@ -17,6 +17,7 @@ on:
       - "telephonepole/**/*.py"
       - "bootcamp/**/*.py"
       - "painter/**/*.py"
+      - "animator/**/*.py"
       - "contracts/pixel_index/**"
       - "contracts/pixel_agents/**"
       - "contracts/corridor/**"
@@ -41,6 +42,7 @@ on:
       - "telephonepole/**/*.py"
       - "bootcamp/**/*.py"
       - "painter/**/*.py"
+      - "animator/**/*.py"
       - "contracts/pixel_index/**"
       - "contracts/pixel_agents/**"
       - "contracts/corridor/**"
@@ -264,6 +266,21 @@ jobs:
             lint_target: "bootcamp"
             mypy_target: "bootcamp"
             extra_deps: "aiohttp 'pydantic>=2.11.3,<2.12' 'a2a-sdk[http-server]' uvicorn 'mcp>=1.29,<2' 'typing-inspection<0.4.3' 'anyio<4.15'"
+            pixel_index_contracts: false
+          # animator never runs its own MCP server or imports mcp types
+          # directly (its tools are bridged from telephonepole's own
+          # registrations, same as bootcamp above), but it does declare
+          # httpx directly (deliver_assets_tool.py downloads pixel-art-mcp
+          # artifact bytes over a plain HTTP GET, like painter's own
+          # architect_client.py), and its conftest.py reaches corridor's
+          # whole eager import chain the same way every other A2A cog's
+          # does -- A2AServer (a2a-sdk[http-server] + uvicorn) and
+          # LiteLLMClient (aiohttp + pydantic) included.
+          - cog: animator
+            test_target: "animator/"
+            lint_target: "animator"
+            mypy_target: "animator"
+            extra_deps: "aiohttp 'pydantic>=2.11.3,<2.12' httpx 'a2a-sdk[http-server]' uvicorn 'mcp>=1.29,<2' 'typing-inspection<0.4.3' 'anyio<4.15'"
             pixel_index_contracts: false
 
     steps:

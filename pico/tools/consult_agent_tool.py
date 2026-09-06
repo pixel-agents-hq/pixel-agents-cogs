@@ -65,11 +65,13 @@ A publish failure here is best-effort, like the announcements themselves
 
 from __future__ import annotations
 
+import io
 import logging
 from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
 from typing import Protocol
 
+import discord
 from pydantic import BaseModel, Field
 
 from corridor.domain import AgentRef, FooterOverride, ReplyField
@@ -120,6 +122,7 @@ class ReplySenderProtocol(Protocol):
         fields: Sequence[ReplyField] = (),
         footer_override: FooterOverride | None = None,
         footer_icon_path: Path | None = None,
+        extra_files: Sequence[discord.File] = (),
     ) -> object: ...
 
 
@@ -218,6 +221,10 @@ class ConsultAgentTool:
                 result.successful_tool_calls,
                 result.failed_tool_calls,
             ),
+            extra_files=[
+                discord.File(io.BytesIO(attachment.data), filename=attachment.filename)
+                for attachment in result.attachments
+            ],
         )
         await self._publish_agent_replied(
             agent=AgentRef(
@@ -239,11 +246,20 @@ class ConsultAgentTool:
 
         await self._announce(f"🐛 **{self._agent_key}**: {_truncate(text)}")
 
-    async def _announce(self, description: str, *, fields: Sequence[ReplyField] = ()) -> None:
+    async def _announce(
+        self,
+        description: str,
+        *,
+        fields: Sequence[ReplyField] = (),
+        extra_files: Sequence[discord.File] = (),
+    ) -> None:
         """Best-effort -- a failure to post the announcement must never
         turn a successful (or already-failed) A2A call into a reported
         tool failure, same convention `ReplyTool._publish_agent_replied`
-        already follows for its own secondary side effect."""
+        already follows for its own secondary side effect. `extra_files`
+        carries any `Attachment`s the consulted agent's answer included
+        (currently only animator, see `AgentAskResult.attachments`'s own
+        docstring) straight into this same announcement message."""
 
         try:
             await self._reply.send_reply(
@@ -252,6 +268,7 @@ class ConsultAgentTool:
                 fields=fields,
                 footer_override=self._footer_override,
                 footer_icon_path=self._footer_icon_path,
+                extra_files=extra_files,
             )
         except Exception:
             log.warning("pico: %s could not announce an A2A exchange", self.name, exc_info=True)

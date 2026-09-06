@@ -20,6 +20,7 @@ together in one place.
 | [`suggestionbox`](../suggestionbox) | Runs its own MCP tools server (`report_error`/`suggest_improvement`) that posts to a bot-owner-configured Discord channel. Registers into corridor's `AgentToolServerRegistry` so a registered A2A agent's own tool loop (`architect`, `painter` today) can call the same tools, gated per agent by a Components v2 toggle panel (`[p]suggestionbox agents`). See `docs/suggestionbox-design.md`. | [suggestionbox/README.md](../suggestionbox/README.md) |
 | [`telephonepole`](../telephonepole) | Lets a bot owner register/unregister third-party MCP servers at runtime (`[p]telephonepole add/remove/list`), registering each into corridor's `AgentToolServerRegistry` so a registered A2A agent's own tool loop can call their tools, gated per server and per agent by a Components v2 toggle panel (`[p]telephonepole agents <name>`). Generalizes `suggestionbox`'s self-registration of its own in-process server to any external MCP endpoint. See `docs/telephonepole-design.md`. | [telephonepole/README.md](../telephonepole/README.md) |
 | [`bootcamp`](../bootcamp) | Lets a bot owner create/remove/edit custom LLM agents at runtime (`[p]bootcamp create/remove/list/permission/maxtoolcalls/debuglogging`), each with its own system prompt and a corridor permission-group gate on who may use it. Every custom agent registers into corridor's `AgentDirectoryService` (so `pico` discovers and consults it, and it gets whatever MCP tools `suggestionbox`/`telephonepole` currently grant it, with zero code changes to any of those cogs), and can also be invoked directly with `[p]bootcamp ask <agent_key> <prompt>`. See `docs/bootcamp-design.md`. | [bootcamp/README.md](../bootcamp/README.md) |
+| [`animator`](../animator) | A2A-only LLM agent with almost no native tool logic of its own -- its capabilities are bridged live from the external `pixel-art-mcp` server via corridor's `AgentToolServerRegistry` (registered through `telephonepole`), the same MCP-bridge mechanism `architect`/`painter` use for `suggestionbox`/`telephonepole` tools. Its one native tool, `deliver_pixel_agents_assets`, fetches a finished render job's output files and delivers them as real Discord attachments (via a new `attachments` extension on the shared tool-loop result and `ReplySender.send_reply`'s `extra_files`) rather than an unreachable internal `download_url`. | [animator/README.md](../animator/README.md) |
 | [`testbench`](../testbench) | Bot-owner-only: publishes Corridor agent events through a generated Discord UI for exercising CCTV projection without a real gateway event. | [testbench/README.md](../testbench/README.md) |
 | [`deskutils`](../deskutils) | Small Discord utilities with no state of their own; today just `[p]deskutils time`, showing the current time via Discord's native per-viewer timestamp markup plus explicit UTC/named-zone formatting. | [deskutils/README.md](../deskutils/README.md) |
 | [`contracts`](../contracts) | **Not a cog** — `"type": "SHARED_LIBRARY"` in its `info.json`, so Red's Downloader skips it. CI-only: consumer-driven contract tests against Pixel Index and Pixel Agents, plus the reply-channel lint. (It does have a no-op `setup()` — purely to stop dev-time hot reload tooling from reporting a spurious failure; see `contracts/__init__.py`.) | [contracts/README.md](../contracts/README.md) |
@@ -107,10 +108,11 @@ python -m pytest -q telephonepole/
 python -m pytest -q bootcamp/
 python -m pytest -q testbench/
 python -m pytest -q deskutils/
+python -m pytest -q animator/
 
-python -m ruff format --check corridor cctv floorplan pixelagents toolbox pico architect painter suggestionbox telephonepole bootcamp testbench deskutils
-python -m ruff check corridor cctv floorplan pixelagents toolbox pico architect painter suggestionbox telephonepole bootcamp testbench deskutils
-python -m mypy corridor cctv floorplan pixelagents toolbox pico architect painter suggestionbox telephonepole bootcamp testbench deskutils
+python -m ruff format --check corridor cctv floorplan pixelagents toolbox pico architect painter suggestionbox telephonepole bootcamp testbench deskutils animator
+python -m ruff check corridor cctv floorplan pixelagents toolbox pico architect painter suggestionbox telephonepole bootcamp testbench deskutils animator
+python -m mypy corridor cctv floorplan pixelagents toolbox pico architect painter suggestionbox telephonepole bootcamp testbench deskutils animator
 python -m unittest discover -s contracts/tests
 python -m contracts.discord_replies.lint_reply_channel
 ```

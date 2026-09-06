@@ -3,6 +3,7 @@ application-layer protocols, and RenderedReply DTOs back into real sends."""
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -55,7 +56,11 @@ class BotIconResolver:
 
 
 def build_reply_payload(
-    reply: RenderedReply, *, avatar_path: Path | None = None, footer_icon_path: Path | None = None
+    reply: RenderedReply,
+    *,
+    avatar_path: Path | None = None,
+    footer_icon_path: Path | None = None,
+    extra_files: Sequence[discord.File] = (),
 ) -> tuple[dict[str, Any], list[discord.File]]:
     """embed/content kwargs + attachments for one `ctx.send(...)` call --
     shared by `send_rendered_reply` below and floorplan's/pixelagents'
@@ -63,13 +68,24 @@ def build_reply_payload(
     followup sends need a different call than plain `ctx.send`, but the
     same embed-building logic -- see docs/reply-identity-design.md
     section 3 on why this was extracted rather than left duplicated in
-    three places)."""
+    three places).
+
+    `extra_files`, when given, are appended to the same `files` list this
+    function already builds for the author/footer icons -- a caller-
+    supplied attachment (e.g. `pico/tools/consult_agent_tool.py` re-
+    uploading a file a consulted A2A agent's answer carried, see
+    `corridor/domain/agent_executor.py`'s own `attachments` handling)
+    rides alongside them in one `ctx.send(...)` call rather than a second
+    message. Included in both `ReplyMode`s below -- unlike the author/
+    footer icons (which only exist to decorate an embed), a caller-supplied
+    attachment carries content of its own and belongs on the message
+    regardless of whether that message is plain text or an embed."""
 
     if reply.mode is ReplyMode.TEXT:
         # No embed exists in TEXT mode -- the author-name prefix (if any)
         # was already applied by ReplyService.render; icons have no
         # TEXT-mode equivalent at all.
-        return {"content": reply.content}, []
+        return {"content": reply.content}, list(extra_files)
 
     color = REPLY_CATEGORY_COLORS.get(reply.category) if reply.category is not None else None
     embed = discord.Embed(title=reply.embed_title, description=reply.embed_description, color=color)
@@ -107,6 +123,7 @@ def build_reply_payload(
     if reply.show_timestamp:
         embed.timestamp = discord.utils.utcnow()
 
+    files.extend(extra_files)
     return {"embed": embed}, files
 
 
@@ -116,9 +133,10 @@ async def send_rendered_reply(
     *,
     avatar_path: Path | None = None,
     footer_icon_path: Path | None = None,
+    extra_files: Sequence[discord.File] = (),
 ) -> discord.Message:
     kwargs, files = build_reply_payload(
-        reply, avatar_path=avatar_path, footer_icon_path=footer_icon_path
+        reply, avatar_path=avatar_path, footer_icon_path=footer_icon_path, extra_files=extra_files
     )
     return await ctx.send(files=files, **kwargs)
 
@@ -129,11 +147,12 @@ async def send_rendered_reply_to_channel(
     *,
     avatar_path: Path | None = None,
     footer_icon_path: Path | None = None,
+    extra_files: Sequence[discord.File] = (),
 ) -> discord.Message:
     """`send_rendered_reply`'s twin for a caller with no live `ctx` -- see
     `CogBase.send_channel_reply`/docs/suggestionbox-design.md §5."""
 
     kwargs, files = build_reply_payload(
-        reply, avatar_path=avatar_path, footer_icon_path=footer_icon_path
+        reply, avatar_path=avatar_path, footer_icon_path=footer_icon_path, extra_files=extra_files
     )
     return await channel.send(files=files, **kwargs)

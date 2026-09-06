@@ -14,7 +14,7 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
-from ..infrastructure.architect_client import AgentAskResult, ArchitectRequestError
+from ..infrastructure.architect_client import AgentAskResult, ArchitectRequestError, Attachment
 from ..tools.consult_agent_tool import ConsultAgentInput, ConsultAgentOutput, ConsultAgentTool
 
 
@@ -28,6 +28,7 @@ class FakeArchitectAsker:
         failed_tool_calls: int | None = None,
         fail_with: Exception | None = None,
         debug_events: list[str] | None = None,
+        attachments: tuple[Attachment, ...] = (),
     ) -> None:
         self.answer = answer
         self.tool_calls_made = tool_calls_made
@@ -35,6 +36,7 @@ class FakeArchitectAsker:
         self.failed_tool_calls = failed_tool_calls
         self.fail_with = fail_with
         self.debug_events = debug_events or []
+        self.attachments = attachments
         self.calls: list[dict[str, str]] = []
 
     async def ask(
@@ -56,6 +58,7 @@ class FakeArchitectAsker:
             tool_calls_made=self.tool_calls_made,
             successful_tool_calls=self.successful_tool_calls,
             failed_tool_calls=self.failed_tool_calls,
+            attachments=self.attachments,
         )
 
 
@@ -65,6 +68,7 @@ class FakeReplySender:
         self.fields: list[Any] = []
         self.footer_overrides: list[Any] = []
         self.footer_icon_paths: list[Path | None] = []
+        self.extra_files: list[Any] = []
 
     async def send_reply(
         self,
@@ -74,12 +78,14 @@ class FakeReplySender:
         fields: Any = (),
         footer_override: Any = None,
         footer_icon_path: Path | None = None,
+        extra_files: Any = (),
         **_: Any,
     ) -> None:
         self.replies.append(description)
         self.fields.append(fields)
         self.footer_overrides.append(footer_override)
         self.footer_icon_paths.append(footer_icon_path)
+        self.extra_files.append(list(extra_files))
 
 
 class FakeCorridor:
@@ -188,6 +194,38 @@ class TestConsultAgentToolAnnouncements(unittest.IsolatedAsyncioTestCase):
         self.assertIn("architect", reply.replies[0] or "")
         self.assertIn("38 items total", reply.replies[1] or "")
         self.assertIn("architect", reply.replies[1] or "")
+
+    async def test_reply_announcement_carries_no_extra_files_when_none_were_sent(self) -> None:
+        reply = FakeReplySender()
+        tool = _tool(FakeArchitectAsker(answer="ok"), reply)
+
+        await tool.handler(ConsultAgentInput(prompt="hi"))
+
+        self.assertEqual(reply.extra_files[0], [])  # the outgoing question
+        self.assertEqual(reply.extra_files[1], [])  # the reply announcement
+
+    async def test_reply_announcement_carries_the_consulted_agents_attachments(self) -> None:
+        reply = FakeReplySender()
+        tool = _tool(
+            FakeArchitectAsker(
+                answer="attached the files",
+                attachments=(
+                    Attachment(
+                        filename="pixel-agents.zip", media_type="application/zip", data=b"ZIP"
+                    ),
+                    Attachment(filename="preview.png", media_type="image/png", data=b"PNG"),
+                ),
+            ),
+            reply,
+            agent_key="animator",
+        )
+
+        await tool.handler(ConsultAgentInput(prompt="render it"))
+
+        reply_files = reply.extra_files[1]
+        self.assertEqual(len(reply_files), 2)
+        self.assertEqual(reply_files[0].filename, "pixel-agents.zip")
+        self.assertEqual(reply_files[1].filename, "preview.png")
 
     async def test_reply_announcement_carries_a_tool_calls_field(self) -> None:
         reply = FakeReplySender()

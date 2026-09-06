@@ -1,0 +1,26 @@
+{
+    "$schema": "https://raw.githubusercontent.com/Cog-Creators/Red-DiscordBot/V3/develop/schema/red_cog.schema.json",
+    "name": "animator",
+    "short": "A2A pixel-art rendering agent backed by pixel-art-mcp.",
+    "description": "An A2A-only agent that models and renders pixel-art sprites and animations via the pixel-art-mcp server, and delivers the resulting Discord-ready assets (pixel-agents.zip, preview.png) as real attachments.",
+    "end_user_data_statement": "This cog does not persistently store any data or metadata about users.",
+    "author": ["NNTin"],
+    "required_cogs": {"corridor": "https://github.com/pixel-agents-hq/pixel-agents-cogs"},
+    "requirements": [
+        "httpx",
+        "pydantic>=2.11.3,<2.12",
+        "a2a-sdk",
+        "typing-inspection<0.4.3",
+        "anyio<4.15"
+    ],
+    "tags": [
+        "agent",
+        "a2a",
+        "pixel-art"
+    ],
+    "min_bot_version": "3.5.24",
+    "min_python_version": [3, 11, 0],
+    "hidden": false,
+    "disabled": false,
+    "type": "COG"
+}

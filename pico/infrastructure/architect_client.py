@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
 
 import httpx
@@ -60,6 +60,22 @@ class ArchitectRequestError(RuntimeError):
 
 
 @dataclass(frozen=True, slots=True)
+class Attachment:
+    """One file the consulted agent's final message carried as a `Part`
+    with a non-empty `raw` (rather than `text`) -- currently only animator
+    ever sends one, via `corridor.domain.agent_executor.
+    GenericAgentExecutor._run_turn`'s own handling of a tool loop result's
+    optional `attachments` field. Carried as raw bytes already, not a URL:
+    the consulted agent fetched the file itself (see
+    `animator/tools/deliver_assets_tool.py`'s module docstring on why),
+    so there is nothing left for pico to download."""
+
+    filename: str
+    media_type: str
+    data: bytes
+
+
+@dataclass(frozen=True, slots=True)
 class AgentAskResult:
     """One consulted agent's answer, plus whatever optional operational
     metadata it chose to report on its final message -- `tool_calls_made`,
@@ -67,12 +83,15 @@ class AgentAskResult:
     their key is absent, since `ask()`'s own contract is generic across any
     future agent (see `ArchitectAsker`'s docstring in
     consult_agent_tool.py), not every one of which necessarily runs a
-    bounded tool-calling loop or reports one."""
+    bounded tool-calling loop or reports one. `attachments` is empty for
+    every agent except one that sends extra `raw` `Part`s alongside its
+    text (currently only animator)."""
 
     answer: str
     tool_calls_made: int | None = None
     successful_tool_calls: int | None = None
     failed_tool_calls: int | None = None
+    attachments: tuple[Attachment, ...] = ()
 
 
 class ArchitectClient:
@@ -108,6 +127,7 @@ class ArchitectClient:
             tool_calls_made: int | None = None
             successful_tool_calls: int | None = None
             failed_tool_calls: int | None = None
+            attachments: list[Attachment] = []
             failed = False
             async for response in client.send_message(request):
                 status = None
@@ -128,6 +148,7 @@ class ArchitectClient:
                         failed_tool_calls = _metadata_int(
                             response.message.metadata, "failed_tool_calls"
                         )
+                        attachments = _collect_attachments(response.message.parts)
                     continue
 
                 if status is not None and status.HasField("message"):
@@ -152,6 +173,7 @@ class ArchitectClient:
                             failed_tool_calls = _metadata_int(
                                 status.message.metadata, "failed_tool_calls"
                             )
+                            attachments = _collect_attachments(status.message.parts)
                 if status is not None and status.state == TaskState.TASK_STATE_FAILED:
                     failed = True
                     break
@@ -169,20 +191,51 @@ class ArchitectClient:
             tool_calls_made=tool_calls_made,
             successful_tool_calls=successful_tool_calls,
             failed_tool_calls=failed_tool_calls,
+            attachments=tuple(attachments),
         )
+
+
+def _collect_attachments(parts: Iterable[Part]) -> list[Attachment]:
+    """Every `Part` in `parts` that carries a non-empty `raw` (rather than
+    `text`) -- see `corridor.domain.agent_executor.GenericAgentExecutor.
+    _run_turn`, the only place a `Part` like this gets built today."""
+
+    return [
+        Attachment(filename=part.filename, media_type=part.media_type, data=part.raw)
+        for part in parts
+        if part.raw
+    ]
 
 
 def _metadata_int(metadata: object, key: str) -> int | None:
     """`metadata` is a protobuf Struct -- membership/indexing work, but not
     `.get()` -- reporting any given key is a consulted agent's own choice
     (see `AgentAskResult`'s docstring), so a missing or non-numeric key is a
-    normal case, not an error."""
+    normal case, not an error.
+
+    Regression note: a *missing* key on a `Struct`-backed proto map doesn't
+    always raise `KeyError` the way a plain dict would. `Struct.fields` is a
+    message-valued map (`map<string, Value>`), and python protobuf
+    auto-vivifies an empty entry on `[]` access for message-valued maps
+    instead of raising -- so `metadata[key]` for a wholly absent key returns
+    a fresh, kind-unset `Value`, and `Struct.__getitem__`'s own
+    `_GetStructValue` helper then raises `ValueError('Value not set')`
+    trying to read it (verified against the installed
+    `google.protobuf.internal.well_known_types`). This is hit on every real
+    task failure: `GenericAgentExecutor._run_turn`'s `updater.failed(...)`
+    calls (`corridor/domain/agent_executor.py`) never pass `metadata=` at
+    all, so the failed message's metadata has none of
+    tool_calls_made/successful_tool_calls/failed_tool_calls -- without this
+    catch, a clean "agent could not produce an answer" failure surfaced
+    here as an opaque `ArchitectRequestError("architect request failed:
+    Value not set")` instead (a live incident, not just a defensive catch:
+    exactly this masked an animator task failure)."""
 
     try:
         raw = metadata[key]  # type: ignore[index]
-    except (KeyError, TypeError):
+    except (KeyError, TypeError, ValueError):
         return None
     return int(raw) if isinstance(raw, (int, float)) else None
 
 
-__all__ = ["AgentAskResult", "ArchitectClient", "ArchitectRequestError"]
+__all__ = ["AgentAskResult", "ArchitectClient", "ArchitectRequestError", "Attachment"]

@@ -28,9 +28,8 @@ class TestRedSettingsRepository(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(config.identifier, CONFIG_IDENTIFIER)
         self.assertTrue(config.force_registration)
         self.assertEqual(config.cog_name, "floorplan")
-        self.assertEqual(config._global, GLOBAL_DEFAULTS)
+        self.assertEqual(config._global_data, GLOBAL_DEFAULTS)
         self.assertEqual(config._guild_defaults, {})
-        self.assertEqual(config._user_defaults, {})
 
     async def test_defaults_and_normalized_setters(self) -> None:
         repository, _ = self.make_repository()

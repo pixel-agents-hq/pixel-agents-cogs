@@ -40,6 +40,7 @@ from ..infrastructure import (
     RedSettingsRepository,
     TicketStore,
     WebviewAssets,
+    degraded_asset_notification,
     member_snapshot,
 )
 
@@ -93,6 +94,10 @@ class CctvBase:
         self._server: CctvServer | None = None
         self._closing = False
         self._initial_sync_task: asyncio.Task[object] | None = None
+        # Which built commit's degraded-assets state has already been
+        # DM'd to owners, so a re-sync against the same unchanged build
+        # (e.g. every `_ensure_page` call) doesn't re-notify on each hit.
+        self._notified_degraded_commit: str | None = None
 
     @property
     def discord_pipeline(self) -> CctvPipeline:
@@ -115,6 +120,7 @@ class CctvBase:
             self._corridor.register_dependent("cctv")
             self._pixelagents = await ensure_loaded(self.bot, "pixelagents", "PixelAgents")
             self._sync_assets()
+            await self._notify_owners_if_assets_degraded()
             self._create_pipelines()
 
             # Settings are loaded before subscriptions and the cache scan.
@@ -226,6 +232,28 @@ class CctvBase:
             self._assets.ready = False
             self._assets.error = f"could not read Pixel Agents bundle: {exc}"
             log.error("cctv: %s", self._assets.error)
+
+    async def _notify_owners_if_assets_degraded(self) -> None:
+        """Best-effort owner DM the first time a given built commit leaves
+        `WebviewAssets.degraded` non-empty -- a sprite family or the
+        furniture catalog failed to decode, degrading the served webview
+        without necessarily flipping `ready` (only a missing `characters`
+        family does that). Without this, that degradation was previously
+        visible only in a log line nobody watches."""
+
+        degraded = self._assets.degraded
+        if not degraded or self._assets.built_commit == self._notified_degraded_commit:
+            return
+        self._notified_degraded_commit = self._assets.built_commit
+        if self._corridor is None:
+            return
+        try:
+            message = await self._corridor.substitute_default_prefix(
+                degraded_asset_notification(degraded)
+            )
+            await self.bot.send_to_owners(message)
+        except Exception:  # best-effort notification only, must never raise
+            log.exception("cctv: could not notify owners about degraded Pixel Agents assets")
 
     async def _sync_after_ready(self) -> None:
         wait: Callable[[], Awaitable[None]] = self.bot.wait_until_red_ready
@@ -444,6 +472,7 @@ class CctvBase:
 
     async def _ensure_page(self, kind: OfficeStateKind) -> str | None:
         self._sync_assets()
+        await self._notify_owners_if_assets_degraded()
         if not self._assets.ready:
             return self._assets.error or "Pixel Agents bundle is unavailable."
         pipeline = self._pipeline(kind)

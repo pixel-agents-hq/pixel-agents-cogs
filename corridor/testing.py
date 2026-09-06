@@ -362,9 +362,27 @@ def _install_discord() -> None:
 
     discord_ui.Section = _MockSection
     discord_ui.Label = _MockLabel
+
+    class _MockLeafItem:
+        """Thumbnail/MediaGallery: leaf components with no nested
+        accessory/component/children. A bare MagicMock is unsafe here for
+        the same reason as `_MockSection`/`_MockLabel` above -- if one ever
+        ended up reachable as a Section's `.accessory` or a Container's
+        child, `iter_ui_tree` would auto-vivify an infinite `.accessory`
+        chain through it. floorplan's MediaGallery items aren't walked as
+        children of it either (matching Discord's own component-limit
+        accounting), so this deliberately carries no `.children`."""
+
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            self.args = args
+            self.kwargs = kwargs
+
+    discord_ui.Thumbnail = _MockLeafItem
+    discord_ui.MediaGallery = _MockLeafItem
     discord.ui = discord_ui
     sys.modules["discord.ui"] = discord_ui
 
+    discord.MediaGalleryItem = _MockLeafItem
     discord.SelectOption = lambda **kwargs: types.SimpleNamespace(**kwargs)
     discord.ButtonStyle = types.SimpleNamespace(
         secondary="secondary", primary="primary", link="link", danger="danger"
@@ -425,6 +443,9 @@ def _install_redbot() -> None:
             self._guild_defaults: dict[str, Any] = {}
             self._guilds: dict[int, _FakeGuildConfig] = {}
             self._global_data: dict[str, Any] = {}
+            self.identifier: int = 0
+            self.cog_name: str | None = None
+            self.force_registration: bool = False
 
         @classmethod
         def get_conf(
@@ -440,8 +461,16 @@ def _install_redbot() -> None:
             # from a cog other than pixelagents itself) -- accepted here
             # purely so callers don't crash passing it; this fake has no
             # cross-instance identity to key by regardless (every call
-            # returns a fresh, independent store either way).
-            return cls()
+            # returns a fresh, independent store either way). `identifier`/
+            # `cog_name`/`force_registration` are still recorded on the
+            # instance, mirroring real Config.get_conf, for tests that
+            # assert on them (e.g. the rolled Config identifier a cog
+            # registers with).
+            config = cls()
+            config.identifier = identifier
+            config.cog_name = cog_name
+            config.force_registration = force_registration
+            return config
 
         def register_guild(self, **defaults: object) -> None:
             self._guild_defaults.update(defaults)

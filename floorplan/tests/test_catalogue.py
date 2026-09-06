@@ -474,7 +474,9 @@ class TestCatalogueViewsAndCommands(unittest.IsolatedAsyncioTestCase):
         cog._send_public = AsyncMock()
         context = MagicMock(interaction=None, author=SimpleNamespace(id=7))
 
-        result = await cog.cmd_layout_search(context, query="cozy", tag=None, sort="invalid")
+        result = await cog.cmd_layout_search.callback(
+            cog, context, query="cozy", tag=None, sort="invalid"
+        )
 
         cog._catalogue_service.search.assert_awaited_once_with(
             query="cozy", tag=None, sort="newest"
@@ -518,7 +520,7 @@ class TestCatalogueViewsAndCommands(unittest.IsolatedAsyncioTestCase):
         cog._send_public = AsyncMock()
         context = MagicMock(interaction=None, author=SimpleNamespace(id=7))
 
-        result = await cog.cmd_layout_search(context)
+        result = await cog.cmd_layout_search.callback(cog, context)
 
         assert result == {
             "status": "ok",
@@ -543,7 +545,7 @@ class TestCatalogueViewsAndCommands(unittest.IsolatedAsyncioTestCase):
         cog._send_public = AsyncMock()
         context = MagicMock(interaction=None, author=SimpleNamespace(id=7))
 
-        result = await cog.cmd_layout_search(context)
+        result = await cog.cmd_layout_search.callback(cog, context)
 
         assert result == {
             "status": "error",
@@ -560,7 +562,7 @@ class TestCatalogueViewsAndCommands(unittest.IsolatedAsyncioTestCase):
         cog._send_public = AsyncMock()
         context = MagicMock(interaction=None, author=SimpleNamespace(id=7))
 
-        result = await cog.cmd_layout_search(context, query=7)  # type: ignore[arg-type]
+        result = await cog.cmd_layout_search.callback(cog, context, query=7)  # type: ignore[arg-type]
 
         assert result["status"] == "error"
         assert result["error"] == "invalid_query"
@@ -580,7 +582,7 @@ class TestCatalogueViewsAndCommands(unittest.IsolatedAsyncioTestCase):
         cog._send_public = AsyncMock()
         context = MagicMock(interaction=None, author=SimpleNamespace(id=7))
 
-        result = await cog.cmd_layout_view(context, "  DEFAULT  ")
+        result = await cog.cmd_layout_view.callback(cog, context, "  DEFAULT  ")
 
         cog._catalogue_service.detail.assert_awaited_once_with("default")
         sent_view = cog._send_public.await_args.kwargs["view"]
@@ -608,7 +610,7 @@ class TestCatalogueViewsAndCommands(unittest.IsolatedAsyncioTestCase):
         cog._send_public = AsyncMock()
         context = MagicMock(interaction=None, author=SimpleNamespace(id=7))
 
-        result = await cog.cmd_layout_view(context, "   ")
+        result = await cog.cmd_layout_view.callback(cog, context, "   ")
 
         assert result["status"] == "error"
         assert result["error"] == "invalid_slug"
@@ -623,7 +625,7 @@ class TestCatalogueViewsAndCommands(unittest.IsolatedAsyncioTestCase):
         context = MagicMock(interaction=None, author=SimpleNamespace(id=7))
         context.send = AsyncMock()
 
-        result = await cog.cmd_layout_search(context)
+        result = await cog.cmd_layout_search.callback(cog, context)
 
         assert result["status"] == "error"
         assert result["error"] == "permission_denied"

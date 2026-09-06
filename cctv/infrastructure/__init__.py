@@ -8,7 +8,12 @@ from .settings import (
     RedSettingsRepository,
 )
 from .tickets import TICKET_TTL_SECONDS, Ticket, TicketStore
-from .webview import WEBVIEW_BASE_PATH, WEBVIEW_CACHE_CONTROL, WebviewAssets
+from .webview import (
+    WEBVIEW_BASE_PATH,
+    WEBVIEW_CACHE_CONTROL,
+    WebviewAssets,
+    degraded_asset_notification,
+)
 
 __all__ = [
     "CONFIG_IDENTIFIER",
@@ -27,5 +32,6 @@ __all__ = [
     "Ticket",
     "TicketStore",
     "WebviewAssets",
+    "degraded_asset_notification",
     "member_snapshot",
 ]

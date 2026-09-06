@@ -198,10 +198,15 @@ just applied to a build instead of an HTTP call:
   `WebviewAssets` (pixelagents builds it, CCTV serves it — see
   both cogs' Architecture.md for that split): every sprite family decodes
   (`characters`/`floors`/`walls`/`carpets`/`furniture`, plus the furniture
-  catalog), a default layout is available, and every asset the built
-  `index.html` references resolves on disk. A build failure reports one
-  failing `build` check and five `skipped` checks, mirroring how Pixel
-  Index's checker skips endpoints it can't reach.
+  catalog), a default layout is available, that layout survives a real
+  `pixelagents.infrastructure.pixel_agents_adapter.decode()` (`layout_decode`
+  — the same function architect and painter both go through for every
+  layout they read; the sprite/catalog checks above only prove pixelagents'
+  own asset-decode path works, not that `tileColors`/`areaTiles`/furniture-
+  entry fields or catalog ids architect/painter depend on haven't drifted),
+  and every asset the built `index.html` references resolves on disk. A
+  build failure reports one failing `build` check and six `skipped` checks,
+  mirroring how Pixel Index's checker skips endpoints it can't reach.
 - [`contracts/pixel_agents/schema.py`](../contracts/pixel_agents/schema.py) /
   [`contracts/pixel_agents/verify_outbound.py`](../contracts/pixel_agents/verify_outbound.py)
   — the websocket half of the contract: `pixelagents/contracts/outbound.py`'s
@@ -276,8 +281,12 @@ already owns catching *upcoming* upstream drift: daily it resolves upstream
 HEAD, bumps the pin on a branch, and gates that bump with this exact
 clone-build-serve path
 (`pixelagents/tests/test_webview_build.py::TestRealWebviewBuild`, behind
-`PIXELAGENTS_REAL_WEBVIEW_BUILD=1`) plus the full pixelagents and CCTV
-suites before opening a PR. `contract-checks.yml`'s Pixel Agents job runs on that PR too
+`PIXELAGENTS_REAL_WEBVIEW_BUILD=1`) plus the full pixelagents, CCTV,
+architect, and painter suites before opening a PR — architect and painter
+both go through pixelagents' `pixel_agents_adapter.decode()`/`encode()` for
+every layout they read/write, so a pin bump that breaks that shape needs to
+fail their suites too, not just pixelagents'/CCTV's.
+`contract-checks.yml`'s Pixel Agents job runs on that PR too
 (its `pull_request.paths` cover `webview_vendor.commit`), so the PR that
 bumps the pin also gets an independent, standardized-shape opinion — on top
 of `vendor-update.yml`'s own bespoke gate — the same way any other PR

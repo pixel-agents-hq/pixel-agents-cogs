@@ -10,7 +10,9 @@ pixelagents/adapters/cog_base.py::webview_bundle_status and
 cctv/adapters/cog_base.py::_sync_assets for the cross-cog handoff).
 This runs that exact production path -- not a reimplementation of it -- against
 the pinned commit and checks the same things a working office actually needs:
-every sprite family decodes, a default layout is available, and the built
+every sprite family decodes, a default layout is available, that layout
+survives a real `pixel_agents_adapter.decode()` (the same function
+architect/painter depend on for every layout they load), and the built
 bundle's asset references all resolve. It also validates the websocket half
 of the contract: pixelagents/contracts/outbound.py's builders and the
 OfficeService/PresenceService application classes that call them, driven
@@ -44,7 +46,8 @@ from types import SimpleNamespace
 
 import pixelagents.tests.conftest  # noqa: F401  # stubs redbot before the imports below
 from cctv.infrastructure.webview import WEBVIEW_BASE_PATH, WebviewAssets
-from pixelagents.infrastructure import webview_build
+from pixelagents.infrastructure import pixel_agents_adapter, webview_build
+from pixelagents.infrastructure.furniture_styles import FurnitureStyleManifest
 
 from . import verify_outbound
 
@@ -106,6 +109,36 @@ def _check_default_layout(provider: WebviewAssets) -> tuple[bool, str]:
     return True, ""
 
 
+def _check_layout_decode(provider: WebviewAssets) -> tuple[bool, str]:
+    """Exercises `pixel_agents_adapter.decode()` -- the only module in
+    pixelagents that knows Pixel Agents' raw layout JSON shape, and the
+    one architect/painter both go through -- against the same live,
+    freshly-built default layout `_check_default_layout` loads. The sprite
+    checks above only prove pixelagents' own asset-decode path works; they
+    say nothing about `tileColors`/`areaTiles`/furniture-entry fields or
+    catalog ids drifting out from under `decode()`, which would surface as
+    a `KeyError` on a bot host, not in CI, without this check."""
+    try:
+        layout = webview_build.load_bundled_default_layout(provider.root)
+    except (OSError, TypeError, ValueError) as exc:
+        return False, f"no bundled default layout: {exc}"
+
+    manifest_path = provider.root / "assets" / "furniture-styles.json"
+    try:
+        raw_manifest = json.loads(manifest_path.read_text("utf-8"))
+    except (OSError, ValueError) as exc:
+        return False, f"no furniture style manifest: {exc}"
+    styles = FurnitureStyleManifest.from_raw(raw_manifest)
+
+    try:
+        office = pixel_agents_adapter.decode(layout, styles)
+    except (KeyError, TypeError, ValueError, IndexError) as exc:
+        return False, f"pixel_agents_adapter.decode() failed on the live default layout: {exc!r}"
+    if office.grid.width <= 0 or office.grid.height <= 0:
+        return False, "decoded office has an empty grid"
+    return True, ""
+
+
 def _check_dashboard_bundle(provider: WebviewAssets) -> tuple[bool, str]:
     response = provider.page_response("discord")
     if response.get("status") != 0:
@@ -136,6 +169,7 @@ def run(env_name: str) -> tuple[bool, str, list[dict]]:
             for name in (
                 "load_assets",
                 "default_layout",
+                "layout_decode",
                 "dashboard_bundle",
                 "outbound_messages",
                 "helper_smoke",
@@ -160,6 +194,7 @@ def run(env_name: str) -> tuple[bool, str, list[dict]]:
         for name, check in (
             ("load_assets", _check_load_assets),
             ("default_layout", _check_default_layout),
+            ("layout_decode", _check_layout_decode),
             ("dashboard_bundle", _check_dashboard_bundle),
         ):
             ok, detail = check(provider)

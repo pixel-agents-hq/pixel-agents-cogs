@@ -19,6 +19,9 @@ on:
       - "pixelagents/infrastructure/webview_vendor.commit"
       - "pixelagents/infrastructure/webview_build_scripts/**"
       - "floorplan/**/*.py"
+      - "architect/**/*.py"
+      - "painter/**/*.py"
+      - "cctv/**/*.py"
       - ".github/workflows/contract-checks.yml"
 
 permissions:

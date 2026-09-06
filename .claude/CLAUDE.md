@@ -80,9 +80,9 @@ python -m pytest -q testbench/
 python -m pytest -q deskutils/
 
 # lint/format/types run fine across all cogs at once:
-python -m ruff format --check corridor floorplan pixelagents cctv toolbox pico architect painter suggestionbox telephonepole bootcamp testbench deskutils
-python -m ruff check corridor floorplan pixelagents cctv toolbox pico architect painter suggestionbox telephonepole bootcamp testbench deskutils
-python -m mypy corridor floorplan pixelagents cctv toolbox pico architect painter suggestionbox telephonepole bootcamp testbench deskutils
+python -m ruff format --check corridor floorplan pixelagents cctv toolbox pico architect painter suggestionbox telephonepole bootcamp testbench deskutils e2e
+python -m ruff check corridor floorplan pixelagents cctv toolbox pico architect painter suggestionbox telephonepole bootcamp testbench deskutils e2e
+python -m mypy corridor floorplan pixelagents cctv toolbox pico architect painter suggestionbox telephonepole bootcamp testbench deskutils e2e
 
 # CI-only contract/lint checks:
 python -m unittest discover -s contracts/tests
@@ -100,6 +100,25 @@ additionally needs `pip install -r contracts/pixel_index/requirements.txt`.
 See [`.github/workflows/cogs-quality.yml`](../.github/workflows/cogs-quality.yml)
 for the exact per-cog dependency matrix if a test run fails on a missing
 package.
+
+### `e2e/`: multi-cog end-to-end tests
+
+Not a cog (no `info.json`, not installable, not part of the one-cog-per-
+pytest-invocation rule above — it deliberately loads corridor,
+pixelagents, architect, and cctv together in one real process, which is
+exactly what the rule above exists to prevent for *cogs*, but is the
+entire point here now that every cog shares one stub). See
+[`e2e/README.md`](../e2e/README.md) for what it covers and why, and for
+local-iteration tips (caching the real webview build across runs).
+
+```sh
+pip install playwright && python -m playwright install chromium
+PIXELAGENTS_REAL_WEBVIEW_BUILD=1 python -m pytest -q e2e/
+```
+
+Skipped (not an error) without `PIXELAGENTS_REAL_WEBVIEW_BUILD=1` — it
+does a real network clone+build of the vendored webview, same gate as
+`pixelagents/tests/test_webview_build.py::TestRealWebviewBuild`.
 
 ## Scaffolding a new cog
 

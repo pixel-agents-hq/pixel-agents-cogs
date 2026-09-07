@@ -40,7 +40,11 @@ from .attachment import Attachment
 
 log = logging.getLogger("red.animator")
 
-_WANTED_FILENAMES = ("pixel-agents.zip", "preview.png")
+_ZIP_FILENAME = "pixel-agents.zip"
+# Preferred first: render_sprites only writes preview.gif for multi-frame (animated)
+# exports -- a single-frame, non-animated pixel_agents state has no preview.gif, so
+# static preview.png is the fallback rather than a second wanted file.
+_PREVIEW_FILENAMES = ("preview.gif", "preview.png")
 
 
 class DeliverPixelAgentsAssetsInput(BaseModel):
@@ -71,7 +75,8 @@ class DeliverPixelAgentsAssetsTool:
     description = (
         "Call this once render_sprites has succeeded (poll get_job until status is "
         "'succeeded') for a job that was run with pixel_agents set. Fetches the "
-        "resulting pixel-agents.zip and preview.png and attaches them to the reply "
+        "resulting pixel-agents.zip and preview (animated preview.gif, or static "
+        "preview.png if the export had no animation) and attaches them to the reply "
         "sent back to Discord. Use this as your final step instead of describing the "
         "files in text -- a bare download_url is not reachable by a Discord user."
     )
@@ -135,7 +140,8 @@ class DeliverPixelAgentsAssetsTool:
                 status="error",
                 message=(
                     f"Job {raw_input.job_id} succeeded, but neither pixel-agents.zip nor "
-                    f"preview.png was among its artifacts (found: {found})."
+                    f"a preview (preview.gif/preview.png) was among its artifacts "
+                    f"(found: {found})."
                 ),
             )
 
@@ -153,11 +159,17 @@ class DeliverPixelAgentsAssetsTool:
     async def _fetch_wanted_artifacts(
         self, artifacts: Sequence[Mapping[str, Any]]
     ) -> list[Attachment]:
+        by_filename = {str(a.get("filename")): a for a in artifacts}
+        preview_name = next((name for name in _PREVIEW_FILENAMES if name in by_filename), None)
+        wanted = [
+            (name, by_filename[name])
+            for name in (_ZIP_FILENAME, preview_name)
+            if name is not None and name in by_filename
+        ]
         attachments: list[Attachment] = []
-        for artifact in artifacts:
-            filename = artifact.get("filename")
+        for filename, artifact in wanted:
             download_url = artifact.get("download_url")
-            if filename not in _WANTED_FILENAMES or not download_url:
+            if not download_url:
                 continue
             try:
                 response = await self._http_client.get(download_url)

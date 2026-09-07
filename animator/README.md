@@ -2,8 +2,9 @@
 
 A2A-only LLM agent that models and renders pixel-art sprites and animations
 via [pixel-art-mcp](https://github.com/NNTin/pixel-art-mcp), and delivers the
-resulting Discord-ready assets (`pixel-agents.zip`, `preview.png`) as real
-message attachments -- never just a `download_url` in text, which a Discord
+resulting Discord-ready assets (`pixel-agents.zip`, plus `preview.gif` if
+the export animated or `preview.png` otherwise) as real message attachments
+-- never just a `download_url` in text, which a Discord
 user has no way to reach (see `tools/deliver_assets_tool.py`'s module
 docstring).
 
@@ -116,9 +117,10 @@ Discord user is. Left as plain text, that URL is not a usable answer.
    respects whatever per-agent enable/connection settings
    `[p]telephonepole` has configured -- no separate MCP connection of its
    own).
-2. Downloads the bytes of the `pixel-agents.zip` and `preview.png`
-   artifacts directly (a plain HTTP GET, not an MCP call -- fetching a file
-   isn't a tool invocation).
+2. Downloads the bytes of the `pixel-agents.zip` artifact and whichever
+   preview artifact is present -- `preview.gif` if the export animated,
+   else `preview.png` -- directly (a plain HTTP GET, not an MCP call --
+   fetching a file isn't a tool invocation).
 3. Returns a small `status`/`message` result to the LLM (so the model
    knows delivery succeeded), while the actual bytes travel out-of-band as
    `Attachment`s -- see below.

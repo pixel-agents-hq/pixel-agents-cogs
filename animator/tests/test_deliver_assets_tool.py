@@ -63,8 +63,32 @@ class TestDeliverPixelAgentsAssetsTool(unittest.IsolatedAsyncioTestCase):
         job = _succeeded_job(
             artifacts=[
                 _artifact("pixel-agents.zip", "application/zip", "http://x/artifacts/1"),
-                _artifact("preview.png", "image/png", "http://x/artifacts/2"),
+                _artifact("preview.gif", "image/gif", "http://x/artifacts/2"),
                 _artifact("sprites.zip", "application/zip", "http://x/artifacts/3"),
+            ]
+        )
+        http_client = _http_client(
+            {
+                "http://x/artifacts/1": httpx.Response(200, content=b"ZIPBYTES"),
+                "http://x/artifacts/2": httpx.Response(200, content=b"GIFBYTES"),
+            }
+        )
+        tool = _tool(registered_tools=(_get_job_tool(job),), http_client=http_client)
+
+        output = await tool.handler(DeliverPixelAgentsAssetsInput(job_id=_JOB_ID))
+
+        self.assertEqual(output.status, "ok")
+        filenames = {a.filename for a in output.attachments}
+        self.assertEqual(filenames, {"pixel-agents.zip", "preview.gif"})
+        zip_attachment = next(a for a in output.attachments if a.filename == "pixel-agents.zip")
+        self.assertEqual(zip_attachment.data, b"ZIPBYTES")
+        self.assertEqual(zip_attachment.media_type, "application/zip")
+
+    async def test_falls_back_to_static_preview_png_when_no_gif_was_exported(self) -> None:
+        job = _succeeded_job(
+            artifacts=[
+                _artifact("pixel-agents.zip", "application/zip", "http://x/artifacts/1"),
+                _artifact("preview.png", "image/png", "http://x/artifacts/2"),
             ]
         )
         http_client = _http_client(
@@ -80,21 +104,33 @@ class TestDeliverPixelAgentsAssetsTool(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(output.status, "ok")
         filenames = {a.filename for a in output.attachments}
         self.assertEqual(filenames, {"pixel-agents.zip", "preview.png"})
-        zip_attachment = next(a for a in output.attachments if a.filename == "pixel-agents.zip")
-        self.assertEqual(zip_attachment.data, b"ZIPBYTES")
-        self.assertEqual(zip_attachment.media_type, "application/zip")
+
+    async def test_prefers_animated_gif_over_static_png_when_both_are_present(self) -> None:
+        job = _succeeded_job(
+            artifacts=[
+                _artifact("preview.png", "image/png", "http://x/artifacts/1"),
+                _artifact("preview.gif", "image/gif", "http://x/artifacts/2"),
+            ]
+        )
+        http_client = _http_client({"http://x/artifacts/2": httpx.Response(200, content=b"GIF")})
+        tool = _tool(registered_tools=(_get_job_tool(job),), http_client=http_client)
+
+        output = await tool.handler(DeliverPixelAgentsAssetsInput(job_id=_JOB_ID))
+
+        self.assertEqual(output.status, "ok")
+        self.assertEqual([a.filename for a in output.attachments], ["preview.gif"])
 
     async def test_attachments_are_excluded_from_the_serialized_output(self) -> None:
         job = _succeeded_job(
-            artifacts=[_artifact("preview.png", "image/png", "http://x/artifacts/2")]
+            artifacts=[_artifact("preview.gif", "image/gif", "http://x/artifacts/2")]
         )
-        http_client = _http_client({"http://x/artifacts/2": httpx.Response(200, content=b"PNG")})
+        http_client = _http_client({"http://x/artifacts/2": httpx.Response(200, content=b"GIF")})
         tool = _tool(registered_tools=(_get_job_tool(job),), http_client=http_client)
 
         output = await tool.handler(DeliverPixelAgentsAssetsInput(job_id=_JOB_ID))
 
         self.assertNotIn("attachments", output.model_dump_json())
-        self.assertNotIn("PNG", output.model_dump_json())
+        self.assertNotIn("GIF", output.model_dump_json())
 
     async def test_job_not_yet_succeeded_reports_an_error_without_attachments(self) -> None:
         job = {"id": str(_JOB_ID), "status": "running", "artifacts": []}
@@ -139,13 +175,13 @@ class TestDeliverPixelAgentsAssetsTool(unittest.IsolatedAsyncioTestCase):
         job = _succeeded_job(
             artifacts=[
                 _artifact("pixel-agents.zip", "application/zip", "http://x/artifacts/1"),
-                _artifact("preview.png", "image/png", "http://x/artifacts/2"),
+                _artifact("preview.gif", "image/gif", "http://x/artifacts/2"),
             ]
         )
         http_client = _http_client(
             {
                 "http://x/artifacts/1": httpx.Response(500),
-                "http://x/artifacts/2": httpx.Response(200, content=b"PNG"),
+                "http://x/artifacts/2": httpx.Response(200, content=b"GIF"),
             }
         )
         tool = _tool(registered_tools=(_get_job_tool(job),), http_client=http_client)
@@ -153,7 +189,7 @@ class TestDeliverPixelAgentsAssetsTool(unittest.IsolatedAsyncioTestCase):
         output = await tool.handler(DeliverPixelAgentsAssetsInput(job_id=_JOB_ID))
 
         self.assertEqual(output.status, "ok")
-        self.assertEqual([a.filename for a in output.attachments], ["preview.png"])
+        self.assertEqual([a.filename for a in output.attachments], ["preview.gif"])
 
 
 if __name__ == "__main__":

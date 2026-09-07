@@ -44,7 +44,8 @@ AGENT_DESCRIPTION = (
     "past consultations -- each prompt is answered on its own, so restate any "
     "earlier project ID or context a follow-up needs. "
     "When asked for an installable pixel-agents furniture package, it delivers the "
-    "resulting pixel-agents.zip and preview.png as real Discord attachments, not "
+    "resulting pixel-agents.zip and preview (animated GIF, or static PNG if the "
+    "export had no animation) as real Discord attachments, not "
     "just a description of them."
 )
 

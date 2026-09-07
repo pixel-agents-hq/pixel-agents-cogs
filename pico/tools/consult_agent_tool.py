@@ -215,7 +215,7 @@ class ConsultAgentTool:
             await self._announce(f"⚠️ **{self._agent_key}** could not be reached: {exc}")
             return ConsultAgentOutput(status="error", error=str(exc))
         await self._announce(
-            f"📩 **{self._agent_key}** replied: {result.answer}",
+            f"📩 **{self._agent_key}** replied: {_truncate(result.answer)}",
             fields=_tool_call_fields(
                 result.tool_calls_made,
                 result.successful_tool_calls,
@@ -285,14 +285,26 @@ class ConsultAgentTool:
         await publish_agent_replied(self._corridor, agent, summary, tool_name=self.name)
 
 
-_DEBUG_EVENT_TRUNCATE_LENGTH = 1500
+_ANNOUNCEMENT_TRUNCATE_LENGTH = 1500
 
 
-def _truncate(text: str, limit: int = _DEBUG_EVENT_TRUNCATE_LENGTH) -> str:
-    """Discord's real embed-description hard cap is 4096 chars, but a tool
-    result can be an arbitrarily large JSON blob -- cut well under that so
-    truncation is visible and deliberate, not a coin-flip against the real
-    limit depending on what else `_announce` renders around it."""
+def _truncate(text: str, limit: int = _ANNOUNCEMENT_TRUNCATE_LENGTH) -> str:
+    """Discord's real embed-description hard cap is 4096 chars, but both an
+    intermediate debug event and a consulted agent's own final answer can
+    be arbitrarily large (a tool result JSON blob; animator's own answer
+    text) -- cut well under that so truncation is visible and deliberate,
+    not a coin-flip against the real limit depending on what else
+    `_announce` renders around it.
+
+    A real production incident: an untruncated `result.answer` alone (no
+    tool-result blob involved) pushed one embed description past 4096
+    chars, so Discord rejected the whole `_announce` call with a 400 --
+    `extra_files` on that same call carried a consulted agent's actual
+    file attachments (see `handler`'s reply-announcement call below), so
+    that whole delivery silently vanished behind `_announce`'s own
+    best-effort `except Exception` (logged as a warning, never surfaced to
+    the user). Only `_announce_debug_event` truncated before this fix --
+    `handler`'s own reply announcement did not."""
 
     if len(text) <= limit:
         return text

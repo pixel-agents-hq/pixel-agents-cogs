@@ -227,6 +227,58 @@ class TestConsultAgentToolAnnouncements(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(reply_files[0].filename, "pixel-agents.zip")
         self.assertEqual(reply_files[1].filename, "preview.png")
 
+    async def test_an_oversized_answer_is_truncated_in_the_announcement(self) -> None:
+        reply = FakeReplySender()
+        oversized = "x" * 5000
+        tool = _tool(FakeArchitectAsker(answer=oversized), reply)
+
+        await tool.handler(ConsultAgentInput(prompt="hi"))
+
+        reply_announcement = reply.replies[1] or ""
+        self.assertLess(len(reply_announcement), len(oversized))
+        self.assertIn("truncated", reply_announcement)
+
+    async def test_an_oversized_answer_does_not_drop_the_attachments(self) -> None:
+        """Regression: a real production incident had an untruncated
+        `result.answer` alone push one embed description past Discord's
+        4096-char cap, so the whole `send_reply` call -- attachments
+        included -- was rejected and silently swallowed by `_announce`'s
+        own best-effort `except Exception`. `FakeReplySender` doesn't
+        enforce the real cap, so this only proves the fix's *mechanism*
+        (attachments still reach the same, now-truncated call) -- the real
+        cap being respected is `test_an_oversized_answer_is_truncated_in_
+        the_announcement`'s job above."""
+
+        reply = FakeReplySender()
+        oversized = "x" * 5000
+        tool = _tool(
+            FakeArchitectAsker(
+                answer=oversized,
+                attachments=(
+                    Attachment(
+                        filename="pixel-agents.zip", media_type="application/zip", data=b"ZIP"
+                    ),
+                ),
+            ),
+            reply,
+            agent_key="animator",
+        )
+
+        await tool.handler(ConsultAgentInput(prompt="render it"))
+
+        reply_files = reply.extra_files[1]
+        self.assertEqual([f.filename for f in reply_files], ["pixel-agents.zip"])
+
+    async def test_an_oversized_answer_is_still_returned_untruncated_to_pico(self) -> None:
+        reply = FakeReplySender()
+        oversized = "x" * 5000
+        tool = _tool(FakeArchitectAsker(answer=oversized), reply)
+
+        output = await tool.handler(ConsultAgentInput(prompt="hi"))
+
+        assert isinstance(output, ConsultAgentOutput)
+        self.assertEqual(output.answer, oversized)
+
     async def test_reply_announcement_carries_a_tool_calls_field(self) -> None:
         reply = FakeReplySender()
         tool = _tool(

@@ -49,7 +49,12 @@ agents at runtime, each with its own system prompt and corridor
 permission-group gate -- registers each one into the same
 AgentDirectoryService architect/painter use, so pico discovers and
 consults it with zero pico-specific code beyond the shared permission
-gate; also directly invokable with `[p]bootcamp ask`), `testbench`
+gate; also directly invokable with `[p]bootcamp ask`), `animator`
+(fourth LLM agent, A2A-only, almost no native tools of its own -- bridges
+pixel-art-mcp's tools via telephonepole/AgentToolServerRegistry, plus one
+native tool, deliver_pixel_agents_assets, that turns a finished render
+job's output files into real Discord attachments instead of an unreachable
+internal download_url), `testbench`
 (owner-only bus-event publisher for testing), `deskutils`
 (small utilities), `contracts` (CI-only, not a runtime cog).
 
@@ -78,11 +83,12 @@ python -m pytest -q telephonepole/
 python -m pytest -q bootcamp/
 python -m pytest -q testbench/
 python -m pytest -q deskutils/
+python -m pytest -q animator/
 
 # lint/format/types run fine across all cogs at once:
-python -m ruff format --check corridor floorplan pixelagents cctv toolbox pico architect painter suggestionbox telephonepole bootcamp testbench deskutils e2e
-python -m ruff check corridor floorplan pixelagents cctv toolbox pico architect painter suggestionbox telephonepole bootcamp testbench deskutils e2e
-python -m mypy corridor floorplan pixelagents cctv toolbox pico architect painter suggestionbox telephonepole bootcamp testbench deskutils e2e
+python -m ruff format --check corridor floorplan pixelagents cctv toolbox pico architect painter suggestionbox telephonepole bootcamp testbench deskutils animator e2e
+python -m ruff check corridor floorplan pixelagents cctv toolbox pico architect painter suggestionbox telephonepole bootcamp testbench deskutils animator e2e
+python -m mypy corridor floorplan pixelagents cctv toolbox pico architect painter suggestionbox telephonepole bootcamp testbench deskutils animator e2e
 
 # CI-only contract/lint checks:
 python -m unittest discover -s contracts/tests

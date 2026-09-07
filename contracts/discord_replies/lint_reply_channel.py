@@ -79,6 +79,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 # cookiecutter template's `commands.py` already follows the compliant
 # pattern this check enforces).
 COG_PACKAGES = (
+    "animator",
     "architect",
     "bootcamp",
     "cctv",

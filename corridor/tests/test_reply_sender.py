@@ -4,9 +4,12 @@ CogBase.reply_sender()/render_reply()/send_reply() together, the same
 
 from __future__ import annotations
 
+import io
 import tempfile
 import unittest
 from pathlib import Path
+
+import discord
 
 from ..corridor import Corridor
 from ..domain import REPLY_CATEGORY_COLORS, FooterOverride, ReplyCategory, ReplyMode
@@ -185,6 +188,42 @@ class TestReplySender(unittest.IsolatedAsyncioTestCase):
         await sender.publish_event("an-event")
 
         self.assertEqual(published, ["an-event"])
+
+    async def test_send_reply_passes_extra_files_through_in_embed_mode(self) -> None:
+        """`extra_files` -- e.g. `pico/tools/consult_agent_tool.py` re-
+        uploading a file a consulted agent's answer carried -- rides
+        alongside whatever avatar/footer icons this call already attaches,
+        in the same `ctx.send(...)` call."""
+
+        member = FakeMember(2, self.guild)
+        ctx = FakeContext(author=member, guild=self.guild)
+        sender = self.corridor.reply_sender(owner="Pico")
+        attachment = discord.File(io.BytesIO(b"zip-bytes"), filename="pixel-agents.zip")
+
+        await sender.send_reply(ctx, description="done", extra_files=[attachment])
+
+        self.assertEqual(ctx.sent[0]["files"], [attachment])
+
+    async def test_send_reply_extra_files_reach_the_message_in_text_mode_too(self) -> None:
+        await self.corridor.set_reply_mode(self.guild.id, ReplyMode.TEXT)
+        member = FakeMember(2, self.guild)
+        ctx = FakeContext(author=member, guild=self.guild)
+        sender = self.corridor.reply_sender(owner="Pico")
+        attachment = discord.File(io.BytesIO(b"png-bytes"), filename="preview.png")
+
+        await sender.send_reply(ctx, description="done", extra_files=[attachment])
+
+        self.assertEqual(ctx.sent[0]["content"], "**Pico:** done")
+        self.assertEqual(ctx.sent[0]["files"], [attachment])
+
+    async def test_send_reply_with_no_extra_files_keeps_existing_behavior(self) -> None:
+        member = FakeMember(2, self.guild)
+        ctx = FakeContext(author=member, guild=self.guild)
+        sender = self.corridor.reply_sender(owner="Architect")
+
+        await sender.send_reply(ctx, title="Hi")
+
+        self.assertEqual(ctx.sent[0]["files"], [])
 
     async def test_two_senders_stay_independent(self) -> None:
         member = FakeMember(2, self.guild)

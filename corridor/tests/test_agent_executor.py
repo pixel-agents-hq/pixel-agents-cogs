@@ -31,6 +31,22 @@ class FakeToolLoopResult:
     text: str | None
     successful_tool_calls: int = 0
     failed_tool_calls: int = 0
+    # Deliberately absent by default (no `attachments` field at all unless a
+    # test opts in via `FakeToolLoopResultWithAttachments` below) -- proves
+    # `_run_turn` tolerates every existing caller's result shape, which
+    # never carries this attribute, via `getattr(result, "attachments", ())`.
+
+
+@dataclass
+class FakeAttachment:
+    filename: str
+    media_type: str
+    data: bytes
+
+
+@dataclass
+class FakeToolLoopResultWithAttachments(FakeToolLoopResult):
+    attachments: tuple[FakeAttachment, ...] = ()
 
 
 @dataclass
@@ -333,6 +349,62 @@ class TestGenericAgentExecutor(unittest.IsolatedAsyncioTestCase):
 
         final_message = queue.events[-1].status.message
         self.assertIn("Testagent", final_message.parts[0].text)
+
+
+class TestAttachments(unittest.IsolatedAsyncioTestCase):
+    """`_run_turn` reads an optional `attachments` field off the tool
+    loop's result (present only on animator's own `ToolLoopResult` today,
+    see `animator/application/tool_loop_service.py`) and turns each into
+    its own `Part` on the final message, alongside the text one."""
+
+    async def test_no_attachments_field_produces_only_the_text_part(self) -> None:
+        tool_loop = ScriptedToolLoop(FakeToolLoopResult(0, "final_text", "the answer"))
+        executor = _executor(tool_loop)
+        queue = FakeEventQueue()
+
+        await executor.execute(FakeRequestContext("hi"), queue)  # type: ignore[arg-type]
+
+        final_message = queue.events[-1].status.message
+        self.assertEqual(len(final_message.parts), 1)
+        self.assertEqual(final_message.parts[0].text, "the answer")
+
+    async def test_attachments_become_extra_parts_alongside_the_text(self) -> None:
+        result = FakeToolLoopResultWithAttachments(
+            0,
+            "final_text",
+            "here you go",
+            attachments=(
+                FakeAttachment(
+                    filename="pixel-agents.zip", media_type="application/zip", data=b"Z"
+                ),
+                FakeAttachment(filename="preview.png", media_type="image/png", data=b"P"),
+            ),
+        )
+        tool_loop = ScriptedToolLoop(result)
+        executor = _executor(tool_loop)
+        queue = FakeEventQueue()
+
+        await executor.execute(FakeRequestContext("hi"), queue)  # type: ignore[arg-type]
+
+        final_message = queue.events[-1].status.message
+        self.assertEqual(len(final_message.parts), 3)
+        self.assertEqual(final_message.parts[0].text, "here you go")
+        self.assertEqual(final_message.parts[1].raw, b"Z")
+        self.assertEqual(final_message.parts[1].filename, "pixel-agents.zip")
+        self.assertEqual(final_message.parts[1].media_type, "application/zip")
+        self.assertEqual(final_message.parts[2].raw, b"P")
+        self.assertEqual(final_message.parts[2].filename, "preview.png")
+
+    async def test_an_empty_attachments_tuple_produces_only_the_text_part(self) -> None:
+        result = FakeToolLoopResultWithAttachments(0, "final_text", "no files here")
+        tool_loop = ScriptedToolLoop(result)
+        executor = _executor(tool_loop)
+        queue = FakeEventQueue()
+
+        await executor.execute(FakeRequestContext("hi"), queue)  # type: ignore[arg-type]
+
+        final_message = queue.events[-1].status.message
+        self.assertEqual(len(final_message.parts), 1)
 
 
 class TestBuildAgentCard(unittest.TestCase):

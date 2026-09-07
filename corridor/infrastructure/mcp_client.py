@@ -76,6 +76,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Mapping
+from datetime import timedelta
 from typing import Any
 
 from mcp import ClientSession
@@ -116,17 +117,43 @@ class McpClientPool:
             raise McpRequestError(f"could not list tools from {base_url}: {exc}") from exc
 
     async def call_tool(
-        self, base_url: str, name: str, arguments: Mapping[str, Any]
+        self,
+        base_url: str,
+        name: str,
+        arguments: Mapping[str, Any],
+        *,
+        timeout_seconds: float | None = None,
     ) -> Mapping[str, Any]:
         """Calls `name` on the server at `base_url` and returns its result
         as a plain JSON-object-shaped mapping -- `RegisteredTool.handler`'s
         own contract. Raises `McpRequestError` on a connection/protocol
         failure or a result the server itself flagged as an error
-        (`CallToolResult.isError`)."""
+        (`CallToolResult.isError`).
 
+        `timeout_seconds`, when given, bounds how long this call waits for
+        a response at the MCP protocol layer (`ClientSession`'s own
+        `read_timeout_seconds`) -- needed for a tool that may itself block
+        server-side well past a normal reply (e.g. a registered server's
+        own `wait_for_job`-shaped tool).
+
+        Deliberately not an `httpx`-level timeout: a Streamable HTTP
+        session multiplexes a tool call's request and its eventual
+        response over a long-lived SSE connection via `anyio` memory
+        streams, so `httpx`'s own per-connection timeout never actually
+        bounds how long one specific call waits for its result --
+        `ClientSession`/`BaseSession.send_request` has *no* timeout at all
+        here otherwise (confirmed by reproducing the hang locally: a short
+        `httpx` client timeout alone left a slow tool call waiting
+        indefinitely, since `send_request`'s own `anyio.fail_after(timeout)`
+        only fires when a `read_timeout_seconds` was actually supplied,
+        here or on `ClientSession` itself -- neither was, before this
+        parameter existed). `None` waits indefinitely, unchanged from
+        before this parameter existed."""
+
+        read_timeout = timedelta(seconds=timeout_seconds) if timeout_seconds is not None else None
         try:
             async with streamable_http_client(base_url) as (read, write, _get_session_id):
-                async with ClientSession(read, write) as session:
+                async with ClientSession(read, write, read_timeout_seconds=read_timeout) as session:
                     await session.initialize()
                     result = await session.call_tool(name, dict(arguments))
         except Exception as exc:

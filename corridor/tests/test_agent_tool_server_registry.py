@@ -12,7 +12,7 @@ from typing import Any
 from mcp import types as mcp_types
 
 from ..application.agent_tool_server_registry import AgentToolServerRegistry
-from ..domain.agent_tool_server import RegisteredMcpServer
+from ..domain.agent_tool_server import McpCallOptions, RegisteredMcpServer
 from ..infrastructure.mcp_client import McpRequestError
 
 
@@ -25,7 +25,7 @@ def _tool(name: str) -> mcp_types.Tool:
 class _FakeClientPool:
     def __init__(self, tools_by_url: dict[str, tuple[mcp_types.Tool, ...]]) -> None:
         self._tools_by_url = tools_by_url
-        self.calls: list[tuple[str, str, Mapping[str, Any]]] = []
+        self.calls: list[tuple[str, str, Mapping[str, Any], float | None]] = []
 
     async def list_tools(self, base_url: str) -> tuple[mcp_types.Tool, ...]:
         if base_url not in self._tools_by_url:
@@ -33,9 +33,14 @@ class _FakeClientPool:
         return self._tools_by_url[base_url]
 
     async def call_tool(
-        self, base_url: str, name: str, arguments: Mapping[str, Any]
+        self,
+        base_url: str,
+        name: str,
+        arguments: Mapping[str, Any],
+        *,
+        timeout_seconds: float | None = None,
     ) -> Mapping[str, Any]:
-        self.calls.append((base_url, name, arguments))
+        self.calls.append((base_url, name, arguments, timeout_seconds))
         return {"status": "ok"}
 
 
@@ -203,12 +208,50 @@ class TestAgentToolServerRegistry(unittest.IsolatedAsyncioTestCase):
         result = await tool.handler(None, {"what_happened": "x"})
 
         self.assertEqual(result, {"status": "ok"})
-        self.assertEqual(pool.calls, [("http://s/mcp", "report_error", {"what_happened": "x"})])
+        self.assertEqual(
+            pool.calls, [("http://s/mcp", "report_error", {"what_happened": "x"}, None)]
+        )
+
+    async def test_wrapped_tool_handler_forwards_mcp_call_options_timeout(self) -> None:
+        pool = _FakeClientPool({"http://s/mcp": (_tool("get_job"),)})
+        registry = AgentToolServerRegistry(pool)
+        await registry.register(
+            RegisteredMcpServer(
+                owner="Animator", base_url="http://s/mcp", agent_allowed=_allow_all
+            ),
+            owner="Animator",
+        )
+
+        (tool,) = await registry.list_tools_for("animator")
+        result = await tool.handler(McpCallOptions(timeout_seconds=90.0), {"job_id": "j1"})
+
+        self.assertEqual(result, {"status": "ok"})
+        self.assertEqual(pool.calls, [("http://s/mcp", "get_job", {"job_id": "j1"}, 90.0)])
+
+    async def test_wrapped_tool_handler_ignores_a_non_mcp_call_options_ctx(self) -> None:
+        pool = _FakeClientPool({"http://s/mcp": (_tool("report_error"),)})
+        registry = AgentToolServerRegistry(pool)
+        await registry.register(
+            RegisteredMcpServer(
+                owner="SuggestionBox", base_url="http://s/mcp", agent_allowed=_allow_all
+            ),
+            owner="SuggestionBox",
+        )
+
+        (tool,) = await registry.list_tools_for("architect")
+        await tool.handler(object(), {})  # e.g. a real Discord commands.Context
+
+        self.assertEqual(pool.calls, [("http://s/mcp", "report_error", {}, None)])
 
     async def test_wrapped_tool_handler_reports_call_failure_as_status_error(self) -> None:
         class _FailingPool(_FakeClientPool):
             async def call_tool(
-                self, base_url: str, name: str, arguments: Mapping[str, Any]
+                self,
+                base_url: str,
+                name: str,
+                arguments: Mapping[str, Any],
+                *,
+                timeout_seconds: float | None = None,
             ) -> Mapping[str, Any]:
                 raise McpRequestError("unreachable")
 

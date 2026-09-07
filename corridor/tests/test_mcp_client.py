@@ -32,6 +32,14 @@ def _build_server() -> FastMCP:
         """Always raises, so the server reports a tool error."""
         raise ValueError("deliberate failure")
 
+    @mcp.tool()
+    async def slow() -> str:
+        """Sleeps longer than any short `timeout_seconds` a test passes, so
+        `call_tool`'s own timeout override can be verified to actually take
+        effect rather than silently falling back to the SDK's default."""
+        await asyncio.sleep(2)
+        return "done"
+
     return mcp
 
 
@@ -55,7 +63,7 @@ class TestMcpClientPool(unittest.IsolatedAsyncioTestCase):
     async def test_list_tools_returns_the_real_servers_tools(self) -> None:
         tools = await self.pool.list_tools(self.base_url)
 
-        self.assertEqual(sorted(tool.name for tool in tools), ["echo", "fail"])
+        self.assertEqual(sorted(tool.name for tool in tools), ["echo", "fail", "slow"])
 
     async def test_call_tool_returns_structured_content_as_a_mapping(self) -> None:
         result = await self.pool.call_tool(self.base_url, "echo", {"text": "hi"})
@@ -73,6 +81,15 @@ class TestMcpClientPool(unittest.IsolatedAsyncioTestCase):
     async def test_list_tools_against_unreachable_server_raises(self) -> None:
         with self.assertRaises(McpRequestError):
             await self.pool.list_tools("http://127.0.0.1:1/mcp")
+
+    async def test_call_tool_honors_a_custom_timeout_seconds(self) -> None:
+        with self.assertRaises(McpRequestError):
+            await self.pool.call_tool(self.base_url, "slow", {}, timeout_seconds=0.05)
+
+    async def test_call_tool_with_a_generous_timeout_seconds_still_succeeds(self) -> None:
+        result = await self.pool.call_tool(self.base_url, "echo", {"text": "hi"}, timeout_seconds=5)
+
+        self.assertEqual(result, {"echo": "hi"})
 
 
 if __name__ == "__main__":

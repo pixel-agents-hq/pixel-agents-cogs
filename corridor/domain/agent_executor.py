@@ -73,6 +73,15 @@ class ToolLoopResult(Protocol):
     @property
     def failed_tool_calls(self) -> int: ...
 
+    # Deliberately NOT declared here: `attachments` is an optional
+    # extension only animator's own `ToolLoopResult` carries today (see
+    # `animator/application/tool_loop_service.py`) -- `_run_turn` below
+    # reads it via `getattr(result, "attachments", ())`, so architect's/
+    # painter's/pico's/bootcamp's own `ToolLoopResult` dataclasses keep
+    # satisfying this Protocol unchanged, with no `attachments` attribute
+    # at all. Each element only needs `.data: bytes`, `.filename: str`,
+    # `.media_type: str` -- see `_run_turn`'s own use of it.
+
 
 class SupportsToolLoop(Protocol):
     async def run(
@@ -295,9 +304,24 @@ class GenericAgentExecutor(AgentExecutor):
             )
             return
 
+        # `attachments` is an optional extension (see `ToolLoopResult`'s own
+        # comment above) -- absent on every existing caller's result, so
+        # this is a no-op for architect/painter/pico/bootcamp. Where
+        # present (animator), each becomes its own `Part` alongside the
+        # text one, carried as raw bytes on the wire (a2a-sdk's `Part.raw`)
+        # rather than a URL -- see animator/tools/deliver_assets_tool.py's
+        # own module docstring for why the file's bytes are fetched once,
+        # here, rather than handing the caller an internal-network URL to
+        # fetch itself.
+        attachment_parts = [
+            Part(
+                raw=attachment.data, filename=attachment.filename, media_type=attachment.media_type
+            )
+            for attachment in getattr(result, "attachments", ())
+        ]
         await updater.complete(
             updater.new_agent_message(
-                [Part(text=result.text)],
+                [Part(text=result.text), *attachment_parts],
                 metadata={
                     "tool_calls_made": result.tool_calls_made,
                     "successful_tool_calls": result.successful_tool_calls,

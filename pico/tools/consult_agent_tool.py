@@ -65,11 +65,13 @@ A publish failure here is best-effort, like the announcements themselves
 
 from __future__ import annotations
 
+import io
 import logging
 from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
 from typing import Protocol
 
+import discord
 from pydantic import BaseModel, Field
 
 from corridor.domain import AgentRef, FooterOverride, ReplyField
@@ -120,6 +122,7 @@ class ReplySenderProtocol(Protocol):
         fields: Sequence[ReplyField] = (),
         footer_override: FooterOverride | None = None,
         footer_icon_path: Path | None = None,
+        extra_files: Sequence[discord.File] = (),
     ) -> object: ...
 
 
@@ -212,12 +215,16 @@ class ConsultAgentTool:
             await self._announce(f"⚠️ **{self._agent_key}** could not be reached: {exc}")
             return ConsultAgentOutput(status="error", error=str(exc))
         await self._announce(
-            f"📩 **{self._agent_key}** replied: {result.answer}",
+            f"📩 **{self._agent_key}** replied: {_truncate(result.answer)}",
             fields=_tool_call_fields(
                 result.tool_calls_made,
                 result.successful_tool_calls,
                 result.failed_tool_calls,
             ),
+            extra_files=[
+                discord.File(io.BytesIO(attachment.data), filename=attachment.filename)
+                for attachment in result.attachments
+            ],
         )
         await self._publish_agent_replied(
             agent=AgentRef(
@@ -239,11 +246,20 @@ class ConsultAgentTool:
 
         await self._announce(f"🐛 **{self._agent_key}**: {_truncate(text)}")
 
-    async def _announce(self, description: str, *, fields: Sequence[ReplyField] = ()) -> None:
+    async def _announce(
+        self,
+        description: str,
+        *,
+        fields: Sequence[ReplyField] = (),
+        extra_files: Sequence[discord.File] = (),
+    ) -> None:
         """Best-effort -- a failure to post the announcement must never
         turn a successful (or already-failed) A2A call into a reported
         tool failure, same convention `ReplyTool._publish_agent_replied`
-        already follows for its own secondary side effect."""
+        already follows for its own secondary side effect. `extra_files`
+        carries any `Attachment`s the consulted agent's answer included
+        (currently only animator, see `AgentAskResult.attachments`'s own
+        docstring) straight into this same announcement message."""
 
         try:
             await self._reply.send_reply(
@@ -252,6 +268,7 @@ class ConsultAgentTool:
                 fields=fields,
                 footer_override=self._footer_override,
                 footer_icon_path=self._footer_icon_path,
+                extra_files=extra_files,
             )
         except Exception:
             log.warning("pico: %s could not announce an A2A exchange", self.name, exc_info=True)
@@ -268,14 +285,26 @@ class ConsultAgentTool:
         await publish_agent_replied(self._corridor, agent, summary, tool_name=self.name)
 
 
-_DEBUG_EVENT_TRUNCATE_LENGTH = 1500
+_ANNOUNCEMENT_TRUNCATE_LENGTH = 1500
 
 
-def _truncate(text: str, limit: int = _DEBUG_EVENT_TRUNCATE_LENGTH) -> str:
-    """Discord's real embed-description hard cap is 4096 chars, but a tool
-    result can be an arbitrarily large JSON blob -- cut well under that so
-    truncation is visible and deliberate, not a coin-flip against the real
-    limit depending on what else `_announce` renders around it."""
+def _truncate(text: str, limit: int = _ANNOUNCEMENT_TRUNCATE_LENGTH) -> str:
+    """Discord's real embed-description hard cap is 4096 chars, but both an
+    intermediate debug event and a consulted agent's own final answer can
+    be arbitrarily large (a tool result JSON blob; animator's own answer
+    text) -- cut well under that so truncation is visible and deliberate,
+    not a coin-flip against the real limit depending on what else
+    `_announce` renders around it.
+
+    A real production incident: an untruncated `result.answer` alone (no
+    tool-result blob involved) pushed one embed description past 4096
+    chars, so Discord rejected the whole `_announce` call with a 400 --
+    `extra_files` on that same call carried a consulted agent's actual
+    file attachments (see `handler`'s reply-announcement call below), so
+    that whole delivery silently vanished behind `_announce`'s own
+    best-effort `except Exception` (logged as a warning, never surfaced to
+    the user). Only `_announce_debug_event` truncated before this fix --
+    `handler`'s own reply announcement did not."""
 
     if len(text) <= limit:
         return text

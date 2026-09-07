@@ -17,7 +17,7 @@ from typing import Any, Protocol
 
 from mcp import types as mcp_types
 
-from ..domain.agent_tool_server import RegisteredMcpServer
+from ..domain.agent_tool_server import McpCallOptions, RegisteredMcpServer
 from ..domain.models import RegisteredTool
 from ..infrastructure.mcp_client import McpRequestError
 
@@ -33,7 +33,12 @@ class McpTools(Protocol):
     async def list_tools(self, base_url: str) -> tuple[mcp_types.Tool, ...]: ...
 
     async def call_tool(
-        self, base_url: str, name: str, arguments: Mapping[str, Any]
+        self,
+        base_url: str,
+        name: str,
+        arguments: Mapping[str, Any],
+        *,
+        timeout_seconds: float | None = None,
     ) -> Mapping[str, Any]: ...
 
 
@@ -115,9 +120,19 @@ class AgentToolServerRegistry:
         name = tool.name
         description = tool.description or name
 
-        async def handler(_ctx: object, arguments: Mapping[str, object]) -> Mapping[str, object]:
+        async def handler(ctx: object, arguments: Mapping[str, object]) -> Mapping[str, object]:
+            # `ctx` is opaque to every other RegisteredTool consumer (a
+            # Discord commands.Context, or None) -- an agent-side adapter
+            # that needs to bound one specific call's own network timeout
+            # (e.g. a registered server's blocking wait_for_job) passes an
+            # McpCallOptions here instead. Anything else just falls back to
+            # McpClientPool's own default timeout, same as before this
+            # existed.
+            timeout_seconds = ctx.timeout_seconds if isinstance(ctx, McpCallOptions) else None
             try:
-                return await self._client_pool.call_tool(base_url, name, arguments)
+                return await self._client_pool.call_tool(
+                    base_url, name, arguments, timeout_seconds=timeout_seconds
+                )
             except McpRequestError as exc:
                 return {"status": "error", "error": str(exc)}
 

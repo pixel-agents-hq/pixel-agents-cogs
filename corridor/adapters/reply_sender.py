@@ -84,6 +84,7 @@ class ReplySender:
         code: Sequence[str] = (),
         footer_override: FooterOverride | None = None,
         footer_icon_path: Path | None = None,
+        extra_files: Sequence[discord.File] = (),
     ) -> discord.Message:
         rendered = await self._cog_base.render_reply(
             ctx,
@@ -97,7 +98,11 @@ class ReplySender:
             category=self._category,
         )
         return await send_rendered_reply(
-            ctx, rendered, avatar_path=self._avatar_path, footer_icon_path=footer_icon_path
+            ctx,
+            rendered,
+            avatar_path=self._avatar_path,
+            footer_icon_path=footer_icon_path,
+            extra_files=extra_files,
         )
 
     async def render_channel_reply(
@@ -133,6 +138,7 @@ class ReplySender:
         code: Sequence[str] = (),
         footer_override: FooterOverride | None = None,
         footer_icon_path: Path | None = None,
+        extra_files: Sequence[discord.File] = (),
     ) -> discord.Message:
         rendered = await self._cog_base.render_channel_reply(
             guild_id,
@@ -146,7 +152,11 @@ class ReplySender:
             category=self._category,
         )
         return await send_rendered_reply_to_channel(
-            channel, rendered, avatar_path=self._avatar_path, footer_icon_path=footer_icon_path
+            channel,
+            rendered,
+            avatar_path=self._avatar_path,
+            footer_icon_path=footer_icon_path,
+            extra_files=extra_files,
         )
 
     async def publish_event(self, event: object) -> None:

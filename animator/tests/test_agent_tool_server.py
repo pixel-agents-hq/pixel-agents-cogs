@@ -7,7 +7,7 @@ from __future__ import annotations
 import unittest
 from collections.abc import Mapping
 
-from corridor.domain import RegisteredTool
+from corridor.domain import McpCallOptions, RegisteredTool
 
 from ..tools.agent_tool_server import AgentToolServerTool
 
@@ -64,6 +64,24 @@ class TestAgentToolServerTool(unittest.IsolatedAsyncioTestCase):
         await tool.handler(tool.Input.model_validate({}))
 
         self.assertEqual(seen_ctx, [None])
+
+    async def test_handler_passes_mcp_call_options_when_a_read_timeout_is_configured(self) -> None:
+        seen_ctx: list[object] = []
+
+        async def handler(ctx: object, arguments: Mapping[str, object]) -> Mapping[str, object]:
+            seen_ctx.append(ctx)
+            return {}
+
+        tool = AgentToolServerTool(
+            RegisteredTool(
+                name="wait_for_job", description="x", parameters={"type": "object"}, handler=handler
+            ),
+            read_timeout_seconds=120.0,
+        )
+
+        await tool.handler(tool.Input.model_validate({}))
+
+        self.assertEqual(seen_ctx, [McpCallOptions(timeout_seconds=120.0)])
 
 
 if __name__ == "__main__":

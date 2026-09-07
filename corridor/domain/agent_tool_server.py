@@ -45,4 +45,25 @@ class RegisteredMcpServer:
     agent_allowed: AgentAllowedCheck
 
 
-__all__ = ["AgentAllowedCheck", "RegisteredMcpServer"]
+@dataclass(frozen=True, slots=True)
+class McpCallOptions:
+    """Optional per-invocation override for one `RegisteredTool.handler`
+    call routed through `AgentToolServerRegistry._wrap_tool` -- passed as
+    that handler's otherwise-opaque `ctx: object` argument by an
+    agent-side adapter (e.g. animator's `AgentToolServerTool`) that needs
+    to bound how long a *specific* MCP tool call's own network request may
+    take, distinct from every other `RegisteredTool` consumer, which passes
+    a real Discord `commands.Context` (or `None`) there instead. A handler
+    built by `_wrap_tool` checks `isinstance(ctx, McpCallOptions)` before
+    treating it as one, so passing a real ctx object elsewhere is
+    unaffected.
+
+    `timeout_seconds=None` (the default) keeps `McpClientPool.call_tool`'s
+    own default timeout unchanged -- see that method's docstring for why a
+    longer one is ever needed (a registered server's own
+    `wait_for_job`-shaped tool blocking well past the SDK's 30s default)."""
+
+    timeout_seconds: float | None = None
+
+
+__all__ = ["AgentAllowedCheck", "McpCallOptions", "RegisteredMcpServer"]

@@ -30,4 +30,25 @@ def parse_request_timeout(raw: str) -> tuple[float | None, str | None]:
     return value, None
 
 
-__all__ = ["TIMEOUT_DEFAULT_LITERALS", "parse_request_timeout"]
+def parse_read_timeout(raw: str) -> tuple[float | None, str | None]:
+    """Same parsing shape as `parse_request_timeout` above, for
+    `read_timeout_seconds` (`GlobalSettings`) -- kept as its own function,
+    not a thin alias, so its error text names the right setting and
+    default (`McpClientPool`'s own "wait indefinitely", not corridor's LLM
+    connection default)."""
+
+    if raw.strip().lower() in TIMEOUT_DEFAULT_LITERALS:
+        return None, None
+    try:
+        value = float(raw)
+    except ValueError:
+        return None, (
+            f"{raw!r} is not a valid read timeout -- give a positive number of seconds, "
+            "or `default` to wait indefinitely"
+        )
+    if value <= 0:
+        return None, "Read timeout must be a positive number of seconds, or `default`."
+    return value, None
+
+
+__all__ = ["TIMEOUT_DEFAULT_LITERALS", "parse_read_timeout", "parse_request_timeout"]

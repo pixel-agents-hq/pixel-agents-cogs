@@ -61,6 +61,7 @@ process-scoped, with no per-guild state of its own.
 |---|---|
 | `[p]animator maxtoolcalls <count>` | Set the max tool calls animator may make per A2A turn |
 | `[p]animator requesttimeout <seconds\|default>` | Override the LLM request timeout for animator's tool loop, or reset to corridor's shared default |
+| `[p]animator readtimeout <seconds\|default>` | Override the MCP tool-call read timeout for animator's bridged pixel-art-mcp tools (used as pixel-art-mcp's `wait_for_job` timeout), or reset to wait indefinitely |
 | `[p]animator debuglogging <true\|false>` | Enable/disable verbose per-tool-call logging |
 | `[p]animator prompt set <text>` | Set animator's system prompt |
 | `[p]animator prompt reset` | Reset the system prompt to the default |
@@ -75,6 +76,18 @@ request timeout may be too short for animator specifically -- if you see
 180`). `[p]animator requesttimeout default` resets to corridor's own
 shared default.
 
+pixel-art-mcp's `wait_for_job` tool blocks server-side (up to its own
+configured maximum -- see its own `get_capabilities` limits) instead of
+requiring repeated `get_job` polls, and animator's system prompt directs
+the model to use it. That server-side wait needs a matching client-side
+network timeout, or the call fails here before the server ever gets a
+chance to respond -- that's `[p]animator readtimeout`, independent of
+`requesttimeout` above (which only covers the LLM completion call, not
+MCP tool calls). Set it to at least pixel-art-mcp's own
+`wait_for_job_max_timeout`, e.g. `[p]animator readtimeout 120`.
+`[p]animator readtimeout default` resets to waiting indefinitely for a
+tool call's response.
+
 ## Architecture
 
 Animator's tool list, rebuilt fresh every A2A turn (so a `[p]telephonepole
@@ -82,7 +95,7 @@ agents` toggle takes effect immediately, no reload needed):
 
 1. Whatever `pixel-art-mcp` tools are currently enabled for `animator`
    (`create_project`, `execute_blender_python`, `inspect_scene`,
-   `render_preview`, `render_sprites`, `get_job`, `cancel_job`,
+   `render_preview`, `render_sprites`, `get_job`, `wait_for_job`, `cancel_job`,
    `get_artifact`, ...) -- bridged via `tools/agent_tool_server.py`'s
    `AgentToolServerTool`, adapting each `corridor.domain.RegisteredTool`
    into animator's own `ToolSpec`.

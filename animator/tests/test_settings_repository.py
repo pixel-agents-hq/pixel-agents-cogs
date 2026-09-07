@@ -26,6 +26,7 @@ class TestRedAnimatorRepository(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(settings.system_prompt, DEFAULT_SYSTEM_PROMPT)
         self.assertEqual(settings.debug_logging, DEFAULT_DEBUG_LOGGING)
         self.assertIsNone(settings.request_timeout_seconds)
+        self.assertIsNone(settings.read_timeout_seconds)
 
     async def test_set_max_tool_calls_persists(self) -> None:
         await self.repository.set_max_tool_calls(3)
@@ -86,3 +87,30 @@ class TestRedAnimatorRepository(unittest.IsolatedAsyncioTestCase):
     async def test_set_request_timeout_rejects_bool(self) -> None:
         with pytest.raises(ValueError):
             await self.repository.set_request_timeout(True)
+
+    async def test_set_read_timeout_persists(self) -> None:
+        await self.repository.set_read_timeout(180.0)
+
+        settings = await self.repository.global_settings()
+
+        self.assertEqual(settings.read_timeout_seconds, 180.0)
+
+    async def test_set_read_timeout_none_resets_to_the_default(self) -> None:
+        await self.repository.set_read_timeout(180.0)
+
+        await self.repository.set_read_timeout(None)
+
+        settings = await self.repository.global_settings()
+        self.assertIsNone(settings.read_timeout_seconds)
+
+    async def test_set_read_timeout_rejects_non_positive_values(self) -> None:
+        with pytest.raises(ValueError):
+            await self.repository.set_read_timeout(0)
+
+    async def test_set_read_timeout_rejects_negative_values(self) -> None:
+        with pytest.raises(ValueError):
+            await self.repository.set_read_timeout(-5.0)
+
+    async def test_set_read_timeout_rejects_bool(self) -> None:
+        with pytest.raises(ValueError):
+            await self.repository.set_read_timeout(True)

@@ -15,7 +15,7 @@ from redbot.core import commands
 from corridor.domain import ReplyField
 
 from ..infrastructure import RedAnimatorRepository
-from .validation import parse_request_timeout
+from .validation import parse_read_timeout, parse_request_timeout
 
 _MASKED_KEY = "•" * 8
 
@@ -77,6 +77,25 @@ class CommandsMixin:
         display = "default" if timeout_value is None else f"{timeout_value:g}s"
         await self._reply.send_reply(ctx, description=f"Request timeout is now {display}.")
 
+    @animator_group.command(name="readtimeout")
+    @commands.is_owner()
+    async def readtimeout(self, ctx: commands.Context, value: str) -> None:
+        """Override the MCP tool-call read timeout (in seconds) for
+        animator's bridged pixel-art-mcp tools, or reset it to
+        McpClientPool's own default (wait indefinitely) with `default`.
+
+        This is used as the timeout for pixel-art-mcp's wait_for_job tool
+        specifically -- raise it if wait_for_job calls are timing out
+        before the render they're waiting on actually finishes."""
+
+        timeout_value, error = parse_read_timeout(value)
+        if error is not None:
+            await self._reply.send_reply(ctx, description=error)
+            return
+        await self._repository.set_read_timeout(timeout_value)
+        display = "default (wait indefinitely)" if timeout_value is None else f"{timeout_value:g}s"
+        await self._reply.send_reply(ctx, description=f"Read timeout is now {display}.")
+
     @animator_group.group(name="prompt", invoke_without_command=True)
     @commands.is_owner()
     async def prompt_group(self, ctx: commands.Context) -> None:
@@ -126,6 +145,13 @@ class CommandsMixin:
                 "default (corridor's shared setting)"
                 if settings.request_timeout_seconds is None
                 else f"{settings.request_timeout_seconds:g}s",
+                False,
+            ),
+            ReplyField(
+                "Read Timeout",
+                "default (wait indefinitely)"
+                if settings.read_timeout_seconds is None
+                else f"{settings.read_timeout_seconds:g}s",
                 False,
             ),
             ReplyField("Debug Logging", "on" if settings.debug_logging else "off"),

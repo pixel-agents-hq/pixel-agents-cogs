@@ -27,11 +27,12 @@ DEFAULT_SYSTEM_PROMPT = (
     "Discord user ever talks to you directly. Another agent (Pico) has delegated a "
     "pixel-art modeling/rendering task to you. "
     "Your tools come from pixel-art-mcp: create_project, execute_blender_python, "
-    "inspect_scene, render_preview, render_sprites, get_job, cancel_job, "
+    "inspect_scene, render_preview, render_sprites, get_job, wait_for_job, cancel_job, "
     "get_artifact, and related project/reference tools. Model in Blender via "
     "execute_blender_python, inspect renders with render_preview before committing "
-    "to a final render_sprites, and poll get_job (with a short delay between polls, "
-    "never a tight loop) until a job reaches a terminal status. "
+    "to a final render_sprites, and use wait_for_job (not a get_job polling loop) to "
+    "wait for a job to reach a terminal status -- call it again if it returns before "
+    "the job is done. "
     "When someone wants an installable pixel-agents furniture package, call "
     "render_sprites with pixel_agents set (asset_id, name, ...). Once that job's "
     "get_job status is 'succeeded', call deliver_pixel_agents_assets with its job_id -- "
@@ -58,12 +59,18 @@ DEFAULT_DEBUG_LOGGING = False
 # `GlobalSettings.request_timeout_seconds`'s own docstring for why animator
 # (unlike architect/painter) has a real per-agent override at all.
 DEFAULT_REQUEST_TIMEOUT_SECONDS: float | None = None
+# `None` means "use McpClientPool's own default" (wait indefinitely for a
+# tool call's response), not "no timeout" -- see
+# `GlobalSettings.read_timeout_seconds`'s own docstring for why this is a
+# separate setting from `request_timeout_seconds` above.
+DEFAULT_READ_TIMEOUT_SECONDS: float | None = None
 
 GLOBAL_DEFAULTS: dict[str, object] = {
     "max_tool_calls": DEFAULT_MAX_TOOL_CALLS,
     "system_prompt": DEFAULT_SYSTEM_PROMPT,
     "debug_logging": DEFAULT_DEBUG_LOGGING,
     "request_timeout_seconds": DEFAULT_REQUEST_TIMEOUT_SECONDS,
+    "read_timeout_seconds": DEFAULT_READ_TIMEOUT_SECONDS,
 }
 
 
@@ -93,6 +100,7 @@ class RedAnimatorRepository:
             request_timeout_seconds=cast(
                 "float | None", await self._config.request_timeout_seconds()
             ),
+            read_timeout_seconds=cast("float | None", await self._config.read_timeout_seconds()),
         )
 
     async def set_max_tool_calls(self, value: int) -> None:
@@ -119,11 +127,23 @@ class RedAnimatorRepository:
             )
         await self._config.request_timeout_seconds.set(value)
 
+    async def set_read_timeout(self, value: float | None) -> None:
+        """`None` resets to `McpClientPool`'s own default (wait
+        indefinitely) -- see `GlobalSettings.read_timeout_seconds`'s own
+        docstring."""
+
+        if value is not None and (isinstance(value, bool) or value <= 0):
+            raise ValueError(
+                "Read timeout must be a positive number of seconds, or omitted for the default."
+            )
+        await self._config.read_timeout_seconds.set(value)
+
 
 __all__ = [
     "CONFIG_IDENTIFIER",
     "DEFAULT_DEBUG_LOGGING",
     "DEFAULT_MAX_TOOL_CALLS",
+    "DEFAULT_READ_TIMEOUT_SECONDS",
     "DEFAULT_REQUEST_TIMEOUT_SECONDS",
     "DEFAULT_SYSTEM_PROMPT",
     "GLOBAL_DEFAULTS",

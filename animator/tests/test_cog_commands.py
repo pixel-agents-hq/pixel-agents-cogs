@@ -148,6 +148,37 @@ class TestAnimatorCommands(unittest.IsolatedAsyncioTestCase):
         timeout_field = next(f for f in fields if f.name == "Request Timeout")
         self.assertEqual(timeout_field.value, "90s")
 
+    async def test_status_shows_the_default_read_timeout(self) -> None:
+        await self.cog.status.callback(self.cog, self.ctx)
+
+        fields = self.bot.corridor.replies[-1]["fields"]
+        timeout_field = next(f for f in fields if f.name == "Read Timeout")
+        self.assertIn("indefinitely", timeout_field.value)
+
+    async def test_status_shows_an_overridden_read_timeout(self) -> None:
+        await self.cog.readtimeout.callback(self.cog, self.ctx, "180")
+
+        await self.cog.status.callback(self.cog, self.ctx)
+
+        fields = self.bot.corridor.replies[-1]["fields"]
+        timeout_field = next(f for f in fields if f.name == "Read Timeout")
+        self.assertEqual(timeout_field.value, "180s")
+
+    async def test_readtimeout_rejects_a_non_positive_value(self) -> None:
+        await self.cog.readtimeout.callback(self.cog, self.ctx, "-1")
+
+        settings = await self.cog._repository.global_settings()
+        self.assertIsNone(settings.read_timeout_seconds)
+        self.assertIn("positive", _descriptions(self.bot)[-1])
+
+    async def test_readtimeout_default_resets_to_none(self) -> None:
+        await self.cog.readtimeout.callback(self.cog, self.ctx, "180")
+
+        await self.cog.readtimeout.callback(self.cog, self.ctx, "default")
+
+        settings = await self.cog._repository.global_settings()
+        self.assertIsNone(settings.read_timeout_seconds)
+
 
 class TestCogLoadSurvivesARegistrationFailure(unittest.IsolatedAsyncioTestCase):
     """A broken/raising corridor.register_agent call (a stale reference, a

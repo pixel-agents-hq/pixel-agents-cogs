@@ -24,7 +24,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
-from corridor.domain import RegisteredTool
+from corridor.domain import McpCallOptions, RegisteredTool
 
 
 class _PassthroughOutput(BaseModel):
@@ -48,12 +48,24 @@ def _passthrough_input_model(tool_name: str, parameters: dict[str, Any]) -> type
 
 
 class AgentToolServerTool:
-    """Wraps one corridor `RegisteredTool` as an animator `ToolSpec`."""
+    """Wraps one corridor `RegisteredTool` as an animator `ToolSpec`.
 
-    def __init__(self, tool: RegisteredTool) -> None:
+    `read_timeout_seconds`, when given, is passed down as an
+    `McpCallOptions` in place of the `ctx=None` every other
+    `AgentToolServerTool` copy (architect's/painter's/bootcamp's, pico's
+    `CrossCogTool`) always passes -- see that type's own docstring. Set
+    from animator's `[p]animator readtimeout`
+    (`GlobalSettings.read_timeout_seconds`): pixel-art-mcp's own tool calls
+    can include a genuinely blocking `wait_for_job`, which needs a real
+    per-call network timeout far longer (or, per-call, shorter) than
+    `McpClientPool`'s own default -- see that method's docstring for why an
+    `httpx`-level override alone would not have been enough here."""
+
+    def __init__(self, tool: RegisteredTool, *, read_timeout_seconds: float | None = None) -> None:
         self._tool = tool
         self.name = tool.name
         self.description = tool.description
+        self._read_timeout_seconds = read_timeout_seconds
         # Eager, not lazy inside the Input property: a malformed
         # `parameters` must fail here, at adapt time -- where the per-entry
         # try/except building animator's tool list can log and skip just
@@ -71,7 +83,12 @@ class AgentToolServerTool:
         return _PassthroughOutput
 
     async def handler(self, raw_input: BaseModel) -> BaseModel:
-        result = await self._tool.handler(None, raw_input.model_dump())
+        ctx = (
+            McpCallOptions(timeout_seconds=self._read_timeout_seconds)
+            if self._read_timeout_seconds is not None
+            else None
+        )
+        result = await self._tool.handler(ctx, raw_input.model_dump())
         return _PassthroughOutput.model_validate(dict(result))
 
 

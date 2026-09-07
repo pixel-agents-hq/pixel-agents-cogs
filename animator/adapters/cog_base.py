@@ -53,18 +53,24 @@ AVATAR_PATH = Path(__file__).resolve().parent.parent / "assets" / "avatar.png"
 _HTTP_TIMEOUT_SECONDS = 120.0
 
 
-async def _mcp_tools(corridor: Any) -> list[ToolSpec]:
+async def _mcp_tools(corridor: Any, *, read_timeout_seconds: float | None = None) -> list[ToolSpec]:
     """Every MCP tool `[p]telephonepole` (or any future agent-tool-server
     provider) currently makes available to animator -- same shape
     architect's/painter's own `_mcp_tools` uses. Fetched fresh every turn,
     not cached, so a bot owner flipping a per-agent toggle takes effect on
     animator's very next turn. See docs/suggestionbox-design.md §6 and
-    docs/telephonepole-design.md."""
+    docs/telephonepole-design.md.
+
+    `read_timeout_seconds` is passed straight through to every wrapped
+    tool (`AgentToolServerTool`'s own `read_timeout_seconds`, see that
+    class's docstring) -- animator's `[p]animator readtimeout`, read fresh
+    each turn alongside the tool list itself so a change takes effect
+    immediately too."""
 
     tools: list[ToolSpec] = []
     for tool in await corridor.list_agent_tools_for(ANIMATOR_AGENT_KEY):
         try:
-            tools.append(AgentToolServerTool(tool))
+            tools.append(AgentToolServerTool(tool, read_timeout_seconds=read_timeout_seconds))
         except Exception:
             log.warning(
                 "animator: could not adapt MCP tool %r, skipping",
@@ -110,8 +116,17 @@ class CogBase:
             settings=self._repository.global_settings,
             llm_settings=lambda: self._corridor.llm_settings(),
             publish_activity=self._publish_activity,
-            mcp_tools=lambda: _mcp_tools(self._corridor),
+            mcp_tools=self._mcp_tools,
         )
+
+    async def _mcp_tools(self) -> list[ToolSpec]:
+        """Bound method form of the module-level `_mcp_tools`, so
+        `AnimatorAgentExecutor`'s `mcp_tools` callback can read animator's
+        *current* `read_timeout_seconds` each turn instead of whatever was
+        configured at `__init__` time."""
+
+        settings = await self._repository.global_settings()
+        return await _mcp_tools(self._corridor, read_timeout_seconds=settings.read_timeout_seconds)
 
     async def cog_load(self) -> None:
         """`required_cogs` in `info.json` is only a Downloader install

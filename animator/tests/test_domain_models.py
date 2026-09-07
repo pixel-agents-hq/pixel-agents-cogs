@@ -17,6 +17,7 @@ def test_global_settings_holds_its_fields() -> None:
     assert settings.system_prompt == "Be terse."
     assert settings.debug_logging is True
     assert settings.request_timeout_seconds is None
+    assert settings.read_timeout_seconds is None
 
 
 def test_global_settings_is_frozen() -> None:

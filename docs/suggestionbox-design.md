@@ -427,14 +427,32 @@ holding one reusable session open the way `LiteLLMClient` holds one
 reusable `aiohttp.ClientSession` for corridor's other outbound client.
 `LiteLLMClient` reuses a session because pico's and architect's chat
 completions are frequent, latency-sensitive traffic; a registered
-server's tools are called rarely -- an agent reporting one error, a bot
+server's *tool calls* are rare -- an agent reporting one error, a bot
 owner running a suggestion through once -- so the per-call connection
 setup cost is a good trade for never needing reconnect-on-drop or
-session-id bookkeeping across arbitrarily long idle gaps.
-`AgentToolServerRegistry.register()` correspondingly only fetches and
-caches a `tools/list` snapshot at registration time; it holds no live
-connection to close later, so `unregister()`/`unregister_owner()` simply
-drop that cached entry.
+session-id bookkeeping across arbitrarily long idle gaps. This also rules
+out the MCP spec's own `notifications/tools/list_changed` push
+notification as a way to invalidate the cache below: receiving it needs a
+standing `ClientSession` to listen on, which is exactly the persistent
+connection this tradeoff opts out of.
+
+`AgentToolServerRegistry.register()` fetches a `tools/list` snapshot and
+caches it with the time it was fetched. Unlike tool *calls*, a
+registered server's *schema* going stale (a third-party server ships a
+new/changed/removed tool) has no natural trigger to key a refresh off
+of -- so `list_tools_for()` treats that cached snapshot as fresh for
+`FRESH_TTL_SECONDS` (5 minutes) and transparently re-fetches it once
+expired, the same TTL-with-stale-fallback policy `ModelCatalogService`
+already uses for LiteLLM's model catalogue: a failed re-fetch (the server
+is briefly down) just keeps serving the last-known tool list rather than
+erroring or evicting it, since a registered server going quiet mid-turn
+shouldn't break an agent's tool loop. `register()` re-fetching
+unconditionally on every call (rather than also being TTL-gated) means
+re-registering the same `base_url` -- a repeat `cog_load` today --
+always forces an immediate, un-cached refresh; a
+future manual-refresh command could reuse `register()` for exactly that
+reason without any registry change. `unregister()`/`unregister_owner()`
+simply drop the cached entry; there's still no live connection to close.
 
 **Why the per-agent toggle is a plain callable at registration time, not
 a third-party filter hook.** Toolbox's `ToolVisibilityFilter` exists
@@ -463,8 +481,11 @@ cog's fixed tool list is built. Fetching `list_agent_tools_for(agent_key)`
 fresh inside `execute()` (the same shape pico's own
 `_agent_tools`/`_cross_cog_tools` already use for `corridor.list_agents()`/
 `corridor.list_tools_for(ctx)`) means a bot owner's toggle flip takes
-effect on that agent's very next A2A message, with no cog reload and no
-local cache to invalidate.
+effect on that agent's very next A2A message, with no cog reload -- and,
+since `AgentToolServerRegistry.list_tools_for()` also re-checks each
+registered server's tool-list TTL on this same call (see "Why the MCP
+client is stateless" above), no cog reload needed for a schema change to
+surface either, just a `FRESH_TTL_SECONDS` wait at worst.
 
 **Why `report_error` and `suggest_improvement` are two distinct tools,
 not one generic `submit_feedback`.** Each gets its own schema -- a caller

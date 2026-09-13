@@ -7,12 +7,25 @@ Same register/unregister_owner/unregister shape `ToolRegistryService`/
 `AgentDirectoryService` already follow, generalized a third time: this one
 holds a live MCP client connection's cached tool list per registered
 server, gated per `agent_key` rather than per Discord permission group.
+
+A registered server's tool list is a short-TTL cache with stale fallback,
+the same policy `ModelCatalogService` (`corridor/application/
+model_catalog_service.py`) already uses for LiteLLM's model catalogue: a
+fresh cache hit skips the network entirely, an expired entry triggers one
+re-fetch on the next `list_tools_for()` call, and a failed re-fetch just
+keeps serving the last-known tool list rather than erroring or evicting
+it -- a third-party server that's briefly unreachable shouldn't break an
+agent's tool loop mid-conversation. See docs/suggestionbox-design.md's
+"Why the MCP client is stateless" rationale for why this is a TTL, not a
+persistent connection kept open for a push notification.
 """
 
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping
+import time
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from typing import Any, Protocol
 
 from mcp import types as mcp_types
@@ -22,6 +35,13 @@ from ..domain.models import RegisteredTool
 from ..infrastructure.mcp_client import McpRequestError
 
 log = logging.getLogger("red.corridor")
+
+# Short enough that a third-party server's schema change is picked up
+# without a manual refresh or cog reload; long enough that an agent
+# holding a fast back-and-forth conversation isn't paying a network
+# round-trip per registered server on every turn. Same constant name/value
+# shape as `model_catalog_service.FRESH_TTL_SECONDS`.
+FRESH_TTL_SECONDS = 5 * 60.0
 
 
 class McpTools(Protocol):
@@ -42,16 +62,27 @@ class McpTools(Protocol):
     ) -> Mapping[str, Any]: ...
 
 
+@dataclass(frozen=True, slots=True)
+class _ServerEntry:
+    owner: str
+    server: RegisteredMcpServer
+    tools: tuple[RegisteredTool, ...]
+    fetched_at: float
+
+
 class AgentToolServerRegistry:
     """One registry per bot process, not per guild -- same scoping as
     ToolRegistryService/AgentDirectoryService."""
 
-    def __init__(self, client_pool: McpTools) -> None:
+    def __init__(
+        self,
+        client_pool: McpTools,
+        *,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
         self._client_pool = client_pool
-        # base_url -> (owner, server, that server's tools, cached at
-        # registration time -- see docs/suggestionbox-design.md §9 on why
-        # this isn't re-fetched on a schedule).
-        self._servers: dict[str, tuple[str, RegisteredMcpServer, tuple[RegisteredTool, ...]]] = {}
+        self._clock = clock
+        self._servers: dict[str, _ServerEntry] = {}
 
     async def register(self, server: RegisteredMcpServer, *, owner: str) -> str | None:
         """Connects to `server.base_url`, fetches its current tool list,
@@ -59,16 +90,18 @@ class AgentToolServerRegistry:
         (never raises, same never-raise convention `A2AServer.start`
         already uses), `None` on success. Re-registering the same
         `base_url` under the same `owner` re-fetches and overwrites --
-        idempotent across repeat `cog_load` calls. A name collision from a
-        *different* owner is a real authoring conflict, so it raises
-        instead of silently letting one shadow the other -- same collision
-        policy as `ToolRegistryService.register`/`AgentDirectoryService.
-        register`."""
+        idempotent across repeat `cog_load` calls, and resets the TTL
+        clock too, so it always forces an immediate refresh regardless of
+        how fresh the previous cache entry still was. A name collision
+        from a *different* owner is a real authoring conflict, so it
+        raises instead of silently letting one shadow the other -- same
+        collision policy as `ToolRegistryService.register`/
+        `AgentDirectoryService.register`."""
 
         existing = self._servers.get(server.base_url)
-        if existing is not None and existing[0] != owner:
+        if existing is not None and existing.owner != owner:
             raise ValueError(
-                f"MCP server {server.base_url!r} is already registered by {existing[0]!r}, "
+                f"MCP server {server.base_url!r} is already registered by {existing.owner!r}, "
                 f"cannot re-register it for {owner!r}"
             )
         try:
@@ -77,7 +110,9 @@ class AgentToolServerRegistry:
             log.warning("corridor: could not register MCP server %r: %s", server.base_url, exc)
             return str(exc)
         registered = tuple(self._wrap_tool(tool, server.base_url) for tool in tools)
-        self._servers[server.base_url] = (owner, server, registered)
+        self._servers[server.base_url] = _ServerEntry(
+            owner=owner, server=server, tools=registered, fetched_at=self._clock()
+        )
         return None
 
     def unregister_owner(self, owner: str) -> None:
@@ -85,7 +120,7 @@ class AgentToolServerRegistry:
         cog_unload -- same convention as ToolRegistryService.
         unregister_owner."""
 
-        for url in [u for u, (o, _, _) in self._servers.items() if o == owner]:
+        for url in [u for u, entry in self._servers.items() if entry.owner == owner]:
             del self._servers[url]
 
     def unregister(self, base_url: str) -> None:
@@ -99,22 +134,62 @@ class AgentToolServerRegistry:
         (agent_key)` returns True -- an agent's own tool loop calls this
         fresh every turn (see docs/suggestionbox-design.md §6), so a bot
         owner flipping suggestionbox's Components V2 toggle takes effect
-        on that agent's very next turn, no cog reload required."""
+        on that agent's very next turn, no cog reload required.
+
+        Also refreshes each server's cached tool *list* (not just the
+        gate) once its entry is older than `FRESH_TTL_SECONDS` -- see the
+        module docstring for the TTL-with-stale-fallback policy."""
 
         allowed: list[RegisteredTool] = []
-        for _owner, server, tools in self._servers.values():
+        for base_url in list(self._servers):
+            entry = self._servers.get(base_url)
+            if entry is None:
+                continue
+            entry = await self._refresh_if_stale(base_url, entry)
             try:
-                if not await server.agent_allowed(agent_key):
+                if not await entry.server.agent_allowed(agent_key):
                     continue
             except Exception:
                 log.warning(
                     "corridor: agent_allowed check failed for MCP server %r; omitting its tools",
-                    server.base_url,
+                    entry.server.base_url,
                     exc_info=True,
                 )
                 continue
-            allowed.extend(tools)
+            allowed.extend(entry.tools)
         return tuple(allowed)
+
+    async def _refresh_if_stale(self, base_url: str, entry: _ServerEntry) -> _ServerEntry:
+        """Re-fetches `base_url`'s tool list once `entry` is older than
+        `FRESH_TTL_SECONDS`. A failed re-fetch logs and returns `entry`
+        unchanged -- a briefly-unreachable server keeps serving its last-
+        known tools rather than losing them for the turn, same
+        stale-on-failure policy `ModelCatalogService.list_models` uses."""
+
+        if self._clock() - entry.fetched_at <= FRESH_TTL_SECONDS:
+            return entry
+        try:
+            tools = await self._client_pool.list_tools(base_url)
+        except McpRequestError as exc:
+            log.warning(
+                "corridor: could not refresh MCP server %r tool list; serving stale cache: %s",
+                base_url,
+                exc,
+            )
+            return entry
+        refreshed = _ServerEntry(
+            owner=entry.owner,
+            server=entry.server,
+            tools=tuple(self._wrap_tool(tool, base_url) for tool in tools),
+            fetched_at=self._clock(),
+        )
+        # Only write back if nothing else (an explicit re-`register()`, an
+        # `unregister()`) changed this entry while the fetch above was
+        # in flight -- otherwise we'd resurrect a since-unregistered
+        # server or clobber a newer explicit registration.
+        if self._servers.get(base_url) is entry:
+            self._servers[base_url] = refreshed
+        return refreshed
 
     def _wrap_tool(self, tool: mcp_types.Tool, base_url: str) -> RegisteredTool:
         name = tool.name
@@ -144,4 +219,4 @@ class AgentToolServerRegistry:
         )
 
 
-__all__ = ["AgentToolServerRegistry"]
+__all__ = ["FRESH_TTL_SECONDS", "AgentToolServerRegistry"]

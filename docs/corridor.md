@@ -276,12 +276,17 @@ architect's and painter's tool loops without either cog importing the
 other. A providing cog calls `corridor.register_mcp_server(RegisteredMcpServer(
 owner=..., base_url=..., agent_allowed=...), owner=...)` from its own
 `cog_load`; corridor connects to that server's Streamable HTTP endpoint
-via `McpClientPool` and caches its tool list at registration time (not
-re-fetched on a schedule). An agent's own tool loop calls
+via `McpClientPool` and caches its tool list, refreshed with a short TTL
+and stale fallback (`AgentToolServerRegistry.FRESH_TTL_SECONDS`, 5
+minutes) rather than on every call or never at all — the same
+TTL-with-stale-fallback policy `ModelCatalogService` uses for LiteLLM's
+model catalogue. An agent's own tool loop calls
 `corridor.list_agent_tools_for(agent_key)` fresh every turn to get every
 tool it's currently allowed to use — gated per `agent_key` by the
 *registering* cog's own `agent_allowed` check, not by corridor's Discord
-permission groups.
+permission groups; that same fresh-every-turn call is also what checks
+whether a registered server's tool-list cache has gone stale and
+re-fetches it.
 
 ```mermaid
 sequenceDiagram

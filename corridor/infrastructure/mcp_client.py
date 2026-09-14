@@ -74,8 +74,12 @@ on-drop or session-id bookkeeping across arbitrarily long idle gaps.
 
 from __future__ import annotations
 
+import asyncio
+import base64
+import binascii
 import logging
 from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any
 
@@ -84,6 +88,40 @@ from mcp import types as mcp_types
 from mcp.client.streamable_http import streamable_http_client
 
 log = logging.getLogger("red.corridor")
+
+MAX_MEDIA_BYTES = 8 * 1024 * 1024
+MAX_MEDIA_BLOCKS = 8
+
+
+@dataclass(frozen=True)
+class McpToolListing:
+    tools: tuple[mcp_types.Tool, ...]
+    instructions: str = ""
+
+
+@dataclass(frozen=True)
+class McpImage:
+    mime_type: str
+    data_base64: str
+
+
+@dataclass(frozen=True)
+class McpResource:
+    uri: str
+    mime_type: str
+    data: bytes
+
+
+class McpToolResult(dict[str, Any]):
+    """JSON-compatible text result with out-of-band media for capable adapters.
+
+    Ordinary dict/JSON consumers never serialize binary payloads into model text or logs.
+    """
+
+    def __init__(self, content: Mapping[str, Any]) -> None:
+        super().__init__(content)
+        self.images: tuple[McpImage, ...] = ()
+        self.resources: tuple[McpResource, ...] = ()
 
 
 class McpRequestError(RuntimeError):
@@ -102,17 +140,29 @@ class McpClientPool:
         self._log = logger or log
 
     async def list_tools(self, base_url: str) -> tuple[mcp_types.Tool, ...]:
-        """Every tool `base_url` currently advertises. Raises
-        `McpRequestError` on any connection/protocol failure -- callers
-        decide what "a server that can't even be listed" means for their
-        own registration flow."""
+        return (await self.discover_tools(base_url)).tools
+
+    async def discover_tools(self, base_url: str) -> McpToolListing:
+        """Read current instructions and all tool pages within a bounded handshake."""
 
         try:
-            async with streamable_http_client(base_url) as (read, write, _get_session_id):
-                async with ClientSession(read, write) as session:
-                    await session.initialize()
-                    result = await session.list_tools()
-                    return tuple(result.tools)
+            async with asyncio.timeout(30):
+                async with streamable_http_client(base_url) as (read, write, _get_session_id):
+                    async with ClientSession(read, write) as session:
+                        initialized = await session.initialize()
+                        tools: list[mcp_types.Tool] = []
+                        cursor = None
+                        seen: set[str] = set()
+                        for _ in range(100):
+                            result = await session.list_tools(cursor=cursor)
+                            tools.extend(result.tools)
+                            cursor = result.nextCursor
+                            if not cursor:
+                                return McpToolListing(tuple(tools), initialized.instructions or "")
+                            if cursor in seen:
+                                break
+                            seen.add(cursor)
+                        raise McpRequestError("MCP tool pagination did not terminate")
         except Exception as exc:
             raise McpRequestError(f"could not list tools from {base_url}: {exc}") from exc
 
@@ -171,16 +221,70 @@ def _result_text(result: mcp_types.CallToolResult) -> str:
     return "\n".join(texts) if texts else "(no text content)"
 
 
-def _result_to_mapping(result: mcp_types.CallToolResult) -> dict[str, Any]:
-    """Prefers `structuredContent` (already a JSON object) when the server
-    provided one; otherwise falls back to joined text content under a
-    single `"text"` key -- same "small, stable, JSON-serializable" bar
-    `corridor-tool-registry-design.md` sets for `RegisteredTool` results."""
-
-    if result.structuredContent is not None:
-        return dict(result.structuredContent)
+def _result_to_mapping(result: mcp_types.CallToolResult) -> McpToolResult:
     texts = [block.text for block in result.content if isinstance(block, mcp_types.TextContent)]
-    return {"text": "\n".join(texts)} if texts else {}
+    mapped = McpToolResult(
+        result.structuredContent
+        if result.structuredContent is not None
+        else {"text": "\n".join(texts)}
+        if texts
+        else {}
+    )
+    images: list[McpImage] = []
+    resources: list[McpResource] = []
+    warnings: list[str] = []
+    remaining = MAX_MEDIA_BYTES
+    for block in result.content:
+        if not isinstance(block, (mcp_types.ImageContent, mcp_types.EmbeddedResource)):
+            continue
+        if len(images) + len(resources) >= MAX_MEDIA_BLOCKS:
+            warnings.append("Media block limit exceeded; request fewer images/resources.")
+            break
+        try:
+            if isinstance(block, mcp_types.ImageContent):
+                if block.mimeType not in {"image/png", "image/jpeg", "image/webp", "image/gif"}:
+                    raise ValueError("Unsupported image MIME type")
+                data = _decode_media(block.data, remaining)
+                images.append(McpImage(block.mimeType, block.data))
+            else:
+                resource = block.resource
+                if isinstance(resource, mcp_types.BlobResourceContents):
+                    data = _decode_media(resource.blob, remaining)
+                else:
+                    if len(resource.text) > remaining:
+                        raise ValueError("Media byte limit exceeded")
+                    data = resource.text.encode("utf-8")
+                    if len(data) > remaining:
+                        raise ValueError("Media byte limit exceeded")
+                resources.append(
+                    McpResource(
+                        str(resource.uri), resource.mimeType or "application/octet-stream", data
+                    )
+                )
+            remaining -= len(data)
+        except (ValueError, binascii.Error) as exc:
+            warnings.append(f"Media omitted: {exc}. Request a smaller preview or artifact chunk.")
+    mapped.images = tuple(images)
+    mapped.resources = tuple(resources)
+    if images or resources or warnings:
+        mapped["mcp_media"] = {
+            "image_count": len(images),
+            "resources": [
+                {"uri": r.uri, "mime_type": r.mime_type, "size_bytes": len(r.data)}
+                for r in resources
+            ],
+            "warnings": warnings,
+        }
+    return mapped
+
+
+def _decode_media(encoded: str, remaining: int) -> bytes:
+    if len(encoded) > 4 * ((remaining + 2) // 3):
+        raise ValueError("Media byte limit exceeded")
+    data = base64.b64decode(encoded, validate=True)
+    if len(data) > remaining:
+        raise ValueError("Media byte limit exceeded")
+    return data
 
 
 __all__ = ["McpClientPool", "McpRequestError"]

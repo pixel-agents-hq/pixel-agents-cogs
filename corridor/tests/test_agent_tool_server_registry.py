@@ -13,7 +13,7 @@ from mcp import types as mcp_types
 
 from ..application.agent_tool_server_registry import FRESH_TTL_SECONDS, AgentToolServerRegistry
 from ..domain.agent_tool_server import McpCallOptions, RegisteredMcpServer
-from ..infrastructure.mcp_client import McpRequestError
+from ..infrastructure.mcp_client import McpRequestError, McpToolListing
 
 
 def _tool(name: str) -> mcp_types.Tool:
@@ -41,15 +41,16 @@ class _FakeClientPool:
         self._tools_by_url = tools_by_url
         self.calls: list[tuple[str, str, Mapping[str, Any], float | None]] = []
         self.list_tools_calls: list[str] = []
+        self.instructions = "Live server instructions"
 
-    async def list_tools(self, base_url: str) -> tuple[mcp_types.Tool, ...]:
+    async def discover_tools(self, base_url: str) -> McpToolListing:
         self.list_tools_calls.append(base_url)
         if base_url not in self._tools_by_url:
             raise McpRequestError(f"no such server: {base_url}")
         result = self._tools_by_url[base_url]
         if isinstance(result, Exception):
             raise result
-        return result
+        return McpToolListing(result, self.instructions)
 
     async def call_tool(
         self,
@@ -72,6 +73,57 @@ async def _deny_all(_agent_key: str) -> bool:
 
 
 class TestAgentToolServerRegistry(unittest.IsolatedAsyncioTestCase):
+    async def test_stale_refresh_picks_up_schema_and_instructions_then_falls_back_on_outage(
+        self,
+    ) -> None:
+        pool = _FakeClientPool({"http://s/mcp": (_tool("old"),)})
+        clock = FakeClock()
+        registry = AgentToolServerRegistry(pool, clock=clock)
+        await registry.register(
+            RegisteredMcpServer(owner="A", base_url="http://s/mcp", agent_allowed=_allow_all),
+            owner="A",
+        )
+        pool._tools_by_url["http://s/mcp"] = (
+            mcp_types.Tool(
+                name="drawing",
+                inputSchema={
+                    "type": "object",
+                    "properties": {"commands": {"type": "array"}},
+                },
+            ),
+        )
+        pool.instructions = "Use numeric commands"
+        clock.advance(FRESH_TTL_SECONDS + 1)
+        (tool,) = await registry.list_tools_for("animator")
+        self.assertEqual(tool.name, "drawing")
+        self.assertIn("commands", tool.parameters["properties"])
+        self.assertEqual(tool.server_instructions, "Use numeric commands")
+        pool._tools_by_url.clear()
+        clock.advance(FRESH_TTL_SECONDS + 1)
+        # A failed refresh past the TTL keeps serving the last-known
+        # (stale) tool list rather than dropping the server outright --
+        # same stale-fallback contract the TTL-cache tests below cover.
+        (stale_tool,) = await registry.list_tools_for("animator")
+        self.assertEqual(stale_tool.name, "drawing")
+
+    async def test_unregister_during_discovery_does_not_restore_tools(self) -> None:
+        pool = _FakeClientPool({"http://s/mcp": (_tool("old"),)})
+        clock = FakeClock()
+        registry = AgentToolServerRegistry(pool, clock=clock)
+        await registry.register(
+            RegisteredMcpServer(owner="A", base_url="http://s/mcp", agent_allowed=_allow_all),
+            owner="A",
+        )
+        original = pool.discover_tools
+
+        async def removing(url):
+            registry.unregister(url)
+            return await original(url)
+
+        pool.discover_tools = removing
+        clock.advance(FRESH_TTL_SECONDS + 1)
+        self.assertEqual(await registry.list_tools_for("animator"), ())
+
     async def test_list_tools_for_with_nothing_registered_is_empty(self) -> None:
         registry = AgentToolServerRegistry(_FakeClientPool({}))
 

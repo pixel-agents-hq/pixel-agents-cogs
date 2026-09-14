@@ -111,6 +111,11 @@ onto (`register_agent`/`unregister_agent_owner`) and bridges cog-owned MCP
 tool servers (`register_mcp_server`) into a registered agent's own tool
 loop (`list_agent_tools_for`) — e.g. `suggestionbox`'s feedback tools
 reaching `architect`/`painter` without either side importing the other.
+Each consultation re-discovers enabled servers' current schemas and initialization instructions;
+unreachable servers are omitted, not served from stale snapshots. The MCP client preserves image
+and embedded-resource payloads out-of-band in `McpToolResult`, with bounded metadata in its JSON
+mapping. Animator consumes those images as multimodal model inputs and resources as attachments;
+ordinary text-only adapters remain JSON-compatible. See [Animator](../animator/README.md).
 `architect` (structural layout) and `painter` (color) are both A2A-only
 agents, reachable as `consult_architect`/`consult_painter` tools; `pico`
 is the sole A2A coordinator and the only one with a real Discord bot login.

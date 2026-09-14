@@ -20,11 +20,15 @@ Animator is the first agent whose entire native tool set (besides its own
 
 from __future__ import annotations
 
+from pathlib import PurePosixPath
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, PrivateAttr
 
 from corridor.domain import McpCallOptions, RegisteredTool
+from corridor.infrastructure.mcp_client import McpImage, McpResource, McpToolResult
+
+from .attachment import Attachment
 
 
 class _PassthroughOutput(BaseModel):
@@ -33,6 +37,21 @@ class _PassthroughOutput(BaseModel):
     output schema to the LLM (only `parameters`/Input goes on the wire)."""
 
     model_config = ConfigDict(extra="allow")
+    _images: tuple[McpImage, ...] = PrivateAttr(default=())
+    _resources: tuple[McpResource, ...] = PrivateAttr(default=())
+    _attachments: tuple[Attachment, ...] = PrivateAttr(default=())
+
+    @property
+    def images(self) -> tuple[McpImage, ...]:
+        return self._images
+
+    @property
+    def resources(self) -> tuple[McpResource, ...]:
+        return self._resources
+
+    @property
+    def attachments(self) -> tuple[Attachment, ...]:
+        return self._attachments
 
 
 def _passthrough_input_model(tool_name: str, parameters: dict[str, Any]) -> type[BaseModel]:
@@ -65,6 +84,7 @@ class AgentToolServerTool:
         self._tool = tool
         self.name = tool.name
         self.description = tool.description
+        self.server_instructions = tool.server_instructions
         self._read_timeout_seconds = read_timeout_seconds
         # Eager, not lazy inside the Input property: a malformed
         # `parameters` must fail here, at adapt time -- where the per-entry
@@ -89,7 +109,31 @@ class AgentToolServerTool:
             else None
         )
         result = await self._tool.handler(ctx, raw_input.model_dump())
-        return _PassthroughOutput.model_validate(dict(result))
+        content = dict(result)
+        for reserved in (
+            "images",
+            "resources",
+            "attachments",
+            "_images",
+            "_resources",
+            "_attachments",
+        ):
+            content.pop(reserved, None)
+        output = _PassthroughOutput.model_validate(content)
+        if isinstance(result, McpToolResult):
+            output._images = result.images
+            output._resources = result.resources
+            if self.name == "get_artifact":
+                filename = PurePosixPath(str(result.get("filename", "artifact.bin"))).name
+                output._attachments = tuple(
+                    Attachment(
+                        filename if len(result.resources) == 1 else f"artifact-{i}.bin",
+                        resource.mime_type,
+                        resource.data,
+                    )
+                    for i, resource in enumerate(result.resources)
+                )
+        return output
 
 
 __all__ = ["AgentToolServerTool"]

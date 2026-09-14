@@ -5,8 +5,8 @@ project, running Blender Python, rendering previews/sprites, polling a job)
 comes for free through `AgentToolServerTool`, bridging whatever
 `pixel-art-mcp` tools `[p]telephonepole` has registered and enabled for
 `animator` (see `adapters/cog_base.py`'s `_mcp_tools`). This tool exists to
-fix one specific gap: `pixel-art-mcp`'s own tools only ever return a
-`download_url` as inert JSON text -- nothing turns that into an actual
+provide a single delivery step for both package and preview. MCP also supports
+embedded artifact bytes, but a bare `download_url` is not itself a
 Discord attachment. That would put a raw internal-network URL
 (`http://pixel-art-mcp:8000/artifacts/...`) in front of a Discord user who
 has no way to reach it, so text alone isn't a usable answer here.
@@ -41,17 +41,15 @@ from .attachment import Attachment
 log = logging.getLogger("red.animator")
 
 _ZIP_FILENAME = "pixel-agents.zip"
-# Preferred first: render_sprites only writes preview.gif for multi-frame (animated)
-# exports -- a single-frame, non-animated pixel_agents state has no preview.gif, so
-# static preview.png is the fallback rather than a second wanted file.
+# Prefer an animated preview when available, otherwise the render_asset contact sheet.
 _PREVIEW_FILENAMES = ("preview.gif", "preview.png")
 
 
 class DeliverPixelAgentsAssetsInput(BaseModel):
     job_id: UUID = Field(
         description=(
-            "The job ID of a render_sprites call whose status (via get_job) is already "
-            "'succeeded', and which was called with pixel_agents set."
+            "The job ID of a furniture render_asset call whose status from wait_for_job "
+            "is 'succeeded' and whose artifacts include pixel-agents.zip."
         )
     )
 
@@ -73,12 +71,11 @@ class DeliverPixelAgentsAssetsOutput(BaseModel):
 class DeliverPixelAgentsAssetsTool:
     name = "deliver_pixel_agents_assets"
     description = (
-        "Call this once render_sprites has succeeded (poll get_job until status is "
-        "'succeeded') for a job that was run with pixel_agents set. Fetches the "
+        "Call this once a furniture render_asset job has succeeded (use wait_for_job). Fetches the "
         "resulting pixel-agents.zip and preview (animated preview.gif, or static "
         "preview.png if the export had no animation) and attaches them to the reply "
-        "sent back to Discord. Use this as your final step instead of describing the "
-        "files in text -- a bare download_url is not reachable by a Discord user."
+        "sent back to Discord. Then send a brief final text reply. A bare download_url "
+        "is not reachable by a Discord user."
     )
 
     def __init__(
@@ -125,7 +122,7 @@ class DeliverPixelAgentsAssetsTool:
                 status="error",
                 message=(
                     f"Job {raw_input.job_id} is not finished yet (status: {job_status!r}). "
-                    "Keep polling get_job until it reports 'succeeded', then call this again."
+                    "Use wait_for_job until it reports 'succeeded', then call this again."
                 ),
             )
 

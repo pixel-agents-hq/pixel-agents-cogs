@@ -36,7 +36,7 @@ flowchart LR
     end
 
     subgraph Corridor["corridor"]
-        Registry["AgentToolServerRegistry<br/>owner, base_url, agent_allowed,<br/>cached tools list"]
+        Registry["AgentToolServerRegistry<br/>owner, base_url, agent_allowed,<br/>TTL-cached tools list"]
         Client["McpClientPool<br/>stateless MCP client"]
     end
 
@@ -114,7 +114,7 @@ sequenceDiagram
     Repo-->>Svc: None (not yet registered)
     Svc->>Reg: register("freecad", base_url, agent_allowed)
     Reg->>Reg: corridor.register_mcp_server(...)
-    Note over Reg: connects immediately, fetches the<br/>tool list, caches it
+    Note over Reg: connects immediately, discovers the<br/>tool list, caches it with a TTL
     Reg-->>Svc: None (success) or an error string
     Svc->>Repo: save_server(ThirdPartyMcpServer(...))
     Svc-->>Cmd: None (or the error, unpersisted)
@@ -181,7 +181,7 @@ never-raise convention:
   repository *before* calling the registrar, so a duplicate `add` never
   triggers a redundant registration attempt.
 - **Registrar connection failure** (the third-party server is unreachable,
-  refuses the connection, etc.) -- corridor's `McpClientPool.list_tools`
+  refuses the connection, etc.) -- corridor's `McpClientPool.discover_tools`
   raises `McpRequestError` internally; `AgentToolServerRegistry.register`
   catches it and returns the message as a string, which `add_server`
   passes straight through, unpersisted.

@@ -39,8 +39,8 @@ flowchart LR
     end
 
     subgraph Corridor["corridor"]
-        Registry["AgentToolServerRegistry<br/>owner, base_url, agent_allowed,<br/>cached tools/list"]
-        Client["McpClientPool<br/>stateless MCP client"]
+        Registry["AgentToolServerRegistry<br/>owner, base_url, agent_allowed"]
+        Client["McpClientPool<br/>stateless MCP client<br/>discovers tools per call"]
     end
 
     Ext["External MCP client<br/><small>coding-agent CLI, IDE</small>"]
@@ -70,9 +70,9 @@ flowchart LR
   direction of this data flow (agents *offering* themselves to pico, not
   agents *consuming* a tool server).
 
-`AgentToolServerRegistry` holds a live MCP client's cached tool list per
-registered server, gated per `agent_key` rather than per Discord
-permission group -- following the same
+`AgentToolServerRegistry` discovers each registered server's live tool
+list at every `list_agent_tools_for` call, gated per `agent_key` rather
+than per Discord permission group -- following the same
 `register`/`unregister_owner`/`unregister`/`list_*` convention the other
 two registries already establish.
 
@@ -258,10 +258,10 @@ transport carries a stronger caller identity.
 
 | Primitive | Shape | Purpose |
 |---|---|---|
-| `register_mcp_server(server, *, owner)` | `RegisteredMcpServer -> str \| None` | Registers a server, fetches and caches its `tools/list`; returns an error string on failure |
+| `register_mcp_server(server, *, owner)` | `RegisteredMcpServer -> str \| None` | Registers a server, discovering and caching its `tools/list` + instructions with a bounded handshake; returns an error string on failure |
 | `unregister_mcp_server_owner(owner)` | `str -> None` | Drops every server registered by `owner` |
 | `unregister_mcp_server(base_url)` | `str -> None` | Drops one server by URL |
-| `list_agent_tools_for(agent_key)` | `str -> tuple[RegisteredTool, ...]` | Every tool from every registered server whose `agent_allowed(agent_key)` is `True`, fetched fresh on each call |
+| `list_agent_tools_for(agent_key)` | `str -> tuple[RegisteredTool, ...]` | Every tool from every registered server whose `agent_allowed(agent_key)` is `True`, re-discovering (schema + instructions) any entry older than `FRESH_TTL_SECONDS`; a stale-but-cached entry is served on a failed refresh |
 | `render_channel_reply(guild_id, ...)` | `-> RenderedReply` | `render_reply`'s ctx-less twin, keyed by an explicit `guild_id` |
 | `send_channel_reply(channel, guild_id, ...)` | `-> discord.Message` | Renders via `render_channel_reply`, then sends directly to `channel` |
 
@@ -364,7 +364,7 @@ to `list_tools_for(agent_key)` simply evaluates the closure fresh.
   is idempotent.
 - **A registered server can't be reached at registration time.**
   `AgentToolServerRegistry.register` catches `McpRequestError` from
-  `McpClientPool.list_tools`, logs a warning, and returns the error
+  `McpClientPool.discover_tools`, logs a warning, and returns the error
   string instead of raising -- registration simply fails for that call.
 - **A registered server's `agent_allowed` check itself raises.**
   `list_tools_for` catches any exception from an individual server's
@@ -387,11 +387,11 @@ to `list_tools_for(agent_key)` simply evaluates the closure fresh.
 - **No persistence beyond the Discord post itself.** The posted message
   is the only record of a submission -- no Config-backed feedback log, no
   list/query command.
-- **No scheduled re-check of a registered server's tool list.**
-  `register()` fetches `tools/list` once, at registration time. A
-  dead-but-still-registered server behaves like an unreachable A2A agent:
-  the next `call_tool` simply fails, surfaced as a tool error to whichever
-  agent's loop invoked it.
+- **A registered server is unreachable when its cache entry goes stale.**
+  `list_agent_tools_for` re-runs `discover_tools` (bounded to a 30-second
+  handshake) for any entry older than `FRESH_TTL_SECONDS`; a failed
+  refresh is logged and the last-known tool list keeps being served
+  rather than dropping the server for that turn.
 
 ## 7. Design rationale
 
@@ -402,7 +402,7 @@ have no such context at all, since each is driven by an A2A
 `RequestContext`, not a Discord command invocation. `AgentDirectoryService`
 solves the opposite data-flow direction -- agents *offering* themselves to
 pico, not agents *consuming* a tool server. This is a genuinely third
-shape: corridor holding a live MCP client's cached tool list per
+shape: corridor holding a live MCP client's TTL-cached tool list per
 registered server, gated per `agent_key`. Reusing either existing
 registry would mean bolting an unrelated filtering axis onto a service
 that isn't shaped for it; a small, parallel registry following the same
@@ -420,7 +420,7 @@ registering suggestionbox's handlers a second time as a plain corridor
 caller, internal or external, proves both take the identical protocol
 surface.
 
-**Why the MCP client is stateless.** `McpClientPool.list_tools`/
+**Why the MCP client is stateless.** `McpClientPool.discover_tools`/
 `call_tool` each open and tear down their own
 `streamable_http_client`/`ClientSession` pair per call, rather than
 holding one reusable session open the way `LiteLLMClient` holds one
@@ -434,19 +434,23 @@ session-id bookkeeping across arbitrarily long idle gaps. This also rules
 out the MCP spec's own `notifications/tools/list_changed` push
 notification as a way to invalidate the cache below: receiving it needs a
 standing `ClientSession` to listen on, which is exactly the persistent
-connection this tradeoff opts out of.
+connection this tradeoff opts out of. Each `discover_tools` call is a
+single bounded handshake (a 30-second timeout, paging through every
+`tools/list` page) that also reads the server's MCP `initialize`
+instructions alongside its tools, not just a `tools/list` call.
 
-`AgentToolServerRegistry.register()` fetches a `tools/list` snapshot and
-caches it with the time it was fetched. Unlike tool *calls*, a
-registered server's *schema* going stale (a third-party server ships a
-new/changed/removed tool) has no natural trigger to key a refresh off
-of -- so `list_tools_for()` treats that cached snapshot as fresh for
-`FRESH_TTL_SECONDS` (5 minutes) and transparently re-fetches it once
-expired, the same TTL-with-stale-fallback policy `ModelCatalogService`
-already uses for LiteLLM's model catalogue: a failed re-fetch (the server
-is briefly down) just keeps serving the last-known tool list rather than
-erroring or evicting it, since a registered server going quiet mid-turn
-shouldn't break an agent's tool loop. `register()` re-fetching
+`AgentToolServerRegistry.register()` discovers a server's current tool
+list and instructions and caches them with the time they were fetched.
+Unlike tool *calls*, a registered server's *schema* going stale (a
+third-party server ships a new/changed/removed tool) has no natural
+trigger to key a refresh off of -- so `list_tools_for()` treats that
+cached snapshot as fresh for `FRESH_TTL_SECONDS` (5 minutes) and
+transparently re-discovers it once expired, the same TTL-with-stale-
+fallback policy `ModelCatalogService` already uses for LiteLLM's model
+catalogue: a failed re-fetch (the server is briefly down, or the 30-second
+handshake times out) just keeps serving the last-known tool list rather
+than erroring or evicting it, since a registered server going quiet
+mid-turn shouldn't break an agent's tool loop. `register()` re-fetching
 unconditionally on every call (rather than also being TTL-gated) means
 re-registering the same `base_url` -- a repeat `cog_load` today --
 always forces an immediate, un-cached refresh; a
@@ -473,19 +477,20 @@ Discord identity at all) nor an A2A agent's own `AgentRef`
 key a per-guild channel choice off of, so `[p]suggestionbox channel` is
 bot-owner-only and stores exactly one `(guild_id, channel_id)` pair.
 
-**Why tools are fetched fresh every A2A turn instead of cached at tool-loop
-construction.** Architect's and painter's tool loops resolve corridor only
-after `register_agent` gives them a live corridor reference at
-`cog_load` -- corridor isn't resolved yet at `__init__` time, when each
-cog's fixed tool list is built. Fetching `list_agent_tools_for(agent_key)`
-fresh inside `execute()` (the same shape pico's own
-`_agent_tools`/`_cross_cog_tools` already use for `corridor.list_agents()`/
-`corridor.list_tools_for(ctx)`) means a bot owner's toggle flip takes
-effect on that agent's very next A2A message, with no cog reload -- and,
-since `AgentToolServerRegistry.list_tools_for()` also re-checks each
-registered server's tool-list TTL on this same call (see "Why the MCP
-client is stateless" above), no cog reload needed for a schema change to
-surface either, just a `FRESH_TTL_SECONDS` wait at worst.
+**Why the agent-allowed gate is re-checked fresh every A2A turn, with the
+tool-list TTL piggybacked on the same call.** Architect's and painter's
+tool loops resolve corridor only after `register_agent` gives them a live
+corridor reference at `cog_load` -- corridor isn't resolved yet at
+`__init__` time, when each cog's fixed tool list is built. Fetching
+`list_agent_tools_for(agent_key)` fresh inside `execute()` (the same
+shape pico's own `_agent_tools`/`_cross_cog_tools` already use for
+`corridor.list_agents()`/`corridor.list_tools_for(ctx)`) means a bot
+owner's toggle flip takes effect on that agent's very next A2A message,
+with no cog reload -- and, since `AgentToolServerRegistry.list_tools_for()`
+also re-checks each registered server's tool-list TTL on this same call
+(see "Why the MCP client is stateless" above), no cog reload needed for a
+schema or instructions change to surface either, just a
+`FRESH_TTL_SECONDS` wait at worst.
 
 **Why `report_error` and `suggest_improvement` are two distinct tools,
 not one generic `submit_feedback`.** Each gets its own schema -- a caller

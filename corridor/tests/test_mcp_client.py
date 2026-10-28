@@ -9,18 +9,33 @@ DummyExecutor rather than importing architect's real one)."""
 from __future__ import annotations
 
 import asyncio
+import base64
+import json
 import unittest
+from unittest.mock import patch
 
 import uvicorn
+from mcp import types as mcp_types
 from mcp.server.fastmcp import FastMCP
 
-from ..infrastructure.mcp_client import McpClientPool, McpRequestError
+from ..infrastructure.mcp_client import (
+    McpClientPool,
+    McpRequestError,
+    McpToolResult,
+    _result_to_mapping,
+)
 
 PORT = 8970
 
 
 def _build_server() -> FastMCP:
-    mcp = FastMCP("test-server", host="127.0.0.1", port=PORT, stateless_http=True)
+    mcp = FastMCP(
+        "test-server",
+        host="127.0.0.1",
+        port=PORT,
+        stateless_http=True,
+        instructions="Use native pixel helpers",
+    )
 
     @mcp.tool()
     def echo(text: str) -> dict[str, str]:
@@ -44,6 +59,37 @@ def _build_server() -> FastMCP:
 
 
 class TestMcpClientPool(unittest.IsolatedAsyncioTestCase):
+    async def test_discovery_preserves_initialization_instructions(self) -> None:
+        listing = await self.pool.discover_tools(self.base_url)
+        self.assertEqual(listing.instructions, "Use native pixel helpers")
+        self.assertEqual(sorted(t.name for t in listing.tools), ["echo", "fail", "slow"])
+
+    async def test_image_and_embedded_binary_survive_real_mcp_transport(self) -> None:
+        @self.mcp.tool()
+        def media() -> mcp_types.CallToolResult:
+            return mcp_types.CallToolResult(
+                structuredContent={"native_size": [1, 1]},
+                content=[
+                    mcp_types.ImageContent(type="image", mimeType="image/png", data="iVBORw=="),
+                    mcp_types.EmbeddedResource(
+                        type="resource",
+                        resource=mcp_types.BlobResourceContents(
+                            uri="pixel-art://artifacts/example",
+                            mimeType="application/zip",
+                            blob="UEs=",
+                        ),
+                    ),
+                ],
+            )
+
+        result = await self.pool.call_tool(self.base_url, "media", {})
+        self.assertIsInstance(result, McpToolResult)
+        self.assertEqual(result.images[0].data_base64, "iVBORw==")
+        self.assertEqual(result.resources[0].data, b"PK")
+        self.assertEqual(result["native_size"], [1, 1])
+        self.assertNotIn("iVBORw==", json.dumps(result))
+        self.assertNotIn("UEs=", json.dumps(result))
+
     async def asyncSetUp(self) -> None:
         self.mcp = _build_server()
         config = uvicorn.Config(
@@ -90,6 +136,47 @@ class TestMcpClientPool(unittest.IsolatedAsyncioTestCase):
         result = await self.pool.call_tool(self.base_url, "echo", {"text": "hi"}, timeout_seconds=5)
 
         self.assertEqual(result, {"echo": "hi"})
+
+
+class TestMediaLimits(unittest.TestCase):
+    def test_oversized_and_invalid_media_report_omissions_not_base64(self) -> None:
+        with patch("corridor.infrastructure.mcp_client.MAX_MEDIA_BYTES", 4):
+            result = _result_to_mapping(
+                mcp_types.CallToolResult(
+                    content=[
+                        mcp_types.ImageContent(
+                            type="image",
+                            mimeType="image/png",
+                            data=base64.b64encode(b"12345").decode(),
+                        ),
+                        mcp_types.ImageContent(type="image", mimeType="image/png", data="???"),
+                        mcp_types.ImageContent(type="image", mimeType="image/svg+xml", data="AA=="),
+                    ]
+                )
+            )
+        self.assertEqual(result.images, ())
+        self.assertEqual(len(result["mcp_media"]["warnings"]), 3)
+
+    def test_embedded_text_and_block_limit(self) -> None:
+        result = _result_to_mapping(
+            mcp_types.CallToolResult(
+                content=[
+                    mcp_types.EmbeddedResource(
+                        type="resource",
+                        resource=mcp_types.TextResourceContents(
+                            uri="pixel-art://note", mimeType="text/plain", text="hello"
+                        ),
+                    ),
+                    *[
+                        mcp_types.ImageContent(type="image", mimeType="image/png", data="AA==")
+                        for _ in range(10)
+                    ],
+                ]
+            )
+        )
+        self.assertEqual(result.resources[0].data, b"hello")
+        self.assertEqual(len(result.images), 7)
+        self.assertTrue(result["mcp_media"]["warnings"])
 
 
 if __name__ == "__main__":

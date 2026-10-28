@@ -8,16 +8,17 @@ Same register/unregister_owner/unregister shape `ToolRegistryService`/
 holds a live MCP client connection's cached tool list per registered
 server, gated per `agent_key` rather than per Discord permission group.
 
-A registered server's tool list is a short-TTL cache with stale fallback,
-the same policy `ModelCatalogService` (`corridor/application/
-model_catalog_service.py`) already uses for LiteLLM's model catalogue: a
-fresh cache hit skips the network entirely, an expired entry triggers one
-re-fetch on the next `list_tools_for()` call, and a failed re-fetch just
-keeps serving the last-known tool list rather than erroring or evicting
-it -- a third-party server that's briefly unreachable shouldn't break an
-agent's tool loop mid-conversation. See docs/suggestionbox-design.md's
-"Why the MCP client is stateless" rationale for why this is a TTL, not a
-persistent connection kept open for a push notification.
+A registered server's tool list (and its initialization instructions) is a
+short-TTL cache with stale fallback, the same policy `ModelCatalogService`
+(`corridor/application/model_catalog_service.py`) already uses for
+LiteLLM's model catalogue: a fresh cache hit skips the network entirely, an
+expired entry triggers one re-fetch on the next `list_tools_for()` call,
+and a failed re-fetch just keeps serving the last-known tool list rather
+than erroring or evicting it -- a third-party server that's briefly
+unreachable shouldn't break an agent's tool loop mid-conversation. See
+docs/suggestionbox-design.md's "Why the MCP client is stateless" rationale
+for why this is a TTL, not a persistent connection kept open for a push
+notification.
 """
 
 from __future__ import annotations
@@ -32,7 +33,7 @@ from mcp import types as mcp_types
 
 from ..domain.agent_tool_server import McpCallOptions, RegisteredMcpServer
 from ..domain.models import RegisteredTool
-from ..infrastructure.mcp_client import McpRequestError
+from ..infrastructure.mcp_client import McpRequestError, McpToolListing
 
 log = logging.getLogger("red.corridor")
 
@@ -50,7 +51,7 @@ class McpTools(Protocol):
     shape `architect`'s own `ToolLoopService.ToolLLM` already uses, so a
     test can stand in a plain fake without needing a real MCP server."""
 
-    async def list_tools(self, base_url: str) -> tuple[mcp_types.Tool, ...]: ...
+    async def discover_tools(self, base_url: str) -> McpToolListing: ...
 
     async def call_tool(
         self,
@@ -105,11 +106,15 @@ class AgentToolServerRegistry:
                 f"cannot re-register it for {owner!r}"
             )
         try:
-            tools = await self._client_pool.list_tools(server.base_url)
+            listing = await self._client_pool.discover_tools(server.base_url)
         except McpRequestError as exc:
             log.warning("corridor: could not register MCP server %r: %s", server.base_url, exc)
             return str(exc)
-        registered = tuple(self._wrap_tool(tool, server.base_url) for tool in tools)
+        if self._servers.get(server.base_url) is not existing:
+            return "MCP registration changed during discovery; retry registration"
+        registered = tuple(
+            self._wrap_tool(tool, server.base_url, listing.instructions) for tool in listing.tools
+        )
         self._servers[server.base_url] = _ServerEntry(
             owner=owner, server=server, tools=registered, fetched_at=self._clock()
         )
@@ -146,6 +151,8 @@ class AgentToolServerRegistry:
             if entry is None:
                 continue
             entry = await self._refresh_if_stale(base_url, entry)
+            if self._servers.get(base_url) is None:
+                continue  # unregistered while the refresh above was in flight
             try:
                 if not await entry.server.agent_allowed(agent_key):
                     continue
@@ -160,16 +167,17 @@ class AgentToolServerRegistry:
         return tuple(allowed)
 
     async def _refresh_if_stale(self, base_url: str, entry: _ServerEntry) -> _ServerEntry:
-        """Re-fetches `base_url`'s tool list once `entry` is older than
-        `FRESH_TTL_SECONDS`. A failed re-fetch logs and returns `entry`
-        unchanged -- a briefly-unreachable server keeps serving its last-
-        known tools rather than losing them for the turn, same
-        stale-on-failure policy `ModelCatalogService.list_models` uses."""
+        """Re-fetches `base_url`'s tool list and instructions once `entry`
+        is older than `FRESH_TTL_SECONDS`. A failed re-fetch logs and
+        returns `entry` unchanged -- a briefly-unreachable server keeps
+        serving its last-known tools rather than losing them for the
+        turn, same stale-on-failure policy `ModelCatalogService.
+        list_models` uses."""
 
         if self._clock() - entry.fetched_at <= FRESH_TTL_SECONDS:
             return entry
         try:
-            tools = await self._client_pool.list_tools(base_url)
+            listing = await self._client_pool.discover_tools(base_url)
         except McpRequestError as exc:
             log.warning(
                 "corridor: could not refresh MCP server %r tool list; serving stale cache: %s",
@@ -180,7 +188,9 @@ class AgentToolServerRegistry:
         refreshed = _ServerEntry(
             owner=entry.owner,
             server=entry.server,
-            tools=tuple(self._wrap_tool(tool, base_url) for tool in tools),
+            tools=tuple(
+                self._wrap_tool(tool, base_url, listing.instructions) for tool in listing.tools
+            ),
             fetched_at=self._clock(),
         )
         # Only write back if nothing else (an explicit re-`register()`, an
@@ -191,7 +201,7 @@ class AgentToolServerRegistry:
             self._servers[base_url] = refreshed
         return refreshed
 
-    def _wrap_tool(self, tool: mcp_types.Tool, base_url: str) -> RegisteredTool:
+    def _wrap_tool(self, tool: mcp_types.Tool, base_url: str, instructions: str) -> RegisteredTool:
         name = tool.name
         description = tool.description or name
 
@@ -216,6 +226,7 @@ class AgentToolServerRegistry:
             description=description,
             parameters=tool.inputSchema,
             handler=handler,
+            server_instructions=instructions,
         )
 
 

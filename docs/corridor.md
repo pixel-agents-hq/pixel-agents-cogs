@@ -276,8 +276,10 @@ architect's and painter's tool loops without either cog importing the
 other. A providing cog calls `corridor.register_mcp_server(RegisteredMcpServer(
 owner=..., base_url=..., agent_allowed=...), owner=...)` from its own
 `cog_load`; corridor connects to that server's Streamable HTTP endpoint
-via `McpClientPool` and caches its tool list, refreshed with a short TTL
-and stale fallback (`AgentToolServerRegistry.FRESH_TTL_SECONDS`, 5
+via `McpClientPool.discover_tools` (a bounded, 30-second handshake that
+pages through the server's full `tools/list` and reads its MCP
+`initialize` instructions) and caches the result, refreshed with a short
+TTL and stale fallback (`AgentToolServerRegistry.FRESH_TTL_SECONDS`, 5
 minutes) rather than on every call or never at all — the same
 TTL-with-stale-fallback policy `ModelCatalogService` uses for LiteLLM's
 model catalogue. An agent's own tool loop calls
@@ -286,7 +288,9 @@ tool it's currently allowed to use — gated per `agent_key` by the
 *registering* cog's own `agent_allowed` check, not by corridor's Discord
 permission groups; that same fresh-every-turn call is also what checks
 whether a registered server's tool-list cache has gone stale and
-re-fetches it.
+re-discovers it. A registered `RegisteredTool` also carries that server's
+current `server_instructions`, so a consuming agent (e.g. animator) can
+surface them in its own system context.
 
 ```mermaid
 sequenceDiagram
@@ -298,8 +302,8 @@ sequenceDiagram
 
     Sug->>Cor: register_mcp_server(RegisteredMcpServer(base_url, agent_allowed), owner)
     Cor->>Reg: register(server, owner)
-    Reg->>Mcp: list_tools(base_url)
-    Mcp-->>Reg: tuple[mcp_types.Tool, ...]
+    Reg->>Mcp: discover_tools(base_url)
+    Mcp-->>Reg: McpToolListing(tools, instructions)
     Reg-->>Cor: None (success) or an error string
 
     Note over Arch: every tool-loop turn

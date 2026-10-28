@@ -63,11 +63,26 @@ class ToolCall(BaseModel):
     function: ToolCallFunction
 
 
+class TextContentPart(BaseModel):
+    type: Literal["text"] = "text"
+    text: str
+
+
+class ImageURL(BaseModel):
+    url: str
+    detail: Literal["auto", "low", "high"] = "high"
+
+
+class ImageContentPart(BaseModel):
+    type: Literal["image_url"] = "image_url"
+    image_url: ImageURL
+
+
 class ChatMessage(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     role: Literal["system", "user", "assistant", "tool"]
-    content: str | None = None
+    content: str | list[TextContentPart | ImageContentPart] | None = None
     name: str | None = None
     tool_call_id: str | None = None
     tool_calls: list[ToolCall] | None = None

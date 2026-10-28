@@ -95,13 +95,37 @@ Animator's tool list, rebuilt fresh every A2A turn (so a `[p]telephonepole
 agents` toggle takes effect immediately, no reload needed):
 
 1. Whatever `pixel-art-mcp` tools are currently enabled for `animator`
-   (`create_project`, `execute_blender_python`, `inspect_scene`,
-   `render_preview`, `render_sprites`, `get_job`, `wait_for_job`, `cancel_job`,
-   `get_artifact`, ...) -- bridged via `tools/agent_tool_server.py`'s
+   (`get_asset_profile`, `create_project`, `configure_asset`, `write_pixel_art`,
+   `edit_pixel_art`, `render_asset`, `get_asset_preview`, `inspect_sprite`,
+   `wait_for_job`, `get_artifact`, ...) -- bridged via `tools/agent_tool_server.py`'s
    `AgentToolServerTool`, adapting each `corridor.domain.RegisteredTool`
    into animator's own `ToolSpec`.
 2. `deliver_pixel_agents_assets` (`tools/deliver_assets_tool.py`) --
    animator's one native tool.
+
+Corridor re-discovers enabled servers' schemas and initialization instructions at each
+consultation, with a 30-second discovery deadline and full pagination. Unreachable servers
+are omitted rather than offered with stale schemas. Instructions are deduplicated into
+Animator's system context; ordinary tool results remain untrusted data.
+
+MCP image blocks travel out-of-band through the bridge into standard `image_url` content
+parts for the model, after all tool-call/result pairs in a batch. Configure a vision-capable
+model/provider. Image history retains at most eight images and approximately 8 MiB decoded;
+older previews are replaced with placeholders. Incoming media is limited to eight blocks and
+8 MiB total per call, with explicit omission warnings. Binary/base64 payloads do not enter
+text tool results or debug logs. `get_artifact` embedded resources are retained and staged as
+attachments without an HTTP download; the delivery helper still handles package plus preview
+in one step. Other agents' text-only adapters continue to receive JSON-compatible metadata.
+
+The default prompt uses native numeric drawing and incremental layer edits. The default tool
+budget is 48; explicit operator limits are preserved. Only a saved prompt identical to the old
+default is automatically migrated. Custom prompts remain untouched; use `[p]animator prompt
+reset` to adopt the new default. Explicit `finish_reason=length` responses execute no calls
+and receive smaller-payload guidance. Broken arguments are not replayed as invalid JSON in
+history. These safeguards do not guarantee the model's artistic quality.
+
+After installing these code changes, reload Corridor and its dependent cogs using the normal
+deployment procedure. Restarting only the MCP container does not update the client bridge.
 
 ### Why a dedicated delivery tool
 

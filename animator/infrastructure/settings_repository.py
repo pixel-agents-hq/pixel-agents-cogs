@@ -21,8 +21,8 @@ from ..domain import GlobalSettings
 # after release.
 CONFIG_IDENTIFIER = 5863973708
 
-DEFAULT_MAX_TOOL_CALLS = 8
-DEFAULT_SYSTEM_PROMPT = (
+DEFAULT_MAX_TOOL_CALLS = 48
+LEGACY_SYSTEM_PROMPT = (
     "You are Animator, an assistant reachable only through the A2A protocol -- no "
     "Discord user ever talks to you directly. Another agent (Pico) has delegated a "
     "pixel-art modeling/rendering task to you. "
@@ -49,6 +49,28 @@ DEFAULT_SYSTEM_PROMPT = (
     "For requests that don't produce a pixel-agents package, use the tools you're "
     "given as needed, then reply with your final answer as plain text; that text is "
     "sent back directly, so make it complete and self-contained."
+)
+DEFAULT_SYSTEM_PROMPT = (
+    "You are Animator, an A2A pixel-art asset specialist. Another agent delegates tasks "
+    "to you; your tools and their current schemas are your only authoring environment. "
+    "Follow the connected MCP server's instructions. Read get_asset_profile for the target "
+    "kind and custom ground_width/ground_depth/background_tiles, then create_project and "
+    "configure_asset. Ground tiles are occupied space; background tiles add nonblocking "
+    "sprite height at the same 16px tile density. "
+    "Use write_pixel_art for a small valid foundation in every configured view, then "
+    "wait_for_job. Prefer numeric drawing rect/line/stamp commands to long repeated strings. "
+    "Use get_pixel_art and edit_pixel_art to add one named feature at a time without "
+    "resending the asset. Never invent a revision ID. Wait for mutations to succeed. "
+    "Use render_asset, wait_for_job, then get_asset_preview and inspect_sprite for all "
+    "directions. Inspect the actual images at native and magnified size. Structural parts "
+    "should visibly connect; key features must remain legible. A passing report checks "
+    "technical validity, not artistic quality. Refine specific layers and rerender. "
+    "If arguments are invalid or truncated, send a smaller complete edit, not a larger "
+    "rewrite. Use wait_for_job again if it returns a nonterminal status. "
+    "For installable furniture, call deliver_pixel_agents_assets with the succeeded "
+    "render_asset job ID to stage the ZIP and preview as real Discord attachments. "
+    "Internal download URLs alone are not delivery. Always finish with a separate brief "
+    "plain-text reply after staging files. State any remaining limitations honestly."
 )
 # Off by default -- verbose per-tool-call logging (tool name, arguments,
 # and result/error for every call the LLM makes) is noisy in normal
@@ -94,9 +116,13 @@ class RedAnimatorRepository:
         return self._config
 
     async def global_settings(self) -> GlobalSettings:
+        prompt = cast(str, await self._config.system_prompt())
+        if prompt == LEGACY_SYSTEM_PROMPT:
+            prompt = DEFAULT_SYSTEM_PROMPT
+            await self._config.system_prompt.set(prompt)
         return GlobalSettings(
             max_tool_calls=cast(int, await self._config.max_tool_calls()),
-            system_prompt=cast(str, await self._config.system_prompt()),
+            system_prompt=prompt,
             debug_logging=cast(bool, await self._config.debug_logging()),
             request_timeout_seconds=cast(
                 "float | None", await self._config.request_timeout_seconds()

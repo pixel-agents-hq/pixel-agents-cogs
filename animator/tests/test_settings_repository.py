@@ -11,6 +11,7 @@ from ..infrastructure.settings_repository import (
     DEFAULT_DEBUG_LOGGING,
     DEFAULT_MAX_TOOL_CALLS,
     DEFAULT_SYSTEM_PROMPT,
+    LEGACY_SYSTEM_PROMPT,
     RedAnimatorRepository,
 )
 
@@ -45,6 +46,17 @@ class TestRedAnimatorRepository(unittest.IsolatedAsyncioTestCase):
         settings = await self.repository.global_settings()
 
         self.assertEqual(settings.system_prompt, "Be terse.")
+
+    async def test_only_the_exact_obsolete_default_prompt_is_migrated(self) -> None:
+        await self.repository.set_system_prompt(LEGACY_SYSTEM_PROMPT)
+        await self.repository.set_max_tool_calls(12)
+        settings = await self.repository.global_settings()
+        self.assertEqual(settings.system_prompt, DEFAULT_SYSTEM_PROMPT)
+        self.assertEqual(await self.repository.config.system_prompt(), DEFAULT_SYSTEM_PROMPT)
+        self.assertEqual(settings.max_tool_calls, 12)
+        custom = LEGACY_SYSTEM_PROMPT + " Custom rules."
+        await self.repository.set_system_prompt(custom)
+        self.assertEqual((await self.repository.global_settings()).system_prompt, custom)
 
     async def test_reset_system_prompt_restores_default(self) -> None:
         await self.repository.set_system_prompt("Be terse.")

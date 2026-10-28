@@ -459,6 +459,7 @@ class RegisteredTool:
     handler: ToolHandler
     required_group: str | None = None
     availability_check: ToolAvailabilityCheck | None = None
+    server_instructions: str = ""
 
 
 # The closed set of classes a cog actually publish()es/subscribe()s to.

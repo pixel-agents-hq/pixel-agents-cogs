@@ -17,6 +17,7 @@ on:
       - "contracts/pixel_agents/**"
       - "pixelagents/**/*.py"
       - "pixelagents/infrastructure/webview_vendor.commit"
+      - "pixelagents/infrastructure/webview_vendor.repo"
       - "pixelagents/infrastructure/webview_build_scripts/**"
       - "floorplan/**/*.py"
       - "architect/**/*.py"

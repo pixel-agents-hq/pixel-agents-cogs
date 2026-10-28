@@ -118,10 +118,10 @@ sequenceDiagram
     alt cache is current
         Cache-->>Build: yes -- reuse existing webview_dist
     else stale or missing
-        Build->>Git: clone/fetch pixel-agents-hq/pixel-agents at commit
+        Build->>Git: clone/fetch webview_vendor.repo at commit
         Build->>Git: npm ci --workspace=webview-ui --ignore-scripts
         Build->>Git: vite build --base ./
-        Build->>Build: decode sprite assets,<br/>generate furniture-styles.json
+        Build->>Build: decode sprite assets, emit default<br/>character profiles, generate furniture-styles.json
         Build->>Cache: remove + repopulate webview_dist in place
     end
     Build-->>Load: BuildOutcome (ok / missing_tools / status_line)

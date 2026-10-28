@@ -6,7 +6,12 @@ import logging
 import unittest
 from unittest.mock import AsyncMock
 
-from pixelagents.application.office import JS_MAX_SAFE, OfficeService, merge_seat_patch
+from pixelagents.application.office import (
+    JS_MAX_SAFE,
+    OfficeService,
+    merge_seat_patch,
+    seat_repeat,
+)
 from pixelagents.domain import (
     ActivitySnapshot,
     AgentKey,
@@ -59,7 +64,6 @@ class TestOfficeService(unittest.IsolatedAsyncioTestCase):
             self.repository,
             send,
             choose=lambda choices: choices[0],
-            hue_shift=lambda low, high: low + high,
         )
 
     async def test_reconcile_owns_agent_and_palette_state(self) -> None:
@@ -71,6 +75,30 @@ class TestOfficeService(unittest.IsolatedAsyncioTestCase):
             [message["type"] for message in self.sent[:3]],
             ["agentCreated", "agentTeamInfo", "agentStatus"],
         )
+
+    async def test_a_seventh_agent_wears_the_first_repeat_of_its_character(self) -> None:
+        for user_id in range(2, 9):
+            await self.service.reconcile(
+                agent(user_id=user_id), include_bots=True, rich_presence_enabled=True
+            )
+
+        created = [m for m in self.sent if m["type"] == "agentCreated"]
+        self.assertEqual([m["repeat"] for m in created], [0, 0, 0, 0, 0, 0, 1])
+        self.assertEqual(created[-1]["palette"], 0)
+        self.assertNotIn("hueShift", self.repository.values[str(self.service.agent_id(8))])
+
+    async def test_existing_agents_meta_reads_a_legacy_hue_shift_as_a_repeat(self) -> None:
+        await self.service.reconcile(agent(), include_bots=True, rich_presence_enabled=True)
+        agent_id = str(self.service.agent_id(2))
+
+        message = self.service.existing_agents_message(
+            {agent_id: {"palette": 1, "hueShift": 200, "seatId": "chair:1"}}
+        )
+
+        self.assertEqual(
+            message["agentMeta"][agent_id], {"palette": 1, "seatId": "chair:1", "repeat": 1}
+        )
+        self.assertEqual(message["directoryNames"], {agent_id: "online"})
 
     async def test_spawn_marks_a_bot_agent_created_headless_and_external(self) -> None:
         await self.service.reconcile(
@@ -255,7 +283,7 @@ class TestOfficeService(unittest.IsolatedAsyncioTestCase):
     async def test_bootstrap_keeps_layout_after_agent_metadata(self) -> None:
         self.service.active_agents[(1, 2)] = ("online", "Agent")
         messages = self.service.bootstrap_messages(
-            assets={"characters": []},
+            assets={"characterProfiles": []},
             seats={},
             layout={"version": 1},
         )
@@ -273,7 +301,7 @@ class TestOfficeService(unittest.IsolatedAsyncioTestCase):
         layoutLoaded so characters exist when messages arrive" convention."""
         self.service.active_agents[(1, 2)] = ("online", "Agent")
         messages = self.service.bootstrap_messages(
-            assets={"characters": []},
+            assets={"characterProfiles": []},
             seats={},
             layout={"version": 1},
         )
@@ -286,7 +314,7 @@ class TestOfficeService(unittest.IsolatedAsyncioTestCase):
         unless settingsLoaded.ghostHeadlessAgents is also true -- see
         renderer.ts's `ch.isHeadless && ghostHeadlessAgents` alpha check."""
         messages = self.service.bootstrap_messages(
-            assets={"characters": []},
+            assets={"characterProfiles": []},
             seats={},
             layout={"version": 1},
         )
@@ -311,7 +339,6 @@ class TestGenuineAgents(unittest.IsolatedAsyncioTestCase):
             self.repository,
             send,
             choose=lambda choices: choices[0],
-            hue_shift=lambda low, high: low + high,
         )
         self.identity = GenuineAgentKey("architect")
 
@@ -399,9 +426,9 @@ class TestGenuineAgents(unittest.IsolatedAsyncioTestCase):
 class TestMergeSeatPatch(unittest.TestCase):
     def test_valid_fields_are_merged(self) -> None:
         seats: dict[str, dict[str, object]] = {}
-        merge_seat_patch(seats, "-1", 6, {"palette": 2, "hueShift": 90, "seatId": "chair:1"})
+        merge_seat_patch(seats, "-1", 6, {"palette": 2, "repeat": 1, "seatId": "chair:1"})
 
-        self.assertEqual(seats["-1"], {"palette": 2, "hueShift": 90, "seatId": "chair:1"})
+        self.assertEqual(seats["-1"], {"palette": 2, "repeat": 1, "seatId": "chair:1"})
 
     def test_out_of_range_or_wrong_typed_fields_are_dropped(self) -> None:
         seats: dict[str, dict[str, object]] = {}
@@ -409,19 +436,37 @@ class TestMergeSeatPatch(unittest.TestCase):
             seats,
             "-1",
             6,
-            {"palette": 99, "hueShift": "not-an-int", "seatId": 42},
+            {"palette": 99, "repeat": "not-an-int", "seatId": 42},
         )
 
         self.assertEqual(seats["-1"], {})
 
     def test_boolean_numeric_fields_are_dropped(self) -> None:
         seats: dict[str, dict[str, object]] = {}
-        merge_seat_patch(seats, "-1", 6, {"palette": True, "hueShift": False})
+        merge_seat_patch(seats, "-1", 6, {"palette": True, "repeat": False})
 
         self.assertEqual(seats["-1"], {})
 
     def test_existing_record_fields_are_preserved_across_partial_patches(self) -> None:
-        seats: dict[str, dict[str, object]] = {"-1": {"palette": 3, "hueShift": 10}}
+        seats: dict[str, dict[str, object]] = {"-1": {"palette": 3, "repeat": 2}}
         merge_seat_patch(seats, "-1", 6, {"seatId": "chair:2"})
 
-        self.assertEqual(seats["-1"], {"palette": 3, "hueShift": 10, "seatId": "chair:2"})
+        self.assertEqual(seats["-1"], {"palette": 3, "repeat": 2, "seatId": "chair:2"})
+
+    def test_a_repeat_replaces_a_legacy_hue_shift(self) -> None:
+        seats: dict[str, dict[str, object]] = {"-1": {"palette": 3, "hueShift": 90}}
+        merge_seat_patch(seats, "-1", 6, {"repeat": 0})
+
+        self.assertEqual(seats["-1"], {"palette": 3, "repeat": 0})
+
+
+class TestSeatRepeat(unittest.TestCase):
+    def test_reads_repeat(self) -> None:
+        self.assertEqual(seat_repeat({"repeat": 2}), 2)
+
+    def test_reads_a_legacy_hue_shift_as_upstream_does(self) -> None:
+        self.assertEqual(seat_repeat({"hueShift": 0}), 0)
+        self.assertEqual(seat_repeat({"hueShift": 135}), 1)
+
+    def test_none_without_either(self) -> None:
+        self.assertIsNone(seat_repeat({"palette": 1}))

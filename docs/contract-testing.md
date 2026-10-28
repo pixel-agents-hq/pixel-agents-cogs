@@ -172,14 +172,17 @@ one, or changes how it calls an endpoint:
 Unlike Pixel Index, pixelagents doesn't call a hosted Pixel Agents API.
 `pixelagents/infrastructure/webview_build.py` clones
 [pixel-agents-hq/pixel-agents](https://github.com/pixel-agents-hq/pixel-agents)
-at the commit pinned in `pixelagents/infrastructure/webview_vendor.commit`,
+(or the fork named in `pixelagents/infrastructure/webview_vendor.repo`,
+while the pin carries unmerged upstream PRs) at the commit pinned in
+`pixelagents/infrastructure/webview_vendor.commit`,
 builds its webview with `npm`/`vite`, and CCTV serves the result — a build-time
 source dependency rather than a runtime HTTP one (see
 [red-downloader-submodules.md](red-downloader-submodules.md) for why it's
 built this way instead of shipped as a submodule). The "contract" here is
 therefore a different kind of shape: specific paths
-(`core/src/assets/build.ts`, `core/src/assets/loader.ts`), specific exported
-function names (`decodeAllCharacters`, `buildFurnitureCatalog`, …), the
+(`core/src/assets/build.ts`, `core/src/assets/loader.ts`,
+`core/src/defaultCharacterProfiles.ts`), specific exported names
+(`decodeAllFloors`, `buildFurnitureCatalog`, `DEFAULT_CHARACTER_PROFILES`, …), the
 `webview-ui` workspace/output layout, and the shape of
 `furniture-catalog.json`/`asset-index.json` — all things upstream can rename
 or restructure exactly the way Pixel Index can reshape a response.
@@ -196,9 +199,9 @@ just applied to a build instead of an HTTP call:
   commit) — not a reimplementation of it — into a scratch directory, then
   runs the same checks a working office actually needs via CCTV's
   `WebviewAssets` (pixelagents builds it, CCTV serves it — see
-  both cogs' Architecture.md for that split): every sprite family decodes
-  (`characters`/`floors`/`walls`/`carpets`/`furniture`, plus the furniture
-  catalog), a default layout is available, that layout survives a real
+  both cogs' Architecture.md for that split): the default character
+  profiles are emitted and every sprite family decodes
+  (`floors`/`walls`/`carpets`/`furniture`, plus the furniture catalog), a default layout is available, that layout survives a real
   `pixelagents.infrastructure.pixel_agents_adapter.decode()` (`layout_decode`
   — the same function architect and painter both go through for every
   layout they read; the sprite/catalog checks above only prove pixelagents'
@@ -277,8 +280,9 @@ this design: two committed contracts" section.
 Pixel Index has production and staging base URLs to check independently.
 Pixel Agents has one pin, and
 [`.github/workflows/vendor-update.yml`](../.github/workflows/vendor-update.yml)
-already owns catching *upcoming* upstream drift: daily it resolves upstream
-HEAD, bumps the pin on a branch, and gates that bump with this exact
+already owns catching *upcoming* upstream drift: daily it resolves the
+tracked ref (upstream `main`, or the fork's tracking branch while
+`webview_vendor.repo` names a fork), bumps the pin on a branch, and gates that bump with this exact
 clone-build-serve path
 (`pixelagents/tests/test_webview_build.py::TestRealWebviewBuild`, behind
 `PIXELAGENTS_REAL_WEBVIEW_BUILD=1`) plus the full pixelagents, CCTV,

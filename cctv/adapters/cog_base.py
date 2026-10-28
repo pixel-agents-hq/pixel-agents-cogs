@@ -237,8 +237,8 @@ class CctvBase:
         """Best-effort owner DM the first time a given built commit leaves
         `WebviewAssets.degraded` non-empty -- a sprite family or the
         furniture catalog failed to decode, degrading the served webview
-        without necessarily flipping `ready` (only a missing `characters`
-        family does that). Without this, that degradation was previously
+        without necessarily flipping `ready` (only missing `characterProfiles`
+        do that). Without this, that degradation was previously
         visible only in a log line nobody watches."""
 
         degraded = self._assets.degraded

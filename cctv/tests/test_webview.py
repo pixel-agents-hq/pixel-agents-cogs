@@ -33,7 +33,7 @@ class TestWebviewAssets(unittest.TestCase):
             "<html><head></head><body></body></html>", encoding="utf-8"
         )
         for name, value in {
-            "characters": [[]],
+            "character-profiles": [{"id": "char-0", "body": "flat", "v": 1}],
             "floors": [],
             "walls": [],
             "carpets": [],
@@ -79,7 +79,7 @@ class TestWebviewAssetsDegraded(unittest.TestCase):
             "<html><head></head><body></body></html>", encoding="utf-8"
         )
         for name, value in {
-            "characters": [[]],
+            "character-profiles": [{"id": "char-0", "body": "flat", "v": 1}],
             "floors": [],
             "walls": [],
             "carpets": [],
@@ -106,13 +106,13 @@ class TestWebviewAssetsDegraded(unittest.TestCase):
 
         self.assertEqual(provider.degraded, ("walls", "carpets"))
 
-    def test_missing_characters_flips_ready_and_still_records_degraded(self) -> None:
-        (self.decoded / "characters.json").unlink()
+    def test_missing_character_profiles_flips_ready_and_still_records_degraded(self) -> None:
+        (self.decoded / "character-profiles.json").unlink()
 
         provider = WebviewAssets()
         provider.sync(_Status(self.root))
 
-        self.assertIn("characters", provider.degraded)
+        self.assertIn("characterProfiles", provider.degraded)
         self.assertFalse(provider.ready)
 
     def test_missing_furniture_catalog_is_recorded(self) -> None:

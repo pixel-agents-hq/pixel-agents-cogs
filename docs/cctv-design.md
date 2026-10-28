@@ -96,13 +96,13 @@ class OfficeStateKind(StrEnum):
 class OfficeState:
     kind: OfficeStateKind
     layout: dict[str, Any]        # raw Pixel Agents layout JSON
-    seats: dict[str, dict[str, Any]]  # avatar palette/hue/seat-assignment records
+    seats: dict[str, dict[str, Any]]  # avatar palette/repeat/seat-assignment records
     revision: int                 # monotonically increasing per kind
 ```
 
 Both aggregates carry all three fields. `layout` is the raw Pixel Agents
 layout JSON (semantic chairs and occupants live here). `seats` is a
-separate avatar-placement map -- palette index, hue shift, and seat
+separate avatar-placement map -- palette index, repeat, and seat
 assignment per agent -- and is not a duplicate of layout occupancy. Each
 aggregate initializes lazily and idempotently from the same bundled
 default layout the first time any consumer reads or writes it, starting
@@ -175,7 +175,7 @@ payload for a known type raises a logged, connection-preserving error:
 | `authorize` | client to server | `ticket: str` | Discord page only. Resolves a session ticket to a user id and re-authorizes the socket. |
 | `webviewReady` | client to server | -- | Triggers `bootstrap`: assets, settings, existing agents, and the current layout. |
 | `saveLayout` | client to server | `layout: OfficeLayout` | Editor-authorized only. Validated and written through Pixelagents' `set_office_layout`. |
-| `saveAgentSeats` | client to server | `seats: {agent_id: {palette?, hueShift?, seatId?}}` | Editor-authorized only. Merged through Pixelagents' `mutate_office_seats`. |
+| `saveAgentSeats` | client to server | `seats: {agent_id: {palette?, repeat?, seatId?}}` | Editor-authorized only. Merged through Pixelagents' `mutate_office_seats`. |
 | `requestDiagnostics` | client to server | -- | Answered with `agentDiagnostics` and the pipeline's current revision. |
 | `importLayout` | client to server | -- | Accepted and intentionally a no-op. |
 | `layoutLoaded` | server to client | `layout` | Broadcast only when the layout field of a newly applied state actually changed. |

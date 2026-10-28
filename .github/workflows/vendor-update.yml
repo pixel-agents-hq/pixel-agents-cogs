@@ -36,10 +36,25 @@ concurrency:
   group: vendor-update
   cancel-in-progress: false
 
+# What "latest" means depends on where the pin lives
+# (pixelagents/infrastructure/webview_vendor.repo):
+#   * upstream itself -> upstream `main` (`HEAD`).
+#   * anything else   -> TRACK_REF on that repository. The pin sits on a fork
+#     branch only while it has to carry upstream PRs that haven't merged
+#     (today pixel-agents#396's agentSelected/agentDeselected/headless
+#     fixes, which this repo's office protocol relies on, plus the #452
+#     stack whose character wardrobe pixatar draws with). Bumping to plain
+#     upstream `main` then would drop that work and move the office behind
+#     the pixatar CLI's own vendor pin, so this follows the tracking branch
+#     instead. Once both PRs merge, point webview_vendor.repo back at
+#     upstream and this goes back to tracking `main` with no edit here.
+#     See .claude/skills/advance-vendor/SKILL.md.
 env:
   PR_BRANCH: chore/vendor-pixel-agents
   PIN_FILE: pixelagents/infrastructure/webview_vendor.commit
+  REPO_FILE: pixelagents/infrastructure/webview_vendor.repo
   UPSTREAM_URL: https://github.com/pixel-agents-hq/pixel-agents.git
+  TRACK_REF: refs/heads/track/cogs-vendor
 
 jobs:
   update:
@@ -66,14 +81,22 @@ jobs:
       # Always develop's pin, never the open PR's -- a PR that already
       # advanced aaa -> bbb and now advances to ccc has to report aaa -> ccc,
       # because that is the diff a reviewer will merge.
-      - name: Resolve upstream HEAD
+      - name: Resolve the tracked ref
         id: candidate
         run: |
           set -euo pipefail
-          sha="$(git ls-remote "$UPSTREAM_URL" HEAD | cut -f1)"
+          repo="$(cat "$REPO_FILE")"
+          if [ "$repo" = "$UPSTREAM_URL" ]; then ref=HEAD; else ref="$TRACK_REF"; fi
+          sha="$(git ls-remote "$repo" "$ref" | cut -f1)"
+          if [ -z "$sha" ]; then
+            echo "::error::$repo has no $ref to track."
+            exit 1
+          fi
+          echo "repo=$repo" >> "$GITHUB_OUTPUT"
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
           if [ "$sha" = "${{ steps.baseline.outputs.sha }}" ]; then
-            echo "Already at upstream HEAD ($sha). Nothing to do."
+            echo "Already at $repo $ref ($sha). Nothing to do."
             echo "moved=false" >> "$GITHUB_OUTPUT"
           else
             echo "moved=true" >> "$GITHUB_OUTPUT"
@@ -148,12 +171,14 @@ jobs:
           short="$(printf '%s' "$CANDIDATE" | cut -c1-7)"
           echo "title=chore(vendor): update pixel-agents to $short" >> "$GITHUB_OUTPUT"
 
-          upstream_web="${UPSTREAM_URL%.git}"
+          upstream_web="${{ steps.candidate.outputs.repo }}"
+          upstream_web="${upstream_web%.git}"
           {
             echo "Bumps \`$PIN_FILE\`, the commit \`webview_dist\` is cloned and built from"
             echo "at \`cog_load\` (\`infrastructure/webview_build.py\`)."
             echo
             echo "[\`$BASELINE\` -> \`$CANDIDATE\`]($upstream_web/compare/$BASELINE...$CANDIDATE)"
+            echo "(\`${{ steps.candidate.outputs.ref }}\` of \`${{ steps.candidate.outputs.repo }}\`)"
             echo
             if [ "${{ steps.smoke.outputs.code }}" = "0" ]; then
               echo "### ✅ Clone-build-serve gate: passed"

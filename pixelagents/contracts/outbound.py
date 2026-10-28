@@ -14,9 +14,9 @@ from typing import Literal, TypedDict
 class _AgentCreatedRequired(TypedDict):
     type: Literal["agentCreated"]
     id: int
-    folderName: str
+    directoryName: str
     palette: int
-    hueShift: int
+    repeat: int
 
 
 class AgentCreatedMessage(_AgentCreatedRequired, total=False):
@@ -43,7 +43,7 @@ class ExistingAgentsMessage(TypedDict):
     type: Literal["existingAgents"]
     agents: list[int]
     agentMeta: Mapping[str, object]
-    folderNames: Mapping[str, str]
+    directoryNames: Mapping[str, str]
     externalAgents: Mapping[str, bool]
     headlessAgents: Mapping[str, bool]
 
@@ -136,9 +136,9 @@ class AgentContextUsageMessage(TypedDict):
 
 def agent_created(
     agent_id: int,
-    folder_name: str,
+    directory_name: str,
     palette: int,
-    hue_shift: int,
+    repeat: int,
     *,
     is_external: bool | None = None,
     is_headless: bool | None = None,
@@ -146,9 +146,9 @@ def agent_created(
     message: AgentCreatedMessage = {
         "type": "agentCreated",
         "id": agent_id,
-        "folderName": folder_name,
+        "directoryName": directory_name,
         "palette": palette,
-        "hueShift": hue_shift,
+        "repeat": repeat,
     }
     if is_external is not None:
         message["isExternal"] = is_external

@@ -40,6 +40,19 @@ FURNITURE_KEYS = frozenset(
 )
 
 
+# Asset key -> the file pixelagents' build writes under `assets/decoded/`
+# (webview_build_scripts/emit_decoded_assets.ts). Every one but the cast is
+# a decoded sprite family; the cast is upstream's default character
+# profiles, which the webview composes into sprites itself.
+DECODED_ASSETS = {
+    "characterProfiles": "character-profiles.json",
+    "floors": "floors.json",
+    "walls": "walls.json",
+    "carpets": "carpets.json",
+    "furniture": "furniture.json",
+}
+
+
 class WebviewStatus(Protocol):
     dist_path: Path
     ready: bool
@@ -189,8 +202,8 @@ class WebviewAssets:
     def _load_assets(self) -> None:
         loaded: dict[str, object] = {}
         degraded: list[str] = []
-        for name in ("characters", "floors", "walls", "carpets", "furniture"):
-            path = self.resolve(f"assets/decoded/{name}.json")
+        for name, filename in DECODED_ASSETS.items():
+            path = self.resolve(f"assets/decoded/{filename}")
             if path is None:
                 degraded.append(name)
                 continue
@@ -219,12 +232,12 @@ class WebviewAssets:
         self.assets.clear()
         self.assets.update(loaded)
         self.degraded = tuple(degraded)
-        if not self.assets.get("characters"):
-            self.error = "The Pixel Agents decoded character assets are missing."
+        if not self.assets.get("characterProfiles"):
+            self.error = "The Pixel Agents character profiles are missing."
             self.ready = False
         self._log.info(
-            "cctv: loaded %d character palettes and %d furniture sprites",
-            self._size(loaded.get("characters")),
+            "cctv: loaded %d character profiles and %d furniture sprites",
+            self._size(loaded.get("characterProfiles")),
             self._size(loaded.get("furniture")),
         )
 

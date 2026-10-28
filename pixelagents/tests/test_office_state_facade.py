@@ -154,10 +154,10 @@ class TestOfficeStateFacade(unittest.IsolatedAsyncioTestCase):
         state = await self.facade.merge_seat_patch(
             OfficeStateKind.EDITOR,
             "agent",
-            {"palette": 999, "hueShift": 90, "seatId": "chair:2"},
+            {"palette": 999, "repeat": 1, "seatId": "chair:2"},
         )
 
-        self.assertEqual(state.seats["agent"], {"hueShift": 90, "seatId": "chair:2"})
+        self.assertEqual(state.seats["agent"], {"repeat": 1, "seatId": "chair:2"})
 
     async def test_watch_subscribes_before_lazy_initialization(self) -> None:
         received: list[int] = []
@@ -188,6 +188,12 @@ class TestOfficeStateFacade(unittest.IsolatedAsyncioTestCase):
                 OfficeStateKind.DISCORD,
                 {"-1": {"hueShift": 361}},
             )
+
+    async def test_negative_repeat_is_rejected(self) -> None:
+        await self.facade.state(OfficeStateKind.DISCORD)
+
+        with self.assertRaises(OfficeStateValidationError):
+            await self.facade.set_seats(OfficeStateKind.DISCORD, {"-1": {"repeat": -1}})
 
 
 if __name__ == "__main__":

@@ -45,13 +45,15 @@ from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 
 import pixelagents.tests.conftest  # noqa: F401  # stubs redbot before the imports below
-from cctv.infrastructure.webview import WEBVIEW_BASE_PATH, WebviewAssets
+from cctv.infrastructure.webview import DECODED_ASSETS, WEBVIEW_BASE_PATH, WebviewAssets
 from pixelagents.infrastructure import pixel_agents_adapter, webview_build
 from pixelagents.infrastructure.furniture_styles import FurnitureStyleManifest
 
 from . import verify_outbound
 
-SPRITE_FAMILIES = ("characters", "floors", "walls", "carpets", "furniture")
+# Every asset `assets/decoded/` carries (cctv.infrastructure.webview.DECODED_ASSETS):
+# the character profiles plus each decoded sprite family.
+DECODED_FAMILIES = tuple(DECODED_ASSETS)
 _BUNDLE_ASSET_RE = re.compile(r'(?:src|href)="([^"]+)"')
 # Pixelagents builds relative asset URLs; CCTV injects its own serving base.
 
@@ -61,7 +63,7 @@ def _utc_now() -> str:
 
 
 def _source_url(commit: str) -> str:
-    return f"{webview_build.REPO_URL.removesuffix('.git')}/tree/{commit}"
+    return f"{webview_build.pinned_repo_url().removesuffix('.git')}/tree/{commit}"
 
 
 def build_result_document(env_name: str, source: str, ok: bool, checks: list[dict]) -> dict:
@@ -91,9 +93,9 @@ def write_result_document(path: str, document: dict) -> None:
 
 
 def _check_load_assets(provider: WebviewAssets) -> tuple[bool, str]:
-    missing = [name for name in SPRITE_FAMILIES if not provider.assets.get(name)]
+    missing = [name for name in DECODED_FAMILIES if not provider.assets.get(name)]
     if missing:
-        return False, f"missing decoded sprite families: {', '.join(missing)}"
+        return False, f"missing decoded assets: {', '.join(missing)}"
     if not provider.assets.get("catalog"):
         return False, "furniture catalog is empty or missing"
     return True, ""
@@ -149,8 +151,12 @@ def _check_dashboard_bundle(provider: WebviewAssets) -> tuple[bool, str]:
     bundle_paths = [match for match in _BUNDLE_ASSET_RE.findall(source) if match.startswith("./")]
     if not bundle_paths:
         return False, "index.html referenced no relative bundled asset"
+    # A query string (`icon-256.png?v=2`, a cache-buster) never reaches the
+    # static route as part of the path, so it doesn't take part in resolving.
     unresolved = [
-        path.removeprefix("./") for path in bundle_paths if provider.resolve(path) is None
+        path.removeprefix("./")
+        for path in bundle_paths
+        if provider.resolve(path.partition("?")[0]) is None
     ]
     if unresolved:
         return False, f"bundle referenced unresolved asset(s): {', '.join(unresolved)}"

@@ -154,8 +154,8 @@ class CctvPipeline:
                 agent_id: patch.model_dump(by_alias=True, exclude_none=True)
                 for agent_id, patch in message.seats.items()
             }
-            characters = self._assets.get("characters")
-            asset_palette_count = len(characters) if isinstance(characters, (list, tuple)) else 0
+            profiles = self._assets.get("characterProfiles")
+            asset_palette_count = len(profiles) if isinstance(profiles, (list, tuple)) else 0
             palette_count = max(
                 asset_palette_count,
                 DEFAULT_PALETTE_COUNT,

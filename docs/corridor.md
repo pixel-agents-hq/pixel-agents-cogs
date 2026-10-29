@@ -155,8 +155,9 @@ A cog replying as an agent binds `reply_sender(..., agent=AgentRef(...))`,
 and each send's author icon is `avatar_for(agent)`: corridor can't import
 pixelagents, so pixelagents registers the resolver
 (`register_avatar_resolver(resolver, owner="pixelagents")`) that answers
-with the agent's office character. A missing or failing resolver falls back
-to `avatar_path`. See [`docs/reply-identity-design.md`](reply-identity-design.md).
+with the agent's office character. An agent has no bundled image: a
+missing or failing resolver means a reply with no icon. See
+[`docs/reply-identity-design.md`](reply-identity-design.md).
 
 An embed's accent color comes from `ReplyCategory` — `AGENT` (Discord
 blurple, `0x5865F2`), `ROOM` (Discord teal, `0x1ABC9C`), or `FURNITURE`
@@ -231,10 +232,11 @@ Corridor runs **one process-wide A2A listener**
 (`corridor/infrastructure/a2a_server.py`, a `uvicorn`/Starlette server)
 instead of every LLM agent binding a socket of its own. An agent cog calls
 `corridor.register_agent(RegisteredAgent(agent_key=..., card=...,
-executor=..., avatar_path=...), owner=...)` from its own `cog_load` and
+executor=...), owner=...)` from its own `cog_load` and
 `corridor.unregister_agent_owner(owner)` from `cog_unload`. Corridor
-rewrites the card's `supported_interfaces[0].url` (and `icon_url`, when an
-avatar path was given) to its own configured host/port plus `/<agent_key>/`
+rewrites the card's `supported_interfaces[0].url` and `icon_url` (the
+agent's office character, served at `avatar.png`) to its own configured
+host/port plus `/<agent_key>/`
 before storing it and mounting the agent's real `AgentExecutor` — the
 registering agent has no way to know that address itself. `[p]corridor
 a2a host`/`port` (bot owner only) reconfigure and live-restart the shared
@@ -262,7 +264,7 @@ sequenceDiagram
     participant Srv as A2AServer
     participant Bus as EventBusService
 
-    Agent->>Cor: register_agent(RegisteredAgent(agent_key, card, executor, avatar_path), owner)
+    Agent->>Cor: register_agent(RegisteredAgent(agent_key, card, executor), owner)
     Cor->>Cor: a2a_settings() -- current host/port
     Cor->>Cor: card_with_url(card, base_url, icon_url)
     Cor->>Dir: register(rewritten_agent, owner)

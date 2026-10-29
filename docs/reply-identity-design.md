@@ -5,7 +5,7 @@
 `corridor.send_reply`/`render_reply` is the one path every dependent cog
 uses to post a Discord reply, respecting a guild's configured `ReplyMode`
 (`EMBED` or `TEXT`). Every dependent cog binds its own `ReplyIdentity` once
-— a name plus an optional bundled avatar — via `CogBase.reply_sender()`,
+— a name plus an avatar — via `CogBase.reply_sender()`,
 and every reply that cog sends through the resulting `ReplySender` carries
 that identity as the embed's author line (or a text prefix in `TEXT`
 mode), with zero per-call-site repetition across the 60+ places
@@ -23,8 +23,9 @@ An agent's avatar is its office character. A cog that replies as an agent
 `reply_sender(agent=...)`: each send asks `CogBase.avatar_for(agent)` for
 that agent's avatar, which pixelagents answers with its pixatar character
 (`pixelagents.office_character_avatar_path`), the same look it wears on
-the CCTV pages. The bundled `avatar_path` stays the fallback while there's
-no character avatar (pixelagents not loaded, pixatar unavailable).
+the CCTV pages. An agent has no bundled image: while it has no character
+avatar (pixelagents not loaded, pixatar unavailable) its replies carry no
+icon. Only the non-agent cogs bind a bundled `avatar_path`.
 
 ## Architecture
 
@@ -40,16 +41,17 @@ changes.
 
 ```mermaid
 flowchart TB
-    Arch["architect<br/><small>reply_sender(owner='Architect',<br/>avatar_path=architect/assets/avatar.png)</small>"]
+    Arch["architect<br/><small>reply_sender(owner='Architect',<br/>agent=AgentRef(agent_key='architect'))</small>"]
     Pico["pico<br/><small>reply_sender(owner='Pico', ...)<br/>+ ConsultAgentTool footer override</small>"]
-    Painter["painter<br/><small>reply_sender(owner='Painter',<br/>avatar_path=painter/assets/avatar.png)</small>"]
+    Painter["painter<br/><small>reply_sender(owner='Painter',<br/>agent=AgentRef(agent_key='painter'))</small>"]
     Other["corridor itself / deskutils / toolbox /<br/>floorplan / pixelagents / testbench / ...<br/><small>reply_sender(owner=..., avatar_path=...)</small>"]
 
     subgraph C["corridor"]
         RS["ReplySender<br/>(adapters/reply_sender.py)"]
         RSvc["ReplyService.render<br/>(application/reply_service.py)"]
         API["build_reply_payload /<br/>send_rendered_reply<br/>(adapters/api.py)"]
-        Dir["AgentDirectoryService<br/>RegisteredAgent.avatar_path"]
+        Dir["AgentDirectoryService"]
+        Av["avatar_for(agent)<br/><small>registered resolver</small>"]
     end
 
     Arch -- "reply_sender() once at cog_load" --> RS
@@ -57,8 +59,10 @@ flowchart TB
     Painter -- "reply_sender() once at cog_load" --> RS
     Other -- "reply_sender() once at cog_load" --> RS
     RS --> RSvc --> API
-    Arch -- "register_agent(RegisteredAgent(avatar_path=...))" --> Dir
-    Pico -- "list_agents(): reads agent.avatar_path directly<br/>(same filesystem, no network hop)" --> Dir
+    RS -- "per send, for an agent" --> Av
+    PA["pixelagents<br/><small>office character avatar</small>"] -- "register_avatar_resolver()" --> Av
+    Arch -- "register_agent(RegisteredAgent(...))" --> Dir
+    Pico -- "list_agents(), then avatar_for(each agent)<br/>for the consult footer" --> Dir
 ```
 
 `ReplySender` lives in the adapters layer, not application, alongside
@@ -68,7 +72,7 @@ filesystem, framework/infrastructure concerns
 `corridor/application/reply_service.py` (pure, zero discord.py imports)
 stays free of.
 
-Each cog's own bundled avatar ships as `<cog_package>/assets/avatar.png`,
+A non-agent cog's own bundled avatar ships as `<cog_package>/assets/avatar.png`,
 committed to git, optional, attached fresh via `discord.File` on every
 message that needs it and referenced as `attachment://<filename>` — never
 served over HTTP, never cached across sends. A cog passes its
@@ -77,11 +81,12 @@ served over HTTP, never cached across sends. A cog passes its
 currently exists — existence is checked fresh on every send
 (`build_reply_payload`), so dropping a real PNG at that exact path is the
 entire change needed to light up that cog's author icon, no code change
-required. Today, real `avatar.png` files exist for architect, corridor,
-deskutils, floorplan, pico, pixelagents, testbench, and toolbox; painter,
-animator, bootcamp, suggestionbox and telephonepole pass the same
-conventional path with no file there, so without a character avatar their
-replies show the author name with no icon.
+required. Today, real `avatar.png` files exist for corridor, deskutils,
+floorplan, pixelagents, testbench, and toolbox; suggestionbox and
+telephonepole pass the same conventional path with no file there, so their
+replies show the author name with no icon. Agents (pico, architect,
+painter, animator, bootcamp's agents) bind no bundled path at all --
+`reply_sender` refuses `agent` together with `avatar_path`.
 
 ### Agents' character avatars
 
@@ -102,8 +107,9 @@ failed reply.
 | a bootcamp agent | `AgentRef(agent_key=<its key>)`, per `[p]bootcamp ask` reply, author = the agent's key | `agent:<key>` |
 | pico | a callable returning the bot account's `AgentRef` (known once logged in) | `user:<bot id>` |
 
-ConsultAgentTool's footer icon is `avatar_for` the consulted agent, falling
-back to its `RegisteredAgent.avatar_path`. The bot owner changes an agent's
+ConsultAgentTool's footer icon is `avatar_for` the consulted agent (none
+while it has no character avatar), and corridor's A2A listener serves the
+same file at `/<agent_key>/avatar.png`, the agent card's `icon_url`. The bot owner changes an agent's
 character with `[p]cctv character agentset <agent> <px.…>` (see
 [`docs/cctv-design.md`](cctv-design.md)).
 
@@ -176,18 +182,10 @@ color via `REPLY_CATEGORY_COLORS` (`corridor/domain/reply_colors.py`);
 `None` — the default, and what deskutils and pixelagents deliberately keep
 — means "no opinion," Discord's own gray, not a fourth category.
 
-**`corridor/domain/agent_directory.py`'s `RegisteredAgent`** gains the
-field that lets a registered A2A agent's avatar reach both this doc's
-consulted-agent footer path and the A2A protocol's own `icon_url`:
-
-```python
-@dataclass(frozen=True, slots=True)
-class RegisteredAgent:
-    agent_key: str
-    card: AgentCard
-    executor: AgentExecutor
-    avatar_path: Path | None = None
-```
+**`corridor/domain/agent_directory.py`'s `RegisteredAgent`** carries no
+avatar: a registered agent's avatar is `avatar_for` its `agent_key`, which
+reaches both this doc's consulted-agent footer path and the A2A protocol's
+own `icon_url` (`/<agent_key>/avatar.png` on corridor's shared listener).
 
 `card_with_url(card, url, *, icon_url=None)` rewrites the registering
 agent's card at the same call site corridor already uses to rewrite
@@ -208,10 +206,11 @@ sequenceDiagram
     participant API as send_rendered_reply
 
     Cmd->>RS: send_reply(ctx, title="Architect Status", fields=fields)
-    RS->>RSvc: render(..., identity=ReplyIdentity("Architect", "avatar.png"), category=AGENT)
-    RSvc-->>RS: RenderedReply(author_name="Architect",<br/>author_icon_attachment="avatar.png", ...)
-    RS->>API: send_rendered_reply(ctx, rendered, avatar_path=.../assets/avatar.png)
-    API->>API: build_reply_payload -- avatar_path.exists()? attach discord.File,<br/>set_author(name="Architect", icon_url="attachment://avatar.png")
+    RS->>RS: avatar_for(AgentRef(agent_key="architect"))<br/>-> pixelagents' HASH.png (or None)
+    RS->>RSvc: render(..., identity=ReplyIdentity("Architect", "HASH.png"), category=AGENT)
+    RSvc-->>RS: RenderedReply(author_name="Architect",<br/>author_icon_attachment="HASH.png", ...)
+    RS->>API: send_rendered_reply(ctx, rendered, avatar_path=pixelagents-data/avatars/HASH.png)
+    API->>API: build_reply_payload -- attach discord.File,<br/>set_author(name="Architect", icon_url="attachment://HASH.png")
     API-->>Cmd: discord.Message sent, embed author = Architect
 ```
 
@@ -226,12 +225,12 @@ sequenceDiagram
     participant RSvc as ReplyService.render
     participant API as send_rendered_reply
 
-    Note over Tool: built with footer_icon_path=<br/>RegisteredAgent("architect").avatar_path
-    Tool->>Tool: FooterOverride(name="architect",<br/>icon_filename="avatar.png")
+    Note over Tool: built with footer_icon_path=<br/>avatar_for(architect)
+    Tool->>Tool: FooterOverride(name="architect",<br/>icon_filename="HASH.png")
     Tool->>RS: send_reply(ctx, description="Asking architect: ...",<br/>footer_override=override, footer_icon_path=path)
     RS->>RSvc: render(..., identity=ReplyIdentity("Pico", ...), footer_override=override)
-    RSvc-->>RS: RenderedReply(author_name="Pico", ...,<br/>footer_text="architect", footer_icon_attachment="avatar.png")
-    RS->>API: send_rendered_reply(ctx, rendered,<br/>avatar_path=pico/avatar.png, footer_icon_path=architect/avatar.png)
+    RSvc-->>RS: RenderedReply(author_name="Pico", ...,<br/>footer_text="architect", footer_icon_attachment="HASH.png")
+    RS->>API: send_rendered_reply(ctx, rendered,<br/>avatar_path=pico's character, footer_icon_path=architect's character)
     API->>API: two discord.File attachments (author + footer,<br/>footer prefixed "footer_" to avoid a filename collision)
     API-->>Tool: message shows Pico as author, architect in the footer
 ```
@@ -334,7 +333,7 @@ both as separate keyword arguments precisely so a cog's bound sender can
 default a category (most do, once, at construction) without that becoming
 part of what "being this cog" means.
 
-**Footer icons are Discord attachments from a local `avatar_path`, not the
+**Footer icons are Discord attachments from a local file, not the
 A2A card's `icon_url`.** Corridor's shared A2A listener does serve a real
 `/<agent_key>/avatar.png` route, and does set `AgentCard.icon_url` to that
 address — genuine, correct A2A protocol infrastructure for an external A2A
@@ -344,16 +343,16 @@ actually bind — `127.0.0.1` by default — which works fine for this same
 process's own agent-to-agent calls but means Discord's own servers can
 never fetch it: a footer built from `icon_url` shows the consulted agent's
 *name* correctly but never its icon. Since every agent in this repo shares
-pico's own filesystem and process, `ConsultAgentTool` instead reads
-`RegisteredAgent.avatar_path` directly and attaches it as a Discord
+pico's own filesystem and process, `ConsultAgentTool` instead takes the
+file `avatar_for` returns directly and attaches it as a Discord
 attachment — `FooterOverride.icon_filename` plus a `footer_icon_path`
 threaded through `ReplySender.send_reply`/`build_reply_payload`, the exact
 same reliable attachment mechanism already used for a cog's own author
 icon. The footer attachment is filename-prefixed (`footer_<name>`) because
-Discord requires unique filenames among one message's attachments, and
-every cog's own avatar is conventionally also named `avatar.png` — without
-the prefix, a message carrying both the sending cog's author icon and a
-consulted agent's footer icon would collide.
+Discord requires unique filenames among one message's attachments, and two
+agents dressed in the same seed code share one avatar file name — without
+the prefix, a message carrying both the sending agent's author icon and a
+consulted agent's footer icon could collide.
 
 **No new cross-cog registry for reply identity.** Unlike
 `AgentDirectoryService`/`ToolRegistryService`, which other cogs genuinely
@@ -363,7 +362,8 @@ the cog that created it, never looked up by name elsewhere.
 
 **Call-site ergonomics: a bound sender obtained once, not a repeated
 `owner` kwarg.** Every dependent cog's `cog_load` calls
-`self._corridor.reply_sender(owner=..., avatar_path=...)` once and stores
+`self._corridor.reply_sender(owner=..., avatar_path=...)` (or
+`agent=...`) once and stores
 the result as `self._reply`; every existing `send_reply`/`render_reply`
 call site keeps its exact signature (title/description/content/fields/code)
 — only *which object* receives the call changes, from `self._corridor` to
@@ -381,19 +381,20 @@ site simply forgetting to pass it.
   announcement text itself already names the consulted agent in prose
   ("Asking **architect**: ..."), so only the *icon* is unavailable there,
   never the attribution.
-- **Avatar caching/CDN-fronting.** Both the `discord.File` re-upload path
-  and corridor's `/avatar.png` A2A route re-read from disk on every single
+- **Avatar CDN-fronting.** An agent's avatar is rendered once per seed
+  code and kept on disk, but the `discord.File` re-upload path and
+  corridor's `/avatar.png` A2A route still read that file on every
   call/request — a small avatar re-uploaded on every reply that needs it
-  is an accepted, deliberate cost over premature caching.
+  is an accepted, deliberate cost.
 - **Avatar auth/access control on corridor's A2A listener.** The avatar
   route shares the same trust model as every other route corridor's
   shared A2A listener serves — no auth. Serving a static PNG adds no
   attack surface beyond "an unauthenticated network peer can read this
   small public-facing image," categorically less sensitive than the
   JSON-RPC surface already accepted there.
-- **A `[p]<cog> avatar` upload/management command.** Avatars are a
-  git-committed asset, not admin-configurable at runtime — no owner-facing
-  command changes one without editing the repo.
+- **An avatar upload command.** A non-agent cog's avatar is a
+  git-committed asset; an agent's is its office character, changed with
+  `[p]cctv character agentset <agent> <px.…>`, never an uploaded image.
 - **A guild-configurable "hide cog author lines" toggle.** The author name
   always shows once an identity is bound; there is no `ReplyPreferences`
   field to suppress it.

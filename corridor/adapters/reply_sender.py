@@ -48,10 +48,10 @@ class ReplySender:
     outright (rather than a not-yet-existing conventional path) is only
     appropriate for a cog that will never want author icons at all.
 
-    `agent`, when given, names who is replying: each send asks
-    `CogBase.avatar_for(agent)` for its avatar (pixelagents answers with
-    that agent's office character) and falls back to `avatar_path` when
-    there's none."""
+    `agent`, given in place of `avatar_path`, names who is replying: each
+    send asks `CogBase.avatar_for(agent)` for its avatar (pixelagents
+    answers with that agent's office character), and the reply carries no
+    icon while there's none. An agent never has a bundled image."""
 
     def __init__(
         self,
@@ -62,6 +62,8 @@ class ReplySender:
         category: ReplyCategory | None = None,
         agent: ReplyAgent | None = None,
     ) -> None:
+        if agent is not None and avatar_path is not None:
+            raise ValueError("an agent's avatar is its office character, not a bundled image")
         self._cog_base = cog_base
         self._owner = owner
         self._avatar_path = avatar_path
@@ -73,15 +75,16 @@ class ReplySender:
         )
 
     async def _avatar(self) -> tuple[ReplyIdentity, Path | None]:
-        """This send's identity and author icon: the agent's own avatar when
-        one resolves, else the static `avatar_path`."""
+        """This send's identity and author icon: the agent's avatar (its
+        office character) for an agent, else the bundled `avatar_path`."""
 
+        if self._agent is None:
+            return self._identity, self._avatar_path
         agent = self._agent() if callable(self._agent) else self._agent
-        if agent is not None:
-            resolved = await self._cog_base.avatar_for(agent)
-            if resolved is not None:
-                return ReplyIdentity(owner=self._owner, avatar_filename=resolved.name), resolved
-        return self._identity, self._avatar_path
+        resolved = await self._cog_base.avatar_for(agent) if agent is not None else None
+        if resolved is None:
+            return self._identity, None
+        return ReplyIdentity(owner=self._owner, avatar_filename=resolved.name), resolved
 
     async def render_reply(
         self,

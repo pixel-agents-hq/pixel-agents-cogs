@@ -89,13 +89,13 @@ once, typically in `cog_load`, and sends every reply through the returned
 `ReplySender` instead of calling `corridor` directly. The owner name always
 shows as the embed author (or a `"**MyCog:** "` text prefix in
 `ReplyMode.TEXT`); the avatar attaches once a real `avatar.png` exists at
-that conventional path. `architect`, `corridor`, `deskutils`, `floorplan`,
-`pico`, `pixelagents`, `testbench`, and `toolbox` all ship one; the cogs
-that don't show name-only. A cog replying as an agent also passes
-`agent=AgentRef(...)`: its avatar is then the agent's office character,
-resolved per send through the avatar resolver pixelagents registers
-(`register_avatar_resolver` / `avatar_for`), with the bundled image as
-fallback.
+that conventional path. `corridor`, `deskutils`, `floorplan`,
+`pixelagents`, `testbench`, and `toolbox` ship one; the cogs that don't
+show name-only. A cog replying as an agent (pico, architect, painter,
+animator, bootcamp's agents) passes `agent=AgentRef(...)` instead of an
+`avatar_path`: its avatar is the agent's office character, resolved per
+send through the avatar resolver pixelagents registers
+(`register_avatar_resolver` / `avatar_for`), and no icon while it has none.
 
 Separate from per-guild settings, `[p]corridor llm ...` and
 `[p]corridor a2a ...` (bot-owner only) configure the one shared LLM

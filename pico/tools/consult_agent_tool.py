@@ -31,8 +31,8 @@ as before.
 
 Both announcements carry pico's own bound author identity (via `reply`,
 a `ReplySender`) *and*, in the footer, the *consulted* agent's own
-identity when it has one (`footer_icon_path`, the same real local `Path`
-`RegisteredAgent.avatar_path` carries -- attached as a Discord attachment
+identity when it has one (`footer_icon_path`, the agent's office character
+from `corridor.avatar_for` -- attached as a Discord attachment
 the same reliable way `reply`'s own avatar is, not fetched from a URL: the
 agent's `a2a.types.AgentCard.icon_url` field points at corridor's shared
 A2A listener, which only binds `a2a_host`/`a2a_port` -- 127.0.0.1 by

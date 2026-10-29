@@ -33,7 +33,7 @@ class DummyExecutor(AgentExecutor):
         raise NotImplementedError
 
 
-def _agent(agent_key: str, *, avatar_path: Path | None = None) -> RegisteredAgent:
+def _agent(agent_key: str) -> RegisteredAgent:
     card = AgentCard(
         name=agent_key,
         description="A test agent.",
@@ -49,9 +49,7 @@ def _agent(agent_key: str, *, avatar_path: Path | None = None) -> RegisteredAgen
         default_output_modes=["text/plain"],
         skills=[],
     )
-    return RegisteredAgent(
-        agent_key=agent_key, card=card, executor=DummyExecutor(), avatar_path=avatar_path
-    )
+    return RegisteredAgent(agent_key=agent_key, card=card, executor=DummyExecutor())
 
 
 class TestA2AServerBindFailure(unittest.IsolatedAsyncioTestCase):
@@ -145,38 +143,42 @@ class TestA2AServerRouting(unittest.IsolatedAsyncioTestCase):
 
 class TestA2AServerAvatarRoute(unittest.IsolatedAsyncioTestCase):
     """See docs/reply-identity-design.md section 7 -- corridor serves an
-    agent's bundled avatar off the same per-agent Mount its A2A routes
-    already use, so ConsultAgentTool can show it as a footer identity."""
+    agent's avatar (its office character, via `avatar_for`) off the same
+    per-agent Mount its A2A routes already use."""
 
-    async def test_serves_the_avatar_when_the_file_exists(self) -> None:
+    async def test_serves_the_agents_avatar(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            avatar_path = Path(tmp) / "avatar.png"
+            avatar_path = Path(tmp) / "0123.png"
             avatar_path.write_bytes(b"fake-png-bytes")
-            server = A2AServer()
-            await server.start(
-                host="127.0.0.1", port=8956, agents=[_agent("architect", avatar_path=avatar_path)]
-            )
+            asked: list[str] = []
+
+            async def avatar(agent_key: str) -> Path | None:
+                asked.append(agent_key)
+                return avatar_path
+
+            server = A2AServer(avatar=avatar)
+            await server.start(host="127.0.0.1", port=8956, agents=[_agent("architect")])
             self.addAsyncCleanup(server.stop)
 
             async with aiohttp.ClientSession() as session:
                 async with session.get("http://127.0.0.1:8956/architect/avatar.png") as response:
                     self.assertEqual(response.status, 200)
                     self.assertEqual(await response.read(), b"fake-png-bytes")
+            self.assertEqual(asked, ["architect"])
 
-    async def test_404s_when_the_configured_avatar_file_is_missing(self) -> None:
-        server = A2AServer()
-        await server.start(
-            host="127.0.0.1",
-            port=8957,
-            agents=[_agent("architect", avatar_path=Path("/does/not/exist/avatar.png"))],
-        )
+    async def test_404s_while_the_agent_has_no_avatar(self) -> None:
+        async def avatar(agent_key: str) -> Path | None:
+            return None
+
+        server = A2AServer(avatar=avatar)
+        await server.start(host="127.0.0.1", port=8957, agents=[_agent("architect")])
         self.addAsyncCleanup(server.stop)
 
         async with aiohttp.ClientSession() as session:
             async with session.get("http://127.0.0.1:8957/architect/avatar.png") as response:
                 self.assertEqual(response.status, 404)
 
-    async def test_no_avatar_route_mounted_without_an_avatar_path(self) -> None:
+    async def test_no_avatar_route_mounted_without_a_provider(self) -> None:
         server = A2AServer()
         await server.start(host="127.0.0.1", port=8958, agents=[_agent("architect")])
         self.addAsyncCleanup(server.stop)

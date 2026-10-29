@@ -21,8 +21,6 @@ class TestReplyAvatars(unittest.IsolatedAsyncioTestCase):
         self.bot.register_guild(self.guild)
         self.corridor = Corridor(bot=self.bot)
         self.tmp = Path(self.enterContext(tempfile.TemporaryDirectory()))
-        self.static = self.tmp / "avatar.png"
-        self.static.write_bytes(b"static")
         self.character = self.tmp / "0123456789abcdef.png"
         self.character.write_bytes(b"character")
         self.asked: list[AgentRef] = []
@@ -36,9 +34,7 @@ class TestReplyAvatars(unittest.IsolatedAsyncioTestCase):
 
     async def test_the_agents_character_is_the_author_icon(self) -> None:
         self.corridor.register_avatar_resolver(self._resolve, owner="pixelagents")
-        sender = self.corridor.reply_sender(
-            owner="Architect", avatar_path=self.static, agent=ARCHITECT
-        )
+        sender = self.corridor.reply_sender(owner="Architect", agent=ARCHITECT)
         ctx = self._ctx()
 
         await sender.send_reply(ctx, title="Hi")
@@ -49,40 +45,38 @@ class TestReplyAvatars(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(ctx.sent[0]["files"][0].filename, "0123456789abcdef.png")
 
-    async def test_without_a_resolver_the_static_avatar_stays(self) -> None:
-        sender = self.corridor.reply_sender(
-            owner="Architect", avatar_path=self.static, agent=ARCHITECT
-        )
+    async def test_without_a_resolver_there_is_no_icon(self) -> None:
+        sender = self.corridor.reply_sender(owner="Architect", agent=ARCHITECT)
         ctx = self._ctx()
 
         await sender.send_reply(ctx, title="Hi")
 
-        ctx.sent[0]["embed"].set_author.assert_called_once_with(
-            name="Architect", icon_url="attachment://avatar.png"
-        )
+        ctx.sent[0]["embed"].set_author.assert_called_once_with(name="Architect", icon_url=None)
 
     async def test_a_failing_resolver_never_fails_the_reply(self) -> None:
         async def broken(agent: AgentRef) -> Path | None:
             raise RuntimeError("pixatar exploded")
 
         self.corridor.register_avatar_resolver(broken, owner="pixelagents")
-        sender = self.corridor.reply_sender(
-            owner="Architect", avatar_path=self.static, agent=ARCHITECT
-        )
+        sender = self.corridor.reply_sender(owner="Architect", agent=ARCHITECT)
         ctx = self._ctx()
 
         with self.assertLogs("red.corridor", level="ERROR"):
             await sender.send_reply(ctx, title="Hi")
 
-        ctx.sent[0]["embed"].set_author.assert_called_once_with(
-            name="Architect", icon_url="attachment://avatar.png"
-        )
+        ctx.sent[0]["embed"].set_author.assert_called_once_with(name="Architect", icon_url=None)
+
+    def test_an_agent_has_no_bundled_avatar(self) -> None:
+        with self.assertRaises(ValueError):
+            self.corridor.reply_sender(
+                owner="Architect", avatar_path=self.character, agent=ARCHITECT
+            )
 
     async def test_a_lazy_agent_is_resolved_at_send_time(self) -> None:
         self.corridor.register_avatar_resolver(self._resolve, owner="pixelagents")
         bot_account: list[AgentRef] = []
         sender = self.corridor.reply_sender(
-            owner="Pico", avatar_path=self.static, agent=lambda: next(iter(bot_account), None)
+            owner="Pico", agent=lambda: next(iter(bot_account), None)
         )
 
         await sender.send_reply(self._ctx(), title="before login")

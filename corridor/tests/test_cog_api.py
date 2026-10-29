@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import unittest
 from collections.abc import Awaitable, Callable
-from pathlib import Path
 
 from a2a.server.agent_execution.agent_executor import AgentExecutor
 from a2a.server.agent_execution.context import RequestContext
@@ -42,7 +41,6 @@ class _DummyExecutor(AgentExecutor):
 def _agent(
     agent_key: str,
     *,
-    avatar_path: Path | None = None,
     required_permission_group: str | None = None,
 ) -> RegisteredAgent:
     card = AgentCard(
@@ -63,7 +61,6 @@ def _agent(
         agent_key=agent_key,
         card=card,
         executor=_DummyExecutor(),
-        avatar_path=avatar_path,
         required_permission_group=required_permission_group,
     )
 
@@ -542,24 +539,16 @@ class TestCorridorApi(unittest.IsolatedAsyncioTestCase):
         expected = f"http://{settings.a2a_host}:{settings.a2a_port}/architect/"
         self.assertEqual(agents[0].card.supported_interfaces[0].url, expected)
 
-    async def test_register_agent_sets_icon_url_when_avatar_path_given(self) -> None:
+    async def test_register_agent_points_icon_url_at_the_agents_avatar_route(self) -> None:
         await self.corridor.set_a2a_host("127.0.0.1")
 
-        await self.corridor.register_agent(
-            _agent("architect", avatar_path=Path("/some/avatar.png")), owner="Architect"
-        )
+        await self.corridor.register_agent(_agent("architect"), owner="Architect")
         await self.corridor.cog_unload()
 
         agents = self.corridor.list_agents()
         settings = await self.corridor.a2a_settings()
         expected = f"http://{settings.a2a_host}:{settings.a2a_port}/architect/avatar.png"
         self.assertEqual(agents[0].card.icon_url, expected)
-
-    async def test_register_agent_leaves_icon_url_unset_without_an_avatar_path(self) -> None:
-        await self.corridor.register_agent(_agent("architect"), owner="Architect")
-
-        agents = self.corridor.list_agents()
-        self.assertEqual(agents[0].card.icon_url, "")
 
     async def test_register_agent_forwards_required_permission_group(self) -> None:
         await self.corridor.register_agent(

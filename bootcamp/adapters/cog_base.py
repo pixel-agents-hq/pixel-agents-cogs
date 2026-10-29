@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable, Sequence
-from pathlib import Path
 from typing import Any
 
 from redbot.core import commands
@@ -32,14 +31,6 @@ from ..tools.base import ToolSpec
 
 log = logging.getLogger("red.bootcamp")
 
-# Conventional path for this cog's own bundled avatar image -- passed to
-# corridor.reply_sender() regardless of whether a real file exists here
-# yet; existence is checked fresh on every send, so dropping a real image
-# at this exact path later needs no code change. See
-# docs/reply-identity-design.md. It is every custom agent's fallback
-# avatar (RegisteredAgent.avatar_path below): an agent's own avatar is its
-# office character, resolved per reply (`run_agent`).
-AVATAR_PATH = Path(__file__).resolve().parent.parent / "assets" / "avatar.png"
 
 _AGENT_DESCRIPTION_PROMPT_PREVIEW = 200
 
@@ -135,7 +126,6 @@ class CorridorAgentRegistrar:
                 agent_key=agent.agent_key,
                 card=card,
                 executor=executor,
-                avatar_path=AVATAR_PATH,
                 required_permission_group=agent.permission_group,
             ),
             owner="Bootcamp",
@@ -198,9 +188,7 @@ class CogBase:
         # Bound once, reused at every reply call site instead of repeating
         # this cog's owner name as an argument everywhere -- see
         # docs/reply-identity-design.md.
-        self._reply = self._corridor.reply_sender(
-            owner="Bootcamp", avatar_path=AVATAR_PATH, category=ReplyCategory.AGENT
-        )
+        self._reply = self._corridor.reply_sender(owner="Bootcamp", category=ReplyCategory.AGENT)
         registrar = CorridorAgentRegistrar(
             self._corridor,
             repository=self._repository,
@@ -282,7 +270,6 @@ class CogBase:
         # The agent answers as itself, wearing its office character.
         reply = self._corridor.reply_sender(
             owner=agent_key,
-            avatar_path=AVATAR_PATH,
             category=ReplyCategory.AGENT,
             agent=AgentRef(discord_user_id=None, guild_id=None, is_bot=True, agent_key=agent_key),
         )
@@ -319,4 +306,4 @@ class CogBase:
         return result.text
 
 
-__all__ = ["AVATAR_PATH", "CogBase", "CorridorAgentRegistrar"]
+__all__ = ["CogBase", "CorridorAgentRegistrar"]

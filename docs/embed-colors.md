@@ -92,8 +92,8 @@ place it already binds everything else about how its replies render, so no
 call site repeats it:
 
 - **`ReplySender`** (`corridor/adapters/reply_sender.py`) binds `category`
-  once per cog, alongside `owner`/`avatar_path`, via
-  `CogBase.reply_sender(owner=..., avatar_path=..., category=...)`. `pico`,
+  once per cog, alongside `owner` and `avatar_path` (or `agent`, for an
+  agent), via `CogBase.reply_sender(owner=..., category=..., ...)`. `pico`,
   `architect`, `painter`, `testbench`, `toolbox`, `deskutils`, and
   **corridor itself** (bound in `CogBase.__init__`, since corridor is a
   Room cog like `floorplan`) each pass their own category at that one

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from pathlib import Path
 from typing import Any, cast
 
 from redbot.core.bot import Red
@@ -36,7 +35,6 @@ ARCHITECT_AGENT_REF = AgentRef(
     is_bot=True,
     agent_key=ARCHITECT_AGENT_KEY,
 )
-AVATAR_PATH = Path(__file__).resolve().parent.parent / "assets" / "avatar.png"
 
 
 async def _mcp_tools(corridor: Any) -> list[ToolSpec]:
@@ -113,7 +111,6 @@ class CogBase:
             self._corridor.register_dependent("architect")
             self._reply = self._corridor.reply_sender(
                 owner="Architect",
-                avatar_path=AVATAR_PATH,
                 category=ReplyCategory.AGENT,
                 agent=ARCHITECT_AGENT_REF,
             )
@@ -146,7 +143,6 @@ class CogBase:
                     agent_key=ARCHITECT_AGENT_KEY,
                     card=card,
                     executor=self._executor,
-                    avatar_path=AVATAR_PATH,
                 ),
                 # Matches AgentDirectoryService.register's own documented
                 # convention (the cog's class name, same as
@@ -171,6 +167,5 @@ class CogBase:
 __all__ = [
     "ARCHITECT_AGENT_KEY",
     "ARCHITECT_AGENT_REF",
-    "AVATAR_PATH",
     "CogBase",
 ]

@@ -99,7 +99,6 @@ def _agent(
     *,
     url: str = "http://localhost:8931/architect/",
     icon_url: str = "",
-    avatar_path: Path | None = None,
     required_permission_group: str | None = None,
 ) -> SimpleNamespace:
     card = SimpleNamespace(
@@ -110,7 +109,6 @@ def _agent(
     return SimpleNamespace(
         agent_key=agent_key,
         card=card,
-        avatar_path=avatar_path,
         required_permission_group=required_permission_group,
     )
 
@@ -135,8 +133,8 @@ class TestAgentTools(unittest.IsolatedAsyncioTestCase):
     async def test_the_consult_footer_wears_the_agents_office_character(self) -> None:
         corridor = FakeCorridor()
         corridor.agents = [
-            _agent("architect", avatar_path=Path("/architect/assets/avatar.png")),
-            _agent("painter", avatar_path=Path("/painter/assets/avatar.png")),
+            _agent("architect"),
+            _agent("painter"),
         ]
         corridor.avatars = {"architect": Path("/pixelagents/avatars/0123.png")}
 
@@ -154,8 +152,8 @@ class TestAgentTools(unittest.IsolatedAsyncioTestCase):
             footers,
             {
                 "consult_architect": Path("/pixelagents/avatars/0123.png"),
-                # No character avatar: its own bundled one.
-                "consult_painter": Path("/painter/assets/avatar.png"),
+                # No character avatar (pixatar unavailable): no footer icon.
+                "consult_painter": None,
             },
         )
 

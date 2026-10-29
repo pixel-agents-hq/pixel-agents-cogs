@@ -130,12 +130,11 @@ async def _agent_tools(
     docs/agent-directory-design.md. Each tool closes over this turn's
     `ctx` and pico's own bound `reply` sender (same convention as
     `ReplyTool`/`CrossCogTool`), since it announces the A2A exchange in
-    this same channel as it happens -- with the consulted agent's own
-    icon in the footer, attached from `agent.avatar_path` (the same real
-    local `Path` corridor also uses to serve that agent's `icon_url` over
-    its shared A2A listener for genuine external A2A clients -- pico
-    reads the file directly instead, since every agent in this repo
-    shares pico's own filesystem/process; see
+    this same channel as it happens -- with the consulted agent's office
+    character in the footer, attached from `corridor.avatar_for(agent)`
+    (the same file corridor serves as that agent's `icon_url` on its shared
+    A2A listener -- pico reads it directly instead, since every agent in
+    this repo shares pico's own filesystem/process; see
     docs/reply-identity-design.md section 7). `guild_id`/`bot_user_id`
     (same values `ReplyTool` above is built with) let each tool publish
     `AgentReplied` events attributing the outgoing question to pico's own
@@ -189,8 +188,7 @@ async def _agent_tools(
                     corridor=corridor,
                     guild_id=guild_id,
                     bot_user_id=bot_user_id,
-                    # The consulted agent's office character, else its own
-                    # bundled avatar.
+                    # The consulted agent's office character.
                     footer_icon_path=await corridor.avatar_for(
                         AgentRef(
                             discord_user_id=None,
@@ -198,8 +196,7 @@ async def _agent_tools(
                             is_bot=True,
                             agent_key=agent.agent_key,
                         )
-                    )
-                    or agent.avatar_path,
+                    ),
                 )
             )
         except Exception:

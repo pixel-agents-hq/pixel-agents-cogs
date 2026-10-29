@@ -352,7 +352,7 @@ class TestConsultAgentToolAnnouncements(unittest.IsolatedAsyncioTestCase):
         tool = _tool(
             FakeArchitectAsker(answer="ok"),
             reply,
-            footer_icon_path=Path("/architect/assets/avatar.png"),
+            footer_icon_path=Path("/pixelagents/avatars/0123456789abcdef.png"),
         )
 
         await tool.handler(ConsultAgentInput(prompt="hi"))
@@ -360,13 +360,15 @@ class TestConsultAgentToolAnnouncements(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(reply.footer_overrides), 2)
         for override in reply.footer_overrides:
             self.assertEqual(override.name, "architect")
-            self.assertEqual(override.icon_filename, "avatar.png")
+            self.assertEqual(override.icon_filename, "0123456789abcdef.png")
         # The real local Path is forwarded alongside the override on every
         # call, not just used to derive icon_filename -- this is what lets
         # build_reply_payload actually attach the file (see
         # docs/reply-identity-design.md section 7 on why this is an
         # attachment, not a URL corridor's shared A2A listener serves).
-        self.assertEqual(reply.footer_icon_paths, [Path("/architect/assets/avatar.png")] * 2)
+        self.assertEqual(
+            reply.footer_icon_paths, [Path("/pixelagents/avatars/0123456789abcdef.png")] * 2
+        )
 
     async def test_no_footer_override_without_an_icon_path(self) -> None:
         reply = FakeReplySender()

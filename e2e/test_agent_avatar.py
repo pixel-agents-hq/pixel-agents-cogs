@@ -26,8 +26,9 @@ _PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
 
 class _Context:
-    def __init__(self, guild: Any) -> None:
+    def __init__(self, guild: Any, author: Any = None) -> None:
         self.guild = guild
+        self.author = author
         self.clean_prefix = "!"
         self.interaction = None
         self.sent: list[dict[str, Any]] = []
@@ -69,6 +70,35 @@ class TestAgentRepliesWearTheirCharacter(unittest.IsolatedAsyncioTestCase):
             name="e2e-avatar-agent", icon_url=f"attachment://{avatar.name}"
         )
         self.assertEqual([f.filename for f in ctx.sent[0]["files"]], [avatar.name])
+
+    async def test_the_member_replied_to_can_wear_their_character_in_the_footer(self) -> None:
+        from corridor.domain import IconPreference, IconSource
+
+        guild = SimpleNamespace(id=4242)
+        await self.corridor.set_icon_preference(guild.id, IconPreference(source=IconSource.MEMBER))
+        member = SimpleNamespace(id=777111, bot=False, display_name="Ada")
+        agent_avatar = await self.corridor.avatar_for(_AGENT)
+        member_avatar = await self.corridor.avatar_for(
+            AgentRef(discord_user_id=member.id, guild_id=guild.id, is_bot=False)
+        )
+        assert agent_avatar is not None and member_avatar is not None
+        self.assertNotEqual(agent_avatar, member_avatar)
+
+        sender = self.corridor.reply_sender(owner="e2e-avatar-agent", agent=_AGENT)
+        ctx = _Context(guild, author=member)
+        with mock.patch("discord.Embed") as embed:
+            await sender.send_reply(ctx, description="hello")
+
+        embed.return_value.set_author.assert_called_once_with(
+            name="e2e-avatar-agent", icon_url=f"attachment://{agent_avatar.name}"
+        )
+        embed.return_value.set_footer.assert_called_once_with(
+            text="Ada", icon_url=f"attachment://member_{member_avatar.name}"
+        )
+        self.assertEqual(
+            sorted(f.filename for f in ctx.sent[0]["files"]),
+            sorted([agent_avatar.name, f"member_{member_avatar.name}"]),
+        )
 
 
 if __name__ == "__main__":

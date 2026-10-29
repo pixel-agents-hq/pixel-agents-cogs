@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
+from pathlib import Path
 from typing import Literal
 
 OWNER_KEY = "owner"
@@ -84,9 +85,25 @@ class ReplyCategory(StrEnum):
 
 
 class IconSource(StrEnum):
+    """Where a reply's footer icon comes from."""
+
     CUSTOM = "custom"
     BOT = "bot"
     SERVER = "server"
+    # The office character of the member being replied to (the bot's icon
+    # when there's no such member, or no character avatar).
+    MEMBER = "member"
+
+
+class AuthorIconSource(StrEnum):
+    """Whose image a reply's author icon shows. The author *name* is always
+    the replier's."""
+
+    # The replying agent's office character, or the cog's bundled avatar.
+    REPLIER = "replier"
+    # The office character of the member being replied to (the replier's
+    # image when there's no such member, or no character avatar).
+    MEMBER = "member"
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,6 +118,7 @@ class ReplyPreferences:
     show_timestamp: bool
     footer_text: str | None
     icon: IconPreference
+    author_icon: AuthorIconSource = AuthorIconSource.REPLIER
 
 
 @dataclass(frozen=True, slots=True)
@@ -236,6 +254,16 @@ class RenderedReply:
     # author_icon_attachment is rather than fetched from footer_icon_url's
     # real HTTP(S) URL. See FooterOverride's own docstring.
     footer_icon_attachment: str | None = None
+    # Which icon slots show the addressed member's office character
+    # (`AuthorIconSource.MEMBER` / `IconSource.MEMBER`): the attachment name
+    # is then `member_icon_attachment`, read from `member_icon_path`.
+    author_icon_member: bool = False
+    footer_icon_member: bool = False
+    member_icon_attachment: str | None = None
+    # Set by the adapter that resolved the member's avatar
+    # (`CogBase.render_reply`), never by `ReplyService` -- the application
+    # layer stays free of filesystem paths.
+    member_icon_path: Path | None = None
 
 
 @dataclass(frozen=True, slots=True)

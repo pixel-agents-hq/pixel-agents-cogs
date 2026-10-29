@@ -8,7 +8,7 @@ import unittest
 
 import pytest
 
-from ..domain import IconPreference, IconSource, ReplyMode
+from ..domain import AuthorIconSource, IconPreference, IconSource, ReplyMode
 from ..infrastructure import DEFAULT_LLM_BASE_URL, RedCorridorRepository
 
 
@@ -23,6 +23,7 @@ class TestRedCorridorRepository(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(settings.reply.show_timestamp)
         self.assertIsNone(settings.reply.footer_text)
         self.assertEqual(settings.reply.icon.source, IconSource.BOT)
+        self.assertEqual(settings.reply.author_icon, AuthorIconSource.REPLIER)
         self.assertEqual(settings.permissions.owner_label, "Owner")
         self.assertEqual(settings.permissions.employee_label, "Employee")
         self.assertEqual(
@@ -50,6 +51,20 @@ class TestRedCorridorRepository(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(settings.reply.icon.source, IconSource.CUSTOM)
         self.assertEqual(settings.reply.icon.custom_url, "https://x/y.png")
+
+    async def test_set_author_icon_persists(self) -> None:
+        await self.repository.set_author_icon(1, AuthorIconSource.MEMBER)
+
+        settings = await self.repository.guild_settings(1)
+
+        self.assertEqual(settings.reply.author_icon, AuthorIconSource.MEMBER)
+
+    async def test_the_member_icon_source_persists(self) -> None:
+        await self.repository.set_icon_preference(1, IconPreference(source=IconSource.MEMBER))
+
+        settings = await self.repository.guild_settings(1)
+
+        self.assertEqual(settings.reply.icon.source, IconSource.MEMBER)
 
     async def test_set_group_role_ids_persists(self) -> None:
         await self.repository.set_group_role_ids(1, "building_manager", frozenset({100, 200}))

@@ -81,7 +81,11 @@ criterion, not both.
 
 Reply style is also guild-wide: plain text vs. rich embed, and if embed,
 whether it shows a timestamp, a footer, and where its icon comes from (a
-custom URL, the bot's own avatar, or the server's icon).
+custom URL, the bot's own avatar, the server's icon, or `member`: the
+office character of the member being replied to). A second setting,
+*Author icon*, chooses whose image sits beside the author name: `replier`
+(the replying agent's character or the cog's avatar, the default) or
+`member`. The author name is always whoever replies.
 
 Every dependent cog also gets a per-cog reply **identity**: it calls
 `corridor.reply_sender(owner="MyCog", avatar_path=<cog>/assets/avatar.png)`

@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from ..domain import (
+    AuthorIconSource,
     FooterOverride,
     IconSource,
     RenderedReply,
@@ -74,7 +75,15 @@ class ReplyService:
         identity: ReplyIdentity | None = None,
         footer_override: FooterOverride | None = None,
         category: ReplyCategory | None = None,
+        member_icon: str | None = None,
+        member_name: str | None = None,
     ) -> RenderedReply:
+        """`member_icon` is the attachment name of the addressed member's
+        office character, when the adapter resolved one; the guild's
+        `author_icon` / footer `icon` preferences decide where it shows.
+        Discord draws a footer icon only beside footer text, so a member
+        footer with no configured text is labelled with `member_name`."""
+
         title = _substitute_prefix(content.title, prefix)
         description = _substitute_prefix(content.description, prefix)
         body = _substitute_prefix(content.content, prefix)
@@ -137,13 +146,24 @@ class ReplyService:
             for field in fields
         )
         footer_icon_attachment: str | None = None
+        footer_icon_member = False
         if footer_override is not None:
+            # A consulted agent's identity wins over every footer
+            # preference, the member's character included.
             footer_text: str | None = footer_override.name
             footer_icon_url: str | None = None
             footer_icon_attachment = footer_override.icon_filename
         else:
             footer_text = preferences.footer_text
-            footer_icon_url = await self._resolve_icon(guild_id, preferences)
+            footer_icon_member = preferences.icon.source is IconSource.MEMBER and bool(member_icon)
+            footer_icon_url = (
+                None if footer_icon_member else await self._resolve_icon(guild_id, preferences)
+            )
+            if footer_icon_member and not footer_text:
+                footer_text = member_name
+        author_icon_member = preferences.author_icon is AuthorIconSource.MEMBER and bool(
+            member_icon
+        )
         return RenderedReply(
             mode=ReplyMode.EMBED,
             content=None,
@@ -157,12 +177,18 @@ class ReplyService:
             author_icon_attachment=identity.avatar_filename if identity is not None else None,
             footer_icon_attachment=footer_icon_attachment,
             category=category,
+            author_icon_member=author_icon_member,
+            footer_icon_member=footer_icon_member,
+            member_icon_attachment=member_icon
+            if author_icon_member or footer_icon_member
+            else None,
         )
 
     async def _resolve_icon(self, guild_id: int, preferences: ReplyPreferences) -> str | None:
         icon = preferences.icon
         if icon.source is IconSource.CUSTOM:
             return icon.custom_url
-        if icon.source is IconSource.BOT:
+        if icon.source in (IconSource.BOT, IconSource.MEMBER):
+            # MEMBER reaches here only without a member avatar to show.
             return await self._icons.bot_icon_url()
         return await self._icons.guild_icon_url(guild_id)

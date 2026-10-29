@@ -55,6 +55,10 @@ class BotIconResolver:
         return str(guild.icon.url)
 
 
+# Discord's limit on attachments per message.
+MAX_ATTACHMENTS = 10
+
+
 def build_reply_payload(
     reply: RenderedReply,
     *,
@@ -92,27 +96,47 @@ def build_reply_payload(
     for field in reply.fields:
         embed.add_field(name=field.name, value=field.value, inline=field.inline)
 
-    files: list[discord.File] = []
-    author_icon_url: str | None = None
-    if reply.author_icon_attachment and avatar_path is not None and avatar_path.exists():
-        # Re-read from disk on every call -- deliberate simplicity over
-        # premature caching (docs/reply-identity-design.md section 2). A
-        # small avatar re-uploaded on every reply that needs it is an
-        # accepted cost.
-        files.append(discord.File(avatar_path, filename=reply.author_icon_attachment))
-        author_icon_url = f"attachment://{reply.author_icon_attachment}"
-
+    # Each icon slot is (attachment name, file). The addressed member's
+    # character (`member_*`) can fill either slot, and one file then serves
+    # both. Names are prefixed per source -- Discord requires unique
+    # filenames among one message's attachments, and the replier's, the
+    # consulted agent's and the member's character can be the same file.
+    icons: dict[str, Path] = {}
+    member = (
+        (f"member_{reply.member_icon_attachment}", reply.member_icon_path)
+        if reply.member_icon_attachment and reply.member_icon_path is not None
+        else None
+    )
+    author: tuple[str, Path] | None = None
+    if reply.author_icon_member and member is not None:
+        author = member
+    elif reply.author_icon_attachment and avatar_path is not None:
+        author = (reply.author_icon_attachment, avatar_path)
+    footer: tuple[str, Path] | None = None
+    if reply.footer_icon_member and member is not None:
+        footer = member
+    elif reply.footer_icon_attachment and footer_icon_path is not None:
+        footer = (f"footer_{reply.footer_icon_attachment}", footer_icon_path)
+    # Re-read from disk on every call -- deliberate simplicity over
+    # premature caching (docs/reply-identity-design.md section 2).
+    for slot in (author, footer):
+        if slot is not None and slot[1].exists():
+            icons.setdefault(slot[0], slot[1])
+    # A caller's own files carry content; icons only decorate. Past
+    # Discord's attachment limit, icons give way (footer's first).
+    while icons and len(icons) + len(extra_files) > MAX_ATTACHMENTS:
+        dropped = footer if footer is not None and footer[0] in icons else author
+        assert dropped is not None
+        icons.pop(dropped[0], None)
+        if footer is not None and footer[0] == dropped[0]:
+            footer = None
+        if author is not None and author[0] == dropped[0]:
+            author = None
+    files = [discord.File(path, filename=name) for name, path in icons.items()]
+    author_icon_url = f"attachment://{author[0]}" if author and author[0] in icons else None
     footer_icon_url = reply.footer_icon_url
-    if reply.footer_icon_attachment and footer_icon_path is not None and footer_icon_path.exists():
-        # Prefixed, not the bare filename `author_icon_attachment` above
-        # uses -- every cog's avatar is conventionally named "avatar.png"
-        # (see ReplyIdentity/FooterOverride's own docstrings), so the
-        # calling cog's own author attachment and the consulted agent's
-        # footer attachment would otherwise collide: Discord requires
-        # unique filenames among one message's attachments.
-        footer_filename = f"footer_{reply.footer_icon_attachment}"
-        files.append(discord.File(footer_icon_path, filename=footer_filename))
-        footer_icon_url = f"attachment://{footer_filename}"
+    if footer and footer[0] in icons:
+        footer_icon_url = f"attachment://{footer[0]}"
 
     if reply.author_name:
         # Always set once an identity is bound -- regardless of whether

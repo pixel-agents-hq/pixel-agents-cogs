@@ -129,8 +129,12 @@ sequenceDiagram
 ## Reply rendering, identity, and embed colors
 
 Also guild-wide: whether replies go out as plain text or a rich embed, and
-if embed, whether it shows a timestamp, a footer, and where its icon comes
-from (`ReplyPreferences` in `corridor/domain/models.py`). The pure
+if embed, whether it shows a timestamp, a footer, where its icon comes
+from (`IconSource`: custom URL, bot, server, or `member`), and whose image
+the author icon shows (`AuthorIconSource`: `replier` or `member`) --
+`ReplyPreferences` in `corridor/domain/models.py`. `member` is the office
+character of the member being replied to; see
+[`docs/reply-identity-design.md`](reply-identity-design.md). The pure
 `ReplyService` turns preferences plus message content into a
 `RenderedReply` DTO; only the adapter layer
 (`corridor/adapters/api.py::build_reply_payload`) turns that into a real

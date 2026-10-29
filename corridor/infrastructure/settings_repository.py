@@ -13,6 +13,7 @@ from redbot.core import Config
 from ..domain import (
     RESERVED_GROUP_KEYS,
     A2ASettings,
+    AuthorIconSource,
     GuildSettings,
     IconPreference,
     IconSource,
@@ -61,6 +62,7 @@ GUILD_DEFAULTS: dict[str, object] = {
     "footer_text": None,
     "icon_source": IconSource.BOT.value,
     "icon_custom_url": None,
+    "author_icon": AuthorIconSource.REPLIER.value,
     "permission_groups": DEFAULT_PERMISSION_GROUPS,
     "owner_label": "Owner",
     "employee_label": "Employee",
@@ -121,6 +123,7 @@ class RedCorridorRepository:
                     source=IconSource(cast(str, await guild.icon_source())),
                     custom_url=cast("str | None", await guild.icon_custom_url()),
                 ),
+                author_icon=AuthorIconSource(cast(str, await guild.author_icon())),
             ),
             permissions=PermissionSettings(
                 groups=tuple(_group_from_dict(entry) for entry in raw_groups),
@@ -172,6 +175,9 @@ class RedCorridorRepository:
         guild = self._config.guild_from_id(guild_id)
         await guild.icon_source.set(icon.source.value)
         await guild.icon_custom_url.set(icon.custom_url)
+
+    async def set_author_icon(self, guild_id: int, source: AuthorIconSource) -> None:
+        await self._config.guild_from_id(guild_id).author_icon.set(source.value)
 
     async def set_owner_label(self, guild_id: int, label: str) -> None:
         await self._config.guild_from_id(guild_id).owner_label.set(label)

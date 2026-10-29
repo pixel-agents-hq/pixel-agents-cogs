@@ -113,6 +113,44 @@ same file at `/<agent_key>/avatar.png`, the agent card's `icon_url`. The bot own
 character with `[p]cctv character agentset <agent> <px.…>` (see
 [`docs/cctv-design.md`](cctv-design.md)).
 
+### The addressed member's character
+
+A guild can also show the office character of the member a reply answers
+(`ctx.author`), in either icon slot, chosen in `[p]corridorsettings`:
+
+| Setting | Values | Default |
+|---|---|---|
+| Icon source (footer) | `custom` / `bot` / `server` / `member` | `bot` |
+| Author icon | `replier` (the replying agent's character or the cog's avatar) / `member` | `replier` |
+
+`CogBase.render_reply(ctx, ...)` resolves the member's avatar
+(`avatar_for(AgentRef(ctx.author.id, ctx.guild.id, ...))`) only when an
+embed reply in that guild shows it, and sets it on the `RenderedReply`
+(`member_icon_attachment` / `member_icon_path`) -- so every path through
+corridor carries it: `ReplySender`, `send_reply`, and the cogs' own
+interaction-aware `ReplyMixin`s that call `render_reply` +
+`build_reply_payload` themselves. What each slot does with it:
+
+- **Author icon `member`:** the member's character beside the *replier's*
+  name -- attribution never moves, only the picture does.
+- **Footer `member`:** the member's character as the footer icon. Discord
+  draws a footer icon only beside footer text, so with no configured
+  footer text the footer reads the member's display name.
+- **One file, both slots:** attached once as `member_<file>`, separate from
+  the replier's (`<file>`) and the consulted agent's (`footer_<file>`)
+  attachments, which can be the very same character.
+
+What it can't break, and why:
+
+| Concern | Behavior |
+|---|---|
+| Pico's consult footer | A `FooterOverride` (the consulted agent) wins over a `member` footer, so the consulted agent stays visible. |
+| No member to show (`render_channel_reply`, no character avatar, pixatar down) | The footer falls back to the bot's icon, the author icon to the replier's image. A reply never fails over an avatar. |
+| Discord's 10 attachments per message | A caller's own files (a consulted agent's renders) keep priority: past the limit the icons give way, the footer's first. |
+| TEXT reply mode | No embed, so nothing is resolved at all. |
+| Cost | Only resolved when a slot shows it; the first reply to a member deals and draws their character once (stored, like being shown on CCTV). |
+| Sent messages being edited | No cog edits a sent embed (every `edit_message` updates a Components-V2 view), so `attachment://` icons never go stale. |
+
 ## Domain model / schema
 
 ```python
@@ -169,6 +207,10 @@ class RenderedReply:
     footer_icon_attachment: str | None = None
     # Mutually exclusive with footer_icon_url -- set instead of it when the
     # footer comes from a FooterOverride with an icon_filename.
+    author_icon_member: bool = False     # author icon is the addressed member's character
+    footer_icon_member: bool = False     # footer icon is the addressed member's character
+    member_icon_attachment: str | None = None
+    member_icon_path: Path | None = None  # set by CogBase.render_reply, never ReplyService
 ```
 
 `author_name`/`author_icon_attachment` and `footer_text`/`footer_icon_url`

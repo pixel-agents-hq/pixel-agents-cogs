@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
-from .office import AgentKey, GenuineAgentKey, OfficeIdentity
+from .office import OfficeIdentity
 
 SEED_PREFIX = "px."
 # Pixel Agents' own profile id rule (core/src/characterProfiles.ts).
@@ -56,29 +56,45 @@ class PixatarFailure(Exception):
         self.message = message
 
 
+def _agent_key(identity: OfficeIdentity) -> str | None:
+    """A genuine agent's key, or None for a Discord member.
+
+    Read off the value, not `isinstance`: Red re-executes every cached
+    `pixelagents.*` module on each load (see `pixelagents/__init__.py`), so a
+    key built by a consuming cog can be an instance of an earlier execution's
+    class.
+    """
+
+    agent_key = getattr(identity, "agent_key", None)
+    return agent_key if isinstance(agent_key, str) else None
+
+
 def character_key(identity: OfficeIdentity) -> str:
     """The character record's key: one per Discord account (every guild and
     both pages share it) or per genuine agent."""
 
-    if isinstance(identity, GenuineAgentKey):
-        return f"agent:{identity.agent_key}"
-    return f"user:{identity.user_id}"
+    agent_key = _agent_key(identity)
+    if agent_key is not None:
+        return f"agent:{agent_key}"
+    return f"user:{identity.user_id}"  # type: ignore[union-attr]
 
 
 def deal_text(identity: OfficeIdentity) -> str:
     """The free text pixatar deals a character from when none was set."""
 
-    if isinstance(identity, GenuineAgentKey):
-        return identity.agent_key
-    return str(identity.user_id)
+    agent_key = _agent_key(identity)
+    if agent_key is not None:
+        return agent_key
+    return str(identity.user_id)  # type: ignore[union-attr]
 
 
 def profile_id(identity: OfficeIdentity) -> str:
     """The roster id the webview keys this character's profile by."""
 
-    if isinstance(identity, AgentKey):
-        return f"u{identity.user_id}"
-    return f"a-{_PROFILE_ID_UNSAFE.sub('-', identity.agent_key)}"[:64]
+    agent_key = _agent_key(identity)
+    if agent_key is None:
+        return f"u{identity.user_id}"  # type: ignore[union-attr]
+    return f"a-{_PROFILE_ID_UNSAFE.sub('-', agent_key)}"[:64]
 
 
 def is_seed_code(seed: str) -> bool:

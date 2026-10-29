@@ -19,6 +19,8 @@ from pixelagents.domain.characters import (
     CharacterSource,
     PixatarCharacter,
     PixatarFailure,
+    character_key,
+    deal_text,
     profile_id,
 )
 
@@ -155,6 +157,32 @@ class TestCharacterService(unittest.IsolatedAsyncioTestCase):
 
         assert record is not None
         self.assertEqual(record.seed, "px.text-42")
+
+    def test_keys_from_a_re_executed_module_are_read_the_same(self) -> None:
+        # Red re-executes pixelagents' modules on load, so a consuming cog's
+        # AgentKey/GenuineAgentKey can be another execution's class.
+        from dataclasses import dataclass
+
+        @dataclass(frozen=True)
+        class AgentKey:  # noqa: N801 -- stands in for an older execution's class
+            guild_id: int
+            user_id: int
+
+        @dataclass(frozen=True)
+        class GenuineAgentKey:  # noqa: N801
+            agent_key: str
+
+        self.assertEqual(profile_id(AgentKey(1, 42)), "u42")  # type: ignore[arg-type]
+        self.assertEqual(character_key(AgentKey(1, 42)), "user:42")  # type: ignore[arg-type]
+        self.assertEqual(deal_text(AgentKey(1, 42)), "42")  # type: ignore[arg-type]
+        self.assertEqual(
+            profile_id(GenuineAgentKey("bootcamp.helper")),  # type: ignore[arg-type]
+            "a-bootcamp-helper",
+        )
+        self.assertEqual(
+            character_key(GenuineAgentKey("architect")),  # type: ignore[arg-type]
+            "agent:architect",
+        )
 
     def test_parse_rejects_malformed_records(self) -> None:
         good = {"seed": "px.a", "source": "custom", "profile": {"body": "flat"}}

@@ -13,10 +13,18 @@ from redbot.core import commands
 
 from corridor.domain import ReplyField
 from pixelagents.domain import AgentKey
-from pixelagents.domain.characters import CharacterRecord, CharacterSource, PixatarFailure
+from pixelagents.domain.characters import CharacterRecord, PixatarFailure
 
 from .cog_base import CctvBase
 from .dashboard import dashboard_cog_loaded
+
+
+def _pixatar_failure(exc: Exception) -> PixatarFailure | None:
+    """`exc` if pixelagents raised it as a pixatar failure. Matched by name:
+    a pixelagents reload re-executes its modules, so it raises a newer
+    execution's `PixatarFailure` class than the one imported here."""
+
+    return cast(PixatarFailure, exc) if type(exc).__name__ == "PixatarFailure" else None
 
 
 class CommandsMixin(CctvBase):
@@ -222,7 +230,7 @@ class CommandsMixin(CctvBase):
         identity = AgentKey(self._guild(ctx).id, ctx.author.id)
         record = await self._pixelagents.office_character(identity)
         if record is None:
-            await self._reply(ctx, "Characters can't be dealt right now: pixatar is unavailable.")
+            await self._reply(ctx, self._pixatar_unavailable())
             return
         await self._reply_character(ctx, record, "Your office character")
 
@@ -239,8 +247,11 @@ class CommandsMixin(CctvBase):
         identity = AgentKey(self._guild(ctx).id, ctx.author.id)
         try:
             record = await self._pixelagents.set_office_character_seed(identity, seed)
-        except PixatarFailure as exc:
-            await self._reply(ctx, f"That seed didn't work: {exc.message}")
+        except Exception as exc:
+            failure = _pixatar_failure(exc)
+            if failure is None:
+                raise
+            await self._reply(ctx, self._pixatar_failure_text("That seed didn't work", failure))
             return
         await self._refresh_character(identity)
         await self._reply_character(ctx, record, "Character updated")
@@ -253,11 +264,28 @@ class CommandsMixin(CctvBase):
         identity = AgentKey(self._guild(ctx).id, ctx.author.id)
         try:
             record = await self._pixelagents.reset_office_character(identity)
-        except PixatarFailure as exc:
-            await self._reply(ctx, f"Couldn't reset your character: {exc.message}")
+        except Exception as exc:
+            failure = _pixatar_failure(exc)
+            if failure is None:
+                raise
+            await self._reply(
+                ctx, self._pixatar_failure_text("Couldn't reset your character", failure)
+            )
             return
         await self._refresh_character(identity)
         await self._reply_character(ctx, record, "Character reset")
+
+    def _pixatar_unavailable(self) -> str:
+        return (
+            "Characters can't be dealt right now: pixatar is unavailable.\n"
+            f"pixatar: {self._pixelagents.pixatar_status()}"
+        )
+
+    def _pixatar_failure_text(self, what: str, exc: PixatarFailure) -> str:
+        # The seed was fine; pixatar itself couldn't run.
+        if exc.code in {"cli-not-found", "cli-exited"}:
+            return self._pixatar_unavailable()
+        return f"{what}: {exc.message}"
 
     async def _reply_character(
         self, ctx: commands.Context, record: CharacterRecord, title: str
@@ -265,15 +293,17 @@ class CommandsMixin(CctvBase):
         settings = await self._settings.global_settings()
         origin = (
             "dealt from your Discord user id"
-            if record.source is CharacterSource.DERIVED
+            # By value: see `_pixatar_failure` on reloaded classes.
+            if record.source == "derived"
             else "a seed code you set"
         )
         files: list[discord.File] = []
         try:
             png = await self._pixelagents.office_character_avatar(record)
             files.append(discord.File(io.BytesIO(png), filename="character.png"))
-        except PixatarFailure:
-            pass
+        except Exception as exc:
+            if _pixatar_failure(exc) is None:
+                raise
         await self._reply(
             ctx,
             f"Your character is {origin}. Change it in the "

@@ -75,11 +75,19 @@ _DEALT = CharacterRecord("px.dealt", CharacterSource.DERIVED, {"body": "flat"})
 class _Characters:
     def __init__(self) -> None:
         self.records: dict[AgentKey, CharacterRecord] = {}
+        self.available = True
+
+    def pixatar_status(self) -> str:
+        return "⚠️ pixatar's Python client is not installed (reinstall pixelagents)."
 
     async def office_character(self, identity: AgentKey) -> CharacterRecord | None:
+        if not self.available:
+            return None
         return self.records.get(identity, _DEALT)
 
     async def set_office_character_seed(self, identity: AgentKey, seed: str) -> CharacterRecord:
+        if not self.available:
+            raise PixatarFailure("cli-not-found", "pixatar is not available on this bot")
         if seed != "px.good":
             raise PixatarFailure("invalid-seed", "This seed code is not one pixatar knows.")
         self.records[identity] = CharacterRecord(seed, CharacterSource.CUSTOM, {"body": "flat"})
@@ -141,6 +149,16 @@ class TestCctvCharacterCommands(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(cog._pixelagents.records, {})
         self.assertEqual(cog.refreshed, [])
         self.assertIn("not one pixatar knows", cog.replies[0]["content"])
+
+    async def test_an_unavailable_pixatar_says_why(self) -> None:
+        cog = _CharacterHarness()
+        cog._pixelagents.available = False
+
+        await CommandsMixin.cmd_character.callback(cog, _ctx())
+        await CommandsMixin.cmd_character_set.callback(cog, _ctx(), "px.good")
+
+        for reply in cog.replies:
+            self.assertIn("Python client is not installed", reply["content"])
 
     async def test_reset_goes_back_to_the_dealt_character(self) -> None:
         cog = _CharacterHarness()

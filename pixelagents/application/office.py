@@ -325,10 +325,13 @@ class OfficeService:
 
         if self._characters is None:
             return
-        if isinstance(identity, GenuineAgentKey):
-            cached = self._genuine_agents.get(identity.agent_key)
+        # By value, not isinstance: a consuming cog's key can be an older
+        # execution's class (see domain/characters.py).
+        agent_key = getattr(identity, "agent_key", None)
+        if isinstance(agent_key, str):
+            cached = self._genuine_agents.get(agent_key)
         else:
-            cached = self._representative_agents().get(identity.user_id)
+            cached = self._representative_agents().get(identity.user_id)  # type: ignore[union-attr]
         if cached is None:
             return
         await self._fit(identity, cached[1])

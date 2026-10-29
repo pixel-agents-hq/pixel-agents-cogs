@@ -112,7 +112,10 @@ class CogBase:
             # leaving it running with a stale corridor reference.
             self._corridor.register_dependent("painter")
             self._reply = self._corridor.reply_sender(
-                owner="Painter", avatar_path=AVATAR_PATH, category=ReplyCategory.AGENT
+                owner="Painter",
+                avatar_path=AVATAR_PATH,
+                category=ReplyCategory.AGENT,
+                agent=PAINTER_AGENT_REF,
             )
             self._pixelagents = await ensure_loaded(self.bot, "pixelagents", "PixelAgents")
             await self._register_with_corridor()

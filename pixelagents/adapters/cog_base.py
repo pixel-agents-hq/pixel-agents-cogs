@@ -13,12 +13,18 @@ from typing import Any, TypeVar, cast
 from redbot.core import commands, data_manager
 from redbot.core.bot import Red
 
-from corridor.domain import OfficeState, OfficeStateChanged, OfficeStateKind, SeatRecords
+from corridor.domain import (
+    AgentRef,
+    OfficeState,
+    OfficeStateChanged,
+    OfficeStateKind,
+    SeatRecords,
+)
 
 from ..application.characters import CharacterService
 from ..application.office_state import OfficeStateFacade, OfficeStateSeatRepository
 from ..dependency_loader import ensure_corridor_loaded
-from ..domain import OfficeIdentity
+from ..domain import AgentKey, GenuineAgentKey, OfficeIdentity
 from ..domain.characters import CharacterRecord
 from ..infrastructure.furniture_styles import FurnitureStyleLoader
 from ..infrastructure.pixatar_build import PixatarBuildOutcome, build_pixatar
@@ -153,6 +159,25 @@ class PixelAgentsBase:
     async def reset_office_character(self, identity: OfficeIdentity) -> CharacterRecord:
         return await self._character_service().reset(identity)
 
+    async def office_character_avatar_path(self, identity: OfficeIdentity) -> Path | None:
+        """Public cross-cog surface: this character's avatar as a PNG file,
+        for a Discord reply icon, or None while pixatar can't draw it."""
+
+        return await self._character_service().avatar_file(identity, self._cog_data_dir / "avatars")
+
+    async def _reply_avatar(self, agent: AgentRef) -> Path | None:
+        """Corridor's avatar resolver: who replies, as their office character."""
+
+        if self._characters is None:
+            return None
+        if agent.agent_key is not None:
+            return await self.office_character_avatar_path(GenuineAgentKey(agent.agent_key))
+        if agent.discord_user_id is not None:
+            # A character is one per account; the guild doesn't pick it.
+            identity = AgentKey(agent.guild_id or 0, agent.discord_user_id)
+            return await self.office_character_avatar_path(identity)
+        return None
+
     async def office_character_avatar(self, record: CharacterRecord, *, scale: int = 8) -> bytes:
         return await self._character_service().avatar_png(record, scale=scale)
 
@@ -281,6 +306,8 @@ class PixelAgentsBase:
             self._default_character_profiles,
             logger=log,
         )
+        # Every agent's Discord replies wear its office character too.
+        self._corridor.register_avatar_resolver(self._reply_avatar, owner="pixelagents")
         await self._refresh_dependents()
         if self._webview_build_outcome is not None and not self._webview_build_outcome.ok:
             await self._notify_owners_webview_build_failed()
@@ -292,6 +319,7 @@ class PixelAgentsBase:
             await asyncio.to_thread(self._pixatar.close)
             self._pixatar = None
         if self._corridor is not None:
+            self._corridor.unregister_avatar_resolver("pixelagents")
             self._corridor.unregister_dependent("pixelagents")
 
     async def _refresh_dependents(self) -> None:

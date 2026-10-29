@@ -278,9 +278,18 @@ sequenceDiagram
         Cog->>Corridor: llm_settings() (not ready -> reply, stop)
         Cog->>TL: run(system_prompt, prompt, mcp_tools, max_tool_calls)
         TL-->>Cog: final text (or a non-final stop reason -> reply, stop)
-        Cog-->>U: reply with the agent's answer
+        Cog-->>U: reply with the agent's answer, as the agent
     end
 ```
+
+The answer (and the agent's "not configured" / "no answer" replies) is
+sent as the agent itself: author name = its `agent_key`, author icon = its
+office character (`reply_sender(agent=AgentRef(agent_key=...))`, see
+[`docs/reply-identity-design.md`](reply-identity-design.md)). The bot owner
+dresses an agent with `[p]cctv character agentset <agent_key> <px.…>`; an
+agent nobody dressed wears the character pixatar deals from its key.
+Bootcamp's own replies (an unknown agent, the management commands) stay
+"Bootcamp".
 
 `run_agent` calls bootcamp's own `ToolLoopService` **directly, in-process
 -- no A2A round-trip to itself**: a cog invoking its own agent has no cog

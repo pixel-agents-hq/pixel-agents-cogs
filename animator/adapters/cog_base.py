@@ -139,7 +139,10 @@ class CogBase:
         # leaving it running with a stale corridor reference.
         self._corridor.register_dependent("animator")
         self._reply = self._corridor.reply_sender(
-            owner="Animator", avatar_path=AVATAR_PATH, category=ReplyCategory.AGENT
+            owner="Animator",
+            avatar_path=AVATAR_PATH,
+            category=ReplyCategory.AGENT,
+            agent=ANIMATOR_AGENT_REF,
         )
         await self._register_with_corridor()
 

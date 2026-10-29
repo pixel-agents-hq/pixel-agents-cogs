@@ -138,7 +138,7 @@ class FakeCorridor:
         )
 
     def reply_sender(
-        self, *, owner: str, avatar_path: Any = None, category: Any = None
+        self, *, owner: str, avatar_path: Any = None, category: Any = None, agent: Any = None
     ) -> FakeReplySender:
         return FakeReplySender(self)
 

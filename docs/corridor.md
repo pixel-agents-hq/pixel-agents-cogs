@@ -151,6 +151,13 @@ configured footer for that one message with the identity of the agent it
 just consulted (architect or painter) — distinct from pico's own author
 identity on the same message.
 
+A cog replying as an agent binds `reply_sender(..., agent=AgentRef(...))`,
+and each send's author icon is `avatar_for(agent)`: corridor can't import
+pixelagents, so pixelagents registers the resolver
+(`register_avatar_resolver(resolver, owner="pixelagents")`) that answers
+with the agent's office character. A missing or failing resolver falls back
+to `avatar_path`. See [`docs/reply-identity-design.md`](reply-identity-design.md).
+
 An embed's accent color comes from `ReplyCategory` — `AGENT` (Discord
 blurple, `0x5865F2`), `ROOM` (Discord teal, `0x1ABC9C`), or `FURNITURE`
 (Discord gold, `0xF1C40F`) — resolved through `REPLY_CATEGORY_COLORS` in

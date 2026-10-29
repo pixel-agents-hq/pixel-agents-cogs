@@ -36,9 +36,9 @@ log = logging.getLogger("red.bootcamp")
 # corridor.reply_sender() regardless of whether a real file exists here
 # yet; existence is checked fresh on every send, so dropping a real image
 # at this exact path later needs no code change. See
-# docs/reply-identity-design.md. Every custom agent shares this one avatar
-# too (RegisteredAgent.avatar_path below) -- a bot-owner-uploaded per-agent
-# avatar is out of scope for now (see docs/bootcamp-design.md).
+# docs/reply-identity-design.md. It is every custom agent's fallback
+# avatar (RegisteredAgent.avatar_path below): an agent's own avatar is its
+# office character, resolved per reply (`run_agent`).
 AVATAR_PATH = Path(__file__).resolve().parent.parent / "assets" / "avatar.png"
 
 _AGENT_DESCRIPTION_PROMPT_PREVIEW = 200
@@ -279,9 +279,16 @@ class CogBase:
         if not await self._corridor.require_permission(ctx, agent.permission_group):
             return None
 
+        # The agent answers as itself, wearing its office character.
+        reply = self._corridor.reply_sender(
+            owner=agent_key,
+            avatar_path=AVATAR_PATH,
+            category=ReplyCategory.AGENT,
+            agent=AgentRef(discord_user_id=None, guild_id=None, is_bot=True, agent_key=agent_key),
+        )
         llm_settings = await self._corridor.llm_settings()
         if not llm_settings.ready:
-            await self._reply.send_reply(
+            await reply.send_reply(
                 ctx,
                 title=agent_key,
                 description="Bootcamp's shared LLM connection is not configured yet.",
@@ -302,13 +309,13 @@ class CogBase:
             request_timeout_seconds=agent.request_timeout_seconds,
         )
         if result.stopped_reason != "final_text" or result.text is None:
-            await self._reply.send_reply(
+            await reply.send_reply(
                 ctx,
                 title=agent_key,
                 description=f"{agent_key} could not produce an answer ({result.stopped_reason}).",
             )
             return None
-        await self._reply.send_reply(ctx, title=agent_key, description=result.text)
+        await reply.send_reply(ctx, description=result.text)
         return result.text
 
 

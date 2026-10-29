@@ -159,6 +159,8 @@ async def _agent_tools(
     next message, no cog reload required. `None` (architect/painter,
     which never set this field) means no gate at all."""
 
+    from corridor.domain import AgentRef
+
     tools: list[ToolSpec] = []
     for agent in corridor.list_agents():
         if agent.required_permission_group is not None:
@@ -187,7 +189,17 @@ async def _agent_tools(
                     corridor=corridor,
                     guild_id=guild_id,
                     bot_user_id=bot_user_id,
-                    footer_icon_path=agent.avatar_path,
+                    # The consulted agent's office character, else its own
+                    # bundled avatar.
+                    footer_icon_path=await corridor.avatar_for(
+                        AgentRef(
+                            discord_user_id=None,
+                            guild_id=None,
+                            is_bot=True,
+                            agent_key=agent.agent_key,
+                        )
+                    )
+                    or agent.avatar_path,
                 )
             )
         except Exception:

@@ -18,6 +18,14 @@ sending cog's own author line and from the guild's configured footer.
 consumer: when pico relays an A2A exchange, the footer shows the
 *consulted* agent's name and avatar, not pico's own.
 
+An agent's avatar is its office character. A cog that replies as an agent
+(pico, architect, painter, animator, every bootcamp agent) also passes
+`reply_sender(agent=...)`: each send asks `CogBase.avatar_for(agent)` for
+that agent's avatar, which pixelagents answers with its pixatar character
+(`pixelagents.office_character_avatar_path`), the same look it wears on
+the CCTV pages. The bundled `avatar_path` stays the fallback while there's
+no character avatar (pixelagents not loaded, pixatar unavailable).
+
 ## Architecture
 
 `ReplyIdentity`, `FooterOverride`, and `ReplyCategory` are plain,
@@ -70,10 +78,34 @@ currently exists — existence is checked fresh on every send
 (`build_reply_payload`), so dropping a real PNG at that exact path is the
 entire change needed to light up that cog's author icon, no code change
 required. Today, real `avatar.png` files exist for architect, corridor,
-deskutils, floorplan, pico, pixelagents, testbench, and toolbox; `painter`
-passes the same conventional path but has no file there yet, so its
-replies show the "Painter" author name with no icon — the ordinary,
-zero-regression state for a cog that hasn't dropped its image in.
+deskutils, floorplan, pico, pixelagents, testbench, and toolbox; painter,
+animator, bootcamp, suggestionbox and telephonepole pass the same
+conventional path with no file there, so without a character avatar their
+replies show the author name with no icon.
+
+### Agents' character avatars
+
+Corridor can't import pixelagents (pixelagents depends on corridor), so it
+offers a hook instead: pixelagents registers one async resolver at
+`cog_load` (`register_avatar_resolver(resolver, owner="pixelagents")`,
+unregistered at `cog_unload`), and `avatar_for(agent: AgentRef)` asks it.
+The resolver maps a genuine agent's `agent_key` to its character, and a
+Discord account (pico: the bot's own account) to that account's character;
+it renders the character's pixatar avatar once per seed code into
+pixelagents' data directory and returns that file. `avatar_for` is
+best-effort -- a failing resolver is logged and means "no avatar", never a
+failed reply.
+
+| Agent | `reply_sender(agent=...)` | Character |
+|---|---|---|
+| architect / painter / animator | `AgentRef(agent_key="architect")` ... | `agent:architect` ... |
+| a bootcamp agent | `AgentRef(agent_key=<its key>)`, per `[p]bootcamp ask` reply, author = the agent's key | `agent:<key>` |
+| pico | a callable returning the bot account's `AgentRef` (known once logged in) | `user:<bot id>` |
+
+ConsultAgentTool's footer icon is `avatar_for` the consulted agent, falling
+back to its `RegisteredAgent.avatar_path`. The bot owner changes an agent's
+character with `[p]cctv character agentset <agent> <px.…>` (see
+[`docs/cctv-design.md`](cctv-design.md)).
 
 ## Domain model / schema
 
@@ -211,7 +243,14 @@ sequenceDiagram
 ```python
 def reply_sender(
     self, *, owner: str, avatar_path: Path | None = None, category: ReplyCategory | None = None,
+    agent: AgentRef | Callable[[], AgentRef | None] | None = None,
 ) -> ReplySender: ...
+
+def register_avatar_resolver(
+    self, resolver: Callable[[AgentRef], Awaitable[Path | None]], *, owner: str
+) -> None: ...
+def unregister_avatar_resolver(self, owner: str) -> None: ...
+async def avatar_for(self, agent: AgentRef) -> Path | None: ...
 
 async def render_reply(
     self, ctx, *, title=None, description=None, content=None, fields=(), code=(),
@@ -235,6 +274,7 @@ class ReplySender:
     def __init__(
         self, cog_base: CogBase, *, owner: str,
         avatar_path: Path | None = None, category: ReplyCategory | None = None,
+        agent: AgentRef | Callable[[], AgentRef | None] | None = None,
     ) -> None: ...
 
     async def render_reply(self, ctx, *, title=None, description=None,

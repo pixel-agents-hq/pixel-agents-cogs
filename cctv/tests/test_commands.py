@@ -4,7 +4,7 @@ import unittest
 from types import SimpleNamespace
 from typing import Any
 
-from pixelagents.domain import AgentKey
+from pixelagents.domain import AgentKey, GenuineAgentKey
 from pixelagents.domain.characters import CharacterRecord, CharacterSource, PixatarFailure
 
 from ..adapters.commands import CommandsMixin
@@ -105,6 +105,13 @@ class _CharacterHarness(CommandsMixin):
     def __init__(self) -> None:
         self._settings = _Settings()
         self._pixelagents = _Characters()
+        self.bot = SimpleNamespace(user=SimpleNamespace(id=7))
+        self._corridor = SimpleNamespace(
+            list_agents=lambda: [
+                SimpleNamespace(agent_key="painter"),
+                SimpleNamespace(agent_key="architect"),
+            ]
+        )
         self.refreshed: list[AgentKey] = []
         self.replies: list[dict[str, Any]] = []
 
@@ -159,6 +166,34 @@ class TestCctvCharacterCommands(unittest.IsolatedAsyncioTestCase):
 
         for reply in cog.replies:
             self.assertIn("Python client is not installed", reply["content"])
+
+    async def test_an_agent_can_be_dressed_by_seed(self) -> None:
+        cog = _CharacterHarness()
+
+        await CommandsMixin.cmd_character_agent_set.callback(cog, _ctx(), "architect", "px.good")
+
+        architect = GenuineAgentKey("architect")
+        self.assertEqual(cog._pixelagents.records[architect].seed, "px.good")  # type: ignore[index]
+        self.assertEqual(cog.refreshed, [architect])
+        self.assertIn("a seed code set for it", cog.replies[0]["content"])
+        self.assertEqual(cog.replies[0]["code"], ["[p]cctv character agentset architect <seed>"])
+
+    async def test_pico_is_the_bots_own_account(self) -> None:
+        cog = _CharacterHarness()
+
+        await CommandsMixin.cmd_character_agent_set.callback(cog, _ctx(), "Pico", "px.good")
+        await CommandsMixin.cmd_character_agent_reset.callback(cog, _ctx(), "pico")
+
+        self.assertEqual(cog.refreshed, [AgentKey(1, 7), AgentKey(1, 7)])
+        self.assertIn("dealt from its key", cog.replies[-1]["content"])
+
+    async def test_an_unknown_agent_lists_the_known_ones(self) -> None:
+        cog = _CharacterHarness()
+
+        await CommandsMixin.cmd_character_agent.callback(cog, _ctx(), "nobody")
+
+        self.assertEqual(cog.refreshed, [])
+        self.assertIn("`pico`, `architect`, `painter`", cog.replies[0]["content"])
 
     async def test_reset_goes_back_to_the_dealt_character(self) -> None:
         cog = _CharacterHarness()

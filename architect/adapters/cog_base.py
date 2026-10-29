@@ -115,6 +115,7 @@ class CogBase:
                 owner="Architect",
                 avatar_path=AVATAR_PATH,
                 category=ReplyCategory.AGENT,
+                agent=ARCHITECT_AGENT_REF,
             )
             self._pixelagents = await ensure_loaded(self.bot, "pixelagents", "PixelAgents")
             await self._register_with_corridor()

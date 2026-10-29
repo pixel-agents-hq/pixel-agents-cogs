@@ -132,6 +132,33 @@ class TestAgentTools(unittest.IsolatedAsyncioTestCase):
         self.assertEqual({tool.name for tool in tools}, {"consult_architect", "consult_agent-n"})
         self.assertTrue(all(isinstance(tool, ConsultAgentTool) for tool in tools))
 
+    async def test_the_consult_footer_wears_the_agents_office_character(self) -> None:
+        corridor = FakeCorridor()
+        corridor.agents = [
+            _agent("architect", avatar_path=Path("/architect/assets/avatar.png")),
+            _agent("painter", avatar_path=Path("/painter/assets/avatar.png")),
+        ]
+        corridor.avatars = {"architect": Path("/pixelagents/avatars/0123.png")}
+
+        tools = await _agent_tools(
+            corridor,
+            corridor.reply_sender(owner="Pico"),
+            ArchitectClient(),
+            _ctx(),
+            guild_id=1,
+            bot_user_id=999,
+        )
+
+        footers = {tool.name: tool._footer_icon_path for tool in tools}  # type: ignore[attr-defined]
+        self.assertEqual(
+            footers,
+            {
+                "consult_architect": Path("/pixelagents/avatars/0123.png"),
+                # No character avatar: its own bundled one.
+                "consult_painter": Path("/painter/assets/avatar.png"),
+            },
+        )
+
     async def test_zero_registered_agents_yields_zero_tools(self) -> None:
         corridor = FakeCorridor()
 

@@ -7,9 +7,11 @@ surface onto them, the way `office_state.py` is for the office aggregates.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 from collections.abc import Callable, Mapping, Sequence
+from pathlib import Path
 from typing import Any, Protocol, TypeAlias, TypeVar
 
 from ..domain import OfficeIdentity
@@ -152,6 +154,33 @@ class CharacterService:
 
     async def avatar_png(self, record: CharacterRecord, *, scale: int = 8) -> bytes:
         return await self._required_pixatar().avatar_png(record.seed, scale=scale)
+
+    async def avatar_file(self, identity: OfficeIdentity, directory: Path) -> Path | None:
+        """This character's avatar as a PNG file under `directory`, for a
+        Discord reply icon; None while pixatar can't draw it. Rendered once
+        per seed code (the file is named after it), so a changed character
+        gets a new file and a reply never shows a stale one."""
+
+        record = await self.character(identity)
+        if record is None:
+            return None
+        path = directory / f"{hashlib.sha256(record.seed.encode()).hexdigest()[:16]}.png"
+        if path.is_file():
+            return path
+        try:
+            png = await self.avatar_png(record)
+        except PixatarFailure as exc:
+            self._log.warning("pixelagents: no avatar for %s: %s", character_key(identity), exc)
+            return None
+
+        def write() -> None:
+            directory.mkdir(parents=True, exist_ok=True)
+            partial = path.with_suffix(".tmp")
+            partial.write_bytes(png)
+            partial.replace(path)
+
+        await asyncio.to_thread(write)
+        return path
 
 
 __all__ = [

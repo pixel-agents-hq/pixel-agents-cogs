@@ -136,7 +136,7 @@ class FakeCorridor:
         )
 
     def reply_sender(
-        self, *, owner: str, avatar_path: Any = None, category: Any = None
+        self, *, owner: str, avatar_path: Any = None, category: Any = None, agent: Any = None
     ) -> FakeReplySender:
         """Stands in for corridor.reply_sender -- records reply/author
         identity is a corridor-side concern, covered by corridor's own

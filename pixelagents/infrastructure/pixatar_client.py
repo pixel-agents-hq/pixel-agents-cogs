@@ -12,6 +12,7 @@ runs on a worker thread.
 from __future__ import annotations
 
 import asyncio
+import importlib
 import importlib.util
 import sys
 from collections.abc import Sequence
@@ -47,12 +48,11 @@ def load_pixatar(src: Path | None) -> ModuleType:
             raise
         return module
     try:
-        import pixatar
+        return importlib.import_module("pixatar")
     except ImportError as exc:
         raise PixatarFailure(
             "cli-not-found", "the pixatar Python client is missing (rebuild pixatar)"
         ) from exc
-    return pixatar
 
 
 class PixatarClient:

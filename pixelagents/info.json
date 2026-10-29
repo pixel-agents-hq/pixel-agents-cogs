@@ -12,8 +12,7 @@
         "corridor": "https://github.com/pixel-agents-hq/pixel-agents-cogs"
     },
     "requirements": [
-        "pydantic>=2.11.3,<2.12",
-        "pixatar @ git+https://github.com/pixel-agents-hq/index@ab9e06bfca166e9b4ea2a3b676417aa1231524f0#subdirectory=packages/pixatar/python"
+        "pydantic>=2.11.3,<2.12"
     ],
     "tags": [
         "pixelagents",

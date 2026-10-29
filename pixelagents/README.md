@@ -60,10 +60,11 @@ stored.
 
 On load, Pixelagents builds the pixatar CLI from the Pixel Index commit
 pinned in `infrastructure/pixatar_vendor.commit` (`git`, `node` 22+,
-`npm`), into `cog_data_path`. The Python client that drives it is this
-cog's `pixatar` requirement, installed from the same commit. Setting
-`PIXATAR_CLI` (e.g. `node /path/to/pixatar/dist/cli.js`) uses that CLI
-instead of building one. pixatar draws with the wardrobe of a Pixel Agents
+`npm`), into `cog_data_path`, and loads the Python client that drives it
+from the same checkout (`packages/pixatar/python`): nothing is
+pip-installed. Setting `PIXATAR_CLI` (e.g. `node /path/to/pixatar/dist/cli.js`)
+uses that CLI instead of building one, with an installed `pixatar` package
+(or an earlier build's checkout) as its client. pixatar draws with the wardrobe of a Pixel Agents
 commit, which the vendored webview's pin has to contain; see
 [`.claude/skills/advance-vendor/SKILL.md`](../.claude/skills/advance-vendor/SKILL.md).
 

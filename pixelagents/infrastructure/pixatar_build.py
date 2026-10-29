@@ -18,7 +18,6 @@ Synchronous and slow (git clone, `npm ci`, a tsup build): callers run
 
 from __future__ import annotations
 
-import importlib.util
 import logging
 import os
 import shutil
@@ -53,6 +52,8 @@ class PixatarBuildOutcome:
     ok: bool
     status_line: str
     command: tuple[str, ...] = ()
+    # The Python client's source in the same checkout as the CLI, when built.
+    client_src: Path | None = None
     error: str | None = None
     missing_tools: tuple[str, ...] = ()
 
@@ -73,6 +74,14 @@ def pixatar_dir(cog_data_dir: Path) -> Path:
 
 def cli_path(cog_data_dir: Path) -> Path:
     return pixatar_dir(cog_data_dir) / "index" / "packages" / "pixatar" / "dist" / "cli.js"
+
+
+def client_src(cog_data_dir: Path) -> Path:
+    """`packages/pixatar/python/src` of the checkout: the Python client that
+    drives the CLI, at the same commit, loaded from here rather than
+    installed (`pixatar_client.load_pixatar`)."""
+
+    return pixatar_dir(cog_data_dir) / "index" / "packages" / "pixatar" / "python" / "src"
 
 
 def built_commit(cog_data_dir: Path) -> str | None:
@@ -142,21 +151,16 @@ def build_pixatar(
     cog_data_dir: Path, *, logger: logging.Logger, force: bool = False
 ) -> PixatarBuildOutcome:
     """`ensure_pixatar_built`, but reports rather than raises. An explicit
-    `PIXATAR_CLI` wins over building, and nothing is built while the Python
-    client that would drive it (this cog's `pixatar` requirement) is
-    missing."""
-
-    if importlib.util.find_spec("pixatar") is None:
-        return PixatarBuildOutcome(
-            ok=False,
-            status_line="⚠️ pixatar's Python client is not installed (reinstall pixelagents).",
-            error="pixatar Python client not installed",
-        )
+    `PIXATAR_CLI` wins over building; its Python client is then an installed
+    `pixatar` package, or a checkout already built here."""
 
     override = os.environ.get(CLI_ENV_VAR, "").strip()
     if override:
+        built = client_src(cog_data_dir)
         return PixatarBuildOutcome(
-            ok=True, status_line=f"✅ pixatar from `{CLI_ENV_VAR}` (`{override}`)."
+            ok=True,
+            status_line=f"✅ pixatar from `{CLI_ENV_VAR}` (`{override}`).",
+            client_src=built if built.is_dir() else None,
         )
     try:
         rebuilt, command = ensure_pixatar_built(cog_data_dir, logger=logger, force=force)
@@ -176,7 +180,12 @@ def build_pixatar(
     commit = pinned_commit()
     verb = "built" if rebuilt else "already up to date"
     link = f"[pixel-agents-hq/index@{commit[:7]}]({_commit_url(commit)})"
-    return PixatarBuildOutcome(ok=True, status_line=f"✅ pixatar {verb} ({link}).", command=command)
+    return PixatarBuildOutcome(
+        ok=True,
+        status_line=f"✅ pixatar {verb} ({link}).",
+        command=command,
+        client_src=client_src(cog_data_dir),
+    )
 
 
 def _run(args: list[str], *, cwd: Path | None, timeout: float, log: logging.Logger) -> None:
@@ -221,6 +230,7 @@ __all__ = [
     "build_pixatar",
     "built_commit",
     "cli_path",
+    "client_src",
     "ensure_pixatar_built",
     "is_up_to_date",
     "pinned_commit",

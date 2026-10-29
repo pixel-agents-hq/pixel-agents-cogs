@@ -7,39 +7,49 @@ PIXELAGENTS_REAL_PIXATAR_BUILD=1, like test_webview_build.py's real build.
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import subprocess
+import sys
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import mock
 
-from pixelagents.infrastructure import pixatar_build, webview_build
+from pixelagents.domain.characters import PixatarFailure
+from pixelagents.infrastructure import pixatar_build, pixatar_client, webview_build
 
 _LOG = logging.getLogger("test_pixatar_build")
-_INFO = Path(pixatar_build.__file__).parents[1] / "info.json"
 
 
-class TestPixatarPins(unittest.TestCase):
-    def test_the_python_client_is_installed_from_the_cli_s_commit(self) -> None:
-        requirements = json.loads(_INFO.read_text("utf-8"))["requirements"]
-        pixatar = [r for r in requirements if r.startswith("pixatar @ ")]
-        self.assertEqual(len(pixatar), 1)
-        self.assertIn(f"/index@{pixatar_build.pinned_commit()}#", pixatar[0])
-        self.assertTrue(pixatar[0].endswith("#subdirectory=packages/pixatar/python"))
+class TestLoadPixatar(unittest.TestCase):
+    def test_the_client_is_loaded_from_the_checkout_not_installed(self) -> None:
+        with TemporaryDirectory() as tmp:
+            package = Path(tmp) / "pixatar"
+            package.mkdir()
+            (package / "__init__.py").write_text(
+                "from ._client import Pixatar, PixatarError\n", encoding="utf-8"
+            )
+            (package / "_client.py").write_text(
+                "class PixatarError(Exception):\n    pass\n\nclass Pixatar:\n    checkout = True\n",
+                encoding="utf-8",
+            )
+            module = pixatar_client.load_pixatar(Path(tmp))
+            self.assertTrue(module.Pixatar.checkout)
+            # Loaded once, then reused.
+            self.assertIs(pixatar_client.load_pixatar(Path(tmp)), module)
+
+    def test_without_a_checkout_or_an_installed_client_pixatar_is_unavailable(self) -> None:
+        with (
+            TemporaryDirectory() as tmp,
+            mock.patch.dict(sys.modules, {"pixatar": None}),
+            self.assertRaises(PixatarFailure) as caught,
+        ):
+            pixatar_client.load_pixatar(Path(tmp))
+        self.assertEqual(caught.exception.code, "cli-not-found")
 
 
 class TestBuildPixatar(unittest.TestCase):
-    def setUp(self) -> None:
-        # As if the pixatar Python client were installed (CI's unit job has none).
-        patcher = mock.patch.object(
-            pixatar_build.importlib.util, "find_spec", return_value=object()
-        )
-        patcher.start()
-        self.addCleanup(patcher.stop)
-
     def test_an_explicit_cli_is_used_without_building(self) -> None:
         with (
             TemporaryDirectory() as tmp,
@@ -50,16 +60,6 @@ class TestBuildPixatar(unittest.TestCase):
         ensure.assert_not_called()
         self.assertTrue(outcome.ok)
         self.assertEqual(outcome.command, ())
-
-    def test_nothing_is_built_without_the_python_client(self) -> None:
-        with (
-            TemporaryDirectory() as tmp,
-            mock.patch.object(pixatar_build.importlib.util, "find_spec", return_value=None),
-            mock.patch.object(pixatar_build, "ensure_pixatar_built") as ensure,
-        ):
-            outcome = pixatar_build.build_pixatar(Path(tmp), logger=_LOG)
-        ensure.assert_not_called()
-        self.assertFalse(outcome.ok)
 
     def test_missing_tools_are_reported_not_raised(self) -> None:
         with (
@@ -121,7 +121,7 @@ def _webview_pin_contains(repo: Path, commit: str) -> bool:
 @unittest.skipUnless(
     os.environ.get("PIXELAGENTS_REAL_PIXATAR_BUILD") == "1",
     "set PIXELAGENTS_REAL_PIXATAR_BUILD=1 to run the real clone+build "
-    "(network, git/node/npm and the pixatar Python client required)",
+    "(network, git/node/npm required)",
 )
 class TestRealPixatarBuild(unittest.IsolatedAsyncioTestCase):
     async def test_the_built_cli_deals_with_a_wardrobe_the_office_has(self) -> None:
@@ -133,7 +133,9 @@ class TestRealPixatarBuild(unittest.IsolatedAsyncioTestCase):
                 outcome = pixatar_build.build_pixatar(data, logger=_LOG)
             self.assertTrue(outcome.ok, outcome.error)
 
-            client = PixatarClient(outcome.command)
+            assert outcome.client_src is not None
+            self.assertTrue((outcome.client_src / "pixatar" / "__init__.py").is_file())
+            client = PixatarClient(outcome.command, outcome.client_src)
             try:
                 vendor = await client.vendor_commit()
                 dealt = await client.from_text("123456789012345678")

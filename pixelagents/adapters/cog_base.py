@@ -109,7 +109,7 @@ class PixelAgentsBase:
         self._pixatar_build_outcome = outcome
         if self._pixatar is not None:
             await asyncio.to_thread(self._pixatar.close)
-        self._pixatar = PixatarClient(outcome.command) if outcome.ok else None
+        self._pixatar = PixatarClient(outcome.command, outcome.client_src) if outcome.ok else None
         return outcome.status_line
 
     def pixatar_status(self) -> str:

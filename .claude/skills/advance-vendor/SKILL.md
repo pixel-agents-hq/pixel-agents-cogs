@@ -60,9 +60,9 @@ user first.
 pixelagents deals every office character with the pixatar CLI
 (`@pixel-index/pixatar`). It builds it at `cog_load` from the Pixel Index
 commit in `pixelagents/infrastructure/pixatar_vendor.commit`
-(`infrastructure/pixatar_build.py`). The Python client that drives it is the
-`pixatar @ git+…/index@<same commit>` requirement in `pixelagents/info.json`,
-and `test_pixatar_build.py` fails if the two commits differ. pixatar bakes in a
+(`infrastructure/pixatar_build.py`), and loads the Python client that drives
+it from the same checkout (`packages/pixatar/python`), so the two are always
+one commit. pixatar bakes in a
 Pixel Agents wardrobe, renderer and profile format from the index's vendor pin.
 A profile or seed code it produces names wardrobe parts, and the office can
 show it only if its build has the same wardrobe.
@@ -88,8 +88,8 @@ git -C <clone> diff --stat <pixatar-commit> <pin> -- \
 ```
 
 Moving the pin past the CLI's wardrobe is a coordinated change. Bump
-`pixatar_vendor.commit` and the `info.json` requirement together, to an index
-commit whose pixatar draws with the new wardrobe. Otherwise the office will
+`pixatar_vendor.commit` to an index commit whose pixatar draws with the new
+wardrobe. Otherwise the office will
 know parts the CLI can't draw. Stored characters keep their seed code and
 profile. Only members dealt for the first time after a pixatar bump can get a
 different look from the same user id.

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import unittest
 from collections.abc import Callable
 from copy import deepcopy
@@ -333,27 +332,6 @@ class TestCharacterRoster(unittest.IsolatedAsyncioTestCase):
 
         loaded = next(m for m in messages if m["type"] == "characterProfilesLoaded")
         self.assertEqual(loaded["profiles"], DEFAULTS)
-
-
-@unittest.skipUnless(
-    os.environ.get("PIXELAGENTS_REAL_PIXATAR") == "1",
-    "set PIXELAGENTS_REAL_PIXATAR=1 (and PIXATAR_CLI, or a built CLI) to deal from the real CLI",
-)
-class TestRealPixatarDeal(unittest.IsolatedAsyncioTestCase):
-    async def test_a_user_id_deals_the_character_pixel_index_deals(self) -> None:
-        from pixelagents.infrastructure.pixatar_client import PixatarClient
-
-        client = PixatarClient()
-        try:
-            dealt = await client.from_text("123456789012345678")
-            again = await client.from_seed(dealt.seed)
-        finally:
-            client.close()
-        # Pinned by pixel-index's own `pixatar info 123456789012345678`.
-        self.assertEqual(
-            dealt.seed, "px.ASMBNkHtAcOaAj2AbyDFgBthZAUGfQQ53_gJfRRQ_-kKfYgBHdT6AEIAZQh9VUX8AQ"
-        )
-        self.assertEqual(again.profile, dealt.profile)
 
 
 if __name__ == "__main__":

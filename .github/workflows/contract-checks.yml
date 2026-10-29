@@ -19,7 +19,6 @@ on:
       - "pixelagents/infrastructure/webview_vendor.commit"
       - "pixelagents/infrastructure/webview_vendor.repo"
       - "pixelagents/infrastructure/pixatar_vendor.commit"
-      - "pixelagents/info.json"
       - "pixelagents/infrastructure/webview_build_scripts/**"
       - "floorplan/**/*.py"
       - "architect/**/*.py"
@@ -177,8 +176,7 @@ jobs:
         env:
           PIXELAGENTS_REAL_PIXATAR_BUILD: "1"
         run: |
-          pip install pytest pytest-timeout \
-            "$(jq -r '.requirements[] | select(startswith("pixatar @ "))' pixelagents/info.json)"
+          pip install pytest pytest-timeout
           python -m pytest -q --timeout=900 pixelagents/tests/test_pixatar_build.py -k RealPixatarBuild
 
       - name: Upload contract result

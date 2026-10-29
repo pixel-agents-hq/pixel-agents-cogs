@@ -7,6 +7,8 @@ from copy import deepcopy
 from typing import Any, TypeVar
 
 from corridor.domain import OfficeState, OfficeStateChanged, OfficeStateKind, SeatRecords
+from pixelagents.domain import AgentKey, AgentSnapshot, GenuineAgentKey, PresenceStatus
+from pixelagents.domain.characters import character_key
 
 from ..application import CctvPipeline
 
@@ -38,6 +40,11 @@ class _Socket:
 class _PixelAgents:
     def __init__(self, state: OfficeState) -> None:
         self.state = state
+        self.looks: dict[str, str] = {}
+
+    async def office_character_profile(self, identity: object) -> dict[str, Any]:
+        key = character_key(identity)  # type: ignore[arg-type]
+        return {"body": "flat", "hair": self.looks.get(key, f"hair-of-{key}")}
 
     async def office_state(self, kind: OfficeStateKind) -> OfficeState:
         assert kind == self.state.kind
@@ -124,7 +131,72 @@ class TestCctvPipeline(unittest.IsolatedAsyncioTestCase):
             ["layoutLoaded", "existingAgents"],
         )
 
-    async def test_seat_write_is_one_aggregate_mutation(self) -> None:
+    async def test_shown_characters_are_the_cast_named_after_who_wears_them(self) -> None:
+        await self.pipeline.seed_state(self.pixelagents.state)
+        member = AgentSnapshot(
+            key=AgentKey(1, 42),
+            display_name="Octocat",
+            status=PresenceStatus.ONLINE,
+            is_bot=False,
+        )
+        await self.pipeline.reconcile_discord(
+            member, include_bots=False, rich_presence_enabled=False
+        )
+        await self.pipeline.reconcile_genuine(GenuineAgentKey("architect"), "Architect", "online")
+        self.socket.messages.clear()
+
+        await self.pipeline.bootstrap(self.socket)  # type: ignore[arg-type]
+
+        loaded = next(m for m in self.socket.messages if m["type"] == "characterProfilesLoaded")
+        self.assertEqual(
+            loaded["profiles"],
+            [
+                {"body": "flat", "hair": "hair-of-user:42", "id": "u42", "name": "Octocat"},
+                {
+                    "body": "flat",
+                    "hair": "hair-of-agent:architect",
+                    "id": "a-architect",
+                    "name": "Architect",
+                },
+            ],
+        )
+        existing = next(m for m in self.socket.messages if m["type"] == "existingAgents")
+        palettes = {agent_id: meta["palette"] for agent_id, meta in existing["agentMeta"].items()}
+        self.assertEqual(sorted(palettes.values()), [0, 1])
+
+    async def test_a_changed_look_is_rebroadcast(self) -> None:
+        await self.pipeline.seed_state(self.pixelagents.state)
+        member = AgentSnapshot(
+            key=AgentKey(1, 42),
+            display_name="Octocat",
+            status=PresenceStatus.ONLINE,
+            is_bot=False,
+        )
+        await self.pipeline.reconcile_discord(
+            member, include_bots=False, rich_presence_enabled=False
+        )
+        self.socket.messages.clear()
+
+        self.pixelagents.looks["user:42"] = "long_bangs"
+        await self.pipeline.office.refresh_character(AgentKey(1, 42))
+
+        self.assertEqual(
+            self.socket.messages,
+            [
+                {
+                    "type": "characterProfilesLoaded",
+                    "profiles": [
+                        {"body": "flat", "hair": "long_bangs", "id": "u42", "name": "Octocat"}
+                    ],
+                    "agentLooks": [{"id": -42, "palette": 0, "repeat": 0}],
+                }
+            ],
+        )
+
+    async def test_seat_write_keeps_only_the_seat(self) -> None:
+        """The roster decides what each agent wears, so a client's palette
+        change is dropped and only its seat is saved."""
+
         from ..contracts import parse_client_message
 
         message = parse_client_message(
@@ -137,10 +209,7 @@ class TestCctvPipeline(unittest.IsolatedAsyncioTestCase):
 
         await self.pipeline.handle_message(self.socket, message)  # type: ignore[arg-type]
 
-        self.assertEqual(
-            self.pixelagents.state.seats,
-            {"-1": {"palette": 2, "seatId": "chair:1"}},
-        )
+        self.assertEqual(self.pixelagents.state.seats, {"-1": {"seatId": "chair:1"}})
         self.assertEqual(self.pixelagents.state.revision, 2)
 
     async def test_layout_save_is_written_and_broadcast_immediately(self) -> None:

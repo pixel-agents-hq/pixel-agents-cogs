@@ -52,6 +52,11 @@ class _MemorySeats:
         return mutation(self.values)
 
 
+class _Characters:
+    async def profile(self, identity: object) -> dict[str, object]:
+        return {"body": "flat", "hair": "long_bangs", "v": 35}
+
+
 def _agent_snapshot(
     *, guild_id: int = 1, user_id: int = 2, name: str = "octocat", online: bool = True
 ) -> AgentSnapshot:
@@ -103,6 +108,14 @@ async def _capture_messages() -> list[dict[str, Any]]:
         seats=await repository.seats(),
         layout={"tiles": []},
     ):
+        captured.append(dict(entry))
+
+    # The character roster: every shown character wears its own profile.
+    roster = OfficeService(_MemorySeats(), send, characters=_Characters())
+    await roster.spawn(_agent_snapshot(user_id=3, name="hubot"), rich_presence_enabled=False)
+    await roster.spawn(_agent_snapshot(user_id=4, name="bender"), rich_presence_enabled=False)
+    await roster.close(AgentKey(1, 3))
+    for entry in roster.bootstrap_messages(assets={}, seats={}, layout={"tiles": []}):
         captured.append(dict(entry))
 
     # Builders no scripted OfficeService/PresenceService flow above reaches.

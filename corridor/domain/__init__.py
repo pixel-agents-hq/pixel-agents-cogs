@@ -40,6 +40,7 @@ from .models import (
     ToolVisibilityFilter,
 )
 from .office_state import (
+    CharacterRecords,
     OfficeState,
     OfficeStateChanged,
     OfficeStateKind,
@@ -88,6 +89,7 @@ __all__ = [
     "ReplyIdentity",
     "ReplyMode",
     "ReplyPreferences",
+    "CharacterRecords",
     "RawLayout",
     "SeatRecords",
     "ToolHandler",

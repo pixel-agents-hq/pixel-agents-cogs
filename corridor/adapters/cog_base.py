@@ -21,6 +21,7 @@ from ..application import (
     AgentToolServerRegistry,
     EventBusService,
     ModelCatalogService,
+    OfficeCharacterService,
     OfficeStateHandler,
     OfficeStateService,
     PermissionService,
@@ -96,6 +97,7 @@ class CogBase:
         self._event_bus = EventBusService()
         self._office_state_repository = RedOfficeStateRepository.create(self)
         self._office_states = OfficeStateService(self._office_state_repository, self._event_bus)
+        self._office_characters = OfficeCharacterService(self._office_state_repository)
         self._tool_registry = ToolRegistryService()
         self._agent_directory = AgentDirectoryService()
         self._a2a_server = A2AServer(logger=log)
@@ -504,6 +506,15 @@ class CogBase:
         owner: str,
     ) -> OfficeState | None:
         return await self._office_states.watch(kind, handler, owner=owner)
+
+    async def office_characters(self) -> dict[str, dict[str, Any]]:
+        return await self._office_characters.characters()
+
+    async def mutate_office_characters(
+        self,
+        mutation: Callable[[dict[str, dict[str, Any]]], _MutationT],
+    ) -> tuple[dict[str, dict[str, Any]], _MutationT]:
+        return await self._office_characters.mutate(mutation)
 
     def watch_agent_events(
         self,

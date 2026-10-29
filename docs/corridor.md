@@ -394,6 +394,12 @@ every successful mutation, once the lock is released — subscribers are
 awaited sequentially with exception isolation and a five-second timeout.
 A failed subscriber never rolls back persisted state.
 
+Beside the two aggregates, the same `Config` identity holds the office
+characters (`characters`: the look each Discord account or genuine agent
+wears, shared by both pages). `OfficeCharacterService` serializes every
+read-modify-write of them under one lock; pixelagents' `CharacterService`
+is the one caller that interprets them.
+
 Corridor never interprets either JSON schema itself —
 [`pixelagents`](../pixelagents) owns the Semantic IR domain model and is
 the one facade `architect`/`painter` actually call through

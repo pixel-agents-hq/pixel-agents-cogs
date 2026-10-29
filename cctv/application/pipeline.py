@@ -40,10 +40,23 @@ class PixelAgentsStateGateway(Protocol):
         mutation: Callable[[SeatRecords], None],
     ) -> tuple[OfficeState, None]: ...
 
+    async def office_character_profile(self, identity: OfficeIdentity) -> dict[str, Any]: ...
+
 
 class SeatRepository(Protocol):
     async def seats(self) -> SeatRecords: ...
     async def mutate_seats(self, mutation: Callable[[SeatRecords], Any]) -> Any: ...
+
+
+class _Characters:
+    """`OfficeService`'s character source, read through the pipeline's
+    current pixelagents reference (it's replaced on a pixelagents reload)."""
+
+    def __init__(self, pipeline: CctvPipeline) -> None:
+        self._pipeline = pipeline
+
+    async def profile(self, identity: OfficeIdentity) -> dict[str, Any]:
+        return await self._pipeline._pixelagents.office_character_profile(identity)
 
 
 class CctvPipeline:
@@ -76,6 +89,7 @@ class CctvPipeline:
             self._send,
             presence=self.presence,
             logger=self._log,
+            characters=_Characters(self),
         )
 
     def set_pixelagents(self, pixelagents: PixelAgentsStateGateway) -> None:
@@ -115,7 +129,7 @@ class CctvPipeline:
             self._state = state
             self.error = None
             # A revision bump doesn't mean the layout changed -- most bumps
-            # are seat-only (agent spawned/despawned, palette assigned) from
+            # are seat-only (agent spawned/despawned, seat assigned) from
             # ambient presence activity, completely unrelated to what's on
             # screen in the editor. Broadcasting layoutLoaded on every one of
             # those raced against the editor's own in-progress edits: the
@@ -150,8 +164,11 @@ class CctvPipeline:
         elif isinstance(message, SaveLayoutMessage):
             await self._pixelagents.set_office_layout(self.kind, message.layout.to_raw())
         elif isinstance(message, SaveAgentSeatsMessage):
+            # The roster decides what each agent wears, so only the seat of a
+            # patch is kept.
+            dropped = ("palette", "repeat") if self.office.dresses_characters else ()
             incoming = {
-                agent_id: patch.model_dump(by_alias=True, exclude_none=True)
+                agent_id: patch.model_dump(by_alias=True, exclude_none=True, exclude=set(dropped))
                 for agent_id, patch in message.seats.items()
             }
             profiles = self._assets.get("characterProfiles")

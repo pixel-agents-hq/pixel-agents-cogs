@@ -13,6 +13,8 @@ class GlobalSettings:
     editor_clear_delay: float
     broadcast_rich_presence: bool
     broadcast_messages: bool
+    # Pixel Index's character designer, where a member copies a seed code.
+    designer_url: str
 
 
 @dataclass(frozen=True, slots=True)

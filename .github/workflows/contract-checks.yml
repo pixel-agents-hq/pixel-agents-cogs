@@ -18,6 +18,8 @@ on:
       - "pixelagents/**/*.py"
       - "pixelagents/infrastructure/webview_vendor.commit"
       - "pixelagents/infrastructure/webview_vendor.repo"
+      - "pixelagents/infrastructure/pixatar_vendor.commit"
+      - "pixelagents/info.json"
       - "pixelagents/infrastructure/webview_build_scripts/**"
       - "floorplan/**/*.py"
       - "architect/**/*.py"
@@ -166,6 +168,18 @@ jobs:
           python -m contracts.pixel_agents.verify \
             --env-name production \
             --output-json "${{ runner.temp }}/pixel-agents-contract-results/production.json"
+
+      - name: Check pixatar draws with the pinned wardrobe
+        # Builds the pixatar CLI from pixatar_vendor.commit, deals a pinned
+        # character with it, and checks webview_vendor.commit contains the
+        # Pixel Agents commit its wardrobe comes from -- see
+        # .claude/skills/advance-vendor/SKILL.md, rule 2.
+        env:
+          PIXELAGENTS_REAL_PIXATAR_BUILD: "1"
+        run: |
+          pip install pytest pytest-timeout \
+            "$(jq -r '.requirements[] | select(startswith("pixatar @ "))' pixelagents/info.json)"
+          python -m pytest -q --timeout=900 pixelagents/tests/test_pixatar_build.py -k RealPixatarBuild
 
       - name: Upload contract result
         if: always()

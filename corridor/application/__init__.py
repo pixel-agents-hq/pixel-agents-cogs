@@ -2,6 +2,7 @@ from .agent_directory_service import AgentDirectoryService
 from .agent_tool_server_registry import AgentToolServerRegistry
 from .event_bus_service import DEFAULT_SUBSCRIBER_TIMEOUT, EventBusService
 from .model_catalog_service import FRESH_TTL_SECONDS, ModelCatalogService
+from .office_character_service import OfficeCharacterService, OfficeCharacterStorage
 from .office_state_service import (
     OFFICE_STATE_SUBSCRIBER_TIMEOUT,
     OfficeStateHandler,
@@ -24,6 +25,8 @@ __all__ = [
     "MemberRef",
     "ModelCatalogService",
     "OwnerRegistry",
+    "OfficeCharacterService",
+    "OfficeCharacterStorage",
     "OfficeStateHandler",
     "OfficeStateNotInitializedError",
     "OfficeStateService",

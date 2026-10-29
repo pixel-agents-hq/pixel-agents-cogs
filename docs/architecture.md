@@ -99,6 +99,11 @@ them. Layout and seat writes are field-specific, preserve the other field, and
 advance a monotonically increasing aggregate revision. Concurrent writes to the
 same field are last-write-wins.
 
+Corridor also stores the office characters (`CharacterRecords`): the pixatar
+seed code and character profile each Discord account or genuine agent wears,
+shared by both pages. Pixelagents deals and validates them, and CCTV's pages
+draw the roster from them.
+
 ```mermaid
 flowchart LR
     PixelIndex["Pixel Index"] --> Floorplan

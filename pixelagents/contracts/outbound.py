@@ -134,6 +134,35 @@ class AgentContextUsageMessage(TypedDict):
     maxContextTokens: int
 
 
+class _AgentLook(TypedDict):
+    id: int
+    palette: int
+    repeat: int
+
+
+class _CharacterProfilesLoadedRequired(TypedDict):
+    type: Literal["characterProfilesLoaded"]
+    profiles: list[Mapping[str, object]]
+
+
+class CharacterProfilesLoadedMessage(_CharacterProfilesLoadedRequired, total=False):
+    # Where each live agent sits in `profiles` -- absent at bootstrap, where
+    # existingAgents carries every agent's palette instead.
+    agentLooks: list[_AgentLook]
+
+
+def character_profiles_loaded(
+    profiles: list[Mapping[str, object]], agent_looks: list[_AgentLook] | None = None
+) -> CharacterProfilesLoadedMessage:
+    message: CharacterProfilesLoadedMessage = {
+        "type": "characterProfilesLoaded",
+        "profiles": profiles,
+    }
+    if agent_looks is not None:
+        message["agentLooks"] = agent_looks
+    return message
+
+
 def agent_created(
     agent_id: int,
     directory_name: str,

@@ -62,10 +62,11 @@ def _field_schema(annotation: Any) -> dict[str, Any]:
     if origin is list:
         (item_type,) = typing.get_args(annotation)
         return {"type": "array", "items": _field_schema(item_type)}
-    if origin in (dict, Mapping):
+    if origin in (dict, Mapping) or typing.is_typeddict(annotation):
         # Coarse -- values not modeled, matching the wire schemas' own
         # additionalProperties-keyed-by-agent-id maps (e.g. existingAgents'
-        # agentMeta/directoryNames/externalAgents).
+        # agentMeta/directoryNames/externalAgents); a nested TypedDict
+        # (characterProfilesLoaded's agentLooks entries) likewise.
         return {"type": "object"}
     if annotation in _PRIMITIVES:
         # A fresh dict every call -- yaml.safe_dump would otherwise notice

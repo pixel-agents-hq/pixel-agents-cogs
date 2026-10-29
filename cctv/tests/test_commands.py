@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import unittest
+from types import SimpleNamespace
 from typing import Any
+
+from pixelagents.domain import AgentKey
+from pixelagents.domain.characters import CharacterRecord, CharacterSource, PixatarFailure
 
 from ..adapters.commands import CommandsMixin
 
@@ -9,6 +13,9 @@ from ..adapters.commands import CommandsMixin
 class _Settings:
     def __init__(self) -> None:
         self.rich_presence: list[bool] = []
+
+    async def global_settings(self) -> Any:
+        return SimpleNamespace(designer_url="https://designer.example/assets/design")
 
     async def set_broadcast_rich_presence(self, value: bool) -> None:
         self.rich_presence.append(value)
@@ -60,6 +67,90 @@ class TestCctvDisplayCommands(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(cog._settings.rich_presence, [False])
         self.assertEqual(cog.sync_calls, 0)
         self.assertEqual(cog.discord_pipeline.office.clear_calls, 1)
+
+
+_DEALT = CharacterRecord("px.dealt", CharacterSource.DERIVED, {"body": "flat"})
+
+
+class _Characters:
+    def __init__(self) -> None:
+        self.records: dict[AgentKey, CharacterRecord] = {}
+
+    async def office_character(self, identity: AgentKey) -> CharacterRecord | None:
+        return self.records.get(identity, _DEALT)
+
+    async def set_office_character_seed(self, identity: AgentKey, seed: str) -> CharacterRecord:
+        if seed != "px.good":
+            raise PixatarFailure("invalid-seed", "This seed code is not one pixatar knows.")
+        self.records[identity] = CharacterRecord(seed, CharacterSource.CUSTOM, {"body": "flat"})
+        return self.records[identity]
+
+    async def reset_office_character(self, identity: AgentKey) -> CharacterRecord:
+        self.records.pop(identity, None)
+        return _DEALT
+
+    async def office_character_avatar(self, record: CharacterRecord, *, scale: int = 8) -> bytes:
+        return b"png:" + record.seed.encode()
+
+
+class _CharacterHarness(CommandsMixin):
+    def __init__(self) -> None:
+        self._settings = _Settings()
+        self._pixelagents = _Characters()
+        self.refreshed: list[AgentKey] = []
+        self.replies: list[dict[str, Any]] = []
+
+    async def _refresh_character(self, identity: Any) -> None:
+        self.refreshed.append(identity)
+
+    async def _reply(self, ctx: object, content: str | None = None, **kwargs: Any) -> None:
+        del ctx
+        self.replies.append({"content": content, **kwargs})
+
+
+def _ctx() -> Any:
+    return SimpleNamespace(guild=SimpleNamespace(id=1), author=SimpleNamespace(id=42))
+
+
+class TestCctvCharacterCommands(unittest.IsolatedAsyncioTestCase):
+    async def test_shows_the_dealt_character_with_a_designer_link(self) -> None:
+        cog = _CharacterHarness()
+
+        await CommandsMixin.cmd_character.callback(cog, _ctx())
+
+        reply = cog.replies[0]
+        self.assertIn("dealt from your Discord user id", reply["content"])
+        self.assertIn("https://designer.example/assets/design?seed=px.dealt", reply["content"])
+        self.assertEqual(reply["fields"][0].value, "px.dealt")
+        self.assertEqual(reply["files"][0].filename, "character.png")
+
+    async def test_setting_a_seed_stores_it_and_redresses_the_member(self) -> None:
+        cog = _CharacterHarness()
+
+        await CommandsMixin.cmd_character_set.callback(cog, _ctx(), "px.good")
+
+        self.assertEqual(cog._pixelagents.records[AgentKey(1, 42)].seed, "px.good")
+        self.assertEqual(cog.refreshed, [AgentKey(1, 42)])
+        self.assertIn("a seed code you set", cog.replies[0]["content"])
+
+    async def test_a_bad_seed_is_refused_and_nothing_changes(self) -> None:
+        cog = _CharacterHarness()
+
+        await CommandsMixin.cmd_character_set.callback(cog, _ctx(), "px.bad")
+
+        self.assertEqual(cog._pixelagents.records, {})
+        self.assertEqual(cog.refreshed, [])
+        self.assertIn("not one pixatar knows", cog.replies[0]["content"])
+
+    async def test_reset_goes_back_to_the_dealt_character(self) -> None:
+        cog = _CharacterHarness()
+        await CommandsMixin.cmd_character_set.callback(cog, _ctx(), "px.good")
+
+        await CommandsMixin.cmd_character_reset.callback(cog, _ctx())
+
+        self.assertEqual(cog._pixelagents.records, {})
+        self.assertEqual(cog.refreshed, [AgentKey(1, 42), AgentKey(1, 42)])
+        self.assertIn("dealt from your Discord user id", cog.replies[-1]["content"])
 
 
 if __name__ == "__main__":

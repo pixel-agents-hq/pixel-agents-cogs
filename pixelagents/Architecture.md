@@ -22,11 +22,13 @@ flowchart TB
         adapters["adapters/cog_base.py<br/><small>cross-cog facade + bundle lifecycle</small>"]
         appstate["application/office_state.py<br/><small>OfficeStateFacade</small>"]
         approster["application/office.py, presence.py<br/><small>roster + activity projection</small>"]
+        appchars["application/characters.py<br/><small>CharacterService</small>"]
         domain["domain/office_ir.py<br/><small>Semantic IR</small>"]
         contracts["contracts/layout.py, outbound.py<br/><small>wire schema + outbound messages</small>"]
         codec["infrastructure/pixel_agents_adapter.py<br/><small>IR codec</small>"]
         styles["infrastructure/furniture_styles.py"]
         build["infrastructure/webview_build.py"]
+        pixatar["infrastructure/pixatar_build.py, pixatar_client.py<br/><small>pixatar CLI</small>"]
         settings["infrastructure/settings.py<br/><small>commit override Config</small>"]
     end
 
@@ -35,6 +37,11 @@ flowchart TB
     adapters --> appstate
     adapters --> approster
     adapters --> build
+    adapters --> appchars
+    adapters --> pixatar
+    approster -->|profile| appchars
+    appchars -->|deal / decode seed| pixatar
+    appchars -->|characters / mutate| corridor
     adapters --> settings
     appstate --> contracts
     appstate --> codec
@@ -42,11 +49,17 @@ flowchart TB
     codec --> domain
     appstate -->|state / mutate / watch| corridor
 
-    cctv["cctv"] -->|"office_state (discord + editor)<br/>webview_bundle_status"| adapters
+    cctv["cctv"] -->|"office_state (discord + editor)<br/>webview_bundle_status<br/>office_character*"| adapters
     floorplan["floorplan"] -->|"set_office_layout (discord)"| adapters
     architect["architect"] -->|"office_state / set_office_layout (editor)"| adapters
     painter["painter"] -->|"office_state / set_office_layout (editor)"| adapters
 ```
+
+`CharacterService` is the same kind of boundary for the office characters:
+it deals a character with pixatar the first time one is shown, reads and
+writes Corridor's character records, and hands `OfficeService` (through
+CCTV's pipeline) the profile each character wears. See the README's
+[Office characters](README.md#office-characters).
 
 `OfficeStateFacade` is the single schema-aware path. `set_layout` reads or
 initializes the selected state, validates the candidate, and asks Corridor

@@ -58,16 +58,18 @@ write landing between subscribe and snapshot, and publishes
 `OfficeStateChanged` synchronously to every subscriber (bounded to a
 five-second timeout per subscriber). It also runs the A2A event bus CCTV
 subscribes to for presence and activity, and the `keyholder` capability
-check CCTV's Discord authorization relies on. Corridor knows nothing about
-what `layout` or `seats` mean.
+check CCTV's Discord authorization relies on. Corridor also persists the
+office characters (`CharacterRecords`) both pages draw. Corridor knows
+nothing about what `layout`, `seats` or a character mean.
 
 **Pixelagents** is the schema boundary. It validates Discord-page layouts
 against the Pixel Agents wire schema, validates editor layouts through the
 shared Semantic IR codec and furniture-style manifest, validates and merges
 avatar-seat patches, lazily and atomically initializes either aggregate
 from the bundled default layout, and delegates persistence/watch calls to
-Corridor. It also builds and serves the static webview bundle CCTV injects
-into both pages. No consumer bypasses this facade for an office-state
+Corridor. It also deals and stores each character's look with the pixatar
+CLI it builds from Pixel Index, and builds the static webview bundle CCTV
+injects into both pages. No consumer bypasses this facade for an office-state
 write.
 
 **CCTV** owns rendering and transport only: two Dashboard pages, one
@@ -96,18 +98,47 @@ class OfficeStateKind(StrEnum):
 class OfficeState:
     kind: OfficeStateKind
     layout: dict[str, Any]        # raw Pixel Agents layout JSON
-    seats: dict[str, dict[str, Any]]  # avatar palette/repeat/seat-assignment records
+    seats: dict[str, dict[str, Any]]  # avatar seat-assignment records
     revision: int                 # monotonically increasing per kind
 ```
 
 Both aggregates carry all three fields. `layout` is the raw Pixel Agents
 layout JSON (semantic chairs and occupants live here). `seats` is a
-separate avatar-placement map -- palette index, repeat, and seat
-assignment per agent -- and is not a duplicate of layout occupancy. Each
+separate avatar-placement map -- the seat assignment per agent -- and is
+not a duplicate of layout occupancy. (A record can also carry a `palette`
+and `repeat`; those are read only when no character roster dresses the
+agents, see below.) Each
 aggregate initializes lazily and idempotently from the same bundled
 default layout the first time any consumer reads or writes it, starting
 with an empty `seats` map and revision `1`; whichever caller reaches an
 absent aggregate first creates it exactly once.
+
+### `CharacterRecords`
+
+```python
+CharacterRecords = dict[str, dict[str, Any]]
+# "user:<discord user id>" | "agent:<agent key>" ->
+#     {"seed": "px.…", "source": "derived" | "custom", "profile": {...}}
+```
+
+One map, shared by both pages and every guild: the look each Discord
+account or genuine agent wears. `seed` is a pixatar seed code, `profile`
+the Pixel Agents character profile it decodes to. A member who never set a
+seed wears the character pixatar deals from their Discord user id
+(`source: "derived"`), dealt and stored the first time they are shown; a
+genuine agent's is dealt from its agent key. `[p]cctv character set
+<px.…>` replaces it with a seed code the member copied from Pixel Index's
+character designer (`source: "custom"`), and `[p]cctv character reset`
+deals it from the user id again. The dealt character is stored, not
+re-dealt, because pixatar's free-text deal depends on the wardrobe of the
+Pixel Agents commit it was built against, while a seed code always decodes
+to the same character. While pixatar can't run (not built yet, or no
+Node.js on the host), each character wears one of the built default cast,
+chosen by its key so it stays the same one, and nothing is stored.
+
+Pixelagents is the schema boundary here too: it deals, reads and writes the
+records (`application/characters.py`), and Corridor persists them under one
+lock.
 
 ### `OfficeStateChanged`
 
@@ -131,11 +162,12 @@ ignores a duplicate or stale delivery, so redundant delivery is harmless.
 | Event | Kind | Fields | Notes |
 |---|---|---|---|
 | `OfficeState` | value object | `kind`, `layout`, `seats`, `revision` | The complete, opaque-to-Corridor aggregate for one kind. |
+| `CharacterRecords` | value object | `seed`, `source`, `profile` per character key | The look each Discord account or genuine agent wears; shared by both pages. |
 | `OfficeStateChanged` | event | `state: OfficeState` | Published after every successful mutation; each subscriber is awaited with a 5-second timeout, isolated from other subscribers' exceptions. |
 
 `corridor/office_state_catalog.py` generates `corridor/office_state.yaml`,
-which CI's office-state contract lint checks against this document; both
-event names above are load-bearing literal text for that check.
+which CI's office-state contract lint checks against this document; every
+name in the table above is load-bearing literal text for that check.
 
 ### CCTV settings
 
@@ -148,6 +180,7 @@ class GlobalSettings:
     editor_clear_delay: float
     broadcast_rich_presence: bool
     broadcast_messages: bool
+    designer_url: str
 
 @dataclass(frozen=True, slots=True)
 class GuildSettings:
@@ -159,7 +192,9 @@ class GuildSettings:
 CCTV registers these under its own fresh Red Config identity (no Floorplan
 or Architect setting is read into it). Defaults: host `127.0.0.1`, port
 `3210`, both clear delays `2.0` seconds, rich-presence and message display
-enabled globally, and every guild starts disabled with bots included.
+enabled globally, the character designer at
+`https://pixel-index-staging.nntin.xyz/assets/design`, and every guild
+starts disabled with bots included.
 Guild enablement, include-bots, rich-presence, and message-display settings
 apply only to the Discord page; the two activity-clear delays are
 independent per page.
@@ -175,10 +210,11 @@ payload for a known type raises a logged, connection-preserving error:
 | `authorize` | client to server | `ticket: str` | Discord page only. Resolves a session ticket to a user id and re-authorizes the socket. |
 | `webviewReady` | client to server | -- | Triggers `bootstrap`: assets, settings, existing agents, and the current layout. |
 | `saveLayout` | client to server | `layout: OfficeLayout` | Editor-authorized only. Validated and written through Pixelagents' `set_office_layout`. |
-| `saveAgentSeats` | client to server | `seats: {agent_id: {palette?, repeat?, seatId?}}` | Editor-authorized only. Merged through Pixelagents' `mutate_office_seats`. |
+| `saveAgentSeats` | client to server | `seats: {agent_id: {palette?, repeat?, seatId?}}` | Editor-authorized only. Merged through Pixelagents' `mutate_office_seats`; only `seatId` is kept, since the character roster decides what each agent wears. |
 | `requestDiagnostics` | client to server | -- | Answered with `agentDiagnostics` and the pipeline's current revision. |
 | `importLayout` | client to server | -- | Accepted and intentionally a no-op. |
 | `layoutLoaded` | server to client | `layout` | Broadcast only when the layout field of a newly applied state actually changed. |
+| `characterProfilesLoaded` | server to client | `profiles`, `agentLooks?` | The character roster: one profile per character shown, named after who wears it (Discord display name or agent name). Sent at bootstrap, and with `agentLooks` (every live agent's `palette`, its place in `profiles`, `repeat` 0) whenever a character is shown, leaves, is renamed or changes its look. |
 | `agentDiagnostics` | server to client | `agents: []`, `revision` | Static reply to `requestDiagnostics`. |
 
 `saveLayout`, `saveAgentSeats`, and `importLayout` are gated as writes: the
@@ -309,6 +345,10 @@ presence change occurring during startup can be missed.
 | `[p]cctv host <host>` | Bot owner | Set listener bind host (validated non-empty, no whitespace); requires reload to rebind |
 | `[p]cctv port <port>` | Bot owner | Set listener bind port (1-65535); requires reload to rebind |
 | `[p]cctv cleardelay <discord\|editor> <seconds>` | Bot owner | Set that page's activity-clear delay (>= 0) |
+| `[p]cctv designer <url>` | Bot owner | Set the character designer `[p]cctv character` links to |
+| `[p]cctv character` | Any member | Show your office character: its seed code, avatar, and a designer link that opens it |
+| `[p]cctv character set <px.…>` | Any member | Wear the character a seed code stands for; the pages re-dress you live |
+| `[p]cctv character reset` | Any member | Go back to the character dealt from your Discord user id |
 
 ## Validation & error handling
 
@@ -383,7 +423,7 @@ end-to-end rather than only within Corridor.
 
 **Revision-gated re-broadcast of `layoutLoaded`, not "broadcast every
 change".** Most revision bumps are seat-only (an agent spawning,
-despawning, or getting a palette assignment) and are unrelated to what is
+despawning, or getting a seat) and are unrelated to what is
 on-screen in the editor. The browser only guards against an incoming
 `layoutLoaded` while it has unsaved local edits, and that guard drops the
 instant a user hits Save -- before that very save's own write has even

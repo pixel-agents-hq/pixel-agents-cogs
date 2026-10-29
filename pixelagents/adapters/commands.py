@@ -1,4 +1,5 @@
-"""Pixel Agents command surface: vendoring and building the webview.
+"""Pixel Agents command surface: vendoring and building the webview and the
+pixatar CLI.
 
 Bot-owner only throughout (`@commands.is_owner()`), not a per-guild
 permission tier: mirrors toolbox's reasoning exactly (see
@@ -18,6 +19,7 @@ from collections.abc import Awaitable, Callable
 from discord import app_commands
 from redbot.core import commands
 
+from ..infrastructure import pixatar_build
 from ..infrastructure.webview_build import pinned_commit
 from .cog_base import PixelAgentsBase
 
@@ -116,3 +118,27 @@ class CommandsMixin(PixelAgentsBase):
             "To build it now:",
             code=["[p]pixelagents webview rebuild"],
         )
+
+    @pixelagents_group.group(name="pixatar", invoke_without_command=True)
+    @commands.guild_only()
+    @commands.is_owner()
+    async def cmd_pixatar(self, ctx: commands.Context) -> None:
+        """Show the pixatar CLI that deals office characters."""
+
+        commit = pixatar_build.pinned_commit()
+        await self._reply(
+            ctx,
+            f"{self.pixatar_status()}\nPinned Pixel Index commit: `{commit}`. To rebuild:",
+            code=["[p]pixelagents pixatar rebuild"],
+        )
+
+    @cmd_pixatar.command(name="rebuild")
+    @commands.guild_only()
+    @commands.is_owner()
+    async def cmd_pixatar_rebuild(self, ctx: commands.Context) -> None:
+        """Re-clone and rebuild pixatar from the pinned Pixel Index commit."""
+
+        if ctx.interaction:
+            await ctx.interaction.response.defer(ephemeral=True)
+        await self._reply(ctx, "Rebuilding pixatar…")
+        await self._reply(ctx, await self._rebuild_pixatar(force=True))

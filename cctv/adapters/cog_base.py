@@ -292,6 +292,10 @@ class CctvBase:
             await self.discord_pipeline.reconcile_genuine(identity, display_name, "online")
             await self.editor_pipeline.reconcile_genuine(identity, display_name, "online")
 
+    async def _refresh_character(self, identity: OfficeIdentity) -> None:
+        for pipeline in self._pipelines.values():
+            await pipeline.office.refresh_character(identity)
+
     async def _sync_all_guilds(self) -> None:
         for guild in self.bot.guilds:
             if await self._settings.guild_enabled(guild):

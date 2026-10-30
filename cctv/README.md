@@ -50,9 +50,12 @@ together.
 | `[p]cctv character` | Any member | Show your office character, its seed code, and a designer link that opens it |
 | `[p]cctv character set <px.…>` | Any member | Wear the character a seed code stands for, e.g. one copied from the designer |
 | `[p]cctv character reset` | Any member | Go back to the character dealt from your Discord user id |
-| `[p]cctv character agent <agent>` | Bot owner | Show an agent's office character; `<agent>` is a registered agent key, or `pico` for the bot's own account |
-| `[p]cctv character agentset <agent> <px.…>` | Bot owner | Dress an agent in a seed code's character, on both pages and in its Discord replies |
-| `[p]cctv character agentreset <agent>` | Bot owner | Go back to the character dealt from the agent's key (pico: the bot's user id) |
+| `[p]cctv character member <member>` | Building Manager | Show any member's office character, bots and the bot's own account included |
+| `[p]cctv character memberset <member> <px.…>` | Building Manager | Dress a member in a seed code's character; the bot's own account also wears it in its Discord replies |
+| `[p]cctv character memberreset <member>` | Building Manager | Go back to the character dealt from the member's Discord user id |
+| `[p]cctv character agent <agent>` | Bot owner | Show a registered agent's office character (e.g. `architect`) |
+| `[p]cctv character agentset <agent> <px.…>` | Bot owner | Dress a registered agent in a seed code's character, on both pages and in its Discord replies |
+| `[p]cctv character agentreset <agent>` | Bot owner | Go back to the character dealt from the agent's key |
 
 ## Characters
 
@@ -65,9 +68,16 @@ designer (`https://pixel-index-staging.nntin.xyz/assets/design` by default),
 press "Copy seed", and run `[p]cctv character set <seed>`; both pages
 re-dress the member live.
 
+A Building Manager (corridor's `building_manager` group, or the reserved
+`owner` group) can change any other member's character, bots included,
+with `[p]cctv character memberset <member> <seed>` and undo it with
+`[p]cctv character memberreset <member>`.
+
 Agents (pico, architect, painter, animator, every bootcamp agent) wear
-characters too, dealt from their key, and their Discord replies use that
-character as their avatar. The bot owner changes one with
+characters too, and their Discord replies use that character as their
+avatar. pico is the bot's own Discord account, so it is dressed like any
+member: `[p]cctv character memberset <bot> <seed>`. The A2A agents wear a
+character dealt from their key; the bot owner changes one with
 `[p]cctv character agentset <agent> <seed>`.
 
 ## Configuration

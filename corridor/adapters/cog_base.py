@@ -6,6 +6,7 @@ stable contract they depend on through `required_cogs`.
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
@@ -33,9 +34,11 @@ from ..domain import (
     A2ASettings,
     AgentPresenceChanged,
     AgentRef,
+    AuthorIconSource,
     FooterOverride,
     GuildSettings,
     IconPreference,
+    IconSource,
     LLMSettings,
     ModelCatalogResult,
     OfficeState,
@@ -49,6 +52,7 @@ from ..domain import (
     ReplyField,
     ReplyIdentity,
     ReplyMode,
+    ReplyPreferences,
     ToolVisibilityFilter,
     card_with_url,
 )
@@ -276,7 +280,8 @@ class CogBase:
 
         assert ctx.guild is not None, "render_reply needs a guild context"
         settings = await self._repository.guild_settings(ctx.guild.id)
-        return await self._reply_service.render(
+        member_icon = await self._member_icon(ctx, settings.reply)
+        rendered = await self._reply_service.render(
             ctx.guild.id,
             settings.reply,
             ReplyContent(
@@ -290,6 +295,33 @@ class CogBase:
             identity=identity,
             footer_override=footer_override,
             category=category,
+            member_icon=member_icon.name if member_icon is not None else None,
+            member_name=getattr(ctx.author, "display_name", None),
+        )
+        if rendered.member_icon_attachment is None:
+            return rendered
+        return dataclasses.replace(rendered, member_icon_path=member_icon)
+
+    async def _member_icon(
+        self, ctx: commands.Context, preferences: ReplyPreferences
+    ) -> Path | None:
+        """The office character of the member being replied to (`ctx.author`),
+        only when this guild shows it somewhere -- resolving one can deal and
+        draw a character, so it isn't done for nothing."""
+
+        wanted = preferences.mode is ReplyMode.EMBED and (
+            preferences.author_icon is AuthorIconSource.MEMBER
+            or preferences.icon.source is IconSource.MEMBER
+        )
+        author = getattr(ctx, "author", None)
+        if not wanted or author is None or ctx.guild is None:
+            return None
+        return await self.avatar_for(
+            AgentRef(
+                discord_user_id=author.id,
+                guild_id=ctx.guild.id,
+                is_bot=bool(getattr(author, "bot", False)),
+            )
         )
 
     async def send_reply(
@@ -860,6 +892,9 @@ class CogBase:
 
     async def set_icon_preference(self, guild_id: int, icon: IconPreference) -> None:
         await self._repository.set_icon_preference(guild_id, icon)
+
+    async def set_author_icon(self, guild_id: int, source: AuthorIconSource) -> None:
+        await self._repository.set_author_icon(guild_id, source)
 
     async def list_permission_groups(self, guild_id: int) -> tuple[PermissionGroupDef, ...]:
         return await self._repository.list_permission_groups(guild_id)

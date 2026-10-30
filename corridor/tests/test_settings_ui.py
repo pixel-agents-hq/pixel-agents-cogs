@@ -24,6 +24,7 @@ from ..adapters.settings_ui import (
 )
 from ..corridor import Corridor
 from ..domain import (
+    AuthorIconSource,
     GuildSettings,
     IconPreference,
     IconSource,
@@ -127,6 +128,29 @@ class TestRoleSelectCallback(unittest.IsolatedAsyncioTestCase):
         building_manager = settings.permissions.group("building_manager")
         assert building_manager is not None
         self.assertEqual(building_manager.role_ids, frozenset({500, 600}))
+
+
+class TestAuthorIconSelectCallback(unittest.IsolatedAsyncioTestCase):
+    async def test_choosing_member_persists_via_corridor_api(self) -> None:
+        bot = FakeBot()
+        guild = FakeGuild(guild_id=1)
+        bot.register_guild(guild)
+        corridor = Corridor(bot=bot)
+        bot.add_cog(corridor)
+
+        container = build_shared_settings_container(_settings(1))
+        select = next(
+            node
+            for node in ui_limits.iter_ui_tree(container)
+            if getattr(node, "placeholder", None) == "Author icon"
+        )
+        select.values = ["member"]  # type: ignore[attr-defined]
+
+        interaction = discord.Interaction(guild=guild, client=bot)
+        await select.callback(interaction)  # type: ignore[attr-defined]
+
+        settings = await corridor.guild_settings(1)
+        self.assertEqual(settings.reply.author_icon, AuthorIconSource.MEMBER)
 
 
 class TestPermissionSelectCallback(unittest.IsolatedAsyncioTestCase):

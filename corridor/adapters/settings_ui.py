@@ -24,6 +24,7 @@ import discord
 
 from ..domain import (
     RESERVED_GROUP_KEYS,
+    AuthorIconSource,
     GuildSettings,
     IconPreference,
     IconSource,
@@ -233,6 +234,9 @@ def build_shared_settings_container(
             "**Shared reply settings**\n"
             f"Mode: `{reply.mode.value}` · Timestamp: `{reply.show_timestamp}`\n"
             f"Footer: `{reply.footer_text or '(none)'}` · Icon source: `{reply.icon.source.value}`"
+            f" · Author icon: `{reply.author_icon.value}`\n"
+            "-# `member` shows the office character of the member being replied to; the "
+            "author name stays whoever replies."
         )
     )
 
@@ -245,6 +249,10 @@ def build_shared_settings_container(
     icon_row: discord.ui.ActionRow[discord.ui.LayoutView] = discord.ui.ActionRow()
     icon_row.add_item(_icon_source_select(reply.icon.source))
     container.add_item(icon_row)
+
+    author_icon_row: discord.ui.ActionRow[discord.ui.LayoutView] = discord.ui.ActionRow()
+    author_icon_row.add_item(_author_icon_select(reply.author_icon))
+    container.add_item(author_icon_row)
 
     container.add_item(
         discord.ui.TextDisplay(
@@ -330,6 +338,32 @@ def _edit_button() -> discord.ui.Button[discord.ui.LayoutView]:
 
     button.callback = callback  # type: ignore[method-assign]
     return button
+
+
+def _author_icon_select(
+    current: AuthorIconSource,
+) -> discord.ui.Select[discord.ui.LayoutView]:
+    select: discord.ui.Select[discord.ui.LayoutView] = discord.ui.Select(
+        placeholder="Author icon",
+        options=[
+            discord.SelectOption(
+                label=f"author icon: {source.value}",
+                value=source.value,
+                default=source is current,
+            )
+            for source in AuthorIconSource
+        ],
+    )
+
+    async def callback(interaction: discord.Interaction) -> None:
+        assert interaction.guild is not None
+        corridor = _get_corridor(interaction)
+        new_source = AuthorIconSource(select.values[0])
+        await corridor.set_author_icon(interaction.guild.id, new_source)
+        await _refresh(interaction, f"Author icon set to `{new_source.value}`.")
+
+    select.callback = callback  # type: ignore[method-assign]
+    return select
 
 
 def _icon_source_select(

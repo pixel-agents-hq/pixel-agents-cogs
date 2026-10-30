@@ -71,6 +71,7 @@ COG_PACKAGES = (
     "pico",
     "pixelagents",
     "suggestionbox",
+    "switchboard",
     "testbench",
     "toolbox",
 )

@@ -2,7 +2,7 @@
 
 ## Overview
 
-Every cog in this repo except `corridor` depends on at least one other cog
+Every cog in this repo except `corridor` and `switchboard` depends on at least one other cog
 in the same repo (`pixelagents` needs `corridor`; `floorplan` needs both).
 Red-DiscordBot has no built-in mechanism for this — confirmed against Red's
 own source (`redbot/core/bot.py`'s `load_extension`/`_pre_connect`,
@@ -147,6 +147,46 @@ at all — the same landmine described above, just one step earlier in the
 sequence. Treat this as a known fragility specific to cctv, not a second
 supported pattern to copy into a new cog.
 
+## Requirements and load order for addpath cogs: switchboard
+
+Everything above is about *loading*. Installing a cog's `info.json`
+`requirements` is a separate step that Red performs only through Downloader
+(`[p]cog install` / `[p]cog update` / `[p]cog reinstallreqs`), which runs
+`python -m pip install -U -t <data>/cogs/Downloader/lib ...`. `[p]addpath`
+and `[p]load` never read `requirements`. A checkout added with `[p]addpath`
+or `--cog-path` therefore fails on its first missing import, e.g. corridor's
+`ModuleNotFoundError: No module named 'a2a'`. Red then drops a package that
+failed at startup from its autoload list, so the failure does not stay
+visible.
+
+[`switchboard`](../switchboard) covers that route. It has no `required_cogs`
+and no `requirements` of its own (it uses only the `packaging` library Red
+already ships), so it loads in an environment where corridor cannot import:
+
+- `[p]switchboard load <cogs|all>` takes the transitive `required_cogs`
+  closure. If anything in it has unsatisfied requirements, it runs
+  Downloader's own pip command once with every requirement of that closure
+  and of every loaded or managed cog, so pip's resolver sees every pin
+  together. It then loads the closure through Red's `CoreLogic._load`,
+  dependencies first, and skips anything whose dependency failed.
+- `[p]switchboard unload <cogs>` unloads every loaded dependent first, so
+  corridor's own cascade-unload (see
+  [`dependency-cascades.md`](dependency-cascades.md)) has nothing left to do.
+- The cogs it loaded are *managed*. With autorepair on (the default), it
+  loads them again, installing requirements first, once Red is ready after a
+  restart.
+- `[p]switchboard status` reports each cog's source from the cog path it
+  resolves from: `downloader` (Red's install path and recorded in
+  Downloader's Config), `downloader_untracked`, `addpath`, `cli_path`, or
+  `core`. It also reports a copy shadowed by a higher-priority path.
+
+`.github/workflows/check-cogs.yml` below only exercises the Downloader
+route, so `.github/workflows/switchboard.yml` covers this one end to end: a
+fresh Red instance with the repo on `[p]addpath`, corridor failing to load
+through Red alone, `switchboard load all` / `unload corridor` over Red's
+RPC, and autorepair after a restart with an emptied lib directory. See
+[`switchboard/Architecture.md`](../switchboard/Architecture.md).
+
 ## The CI smoke test's unload-then-test mechanism
 
 The `.github/workflows/check-cogs.yml` job runs
@@ -155,10 +195,11 @@ The `.github/workflows/check-cogs.yml` job runs
 repo (pinned at `NNTin/d-flows@873892e7d5f5fa19737b93e01f608f52a8f65a0f`)
 so this repo can iterate on CI behavior without waiting on upstream. It
 installs and loads/unloads every non-shared-library cog in the repo,
-**alphabetically**: `architect` → `cctv` → `corridor` → `deskutils` →
-`floorplan` → `painter` → `pico` → `pixelagents` → `suggestionbox` →
-`testbench` → `toolbox` (`contracts` is a `SHARED_LIBRARY`-type
-installable, so Downloader's own `available_cogs` excludes it from this
+**alphabetically**: `animator` → `architect` → `bootcamp` → `cctv` →
+`corridor` → `deskutils` → `floorplan` → `painter` → `pico` →
+`pixelagents` → `suggestionbox` → `switchboard` → `telephonepole` →
+`testbench` → `toolbox` (`contracts` and `e2e` are `SHARED_LIBRARY`-type
+installables, so Downloader's own `available_cogs` excludes them from this
 list).
 
 Before testing a cog, `test_downloader_cogs.py` (`exercise_cogs()`)

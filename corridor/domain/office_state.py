@@ -9,6 +9,9 @@ from typing import Any, TypeAlias
 
 RawLayout: TypeAlias = dict[str, Any]
 SeatRecords: TypeAlias = dict[str, dict[str, Any]]
+# Each office character's look, keyed by who wears it -- shared by both
+# pages, so not part of either aggregate.
+CharacterRecords: TypeAlias = dict[str, dict[str, Any]]
 
 
 class OfficeStateKind(StrEnum):
@@ -41,6 +44,7 @@ def copy_office_state(state: OfficeState) -> OfficeState:
 
 
 __all__ = [
+    "CharacterRecords",
     "OfficeState",
     "OfficeStateChanged",
     "OfficeStateKind",

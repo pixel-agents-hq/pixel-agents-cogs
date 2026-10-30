@@ -21,6 +21,15 @@ def build_contract() -> dict[str, Any]:
                     "revision": {"type": "int"},
                 },
             },
+            "CharacterRecords": {
+                "kind": "value-object",
+                "keyed_by": "user:<discord user id> | agent:<agent key>",
+                "fields": {
+                    "seed": {"type": "str"},
+                    "source": {"type": "Literal['derived', 'custom']"},
+                    "profile": {"type": "dict[str, Any]"},
+                },
+            },
             "OfficeStateChanged": {
                 "kind": "event",
                 "fields": {"state": {"type": "OfficeState"}},

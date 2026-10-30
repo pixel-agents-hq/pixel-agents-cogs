@@ -15,9 +15,14 @@ from redbot.core.bot import Red
 
 from corridor.domain import OfficeState, OfficeStateChanged, OfficeStateKind, SeatRecords
 
+from ..application.characters import CharacterService
 from ..application.office_state import OfficeStateFacade, OfficeStateSeatRepository
 from ..dependency_loader import ensure_corridor_loaded
+from ..domain import OfficeIdentity
+from ..domain.characters import CharacterRecord
 from ..infrastructure.furniture_styles import FurnitureStyleLoader
+from ..infrastructure.pixatar_build import PixatarBuildOutcome, build_pixatar
+from ..infrastructure.pixatar_client import PixatarClient
 from ..infrastructure.settings import RedSettingsRepository
 from ..infrastructure.webview_build import (
     BuildOutcome,
@@ -71,6 +76,9 @@ class PixelAgentsBase:
         self._webview_build_outcome: BuildOutcome | None = None
         self._style_loader = FurnitureStyleLoader(self)
         self._office_state: OfficeStateFacade | None = None
+        self._pixatar_build_outcome: PixatarBuildOutcome | None = None
+        self._pixatar: PixatarClient | None = None
+        self._characters: CharacterService | None = None
 
     def _webview_dist_path(self) -> Path:
         return self._cog_data_dir / "webview_dist"
@@ -90,6 +98,63 @@ class PixelAgentsBase:
         )
         self._webview_build_outcome = outcome
         return outcome.status_line
+
+    async def _rebuild_pixatar(self, *, force: bool) -> str:
+        """Build the pixatar CLI off the event loop; a working build replaces
+        the client, so the next character is dealt by the new CLI."""
+
+        outcome = await asyncio.to_thread(
+            build_pixatar, self._cog_data_dir, logger=log, force=force
+        )
+        self._pixatar_build_outcome = outcome
+        if self._pixatar is not None:
+            await asyncio.to_thread(self._pixatar.close)
+        self._pixatar = PixatarClient(outcome.command, outcome.client_src) if outcome.ok else None
+        return outcome.status_line
+
+    def pixatar_status(self) -> str:
+        outcome = self._pixatar_build_outcome
+        if outcome is None:
+            return "⚠️ not built yet"
+        return outcome.status_line
+
+    def _current_pixatar(self) -> PixatarClient | None:
+        return self._pixatar
+
+    def _default_character_profiles(self) -> list[dict[str, Any]]:
+        path = self._webview_dist_path() / "assets" / "decoded" / "character-profiles.json"
+        try:
+            profiles = json.loads(path.read_text("utf-8"))
+        except (OSError, ValueError):
+            return []
+        return (
+            [dict(p) for p in profiles if isinstance(p, dict)] if isinstance(profiles, list) else []
+        )
+
+    def _character_service(self) -> CharacterService:
+        if self._characters is None:
+            raise RuntimeError("pixelagents characters are not loaded")
+        return self._characters
+
+    async def office_character_profile(self, identity: OfficeIdentity) -> dict[str, Any]:
+        """Public cross-cog surface: the profile a character wears on the
+        canvas (dealt from its user id or agent key the first time)."""
+
+        return await self._character_service().profile(identity)
+
+    async def office_character(self, identity: OfficeIdentity) -> CharacterRecord | None:
+        return await self._character_service().character(identity)
+
+    async def set_office_character_seed(
+        self, identity: OfficeIdentity, seed: str
+    ) -> CharacterRecord:
+        return await self._character_service().set_seed(identity, seed)
+
+    async def reset_office_character(self, identity: OfficeIdentity) -> CharacterRecord:
+        return await self._character_service().reset(identity)
+
+    async def office_character_avatar(self, record: CharacterRecord, *, scale: int = 8) -> bytes:
+        return await self._character_service().avatar_png(record, scale=scale)
 
     def webview_bundle_status(self) -> WebviewBundleStatus:
         """Public, read-only cross-cog surface consumed by CCTV and agents.
@@ -204,10 +269,17 @@ class PixelAgentsBase:
         self._corridor = await ensure_corridor_loaded(self.bot)
         self._corridor.register_dependent("pixelagents")
         log.info("pixelagents: %s", await self._rebuild_webview(force=False))
+        log.info("pixelagents: %s", await self._rebuild_pixatar(force=False))
         self._office_state = OfficeStateFacade(
             self._corridor,
             self.bundled_default_layout,
             self._style_loader.styles,
+        )
+        self._characters = CharacterService(
+            self._corridor,
+            self._current_pixatar,
+            self._default_character_profiles,
+            logger=log,
         )
         await self._refresh_dependents()
         if self._webview_build_outcome is not None and not self._webview_build_outcome.ok:
@@ -215,6 +287,10 @@ class PixelAgentsBase:
 
     async def cog_unload(self) -> None:
         self._office_state = None
+        self._characters = None
+        if self._pixatar is not None:
+            await asyncio.to_thread(self._pixatar.close)
+            self._pixatar = None
         if self._corridor is not None:
             self._corridor.unregister_dependent("pixelagents")
 

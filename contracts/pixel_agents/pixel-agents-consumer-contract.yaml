@@ -198,6 +198,24 @@ messages:
         const: agentToolsClear
       id:
         type: integer
+  characterProfilesLoaded:
+    typeddict: CharacterProfilesLoadedMessage
+    type: object
+    additionalProperties: false
+    required:
+    - profiles
+    - type
+    properties:
+      type:
+        const: characterProfilesLoaded
+      profiles:
+        type: array
+        items:
+          type: object
+      agentLooks:
+        type: array
+        items:
+          type: object
   existingAgents:
     typeddict: ExistingAgentsMessage
     type: object

@@ -18,6 +18,7 @@ GLOBAL_DEFAULTS: dict[str, object] = {
     "editor_clear_delay": 2.0,
     "broadcast_rich_presence": True,
     "broadcast_messages": True,
+    "designer_url": "https://pixel-index-staging.nntin.xyz/assets/design",
 }
 GUILD_DEFAULTS: dict[str, object] = {"enabled": False, "include_bots": True}
 
@@ -54,6 +55,7 @@ class RedSettingsRepository:
             editor_clear_delay=cast(float, await self._config.editor_clear_delay()),
             broadcast_rich_presence=cast(bool, await self._config.broadcast_rich_presence()),
             broadcast_messages=cast(bool, await self._config.broadcast_messages()),
+            designer_url=cast(str, await self._config.designer_url()),
         )
 
     def _guild(self, guild: int | GuildReference) -> tuple[int, Any]:
@@ -101,6 +103,13 @@ class RedSettingsRepository:
         if not isinstance(value, bool):
             raise ValueError("Message setting must be a boolean.")
         await self._config.broadcast_messages.set(value)
+
+    async def set_designer_url(self, url: str) -> str:
+        clean = url.strip().strip("<>")
+        if not clean.startswith(("https://", "http://")) or any(c.isspace() for c in clean):
+            raise ValueError("The designer URL must be an http(s) link.")
+        await self._config.designer_url.set(clean)
+        return clean
 
     async def set_guild_enabled(self, guild_id: int, value: bool) -> None:
         if not isinstance(value, bool):

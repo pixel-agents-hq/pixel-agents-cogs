@@ -127,6 +127,20 @@ class TestAgentActivityReachesCctv(unittest.IsolatedAsyncioTestCase):
                 frame, "discord pipeline never received the AgentReplied broadcast"
             )
 
+            # The member is in the page's character roster, under their name.
+            roster = await wait_for_frame(
+                discord_page,
+                discord_frames,
+                lambda f: (
+                    f.get("type") == "characterProfilesLoaded"
+                    and any(
+                        isinstance(p, dict) and p.get("name") == "Ada"
+                        for p in f.get("profiles") or []  # type: ignore[attr-defined]
+                    )
+                ),
+            )
+            self.assertIsNotNone(roster, "the member never appeared in the character roster")
+
             # A genuine negative assertion has to burn the full poll budget
             # to mean anything -- accept the added wall-clock cost here.
             leaked = await wait_for_frame(

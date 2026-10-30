@@ -252,7 +252,7 @@ def _read_marker(marker: Path) -> str | None:
 
 
 @contextlib.contextmanager
-def _build_lock(cog_data_dir: Path) -> Iterator[None]:
+def _build_lock(cog_data_dir: Path, name: str = "webview_build.lock") -> Iterator[None]:
     """Serialize concurrent builds against the same `vendor_dir` checkout.
 
     A real OS-level lock, not an `asyncio.Lock`: callers run this (via
@@ -270,7 +270,7 @@ def _build_lock(cog_data_dir: Path) -> Iterator[None]:
     """
 
     cog_data_dir.mkdir(parents=True, exist_ok=True)
-    lock_path = cog_data_dir / "webview_build.lock"
+    lock_path = cog_data_dir / name
     with open(lock_path, "w", encoding="utf-8") as lock_file:
         fcntl.flock(lock_file, fcntl.LOCK_EX)
         try:

@@ -46,6 +46,21 @@ together.
 | `[p]cctv host <host>` | Bot owner | Set the listener bind host; reload to rebind |
 | `[p]cctv port <port>` | Bot owner | Set the listener bind port; reload to rebind |
 | `[p]cctv cleardelay <discord\|editor> <seconds>` | Bot owner | Set that page's activity-clear delay |
+| `[p]cctv designer <url>` | Bot owner | Set the character designer `[p]cctv character` links to |
+| `[p]cctv character` | Any member | Show your office character, its seed code, and a designer link that opens it |
+| `[p]cctv character set <px.…>` | Any member | Wear the character a seed code stands for, e.g. one copied from the designer |
+| `[p]cctv character reset` | Any member | Go back to the character dealt from your Discord user id |
+
+## Characters
+
+Every character on a page wears its own look, and the page's roster lists
+exactly the characters shown, each named after its Discord display name
+(or agent name). A member who never chose a look wears the character
+[pixatar](../pixelagents/README.md#office-characters) deals from their
+Discord user id. To change it, design one in Pixel Index's character
+designer (`https://pixel-index-staging.nntin.xyz/assets/design` by default),
+press "Copy seed", and run `[p]cctv character set <seed>`; both pages
+re-dress the member live.
 
 ## Configuration
 

@@ -7,7 +7,7 @@ from typing import Any, cast
 
 from redbot.core import Config
 
-from ..domain import OfficeState, OfficeStateKind
+from ..domain import CharacterRecords, OfficeState, OfficeStateKind
 
 # Fresh store: deliberately unrelated to corridor's settings Config and every
 # former floorplan/pixelagents layout identifier.
@@ -16,6 +16,7 @@ CONFIG_IDENTIFIER = 0x636374765F7374617465  # "cctv_state"
 GLOBAL_DEFAULTS: dict[str, object] = {
     "discord_state": None,
     "editor_state": None,
+    "characters": {},
 }
 
 
@@ -56,6 +57,12 @@ class RedOfficeStateRepository:
                 "revision": state.revision,
             }
         )
+
+    async def characters(self) -> CharacterRecords:
+        return deepcopy(cast("CharacterRecords", await self._config.characters()))
+
+    async def save_characters(self, characters: CharacterRecords) -> None:
+        await self._config.characters.set(deepcopy(characters))
 
 
 __all__ = ["CONFIG_IDENTIFIER", "GLOBAL_DEFAULTS", "RedOfficeStateRepository"]

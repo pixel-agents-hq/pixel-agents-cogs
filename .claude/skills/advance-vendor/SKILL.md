@@ -57,19 +57,29 @@ user first.
 
 ## Rule 2: the pin follows the pixatar CLI
 
-The avatar cogs render with the pixatar CLI (`@pixel-index/pixatar`), which
-bakes in a Pixel Agents wardrobe, renderer and profile format from the
-index's vendor pin. A profile or seed code it produces names wardrobe parts.
-The office can show it only if its build has the same wardrobe.
+pixelagents deals every office character with the pixatar CLI
+(`@pixel-index/pixatar`). It builds it at `cog_load` from the Pixel Index
+commit in `pixelagents/infrastructure/pixatar_vendor.commit`
+(`infrastructure/pixatar_build.py`), and loads the Python client that drives
+it from the same checkout (`packages/pixatar/python`), so the two are always
+one commit. pixatar bakes in a
+Pixel Agents wardrobe, renderer and profile format from the index's vendor pin.
+A profile or seed code it produces names wardrobe parts, and the office can
+show it only if its build has the same wardrobe.
+
+To find the commit pixatar draws with, use any of these:
 
 ```bash
+ao-heavy env PIXATAR_CLI= PIXELAGENTS_REAL_PIXATAR_BUILD=1 python3 -m pytest -q --timeout=900 \
+  pixelagents/tests/test_pixatar_build.py -k RealPixatarBuild   # builds it, checks the pin contains it
 pixatar --version      # names the pixel-agents version
 node -e "import('@pixel-index/pixatar').then(m => console.log(m.VENDOR))"   # {version, commit}
 ```
 
-The pin must contain that `commit`
-(`git merge-base --is-ancestor <pixatar-commit> <pin>`). The wardrobe sources
-must also match. This should print nothing:
+The real gate asks the CLI's `version` op for `vendor.commit` and checks
+`git merge-base --is-ancestor <pixatar-commit> <pin>` against
+`webview_vendor.repo`. The wardrobe sources must also match. This should
+print nothing:
 
 ```bash
 git -C <clone> diff --stat <pixatar-commit> <pin> -- \
@@ -77,8 +87,12 @@ git -C <clone> diff --stat <pixatar-commit> <pin> -- \
   core/src/defaultCharacterProfiles.ts core/src/wardrobeItems.ts
 ```
 
-Moving the pin past the CLI's wardrobe is a coordinated change. Bump the
-index's pixatar too, or the office will know parts the CLI can't draw.
+Moving the pin past the CLI's wardrobe is a coordinated change. Bump
+`pixatar_vendor.commit` to an index commit whose pixatar draws with the new
+wardrobe. Otherwise the office will
+know parts the CLI can't draw. Stored characters keep their seed code and
+profile. Only members dealt for the first time after a pixatar bump can get a
+different look from the same user id.
 
 ## Procedure
 
@@ -136,6 +150,7 @@ installs its own `sys.modules["redbot.core"]` stub, and the
 
 ```bash
 PIXELAGENTS_REAL_WEBVIEW_BUILD=1 ao-heavy python3 -m pytest -q pixelagents/tests/test_webview_build.py -k RealWebviewBuild
+PIXATAR_CLI= PIXELAGENTS_REAL_PIXATAR_BUILD=1 ao-heavy python3 -m pytest -q --timeout=900 pixelagents/tests/test_pixatar_build.py -k RealPixatarBuild
 ao-heavy python3 -m pytest -q pixelagents/tests
 ao-heavy python3 -m pytest -q cctv/tests
 ao-heavy python3 -m pytest -q architect/

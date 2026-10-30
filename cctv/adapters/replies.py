@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
+import discord
 from redbot.core import commands
 
 from .cog_base import CctvBase
@@ -22,6 +23,7 @@ class ReplyMixin(CctvBase):
         title: str | None = None,
         fields: Sequence[ReplyField] = (),
         code: Sequence[str] = (),
+        files: Sequence[discord.File] = (),
         **kwargs: Any,
     ) -> None:
         from corridor.adapters.api import build_reply_payload
@@ -37,10 +39,10 @@ class ReplyMixin(CctvBase):
                 identity=ReplyIdentity(owner="CCTV"),
                 category=ReplyCategory.ROOM,
             )
-            payload, files = build_reply_payload(rendered)
+            payload, attachments = build_reply_payload(rendered, extra_files=files)
             kwargs.update(payload)
-            if files:
-                kwargs["files"] = files
+            if attachments:
+                kwargs["files"] = attachments
         elif content is not None:
             kwargs["content"] = content
 

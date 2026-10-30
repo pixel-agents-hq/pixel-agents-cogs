@@ -1,18 +1,30 @@
-"""CCTV listener, display-policy, and guild commands."""
+"""CCTV listener, display-policy, guild, and character commands."""
 
 from __future__ import annotations
 
+import io
 from collections.abc import Awaitable, Callable
 from typing import cast
+from urllib.parse import quote
 
 import discord
 from discord import app_commands
 from redbot.core import commands
 
 from corridor.domain import ReplyField
+from pixelagents.domain import AgentKey
+from pixelagents.domain.characters import CharacterRecord, PixatarFailure
 
 from .cog_base import CctvBase
 from .dashboard import dashboard_cog_loaded
+
+
+def _pixatar_failure(exc: Exception) -> PixatarFailure | None:
+    """`exc` if pixelagents raised it as a pixatar failure. Matched by name:
+    a pixelagents reload re-executes its modules, so it raises a newer
+    execution's `PixatarFailure` class than the one imported here."""
+
+    return cast(PixatarFailure, exc) if type(exc).__name__ == "PixatarFailure" else None
 
 
 class CommandsMixin(CctvBase):
@@ -197,6 +209,111 @@ class CommandsMixin(CctvBase):
 
         await self._despawn_guild(self._guild(ctx))
         await self._reply(ctx, "Guild roster despawned.")
+
+    @cctv_group.command(name="designer")
+    @commands.is_owner()
+    async def cmd_designer(self, ctx: commands.Context, url: str) -> None:
+        """Set the character designer `[p]cctv character` links to. Bot owner only."""
+
+        try:
+            clean = await self._settings.set_designer_url(url)
+        except ValueError as exc:
+            await self._reply(ctx, str(exc))
+            return
+        await self._reply(ctx, f"Character designer set to <{clean}>.")
+
+    @cctv_group.group(name="character", invoke_without_command=True)
+    @commands.guild_only()
+    async def cmd_character(self, ctx: commands.Context) -> None:
+        """Show your office character and its seed code."""
+
+        identity = AgentKey(self._guild(ctx).id, ctx.author.id)
+        record = await self._pixelagents.office_character(identity)
+        if record is None:
+            await self._reply(ctx, self._pixatar_unavailable())
+            return
+        await self._reply_character(ctx, record, "Your office character")
+
+    @cmd_character.command(name="set")
+    @commands.guild_only()
+    @app_commands.describe(seed="A seed code (px.…), e.g. copied from the character designer")
+    async def cmd_character_set(self, ctx: commands.Context, seed: str) -> None:
+        """Wear the character a seed code stands for.
+
+        Design one in Pixel Index's character designer, press "Copy seed",
+        and paste it here.
+        """
+
+        identity = AgentKey(self._guild(ctx).id, ctx.author.id)
+        try:
+            record = await self._pixelagents.set_office_character_seed(identity, seed)
+        except Exception as exc:
+            failure = _pixatar_failure(exc)
+            if failure is None:
+                raise
+            await self._reply(ctx, self._pixatar_failure_text("That seed didn't work", failure))
+            return
+        await self._refresh_character(identity)
+        await self._reply_character(ctx, record, "Character updated")
+
+    @cmd_character.command(name="reset")
+    @commands.guild_only()
+    async def cmd_character_reset(self, ctx: commands.Context) -> None:
+        """Go back to the character dealt from your Discord user id."""
+
+        identity = AgentKey(self._guild(ctx).id, ctx.author.id)
+        try:
+            record = await self._pixelagents.reset_office_character(identity)
+        except Exception as exc:
+            failure = _pixatar_failure(exc)
+            if failure is None:
+                raise
+            await self._reply(
+                ctx, self._pixatar_failure_text("Couldn't reset your character", failure)
+            )
+            return
+        await self._refresh_character(identity)
+        await self._reply_character(ctx, record, "Character reset")
+
+    def _pixatar_unavailable(self) -> str:
+        return (
+            "Characters can't be dealt right now: pixatar is unavailable.\n"
+            f"pixatar: {self._pixelagents.pixatar_status()}"
+        )
+
+    def _pixatar_failure_text(self, what: str, exc: PixatarFailure) -> str:
+        # The seed was fine; pixatar itself couldn't run.
+        if exc.code in {"cli-not-found", "cli-exited"}:
+            return self._pixatar_unavailable()
+        return f"{what}: {exc.message}"
+
+    async def _reply_character(
+        self, ctx: commands.Context, record: CharacterRecord, title: str
+    ) -> None:
+        settings = await self._settings.global_settings()
+        origin = (
+            "dealt from your Discord user id"
+            # By value: see `_pixatar_failure` on reloaded classes.
+            if record.source == "derived"
+            else "a seed code you set"
+        )
+        files: list[discord.File] = []
+        try:
+            png = await self._pixelagents.office_character_avatar(record)
+            files.append(discord.File(io.BytesIO(png), filename="character.png"))
+        except Exception as exc:
+            if _pixatar_failure(exc) is None:
+                raise
+        await self._reply(
+            ctx,
+            f"Your character is {origin}. Change it in the "
+            f"[designer]({settings.designer_url}?seed={quote(record.seed)}), "
+            "then copy its seed and run:",
+            title=title,
+            fields=(ReplyField("Seed", record.seed, code=True),),
+            code=["[p]cctv character set <seed>"],
+            files=files,
+        )
 
 
 __all__ = ["CommandsMixin"]

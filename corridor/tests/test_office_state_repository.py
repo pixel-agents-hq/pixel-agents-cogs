@@ -53,6 +53,16 @@ class TestRedOfficeStateRepository(unittest.IsolatedAsyncioTestCase):
         assert reloaded is not None
         self.assertEqual(reloaded.layout["objects"][0]["id"], "desk-a")
 
+    async def test_characters_start_empty_and_round_trip(self) -> None:
+        self.assertEqual(await self.repository.characters(), {})
+        record = {"seed": "px.a", "source": "derived", "profile": {"body": "flat"}}
+
+        await self.repository.save_characters({"user:42": record})
+        loaded = await self.repository.characters()
+        loaded["user:42"]["seed"] = "changed"
+
+        self.assertEqual(await self.repository.characters(), {"user:42": record})
+
 
 if __name__ == "__main__":
     unittest.main()

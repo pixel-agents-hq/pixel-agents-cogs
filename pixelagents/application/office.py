@@ -9,6 +9,7 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Literal, Protocol, TypeAlias, TypeVar
 
 from ..contracts.outbound import (
+    CharacterProfilesLoadedMessage,
     ExistingAgentsMessage,
     agent_closed,
     agent_created,
@@ -18,12 +19,16 @@ from ..contracts.outbound import (
     agent_team_info,
     agent_tool_start,
     agent_tools_clear,
+    character_profiles_loaded,
 )
 from ..domain import AgentKey, AgentSnapshot, GenuineAgentKey, MessageSnapshot, OfficeIdentity
+from ..domain.characters import profile_id
 from .presence import PresenceService, SendMessage, ServerMessage
 
 JS_MAX_SAFE = (1 << 53) - 1
 DEFAULT_PALETTE_COUNT = 6
+# Upstream's MAX_CHARACTER_PROFILES (core/src/characterProfiles.ts).
+MAX_CHARACTER_PROFILES = 500
 READING_TOOLS = ("Read", "Grep", "Glob", "WebFetch", "WebSearch")
 SUBAGENT_TOOL_NAMES = ("Task", "Agent")
 
@@ -37,6 +42,12 @@ class SeatRepository(Protocol):
     async def mutate_seats(
         self, mutation: Callable[[SeatRecords], MutationResult]
     ) -> MutationResult: ...
+
+
+class CharacterProfiles(Protocol):
+    """The profile each character wears (`application.characters.CharacterService`)."""
+
+    async def profile(self, identity: OfficeIdentity) -> Mapping[str, Any]: ...
 
 
 def to_agent_id(external_id: int) -> int:
@@ -120,6 +131,7 @@ class OfficeService:
         logger: logging.Logger | None = None,
         palette_count: int = DEFAULT_PALETTE_COUNT,
         choose: Callable[[Sequence[int]], int] = random.choice,
+        characters: CharacterProfiles | None = None,
     ) -> None:
         self._repository = repository
         self._send = send
@@ -144,6 +156,19 @@ class OfficeService:
         # connecting browser already receives. See
         # docs/office-agent-identity-design.md.
         self._genuine_agents: dict[str, tuple[str, str]] = {}
+        # With `characters`, every character on the canvas wears its own
+        # profile: the cast sent in characterProfilesLoaded is exactly the
+        # characters shown, each named after who wears it, and an agent's
+        # palette is its place in that cast (repeat 0). Without it, agents
+        # share the built default cast through `assign_palette`.
+        self._characters = characters
+        self._profiles: dict[int, dict[str, Any]] = {}
+
+    @property
+    def dresses_characters(self) -> bool:
+        """Whether palettes come from the character roster rather than seats."""
+
+        return self._characters is not None
 
     @property
     def active_agents(self) -> dict[tuple[int, int], tuple[str, str]]:
@@ -221,6 +246,97 @@ class OfficeService:
             meta["repeat"] = repeat
         return meta
 
+    def _roster(self) -> list[int]:
+        """The agent ids the cast lists, in cast order."""
+
+        live = [self.agent_id(user_id) for user_id in self._representative_agents()]
+        live += [self.genuine_agent_id(agent_key) for agent_key in self._genuine_agents]
+        # Past upstream's cast limit the webview rejects the whole list, so
+        # agents beyond it keep whatever their seat records say.
+        return [agent_id for agent_id in live if agent_id in self._profiles][
+            :MAX_CHARACTER_PROFILES
+        ]
+
+    def roster_profiles(self) -> list[dict[str, Any]]:
+        return [dict(self._profiles[agent_id]) for agent_id in self._roster()]
+
+    def _look(self, agent_id: int) -> tuple[int, int] | None:
+        roster = self._roster()
+        return (roster.index(agent_id), 0) if agent_id in roster else None
+
+    def _agent_meta(
+        self, agent_id: int, seats: Mapping[str, Mapping[str, object]] | None
+    ) -> dict[str, object]:
+        meta = self.seat_meta(agent_id, seats)
+        look = self._look(agent_id)
+        if look is not None:
+            meta["palette"], meta["repeat"] = look
+        return meta
+
+    def character_profiles_message(self) -> CharacterProfilesLoadedMessage | None:
+        """The cast, with every live agent's place in it: a cast that gained or
+        lost a character moves the agents after it (upstream's `agentLooks`).
+        None while there's nobody to list (the webview keeps the cast it has:
+        it ignores an empty one)."""
+
+        roster = self._roster()
+        if not roster:
+            return None
+        return character_profiles_loaded(
+            [dict(self._profiles[agent_id]) for agent_id in roster],
+            [
+                {"id": agent_id, "palette": index, "repeat": 0}
+                for index, agent_id in enumerate(roster)
+            ],
+        )
+
+    async def _send_roster(self) -> None:
+        message = self.character_profiles_message()
+        if message is not None:
+            await self._send(message)
+
+    async def _dress(self, identity: OfficeIdentity, name: str) -> tuple[int, int]:
+        """The palette and repeat a newly shown (or re-created) agent wears."""
+
+        agent_id = self._agent_id_for(identity)
+        if self._characters is None:
+            return await self.assign_palette(agent_id)
+        await self._fit(identity, name)
+        await self._send_roster()
+        # Only None past the cast limit (see `_roster`).
+        return self._look(agent_id) or (0, 0)
+
+    async def _fit(self, identity: OfficeIdentity, name: str) -> None:
+        assert self._characters is not None
+        profile = dict(await self._characters.profile(identity))
+        profile["id"] = profile_id(identity)
+        profile["name"] = name
+        self._profiles[self._agent_id_for(identity)] = profile
+
+    async def _rename(self, agent_id: int, name: str) -> None:
+        profile = self._profiles.get(agent_id)
+        if profile is not None and profile.get("name") != name:
+            profile["name"] = name
+            await self._send_roster()
+
+    async def refresh_character(self, identity: OfficeIdentity) -> None:
+        """Re-dress a shown character after its look changed (a member set a
+        seed); a character not shown here is left alone."""
+
+        if self._characters is None:
+            return
+        # By value, not isinstance: a consuming cog's key can be an older
+        # execution's class (see domain/characters.py).
+        agent_key = getattr(identity, "agent_key", None)
+        if isinstance(agent_key, str):
+            cached = self._genuine_agents.get(agent_key)
+        else:
+            cached = self._representative_agents().get(identity.user_id)  # type: ignore[union-attr]
+        if cached is None:
+            return
+        await self._fit(identity, cached[1])
+        await self._send_roster()
+
     def existing_agents_message(
         self, seats: Mapping[str, Mapping[str, object]]
     ) -> ExistingAgentsMessage:
@@ -233,7 +349,7 @@ class OfficeService:
             agent_id = self.agent_id(user_id)
             agent_ids.append(agent_id)
             directory_names[str(agent_id)] = folder
-            agent_meta[str(agent_id)] = self.seat_meta(agent_id, seats)
+            agent_meta[str(agent_id)] = self._agent_meta(agent_id, seats)
             # Every agent this service tracks is Discord-derived, hence
             # external, unconditionally.
             external_agents[str(agent_id)] = True
@@ -242,7 +358,7 @@ class OfficeService:
             agent_id = self.genuine_agent_id(agent_key)
             agent_ids.append(agent_id)
             directory_names[str(agent_id)] = folder
-            agent_meta[str(agent_id)] = self.seat_meta(agent_id, seats)
+            agent_meta[str(agent_id)] = self._agent_meta(agent_id, seats)
             # Ships with the same treatment a Discord bot gets for now --
             # see docs/office-agent-identity-design.md's open question on
             # whether a genuine agent deserves its own distinct isExternal/
@@ -320,7 +436,7 @@ class OfficeService:
         if folder != cached_folder:
             self._agents[key] = (folder, snapshot.display_name)
             self._agent_is_bot[snapshot.key.user_id] = snapshot.is_bot
-            palette, repeat = await self.assign_palette(agent_id)
+            palette, repeat = await self._dress(snapshot.key, snapshot.display_name)
             await self._send(agent_closed(agent_id))
             await self._send(
                 agent_created(
@@ -338,6 +454,7 @@ class OfficeService:
         elif snapshot.display_name != cached_name:
             self._agents[key] = (folder, snapshot.display_name)
             await self._send(agent_team_info(agent_id, snapshot.display_name))
+            await self._rename(agent_id, snapshot.display_name)
         await self.presence.update(snapshot, agent_id, enabled=rich_presence_enabled)
 
     async def spawn(self, snapshot: AgentSnapshot, *, rich_presence_enabled: bool) -> None:
@@ -351,7 +468,7 @@ class OfficeService:
         self._agents[(guild_id, user_id)] = (snapshot.status.value, snapshot.display_name)
         self._agent_is_bot[user_id] = snapshot.is_bot
         if not already_active:
-            palette, repeat = await self.assign_palette(agent_id)
+            palette, repeat = await self._dress(snapshot.key, snapshot.display_name)
             await self._send(
                 agent_created(
                     agent_id,
@@ -377,6 +494,8 @@ class OfficeService:
         if not self.is_user_active_in_other_guild(key.guild_id, key.user_id):
             self._agent_is_bot.pop(key.user_id, None)
             await self._send(agent_closed(agent_id))
+            if self._profiles.pop(agent_id, None) is not None:
+                await self._send_roster()
         await self.send_existing_agents()
 
     async def reconcile_genuine_agent(
@@ -397,7 +516,7 @@ class OfficeService:
         agent_id = self.genuine_agent_id(identity.agent_key)
         if cached is None:
             self._genuine_agents[identity.agent_key] = (status, display_name)
-            palette, repeat = await self.assign_palette(agent_id)
+            palette, repeat = await self._dress(identity, display_name)
             await self._send(
                 agent_created(agent_id, status, palette, repeat, is_external=True, is_headless=True)
             )
@@ -408,7 +527,7 @@ class OfficeService:
         cached_status, cached_name = cached
         if status != cached_status:
             self._genuine_agents[identity.agent_key] = (status, display_name)
-            palette, repeat = await self.assign_palette(agent_id)
+            palette, repeat = await self._dress(identity, display_name)
             await self._send(agent_closed(agent_id))
             await self._send(
                 agent_created(agent_id, status, palette, repeat, is_external=True, is_headless=True)
@@ -419,6 +538,7 @@ class OfficeService:
         elif display_name != cached_name:
             self._genuine_agents[identity.agent_key] = (status, display_name)
             await self._send(agent_team_info(agent_id, display_name))
+            await self._rename(agent_id, display_name)
 
     async def close_genuine_agent(self, identity: GenuineAgentKey) -> None:
         if identity.agent_key not in self._genuine_agents:
@@ -426,6 +546,8 @@ class OfficeService:
         agent_id = self.genuine_agent_id(identity.agent_key)
         del self._genuine_agents[identity.agent_key]
         await self._send(agent_closed(agent_id))
+        if self._profiles.pop(agent_id, None) is not None:
+            await self._send_roster()
         await self.send_existing_agents()
 
     async def despawn_guild(self, guild_id: int) -> None:
@@ -548,8 +670,13 @@ class OfficeService:
             ("walls", "wallTilesLoaded", "sets"),
             ("carpets", "carpetTilesLoaded", "sets"),
         )
+        roster = self.roster_profiles()
         for asset_key, message_type, payload_key in asset_messages:
-            if asset_key in assets:
+            if asset_key == "characterProfiles" and roster:
+                # The characters shown, each named after who wears it; the
+                # agents' places in it come with existingAgents below.
+                messages.append({"type": message_type, payload_key: roster})
+            elif asset_key in assets:
                 messages.append({"type": message_type, payload_key: assets[asset_key]})
             if asset_key == "characterProfiles":
                 # Sprites worn after the profiles, from external asset

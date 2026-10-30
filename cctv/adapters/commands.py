@@ -18,8 +18,10 @@ from pixelagents.domain.characters import CharacterRecord, PixatarFailure
 from .cog_base import CctvBase
 from .dashboard import dashboard_cog_loaded
 
-# What `[p]cctv character agent…` calls the bot's own Discord account.
-PICO_AGENT = "pico"
+# The corridor permission group allowed to show/set/reset another member's
+# character (`[p]cctv character member…`). The reserved `owner` group (bot
+# owner or guild Administrator) always satisfies it too.
+MEMBER_CHARACTER_GROUP = "building_manager"
 
 
 def _pixatar_failure(exc: Exception) -> PixatarFailure | None:
@@ -293,7 +295,7 @@ class CommandsMixin(CctvBase):
     @cmd_character.command(name="agent")
     @commands.guild_only()
     @commands.is_owner()
-    @app_commands.describe(agent="An agent key (e.g. architect), or pico for the bot itself")
+    @app_commands.describe(agent="A registered agent key, e.g. architect")
     async def cmd_character_agent(self, ctx: commands.Context, agent: str) -> None:
         """Show an agent's office character. Bot owner only."""
 
@@ -310,7 +312,7 @@ class CommandsMixin(CctvBase):
     @commands.guild_only()
     @commands.is_owner()
     @app_commands.describe(
-        agent="An agent key (e.g. architect), or pico for the bot itself",
+        agent="A registered agent key, e.g. architect",
         seed="A seed code (px.…), e.g. copied from the character designer",
     )
     async def cmd_character_agent_set(self, ctx: commands.Context, agent: str, seed: str) -> None:
@@ -336,7 +338,7 @@ class CommandsMixin(CctvBase):
     @cmd_character.command(name="agentreset")
     @commands.guild_only()
     @commands.is_owner()
-    @app_commands.describe(agent="An agent key (e.g. architect), or pico for the bot itself")
+    @app_commands.describe(agent="A registered agent key, e.g. architect")
     async def cmd_character_agent_reset(self, ctx: commands.Context, agent: str) -> None:
         """Go back to the character dealt from an agent's key. Bot owner only."""
 
@@ -356,16 +358,91 @@ class CommandsMixin(CctvBase):
         await self._refresh_character(identity)
         await self._reply_character(ctx, record, f"{agent}'s character reset", agent=agent)
 
-    async def _agent_identity(self, ctx: commands.Context, agent: str) -> OfficeIdentity | None:
-        """`pico` is the bot's own Discord account; anything else a registered
-        agent's key. Replies (and returns None) when it's neither."""
+    @cmd_character.command(name="member")
+    @commands.guild_only()
+    @app_commands.describe(member="Any member of this server, bots included")
+    async def cmd_character_member(self, ctx: commands.Context, member: discord.Member) -> None:
+        """Show a member's office character. Building Manager only."""
 
-        if agent.lower() == PICO_AGENT and self.bot.user is not None:
-            return AgentKey(self._guild(ctx).id, self.bot.user.id)
+        if not await self._corridor.require_permission(ctx, MEMBER_CHARACTER_GROUP):
+            return
+        record = await self._pixelagents.office_character(self._member_identity(ctx, member))
+        if record is None:
+            await self._reply(ctx, self._pixatar_unavailable())
+            return
+        await self._reply_character(
+            ctx, record, f"{member.display_name}'s office character", member=member
+        )
+
+    @cmd_character.command(name="memberset")
+    @commands.guild_only()
+    @app_commands.describe(
+        member="Any member of this server, bots included",
+        seed="A seed code (px.…), e.g. copied from the character designer",
+    )
+    async def cmd_character_member_set(
+        self, ctx: commands.Context, member: discord.Member, seed: str
+    ) -> None:
+        """Dress a member in the character a seed code stands for. Building Manager only.
+
+        Bots included: the bot's own account wears it in its Discord replies too.
+        """
+
+        if not await self._corridor.require_permission(ctx, MEMBER_CHARACTER_GROUP):
+            return
+        identity = self._member_identity(ctx, member)
+        try:
+            record = await self._pixelagents.set_office_character_seed(identity, seed)
+        except Exception as exc:
+            failure = _pixatar_failure(exc)
+            if failure is None:
+                raise
+            await self._reply(ctx, self._pixatar_failure_text("That seed didn't work", failure))
+            return
+        await self._refresh_character(identity)
+        await self._reply_character(
+            ctx, record, f"{member.display_name}'s character updated", member=member
+        )
+
+    @cmd_character.command(name="memberreset")
+    @commands.guild_only()
+    @app_commands.describe(member="Any member of this server, bots included")
+    async def cmd_character_member_reset(
+        self, ctx: commands.Context, member: discord.Member
+    ) -> None:
+        """Go back to the character dealt from a member's user id. Building Manager only."""
+
+        if not await self._corridor.require_permission(ctx, MEMBER_CHARACTER_GROUP):
+            return
+        identity = self._member_identity(ctx, member)
+        try:
+            record = await self._pixelagents.reset_office_character(identity)
+        except Exception as exc:
+            failure = _pixatar_failure(exc)
+            if failure is None:
+                raise
+            await self._reply(
+                ctx, self._pixatar_failure_text("Couldn't reset the character", failure)
+            )
+            return
+        await self._refresh_character(identity)
+        await self._reply_character(
+            ctx, record, f"{member.display_name}'s character reset", member=member
+        )
+
+    def _member_identity(self, ctx: commands.Context, member: discord.Member) -> AgentKey:
+        # The identity the member's own `[p]cctv character` uses; for the bot's
+        # account, the one its Discord replies and both pages show.
+        return AgentKey(self._guild(ctx).id, member.id)
+
+    async def _agent_identity(self, ctx: commands.Context, agent: str) -> OfficeIdentity | None:
+        """A registered agent's key. Replies (and returns None) when it isn't one.
+        Discord accounts, the bot's own included, go through `member…`."""
+
         keys = sorted(registered.agent_key for registered in self._corridor.list_agents())
         if agent in keys:
             return GenuineAgentKey(agent)
-        known = ", ".join(f"`{key}`" for key in [PICO_AGENT, *keys])
+        known = ", ".join(f"`{key}`" for key in keys) or "none"
         await self._reply(ctx, f"No agent `{agent}`. Known agents: {known}.")
         return None
 
@@ -376,11 +453,16 @@ class CommandsMixin(CctvBase):
         title: str,
         *,
         agent: str | None = None,
+        member: discord.Member | None = None,
     ) -> None:
         settings = await self._settings.global_settings()
         # By value: see `_pixatar_failure` on reloaded classes.
         derived = record.source == "derived"
-        if agent is None:
+        if member is not None:
+            subject = f"{member.display_name}'s character is"
+            origin = "dealt from their Discord user id" if derived else "a seed code set for them"
+            command = f"[p]cctv character memberset {member.id} <seed>"
+        elif agent is None:
             subject = "Your character is"
             origin = "dealt from your Discord user id" if derived else "a seed code you set"
             command = "[p]cctv character set <seed>"

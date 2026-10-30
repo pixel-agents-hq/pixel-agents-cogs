@@ -83,7 +83,8 @@ plus the two reserved keys below.
 | *(any admin-added group)* | *(chosen at creation, stable thereafter)* | Members holding one of the roles, or one of the Discord permissions, an admin assigned to that group. |
 
 Dependent cogs reference a group by its plain string `key` (e.g.
-floorplan hardcodes `"keyholder"`), not an enum member. Groups are
+floorplan hardcodes `"keyholder"`, cctv's `[p]cctv character member…`
+commands `"building_manager"`), not an enum member. Groups are
 **independent, unranked tiers** — holding one does not imply another.
 `owner` bypasses every check regardless of group; `employee` never
 restricts. Roles and permissions are **two independent, OR'd criteria**: a

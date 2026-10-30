@@ -129,10 +129,14 @@ seed wears the character pixatar deals from their Discord user id
 genuine agent's is dealt from its agent key. `[p]cctv character set
 <px.…>` replaces it with a seed code the member copied from Pixel Index's
 character designer (`source: "custom"`), and `[p]cctv character reset`
-deals it from the user id again. The bot owner does the same for an
-agent with `[p]cctv character agentset <agent> <px.…>` / `agentreset`
-(`pico` names the bot's own account), and an agent's Discord replies wear
-its character as their author icon (see
+deals it from the user id again. A member of the corridor `building_manager`
+group (or the reserved `owner` group) does the same for any other member,
+bots included, with `[p]cctv character memberset <member> <px.…>` /
+`memberreset <member>`; the bot's own account is a member like any other,
+stored under `user:<bot id>`, the key pico's replies and both pages read.
+The bot owner does the same for a registered agent with
+`[p]cctv character agentset <agent> <px.…>` / `agentreset`, and an agent's
+Discord replies wear its character as their author icon (see
 [`docs/reply-identity-design.md`](reply-identity-design.md)). The dealt character is stored, not
 re-dealt, because pixatar's free-text deal depends on the wardrobe of the
 Pixel Agents commit it was built against, while a seed code always decodes
@@ -353,9 +357,12 @@ presence change occurring during startup can be missed.
 | `[p]cctv character` | Any member | Show your office character: its seed code, avatar, and a designer link that opens it |
 | `[p]cctv character set <px.…>` | Any member | Wear the character a seed code stands for; the pages re-dress you live |
 | `[p]cctv character reset` | Any member | Go back to the character dealt from your Discord user id |
-| `[p]cctv character agent <agent>` | Bot owner | Show an agent's office character; `<agent>` is a registered agent key, or `pico` for the bot's own account |
-| `[p]cctv character agentset <agent> <px.…>` | Bot owner | Dress an agent in a seed code's character, on both pages and in its Discord replies |
-| `[p]cctv character agentreset <agent>` | Bot owner | Go back to the character dealt from the agent's key (pico: the bot's user id) |
+| `[p]cctv character member <member>` | Building Manager | Show any member's office character, bots and the bot's own account included |
+| `[p]cctv character memberset <member> <px.…>` | Building Manager | Dress a member in a seed code's character; the bot's own account also wears it in its Discord replies |
+| `[p]cctv character memberreset <member>` | Building Manager | Go back to the character dealt from the member's Discord user id |
+| `[p]cctv character agent <agent>` | Bot owner | Show a registered agent's office character (e.g. `architect`) |
+| `[p]cctv character agentset <agent> <px.…>` | Bot owner | Dress a registered agent in a seed code's character, on both pages and in its Discord replies |
+| `[p]cctv character agentreset <agent>` | Bot owner | Go back to the character dealt from the agent's key |
 
 ## Validation & error handling
 

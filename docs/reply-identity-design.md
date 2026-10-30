@@ -110,7 +110,9 @@ failed reply.
 ConsultAgentTool's footer icon is `avatar_for` the consulted agent (none
 while it has no character avatar), and corridor's A2A listener serves the
 same file at `/<agent_key>/avatar.png`, the agent card's `icon_url`. The bot owner changes an agent's
-character with `[p]cctv character agentset <agent> <px.…>` (see
+character with `[p]cctv character agentset <agent> <px.…>`; pico's is the
+bot account's member character, changed with
+`[p]cctv character memberset <bot> <px.…>` (see
 [`docs/cctv-design.md`](cctv-design.md)).
 
 ### The addressed member's character
@@ -436,7 +438,8 @@ site simply forgetting to pass it.
   JSON-RPC surface already accepted there.
 - **An avatar upload command.** A non-agent cog's avatar is a
   git-committed asset; an agent's is its office character, changed with
-  `[p]cctv character agentset <agent> <px.…>`, never an uploaded image.
+  `[p]cctv character agentset <agent> <px.…>` (pico's with
+  `[p]cctv character memberset <bot> <px.…>`), never an uploaded image.
 - **A guild-configurable "hide cog author lines" toggle.** The author name
   always shows once an identity is bound; there is no `ReplyPreferences`
   field to suppress it.

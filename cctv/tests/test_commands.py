@@ -106,14 +106,22 @@ class _CharacterHarness(CommandsMixin):
         self._settings = _Settings()
         self._pixelagents = _Characters()
         self.bot = SimpleNamespace(user=SimpleNamespace(id=7))
+        self.allowed = True
+        self.permission_checks: list[str] = []
         self._corridor = SimpleNamespace(
             list_agents=lambda: [
                 SimpleNamespace(agent_key="painter"),
                 SimpleNamespace(agent_key="architect"),
-            ]
+            ],
+            require_permission=self._require_permission,
         )
         self.refreshed: list[AgentKey] = []
         self.replies: list[dict[str, Any]] = []
+
+    async def _require_permission(self, ctx: object, group_key: str) -> bool:
+        del ctx
+        self.permission_checks.append(group_key)
+        return self.allowed
 
     async def _refresh_character(self, identity: Any) -> None:
         self.refreshed.append(identity)
@@ -125,6 +133,10 @@ class _CharacterHarness(CommandsMixin):
 
 def _ctx() -> Any:
     return SimpleNamespace(guild=SimpleNamespace(id=1), author=SimpleNamespace(id=42))
+
+
+def _member(member_id: int, name: str, *, bot: bool = False) -> Any:
+    return SimpleNamespace(id=member_id, display_name=name, bot=bot)
 
 
 class TestCctvCharacterCommands(unittest.IsolatedAsyncioTestCase):
@@ -178,14 +190,14 @@ class TestCctvCharacterCommands(unittest.IsolatedAsyncioTestCase):
         self.assertIn("a seed code set for it", cog.replies[0]["content"])
         self.assertEqual(cog.replies[0]["code"], ["[p]cctv character agentset architect <seed>"])
 
-    async def test_pico_is_the_bots_own_account(self) -> None:
+    async def test_pico_is_not_an_agent_key(self) -> None:
         cog = _CharacterHarness()
 
-        await CommandsMixin.cmd_character_agent_set.callback(cog, _ctx(), "Pico", "px.good")
-        await CommandsMixin.cmd_character_agent_reset.callback(cog, _ctx(), "pico")
+        await CommandsMixin.cmd_character_agent_set.callback(cog, _ctx(), "pico", "px.good")
 
-        self.assertEqual(cog.refreshed, [AgentKey(1, 7), AgentKey(1, 7)])
-        self.assertIn("dealt from its key", cog.replies[-1]["content"])
+        self.assertEqual(cog._pixelagents.records, {})
+        self.assertEqual(cog.refreshed, [])
+        self.assertIn("No agent `pico`", cog.replies[0]["content"])
 
     async def test_an_unknown_agent_lists_the_known_ones(self) -> None:
         cog = _CharacterHarness()
@@ -193,7 +205,79 @@ class TestCctvCharacterCommands(unittest.IsolatedAsyncioTestCase):
         await CommandsMixin.cmd_character_agent.callback(cog, _ctx(), "nobody")
 
         self.assertEqual(cog.refreshed, [])
-        self.assertIn("`pico`, `architect`, `painter`", cog.replies[0]["content"])
+        self.assertIn("Known agents: `architect`, `painter`.", cog.replies[0]["content"])
+
+    async def test_a_member_can_be_dressed_by_seed(self) -> None:
+        cog = _CharacterHarness()
+        target = _member(99, "Robin")
+
+        await CommandsMixin.cmd_character_member_set.callback(cog, _ctx(), target, "px.good")
+
+        self.assertEqual(cog.permission_checks, ["building_manager"])
+        self.assertEqual(cog._pixelagents.records[AgentKey(1, 99)].seed, "px.good")
+        self.assertEqual(cog.refreshed, [AgentKey(1, 99)])
+        reply = cog.replies[0]
+        self.assertEqual(reply["title"], "Robin's character updated")
+        self.assertIn("Robin's character is a seed code set for them", reply["content"])
+        self.assertEqual(reply["code"], ["[p]cctv character memberset 99 <seed>"])
+
+    async def test_a_member_set_seed_is_what_they_see_themselves(self) -> None:
+        cog = _CharacterHarness()
+
+        await CommandsMixin.cmd_character_member_set.callback(
+            cog, _ctx(), _member(42, "Me"), "px.good"
+        )
+        await CommandsMixin.cmd_character.callback(cog, _ctx())
+
+        self.assertEqual(cog.replies[-1]["fields"][0].value, "px.good")
+
+    async def test_the_bots_own_account_is_the_identity_its_replies_wear(self) -> None:
+        cog = _CharacterHarness()
+        bot = _member(7, "Pico", bot=True)
+
+        await CommandsMixin.cmd_character_member_set.callback(cog, _ctx(), bot, "px.good")
+        await CommandsMixin.cmd_character_member.callback(cog, _ctx(), bot)
+
+        # AgentKey(guild, bot user id) is stored as "user:<bot id>", the key
+        # pico's reply author icon and both CCTV pages read.
+        self.assertEqual(cog._pixelagents.records[AgentKey(1, 7)].seed, "px.good")
+        self.assertEqual(cog.refreshed, [AgentKey(1, 7)])
+        self.assertEqual(cog.replies[-1]["fields"][0].value, "px.good")
+
+    async def test_other_bots_are_members_too(self) -> None:
+        cog = _CharacterHarness()
+
+        await CommandsMixin.cmd_character_member_reset.callback(
+            cog, _ctx(), _member(55, "OtherBot", bot=True)
+        )
+
+        self.assertEqual(cog.refreshed, [AgentKey(1, 55)])
+        self.assertIn("dealt from their Discord user id", cog.replies[0]["content"])
+
+    async def test_member_commands_need_the_building_manager_group(self) -> None:
+        cog = _CharacterHarness()
+        cog.allowed = False
+        target = _member(99, "Robin")
+
+        await CommandsMixin.cmd_character_member.callback(cog, _ctx(), target)
+        await CommandsMixin.cmd_character_member_set.callback(cog, _ctx(), target, "px.good")
+        await CommandsMixin.cmd_character_member_reset.callback(cog, _ctx(), target)
+
+        self.assertEqual(cog.permission_checks, ["building_manager"] * 3)
+        self.assertEqual(cog._pixelagents.records, {})
+        self.assertEqual(cog.refreshed, [])
+        self.assertEqual(cog.replies, [])
+
+    async def test_a_bad_member_seed_is_refused(self) -> None:
+        cog = _CharacterHarness()
+
+        await CommandsMixin.cmd_character_member_set.callback(
+            cog, _ctx(), _member(99, "Robin"), "px.bad"
+        )
+
+        self.assertEqual(cog._pixelagents.records, {})
+        self.assertEqual(cog.refreshed, [])
+        self.assertIn("not one pixatar knows", cog.replies[0]["content"])
 
     async def test_reset_goes_back_to_the_dealt_character(self) -> None:
         cog = _CharacterHarness()

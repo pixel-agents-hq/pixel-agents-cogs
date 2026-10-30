@@ -90,12 +90,16 @@ other Discord member appears on the Discord-roster page alone.
 
 | | Identity | Guild scope | `is_bot` | `AgentRef` shape |
 |---|---|---|---|---|
-| **(a) Discord user account** | `AgentKey(guild_id, user_id)` | Per-guild membership, merged cross-guild into one canvas entry | `False` | `discord_user_id`/`guild_id` set, `agent_key=None` |
-| **(b) Discord bot account** (including this bot's own account) | `AgentKey(guild_id, user_id)` — same shape as (a) | Same as (a) | `True`, rendered headless/"ghost" | `discord_user_id`/`guild_id` set, `agent_key=None` |
+| **(a) Discord user account** | `AgentKey(guild_id, user_id)` | Per-guild membership, merged cross-guild into one canvas entry | `False`; rendered headless/"ghost" while shown offline, unless the guild turns `ghostoffline` off | `discord_user_id`/`guild_id` set, `agent_key=None` |
+| **(b) Discord bot account** (including this bot's own account) | `AgentKey(guild_id, user_id)` — same shape as (a) | Same as (a) | `True`, rendered headless/"ghost" unless the guild turns `ghostbots` off | `discord_user_id`/`guild_id` set, `agent_key=None` |
 | **(c) Genuine agent** | `GenuineAgentKey(agent_key)` — no Discord snowflake | None — visible on the one shared canvas unconditionally | `True` (not a rendering flag here, just the value corridor's own presence-publisher sets) | `discord_user_id=None`, `guild_id=None`, `agent_key="architect"` (etc.) |
 
-(a) and (b) are the same identity shape — `is_bot` is a rendering flag on
-top of an otherwise-identical Discord-account identity. (c) is
+(a) and (b) are the same identity shape — `is_bot` is a rendering input on
+top of an otherwise-identical Discord-account identity: whether a Discord
+character is drawn headless (translucent) is decided per guild by
+`pixelagents.domain.OfficeVisibility` from `is_bot` and the member's
+status. See "Who the Discord page shows" in
+[`docs/cctv-design.md`](cctv-design.md). (c) is
 structurally different: it isn't a Discord account with a flag toggled,
 it's a different *kind* of entity with no snowflake to key off at all.
 `AgentKey`'s fields are non-nullable Discord snowflakes by construction,
@@ -199,6 +203,7 @@ class AgentPresenceChanged:
     display_name: str
     status: Literal["online", "idle", "dnd", "offline"]
     activities: tuple[AgentActivity, ...] = ()
+    left_guild: bool = False
 ```
 
 One rich event per presence change, not four granular ones
@@ -207,7 +212,9 @@ full-snapshot reconstruction to call `reconcile()`/`reconcile_genuine_agent()`
 anyway, so a granular split would only add event types without adding
 information. `status="offline"` covers both a real Discord
 offline/invisible status *and* a member actually leaving the guild — there
-is no separate "member left" event.
+is no separate "member left" event; a member-remove sets `left_guild=True`
+so a guild showing offline members removes the leaver instead of drawing
+them offline.
 
 `cctv/adapters/cog_base.py`'s `_office_identity` is the one resolver every
 subscriber handler calls before dispatching:
@@ -330,10 +337,11 @@ extraction.
 - **No per-guild fan-out or replication.** A genuine agent needs exactly
   one canvas entry, not one per guild — see "There is only one canvas"
   above.
-- **No change to how Discord user/bot accounts are identified or
-  rendered.** `AgentKey`/`is_bot`/headless semantics for (a) and (b) are
-  unchanged by any of the above; genuine agents add a third, parallel
-  identity shape alongside them.
+- **No change to how Discord user/bot accounts are identified.**
+  `AgentKey`/`is_bot` for (a) and (b) are unchanged by any of the above;
+  genuine agents add a third, parallel identity shape alongside them.
+  How (a) and (b) render (offline members shown, who is headless) is
+  CCTV's per-guild display policy, not part of the identity model.
 - **No `isExternal`/`isHeadless` distinction for genuine agents.** A
   genuine agent renders with the same `isExternal=True`/`isHeadless=True`
   ghost treatment a Discord bot gets — the safe, already-shipped default,

@@ -170,12 +170,14 @@ class AgentPresenceChanged:
     status="offline" covers a real Discord offline/invisible status, a
     member leaving the guild, AND an agent cog unloading (architect,
     painter) -- there's no separate "member left"/"agent went away"
-    event."""
+    event. A member leaving also sets left_guild=True, so a subscriber
+    that shows offline members can remove a leaver."""
 
     agent: AgentRef
     display_name: str
     status: Literal["online", "idle", "dnd", "offline"]
     activities: tuple[AgentActivity, ...] = ()
+    left_guild: bool = False
 
 
 AgentActivityEvent = (
@@ -208,7 +210,7 @@ message" one.
 | `AgentRef` | `discord_user_id`, `guild_id`, `is_bot`, `agent_key` | *(value object — carried by every event below)* | identifies the agent a snapshot belongs to |
 | `AgentActivity` | `kind`, `name`, `title`, `artist`, `details`, `state` | *(value object — carried inside `AgentPresenceChanged.activities`)* | one Discord rich-presence entry |
 | `AgentReplied` | `agent`, `summary` | corridor (message mirroring), pico (`ReplyTool`), architect and painter (tool use/thinking) | `agentToolStart` then `agentSelected`, later `agentToolsClear` |
-| `AgentPresenceChanged` | `agent`, `display_name`, `status`, `activities` | corridor (gateway listeners; `register_agent`/`unregister_agent_owner`/`unregister_agent`) | spawns/closes/renames the agent, forwards each activity |
+| `AgentPresenceChanged` | `agent`, `display_name`, `status`, `activities`, `left_guild` | corridor (gateway listeners; `register_agent`/`unregister_agent_owner`/`unregister_agent`) | spawns/closes/renames the agent, forwards each activity |
 | `AgentStatusChanged` | `agent`, `status`, `awaiting_input` | manual only (testbench) | `agentStatus` |
 | `AgentToolStarted` | `agent`, `tool_id`, `status`, `tool_name` | manual only (testbench) | `agentToolStart` |
 | `AgentHighlighted` | `agent` | manual only (testbench) | `agentSelected(id)` |

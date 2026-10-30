@@ -24,6 +24,7 @@ from corridor.domain import (
     RegisteredAgent,
 )
 from pixelagents.domain import (
+    DEFAULT_VISIBILITY,
     ActivityKind,
     ActivitySnapshot,
     AgentKey,
@@ -31,10 +32,12 @@ from pixelagents.domain import (
     GenuineAgentKey,
     MessageSnapshot,
     OfficeIdentity,
+    OfficeVisibility,
     PresenceStatus,
 )
 
 from ..application import CctvPipeline, TaskSupervisor
+from ..domain import GuildSettings
 from ..infrastructure import (
     CctvServer,
     RedSettingsRepository,
@@ -75,6 +78,35 @@ def _event_snapshot(event: AgentPresenceChanged, key: AgentKey) -> AgentSnapshot
             for activity in event.activities
         ),
     )
+
+
+def _visibility(settings: GuildSettings) -> OfficeVisibility:
+    return OfficeVisibility(
+        show_offline=settings.show_offline,
+        ghost_offline=settings.ghost_offline,
+        ghost_bots=settings.ghost_bots,
+    )
+
+
+def roster_warnings(guild: discord.Guild, intents: discord.Intents) -> tuple[str, ...]:
+    """Why this guild's roster can't be what its settings ask for: without
+    the presences intent every member reads as offline, and without the
+    members intent the member cache holds only members seen in an event,
+    so `showoffline` can show only those."""
+
+    warnings = []
+    if not intents.presences:
+        warnings.append(
+            "The presences intent is disabled: Discord reports every member as offline."
+        )
+    if not intents.members:
+        warnings.append(
+            "The members intent is disabled: only members seen since startup are "
+            "cached, so offline members who haven't been seen can't be shown."
+        )
+    elif not guild.chunked:
+        warnings.append("The member list isn't fully loaded yet (guild not chunked).")
+    return tuple(warnings)
 
 
 class CctvBase:
@@ -168,6 +200,7 @@ class CctvBase:
                     snapshot,
                     include_bots=settings.include_bots,
                     rich_presence_enabled=global_settings.broadcast_rich_presence,
+                    visibility=_visibility(settings),
                 )
             for snapshot in editor_bot_seed:
                 await self.editor_pipeline.reconcile_discord(
@@ -307,16 +340,28 @@ class CctvBase:
     async def _full_sync(self, guild: discord.Guild) -> str:
         settings = await self._settings.guild_settings(guild)
         global_settings = await self._settings.global_settings()
+        intents = self.bot.intents
+        if settings.show_offline and intents.members and not guild.chunked:
+            # Offline members are only in the cache once the guild is
+            # chunked; Red chunks at startup, but a guild can still be
+            # partial (a large guild mid-ready, or chunking turned off).
+            try:
+                await guild.chunk()
+            except Exception:
+                log.exception("cctv: could not load the member list of guild %s", guild.id)
         bot_user_id = self.bot.user.id if self.bot.user is not None else None
         snapshots = tuple(
             member_snapshot(member, bot_user_id=bot_user_id) for member in guild.members
         )
-        return await self.discord_pipeline.office.sync_guild(
+        result = await self.discord_pipeline.office.sync_guild(
             guild.id,
             snapshots,
             include_bots=settings.include_bots,
             rich_presence_enabled=global_settings.broadcast_rich_presence,
+            visibility=_visibility(settings),
         )
+        warnings = roster_warnings(guild, intents) if settings.show_offline else ()
+        return "\n".join((result, *(f"⚠️ {warning}" for warning in warnings)))
 
     async def _sync_editor_bot(self) -> None:
         bot_user_id = self.bot.user.id if self.bot.user is not None else None
@@ -348,10 +393,14 @@ class CctvBase:
         settings = await self._settings.guild_settings(identity.guild_id)
         if settings.enabled:
             global_settings = await self._settings.global_settings()
+            # A member who left is removed even where offline members show:
+            # the default policy hides an offline snapshot.
+            visibility = DEFAULT_VISIBILITY if event.left_guild else _visibility(settings)
             await self.discord_pipeline.reconcile_discord(
                 snapshot,
                 include_bots=settings.include_bots,
                 rich_presence_enabled=global_settings.broadcast_rich_presence,
+                visibility=visibility,
             )
         if self.bot.user is not None and identity.user_id == self.bot.user.id:
             await self.editor_pipeline.reconcile_discord(
@@ -528,4 +577,4 @@ class CctvBase:
         raise NotImplementedError
 
 
-__all__ = ["CctvBase", "_event_snapshot", "_office_identity"]
+__all__ = ["CctvBase", "_event_snapshot", "_office_identity", "roster_warnings"]

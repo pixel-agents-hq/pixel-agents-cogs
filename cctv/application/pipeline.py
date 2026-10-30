@@ -12,7 +12,13 @@ from aiohttp import web
 from corridor.domain import OfficeState, OfficeStateChanged, OfficeStateKind, SeatRecords
 from pixelagents.application import DEFAULT_PALETTE_COUNT, OfficeService, PresenceService
 from pixelagents.application.office import merge_seat_patch
-from pixelagents.domain import AgentSnapshot, GenuineAgentKey, OfficeIdentity
+from pixelagents.domain import (
+    DEFAULT_VISIBILITY,
+    AgentSnapshot,
+    GenuineAgentKey,
+    OfficeIdentity,
+    OfficeVisibility,
+)
 
 from ..contracts import (
     ClientMessage,
@@ -201,11 +207,13 @@ class CctvPipeline:
         *,
         include_bots: bool,
         rich_presence_enabled: bool,
+        visibility: OfficeVisibility = DEFAULT_VISIBILITY,
     ) -> None:
         await self.office.reconcile(
             snapshot,
             include_bots=include_bots,
             rich_presence_enabled=rich_presence_enabled,
+            visibility=visibility,
         )
 
     async def reconcile_genuine(

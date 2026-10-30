@@ -13,11 +13,10 @@ existingAgents) and regenerate instead.
 
 Deliberately narrower than "Verified against the real wire protocol" in
 docs/corridor-pubsub-design.md: this only covers what
-pixelagents.contracts.outbound actually BUILDS today. agentDeselected and
-isHeadless/headlessAgents aren't produced by any code yet, so they don't
-appear here -- they'll show up automatically, no generator change needed,
-once a future PR adds real producers for them. See that doc's "Verifying
-this design: two committed contracts" section.
+pixelagents.contracts.outbound actually BUILDS. A message or field upstream
+accepts but no builder produces doesn't appear here; it shows up
+automatically, no generator change needed, once a builder produces it. See
+that doc's "Verifying this design: two committed contracts" section.
 
 Run: python -m contracts.pixel_agents.generate_consumer_contract
 Check without writing: python -m contracts.pixel_agents.generate_consumer_contract --check

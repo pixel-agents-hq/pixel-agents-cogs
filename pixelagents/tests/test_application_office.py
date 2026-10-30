@@ -18,6 +18,7 @@ from pixelagents.domain import (
     AgentSnapshot,
     GenuineAgentKey,
     MessageSnapshot,
+    OfficeVisibility,
     PresenceStatus,
 )
 
@@ -155,6 +156,132 @@ class TestOfficeService(unittest.IsolatedAsyncioTestCase):
 
         message = self.service.existing_agents_message(await self.repository.seats())
         self.assertEqual(message["headlessAgents"], {str(self.service.agent_id(3)): True})
+
+    async def test_an_offline_member_is_hidden_by_default(self) -> None:
+        await self.service.reconcile(
+            agent(status=None), include_bots=True, rich_presence_enabled=True
+        )
+
+        self.assertEqual(self.sent, [])
+        self.assertFalse(self.service.is_tracked(AgentKey(1, 2)))
+
+    async def test_show_offline_draws_an_offline_member_translucent(self) -> None:
+        await self.service.reconcile(
+            agent(status=None),
+            include_bots=True,
+            rich_presence_enabled=True,
+            visibility=OfficeVisibility(show_offline=True),
+        )
+
+        created = next(m for m in self.sent if m["type"] == "agentCreated")
+        self.assertEqual(created["directoryName"], "offline")
+        self.assertTrue(created["isHeadless"])
+        message = self.service.existing_agents_message(await self.repository.seats())
+        self.assertEqual(message["headlessAgents"], {str(self.service.agent_id(2)): True})
+
+    async def test_show_offline_without_ghosting_draws_an_offline_member_opaque(self) -> None:
+        await self.service.reconcile(
+            agent(status=None),
+            include_bots=True,
+            rich_presence_enabled=True,
+            visibility=OfficeVisibility(show_offline=True, ghost_offline=False),
+        )
+
+        created = next(m for m in self.sent if m["type"] == "agentCreated")
+        self.assertEqual(created["directoryName"], "offline")
+        self.assertFalse(created["isHeadless"])
+
+    async def test_coming_online_recreates_an_offline_member_opaque(self) -> None:
+        visibility = OfficeVisibility(show_offline=True)
+        await self.service.reconcile(
+            agent(status=None), include_bots=True, rich_presence_enabled=True, visibility=visibility
+        )
+        self.sent.clear()
+
+        await self.service.reconcile(
+            agent(), include_bots=True, rich_presence_enabled=True, visibility=visibility
+        )
+
+        types = [m["type"] for m in self.sent]
+        self.assertLess(types.index("agentClosed"), types.index("agentCreated"))
+        created = next(m for m in self.sent if m["type"] == "agentCreated")
+        self.assertEqual(created["directoryName"], "online")
+        self.assertFalse(created["isHeadless"])
+        self.assertEqual(self.service.active_agents[(1, 2)], ("online", "Agent"))
+
+    async def test_going_offline_keeps_a_shown_member_on_canvas(self) -> None:
+        visibility = OfficeVisibility(show_offline=True)
+        await self.service.reconcile(
+            agent(), include_bots=True, rich_presence_enabled=True, visibility=visibility
+        )
+
+        await self.service.reconcile(
+            agent(status=None), include_bots=True, rich_presence_enabled=True, visibility=visibility
+        )
+
+        self.assertEqual(self.service.active_agents[(1, 2)], ("offline", "Agent"))
+        created = [m for m in self.sent if m["type"] == "agentCreated"]
+        self.assertEqual([m["isHeadless"] for m in created], [False, True])
+
+    async def test_ghost_bots_off_draws_a_bot_opaque(self) -> None:
+        await self.service.reconcile(
+            agent(is_bot=True),
+            include_bots=True,
+            rich_presence_enabled=True,
+            visibility=OfficeVisibility(ghost_bots=False),
+        )
+
+        created = next(m for m in self.sent if m["type"] == "agentCreated")
+        self.assertFalse(created["isHeadless"])
+        message = self.service.existing_agents_message(await self.repository.seats())
+        self.assertEqual(message["headlessAgents"], {str(self.service.agent_id(2)): False})
+
+    async def test_a_ghosting_change_alone_recreates_the_character(self) -> None:
+        """The webview only reads isHeadless when it creates a character, so
+        flipping ghost_bots for an unchanged member must re-create it."""
+
+        await self.service.reconcile(
+            agent(is_bot=True), include_bots=True, rich_presence_enabled=True
+        )
+        self.sent.clear()
+
+        await self.service.reconcile(
+            agent(is_bot=True),
+            include_bots=True,
+            rich_presence_enabled=True,
+            visibility=OfficeVisibility(ghost_bots=False),
+        )
+
+        self.assertIn("agentClosed", [m["type"] for m in self.sent])
+        created = next(m for m in self.sent if m["type"] == "agentCreated")
+        self.assertFalse(created["isHeadless"])
+
+    async def test_an_unchanged_member_is_not_recreated(self) -> None:
+        visibility = OfficeVisibility(show_offline=True)
+        await self.service.reconcile(
+            agent(status=None), include_bots=True, rich_presence_enabled=True, visibility=visibility
+        )
+        self.sent.clear()
+
+        await self.service.reconcile(
+            agent(status=None), include_bots=True, rich_presence_enabled=True, visibility=visibility
+        )
+
+        self.assertNotIn("agentCreated", [m["type"] for m in self.sent])
+
+    async def test_sync_guild_shows_offline_members_from_the_member_list(self) -> None:
+        await self.service.sync_guild(
+            1,
+            (agent(user_id=2), agent(user_id=3, status=None)),
+            include_bots=True,
+            rich_presence_enabled=True,
+            visibility=OfficeVisibility(show_offline=True),
+        )
+
+        self.assertEqual(
+            self.service.active_agents,
+            {(1, 2): ("online", "Agent"), (1, 3): ("offline", "Agent")},
+        )
 
     async def test_send_message_activity_selects_the_agent(self) -> None:
         """send_message_activity must send agentSelected right alongside the

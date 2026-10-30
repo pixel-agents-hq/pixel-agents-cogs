@@ -43,6 +43,9 @@ events:
       activities:
         type: tuple[AgentActivity, ...]
         default: []
+      left_guild:
+        type: bool
+        default: false
   AgentRef:
     kind: value-object
     fields:

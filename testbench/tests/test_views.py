@@ -155,8 +155,9 @@ class TestModalSubmit(unittest.IsolatedAsyncioTestCase):
         await button.callback(interaction)  # type: ignore[misc]
         modal = shown_modal(interaction)
 
+        values = {"display_name": "Tin", "left_guild": "false"}
         for text_input in modal.children:  # type: ignore[attr-defined]
-            text_input.value = "Tin"
+            text_input.value = values[text_input.label]
 
         submit_interaction = discord.Interaction(guild=FakeGuild(100), client=bot)
         await modal.on_submit(submit_interaction)  # type: ignore[attr-defined]

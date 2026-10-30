@@ -18,7 +18,9 @@ AgentId: TypeAlias = int
 
 
 class PresenceStatus(StrEnum):
-    """Presence states that produce a visible office agent."""
+    """Presence states that produce a visible office agent. An offline (or
+    invisible) member has no status (`AgentSnapshot.status is None`) and is
+    shown only under `OfficeVisibility.show_offline`."""
 
     ONLINE = "online"
     IDLE = "idle"
@@ -84,6 +86,43 @@ class AgentSnapshot:
     status: PresenceStatus | None
     is_bot: bool
     activities: tuple[ActivitySnapshot, ...] = ()
+
+
+# The directory name an offline member's character is created with -- the
+# webview's `directoryName`, like a present member's PresenceStatus value.
+OFFLINE_DIRECTORY = "offline"
+
+
+@dataclass(frozen=True, slots=True)
+class OfficeVisibility:
+    """Who a Discord roster shows, and which of its characters are drawn
+    translucent. The webview draws a character translucent exactly when it
+    is created `isHeadless` (and `settingsLoaded.ghostHeadlessAgents` is
+    on, which this office always sends), so "ghosted" here is the
+    isHeadless value. The defaults are the office's long-standing policy:
+    offline members hidden, bots ghosted."""
+
+    show_offline: bool = False
+    # Only consulted for a member shown while offline (`show_offline`).
+    ghost_offline: bool = True
+    ghost_bots: bool = True
+
+    def directory(self, snapshot: AgentSnapshot) -> str | None:
+        """The directory a member's character is created with, or None if
+        this policy doesn't show the member at all."""
+
+        if snapshot.status is not None:
+            return snapshot.status.value
+        return OFFLINE_DIRECTORY if self.show_offline else None
+
+    def ghosted(self, snapshot: AgentSnapshot) -> bool:
+        if snapshot.is_bot and self.ghost_bots:
+            return True
+        return snapshot.status is None and self.ghost_offline
+
+
+# The office's long-standing policy, for callers that don't configure one.
+DEFAULT_VISIBILITY = OfficeVisibility()
 
 
 @dataclass(frozen=True, slots=True)

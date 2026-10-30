@@ -1,6 +1,8 @@
 """Framework-independent business data owned by the Pixel Agents package."""
 
 from .office import (
+    DEFAULT_VISIBILITY,
+    OFFLINE_DIRECTORY,
     ActivityKind,
     ActivitySnapshot,
     AgentId,
@@ -9,6 +11,7 @@ from .office import (
     GenuineAgentKey,
     MessageSnapshot,
     OfficeIdentity,
+    OfficeVisibility,
     PresenceStatus,
     SnowflakeId,
 )
@@ -34,6 +37,7 @@ __all__ = [
     "AgentId",
     "AgentKey",
     "AgentSnapshot",
+    "DEFAULT_VISIBILITY",
     "Direction",
     "FurnitureItem",
     "FurnitureKind",
@@ -42,9 +46,11 @@ __all__ = [
     "GridPosition",
     "GridRect",
     "MessageSnapshot",
+    "OFFLINE_DIRECTORY",
     "Occupant",
     "Office",
     "OfficeIdentity",
+    "OfficeVisibility",
     "PresenceStatus",
     "Seat",
     "SnowflakeId",

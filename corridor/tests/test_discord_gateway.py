@@ -125,6 +125,8 @@ class TestMemberJoinListener(unittest.IsolatedAsyncioTestCase):
         await self.cog.on_member_join(m)
         self.assertEqual(len(self.published), 1)
         self.assertEqual(self.published[0].status, "offline")
+        # Offline, but still a member: not the member-remove shape.
+        self.assertFalse(self.published[0].left_guild)
 
 
 class TestMemberRemoveListener(unittest.IsolatedAsyncioTestCase):
@@ -142,6 +144,9 @@ class TestMemberRemoveListener(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(event.status, "offline")
         self.assertEqual(event.agent.discord_user_id, 42)
         self.assertEqual(event.agent.guild_id, 100)
+        # Lets a subscriber that shows offline members remove a leaver
+        # instead of drawing them offline.
+        self.assertTrue(event.left_guild)
 
 
 class TestOnMessage(unittest.IsolatedAsyncioTestCase):

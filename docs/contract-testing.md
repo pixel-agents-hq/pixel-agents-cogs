@@ -271,8 +271,8 @@ diff to this file in the same PR. Checked two ways:
 
 This file is deliberately narrower than what
 [`docs/corridor-pubsub-design.md`](corridor-pubsub-design.md) has verified
-against upstream by hand (e.g. `agentDeselected`, `isHeadless`) — it only
-covers what `outbound.py` actually builds today. See that doc's "Verifying
+against upstream by hand — it only covers what `outbound.py` actually
+builds. See that doc's "Verifying
 this design: two committed contracts" section.
 
 ### Why one environment, not two

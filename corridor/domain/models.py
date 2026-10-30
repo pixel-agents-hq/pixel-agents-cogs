@@ -416,14 +416,19 @@ class AgentPresenceChanged:
     `status="offline"` covers both a real Discord offline/invisible status
     AND a member actually leaving the guild -- there is no separate "member
     left" event; a member-remove publishes this same shape with
-    `status="offline"`. The subscriber maps that to
-    `AgentSnapshot(status=None, ...)` before calling `reconcile()`, matching
-    that method's own existing `folder is None` branch."""
+    `status="offline"` and `left_guild=True`. A subscriber that shows
+    offline members (CCTV's per-guild `showoffline`) tells the two apart
+    by `left_guild`: an offline member stays on its canvas, a member who
+    left is removed. The subscriber maps offline to
+    `AgentSnapshot(status=None, ...)` before calling `reconcile()`."""
 
     agent: AgentRef
     display_name: str
     status: Literal["online", "idle", "dnd", "offline"]
     activities: tuple[AgentActivity, ...] = ()
+    # True only for a member-remove (left, kicked, banned): the member is no
+    # longer in the guild at all, not merely offline.
+    left_guild: bool = False
 
 
 # --- corridor's cross-cog LLM tool registry -----------------------------

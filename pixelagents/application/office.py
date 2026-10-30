@@ -21,7 +21,15 @@ from ..contracts.outbound import (
     agent_tools_clear,
     character_profiles_loaded,
 )
-from ..domain import AgentKey, AgentSnapshot, GenuineAgentKey, MessageSnapshot, OfficeIdentity
+from ..domain import (
+    DEFAULT_VISIBILITY,
+    AgentKey,
+    AgentSnapshot,
+    GenuineAgentKey,
+    MessageSnapshot,
+    OfficeIdentity,
+    OfficeVisibility,
+)
 from ..domain.characters import profile_id
 from .presence import PresenceService, SendMessage, ServerMessage
 
@@ -140,13 +148,13 @@ class OfficeService:
         self._palette_count = palette_count
         self._choose = choose
         self._agents: dict[tuple[int, int], tuple[str, str]] = {}
-        # Keyed by bare user_id, not (guild_id, user_id) like self._agents --
-        # is_bot is guild-invariant (a Discord account's bot flag doesn't
-        # change per guild), and _representative_agents() already collapses
-        # multi-guild presence down to one representative user_id, so a
-        # (guild_id, user_id)-keyed dict here would need that same
-        # internally-chosen representative guild_id, which isn't exposed.
-        self._agent_is_bot: dict[int, bool] = {}
+        # Whether each shown Discord member's character was last created
+        # isHeadless (drawn translucent, see OfficeVisibility.ghosted).
+        # Keyed by bare user_id, not (guild_id, user_id) like self._agents:
+        # a member in several guilds is one character on the canvas
+        # (_representative_agents()), so this records what that one
+        # character was last created with, whichever guild's policy did it.
+        self._agent_headless: dict[int, bool] = {}
         self._logged_collisions: set[int] = set()
         # Genuine agents (no Discord account, e.g. architect) -- a second,
         # simpler roster alongside self._agents: no cross-guild merge logic
@@ -353,7 +361,7 @@ class OfficeService:
             # Every agent this service tracks is Discord-derived, hence
             # external, unconditionally.
             external_agents[str(agent_id)] = True
-            headless_agents[str(agent_id)] = self._agent_is_bot.get(user_id, False)
+            headless_agents[str(agent_id)] = self._agent_headless.get(user_id, False)
         for agent_key, (folder, _) in self._genuine_agents.items():
             agent_id = self.genuine_agent_id(agent_key)
             agent_ids.append(agent_id)
@@ -418,9 +426,10 @@ class OfficeService:
         *,
         include_bots: bool,
         rich_presence_enabled: bool,
+        visibility: OfficeVisibility = DEFAULT_VISIBILITY,
     ) -> None:
         key = (snapshot.key.guild_id, snapshot.key.user_id)
-        folder = snapshot.status.value if snapshot.status is not None else None
+        folder = visibility.directory(snapshot)
         if folder is None or (snapshot.is_bot and not include_bots):
             if key in self._agents:
                 await self.close(snapshot.key)
@@ -428,14 +437,19 @@ class OfficeService:
 
         cached = self._agents.get(key)
         if cached is None:
-            await self.spawn(snapshot, rich_presence_enabled=rich_presence_enabled)
+            await self.spawn(
+                snapshot, rich_presence_enabled=rich_presence_enabled, visibility=visibility
+            )
             return
 
         cached_folder, cached_name = cached
         agent_id = self.agent_id(snapshot.key.user_id)
-        if folder != cached_folder:
+        headless = visibility.ghosted(snapshot)
+        # The webview only reads isHeadless when it creates a character, so
+        # a change of translucency is a re-create, like a change of status.
+        if folder != cached_folder or headless != self._agent_headless.get(snapshot.key.user_id):
             self._agents[key] = (folder, snapshot.display_name)
-            self._agent_is_bot[snapshot.key.user_id] = snapshot.is_bot
+            self._agent_headless[snapshot.key.user_id] = headless
             palette, repeat = await self._dress(snapshot.key, snapshot.display_name)
             await self._send(agent_closed(agent_id))
             await self._send(
@@ -445,7 +459,7 @@ class OfficeService:
                     palette,
                     repeat,
                     is_external=True,
-                    is_headless=snapshot.is_bot,
+                    is_headless=headless,
                 )
             )
             if snapshot.display_name != cached_name:
@@ -457,26 +471,34 @@ class OfficeService:
             await self._rename(agent_id, snapshot.display_name)
         await self.presence.update(snapshot, agent_id, enabled=rich_presence_enabled)
 
-    async def spawn(self, snapshot: AgentSnapshot, *, rich_presence_enabled: bool) -> None:
+    async def spawn(
+        self,
+        snapshot: AgentSnapshot,
+        *,
+        rich_presence_enabled: bool,
+        visibility: OfficeVisibility = DEFAULT_VISIBILITY,
+    ) -> None:
         guild_id = snapshot.key.guild_id
         user_id = snapshot.key.user_id
-        if snapshot.status is None:
+        folder = visibility.directory(snapshot)
+        if folder is None:
             return
         self.detect_collision(user_id)
         agent_id = self.agent_id(user_id)
         already_active = self.is_user_active_in_other_guild(guild_id, user_id)
-        self._agents[(guild_id, user_id)] = (snapshot.status.value, snapshot.display_name)
-        self._agent_is_bot[user_id] = snapshot.is_bot
+        self._agents[(guild_id, user_id)] = (folder, snapshot.display_name)
         if not already_active:
+            headless = visibility.ghosted(snapshot)
+            self._agent_headless[user_id] = headless
             palette, repeat = await self._dress(snapshot.key, snapshot.display_name)
             await self._send(
                 agent_created(
                     agent_id,
-                    snapshot.status.value,
+                    folder,
                     palette,
                     repeat,
                     is_external=True,
-                    is_headless=snapshot.is_bot,
+                    is_headless=headless,
                 )
             )
             await self._send(agent_team_info(agent_id, snapshot.display_name))
@@ -492,7 +514,7 @@ class OfficeService:
         del self._agents[raw_key]
         self.presence.forget(key)
         if not self.is_user_active_in_other_guild(key.guild_id, key.user_id):
-            self._agent_is_bot.pop(key.user_id, None)
+            self._agent_headless.pop(key.user_id, None)
             await self._send(agent_closed(agent_id))
             if self._profiles.pop(agent_id, None) is not None:
                 await self._send_roster()
@@ -505,7 +527,9 @@ class OfficeService:
         logic applies (a genuine agent has exactly one entry), and no
         rich-presence activities (not modeled for genuine agents yet, see
         docs/office-agent-identity-design.md). status="offline" closes it,
-        the same as a Discord member going offline or leaving."""
+        the same as a Discord member leaving: OfficeVisibility (showing
+        offline members, ghosting) is a Discord-roster policy, and a genuine
+        agent is always shown translucent while registered."""
 
         cached = self._genuine_agents.get(identity.agent_key)
         if status == "offline":
@@ -562,6 +586,7 @@ class OfficeService:
         *,
         include_bots: bool,
         rich_presence_enabled: bool,
+        visibility: OfficeVisibility = DEFAULT_VISIBILITY,
     ) -> str:
         current_user_ids = {snapshot.key.user_id for snapshot in snapshots}
         stale = [
@@ -579,6 +604,7 @@ class OfficeService:
                     snapshot,
                     include_bots=include_bots,
                     rich_presence_enabled=rich_presence_enabled,
+                    visibility=visibility,
                 )
             except Exception as exc:
                 self._log.error(
@@ -702,10 +728,11 @@ class OfficeService:
                     # The webview only ever renders the isHeadless ghost cue
                     # (translucent sprite) when this is true -- isHeadless
                     # alone (agent_created/existingAgents, set from
-                    # snapshot.is_bot) is inert without it. Unlike VS Code,
-                    # where it's a genuine user preference toggle, every
-                    # headless-worthy agent this office produces is a real
-                    # Discord bot, so there's no case where it should be off.
+                    # OfficeVisibility.ghosted) is inert without it. Unlike
+                    # VS Code, where it's a genuine user preference toggle,
+                    # this office decides translucency per character through
+                    # isHeadless, so it's always on: a character that
+                    # shouldn't be translucent is created isHeadless=false.
                     "ghostHeadlessAgents": True,
                     "hooksEnabled": False,
                     "hooksInfoShown": True,

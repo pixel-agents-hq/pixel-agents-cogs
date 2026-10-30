@@ -15,7 +15,7 @@ from corridor.domain import ReplyField
 from pixelagents.domain import AgentKey, GenuineAgentKey, OfficeIdentity
 from pixelagents.domain.characters import CharacterRecord, PixatarFailure
 
-from .cog_base import CctvBase
+from .cog_base import CctvBase, roster_warnings
 from .dashboard import dashboard_cog_loaded
 
 # What `[p]cctv character agent…` calls the bot's own Discord account.
@@ -52,6 +52,7 @@ class CommandsMixin(CctvBase):
 
         settings = await self._settings.global_settings()
         guild = await self._settings.guild_settings(self._guild(ctx))
+        warnings = roster_warnings(self._guild(ctx), self.bot.intents)
         reasons = self._degraded_reasons()
         listener = self._server.running if self._server is not None else False
         fields = (
@@ -81,6 +82,13 @@ class CommandsMixin(CctvBase):
             ),
             ReplyField("Guild Enabled", "✅" if guild.enabled else "🛑"),
             ReplyField("Include Bots", "✅" if guild.include_bots else "🛑"),
+            ReplyField("Ghost Bots", "✅" if guild.ghost_bots else "🛑"),
+            ReplyField("Show Offline", "✅" if guild.show_offline else "🛑"),
+            ReplyField("Ghost Offline", "✅" if guild.ghost_offline else "🛑"),
+            ReplyField(
+                "Member Cache",
+                "✅ complete" if not warnings else "⚠️ " + " ".join(warnings),
+            ),
             ReplyField(
                 "Rich Presence",
                 "✅" if settings.broadcast_rich_presence else "🛑",
@@ -193,6 +201,40 @@ class CommandsMixin(CctvBase):
             await self._reply(ctx, await self._full_sync(guild))
         else:
             await self._reply(ctx, f"Include-bots set to `{value}`.")
+
+    @cctv_group.command(name="showoffline")
+    @commands.admin_or_permissions(administrator=True)
+    async def cmd_show_offline(self, ctx: commands.Context, value: bool) -> None:
+        """Show or hide offline members in this guild's CCTV roster."""
+
+        guild = self._guild(ctx)
+        await self._settings.set_guild_show_offline(guild.id, value)
+        await self._reply_policy(ctx, guild, f"Show-offline set to `{value}`.")
+
+    @cctv_group.command(name="ghostoffline")
+    @commands.admin_or_permissions(administrator=True)
+    async def cmd_ghost_offline(self, ctx: commands.Context, value: bool) -> None:
+        """Draw offline members translucent (with showoffline on) or normally."""
+
+        guild = self._guild(ctx)
+        await self._settings.set_guild_ghost_offline(guild.id, value)
+        await self._reply_policy(ctx, guild, f"Ghost-offline set to `{value}`.")
+
+    @cctv_group.command(name="ghostbots")
+    @commands.admin_or_permissions(administrator=True)
+    async def cmd_ghost_bots(self, ctx: commands.Context, value: bool) -> None:
+        """Draw this guild's bot accounts translucent or normally."""
+
+        guild = self._guild(ctx)
+        await self._settings.set_guild_ghost_bots(guild.id, value)
+        await self._reply_policy(ctx, guild, f"Ghost-bots set to `{value}`.")
+
+    async def _reply_policy(self, ctx: commands.Context, guild: discord.Guild, done: str) -> None:
+        # The roster is re-synced so the change shows at once.
+        if await self._settings.guild_enabled(guild):
+            await self._reply(ctx, f"{done}\n{await self._full_sync(guild)}")
+        else:
+            await self._reply(ctx, done)
 
     @cctv_group.command(name="sync")
     @commands.admin_or_permissions(administrator=True)

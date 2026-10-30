@@ -107,6 +107,7 @@ class DiscordGatewayMixin(CogBase):
                     ),
                     display_name=member.display_name,
                     status="offline",
+                    left_guild=True,
                 )
             )
         except Exception as exc:

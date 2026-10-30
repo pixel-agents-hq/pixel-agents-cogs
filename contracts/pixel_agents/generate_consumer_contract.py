@@ -65,7 +65,7 @@ def _field_schema(annotation: Any) -> dict[str, Any]:
     if origin in (dict, Mapping):
         # Coarse -- values not modeled, matching the wire schemas' own
         # additionalProperties-keyed-by-agent-id maps (e.g. existingAgents'
-        # agentMeta/folderNames/externalAgents).
+        # agentMeta/directoryNames/externalAgents).
         return {"type": "object"}
     if annotation in _PRIMITIVES:
         # A fresh dict every call -- yaml.safe_dump would otherwise notice

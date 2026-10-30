@@ -13,6 +13,13 @@
  * to the Vite build, mirroring what its dev-server middleware serves on
  * demand.
  *
+ * Characters are the exception: upstream composes them in the webview from
+ * the wardrobe art the bundle already inlines, so there is no sheet to
+ * decode. What the office needs from the server is the cast itself, the
+ * character profiles a new office starts with -- written out here as
+ * upstream's own `DEFAULT_CHARACTER_PROFILES`, the list its server falls
+ * back to (`server/src/characterProfilesStore.ts`).
+ *
  * Usage: tsx emit_decoded_assets.ts <vendorCheckoutRoot> <assetsDir> <outDir>
  */
 
@@ -42,19 +49,18 @@ async function main(): Promise<void> {
   const { buildFurnitureCatalog } = await import(
     moduleUrl(vendorRoot, "core/src/assets/build.ts")
   );
-  const {
-    decodeAllCarpets,
-    decodeAllCharacters,
-    decodeAllFloors,
-    decodeAllFurniture,
-    decodeAllWalls,
-  } = await import(moduleUrl(vendorRoot, "core/src/assets/loader.ts"));
+  const { decodeAllCarpets, decodeAllFloors, decodeAllFurniture, decodeAllWalls } = await import(
+    moduleUrl(vendorRoot, "core/src/assets/loader.ts")
+  );
+  const { DEFAULT_CHARACTER_PROFILES } = await import(
+    moduleUrl(vendorRoot, "core/src/defaultCharacterProfiles.ts")
+  );
 
   fs.mkdirSync(outDir, { recursive: true });
 
   const catalog = buildFurnitureCatalog(assetsDir);
   const decoded: Record<string, unknown> = {
-    "characters.json": decodeAllCharacters(assetsDir),
+    "character-profiles.json": DEFAULT_CHARACTER_PROFILES,
     "floors.json": decodeAllFloors(assetsDir),
     "walls.json": decodeAllWalls(assetsDir),
     "carpets.json": decodeAllCarpets(assetsDir),

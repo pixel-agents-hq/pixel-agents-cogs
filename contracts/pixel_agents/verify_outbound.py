@@ -93,7 +93,7 @@ async def _capture_messages() -> list[dict[str, Any]]:
 
     for entry in service.bootstrap_messages(
         assets={
-            "characters": [],
+            "characterProfiles": [],
             "floors": [],
             "walls": [],
             "carpets": [],
@@ -157,12 +157,12 @@ def _check_outbound_messages(vendor_dir: Path) -> tuple[bool, str]:
 
 
 def _check_helper_smoke() -> tuple[bool, str]:
-    seats: dict[str, dict[str, object]] = {"7": {"palette": 1, "hueShift": 30, "seatId": "a1"}}
-    merge_seat_patch(seats, "7", 6, {"palette": 3, "hueShift": 999, "seatId": "b2"})
+    seats: dict[str, dict[str, object]] = {"7": {"palette": 1, "repeat": 2, "seatId": "a1"}}
+    merge_seat_patch(seats, "7", 6, {"palette": 3, "repeat": -1, "seatId": "b2"})
     if seats["7"]["palette"] != 3:
         return False, "merge_seat_patch did not apply an in-range palette"
-    if seats["7"]["hueShift"] != 30:
-        return False, "merge_seat_patch did not reject an out-of-range hueShift"
+    if seats["7"]["repeat"] != 2:
+        return False, "merge_seat_patch did not reject a negative repeat"
     if seats["7"]["seatId"] != "b2":
         return False, "merge_seat_patch did not apply a valid seatId"
 

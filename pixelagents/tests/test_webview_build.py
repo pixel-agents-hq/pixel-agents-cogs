@@ -35,6 +35,11 @@ class TestPinnedCommit(unittest.TestCase):
     def test_pin_file_is_a_full_commit_hash(self) -> None:
         self.assertRegex(webview_build.pinned_commit(), r"^[0-9a-f]{40}$")
 
+    def test_repo_file_is_a_github_pixel_agents_clone_url(self) -> None:
+        self.assertRegex(
+            webview_build.pinned_repo_url(), r"^https://github\.com/[\w.-]+/pixel-agents\.git$"
+        )
+
 
 class TestMissingTools(unittest.TestCase):
     def test_reports_exactly_the_missing_tools(self) -> None:
@@ -175,6 +180,28 @@ class TestIsUpToDate(unittest.TestCase):
             )
 
 
+class TestCheckout(unittest.TestCase):
+    def test_clones_from_the_pinned_repo(self) -> None:
+        with TemporaryDirectory() as tmp, patch.object(webview_build, "_run") as run:
+            vendor_dir = Path(tmp) / "vendor" / "pixel-agents"
+            webview_build._checkout(vendor_dir, "a" * 40, _LOG)
+        self.assertEqual(
+            run.call_args_list[0].args[0],
+            ["git", "clone", webview_build.pinned_repo_url(), str(vendor_dir)],
+        )
+
+    def test_repoints_an_existing_clone_before_fetching(self) -> None:
+        with TemporaryDirectory() as tmp, patch.object(webview_build, "_run") as run:
+            vendor_dir = Path(tmp)
+            (vendor_dir / ".git").mkdir()
+            webview_build._checkout(vendor_dir, "a" * 40, _LOG)
+        self.assertEqual(
+            [call.args[0][3:5] for call in run.call_args_list],
+            [["remote", "set-url"], ["fetch", "origin"], ["checkout", "--detach"]],
+        )
+        self.assertEqual(run.call_args_list[0].args[0][-1], webview_build.pinned_repo_url())
+
+
 class TestEnsureWebviewBuilt(unittest.TestCase):
     def test_skips_the_build_when_already_up_to_date(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -264,6 +291,9 @@ class TestEnsureWebviewBuilt(unittest.TestCase):
             self.assertTrue(result.rebuilt)
             dist = cog_data_dir / "webview_dist"
             self.assertTrue((dist / "index.html").is_file())
+            self.assertTrue((dist / "manifest.webmanifest").is_file())
+            self.assertTrue((dist / "icons" / "icon-256.png").is_file())
+            self.assertFalse((dist / "assets" / "floors").exists())
             self.assertEqual(
                 (dist / ".built_commit").read_text(encoding="utf-8").strip(), result.commit
             )
@@ -467,9 +497,9 @@ class TestBuildWebview(unittest.TestCase):
         self.assertIn("up to date", outcome.status_line)
         # Discord markdown link, not a bare "@abc1234" -- the commit should
         # be one click from the reader, not something to copy-paste.
+        repo = webview_build.pinned_repo_url().removesuffix(".git")
         expected_link = (
-            f"[pixel-agents-hq/pixel-agents@{commit[:7]}]"
-            f"(https://github.com/pixel-agents-hq/pixel-agents/tree/{commit})"
+            f"[{repo.removeprefix('https://github.com/')}@{commit[:7]}]({repo}/tree/{commit})"
         )
         self.assertIn(expected_link, outcome.status_line)
 
@@ -527,7 +557,9 @@ class TestRealWebviewBuild(unittest.TestCase):
 
             dist = cog_data_dir / "webview_dist"
             self.assertTrue((dist / "index.html").is_file())
-            for name in ("characters", "floors", "walls", "carpets", "furniture"):
+            self.assertTrue((dist / "manifest.webmanifest").is_file())
+            self.assertTrue((dist / "icons").is_dir())
+            for name in ("character-profiles", "floors", "walls", "carpets", "furniture"):
                 self.assertTrue((dist / "assets" / "decoded" / f"{name}.json").is_file())
             self.assertTrue((dist / "assets" / "furniture-catalog.json").is_file())
             self.assertEqual(webview_build.built_commit(dist), webview_build.pinned_commit())

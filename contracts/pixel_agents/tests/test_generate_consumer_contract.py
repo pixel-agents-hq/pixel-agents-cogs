@@ -18,7 +18,7 @@ class TestBuildContract(unittest.TestCase):
         entry = contract["messages"]["agentCreated"]
 
         self.assertEqual(
-            entry["required"], sorted(["type", "id", "folderName", "palette", "hueShift"])
+            entry["required"], sorted(["type", "id", "directoryName", "palette", "repeat"])
         )
         self.assertEqual(entry["properties"]["isExternal"], {"type": "boolean"})
         self.assertEqual(entry["properties"]["id"], {"type": "integer"})
@@ -45,7 +45,14 @@ class TestBuildContract(unittest.TestCase):
         self.assertEqual(
             entry["required"],
             sorted(
-                ["type", "agents", "agentMeta", "folderNames", "externalAgents", "headlessAgents"]
+                [
+                    "type",
+                    "agents",
+                    "agentMeta",
+                    "directoryNames",
+                    "externalAgents",
+                    "headlessAgents",
+                ]
             ),
         )
 

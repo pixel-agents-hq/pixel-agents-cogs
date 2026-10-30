@@ -40,21 +40,21 @@ messages:
     type: object
     additionalProperties: false
     required:
-    - folderName
-    - hueShift
+    - directoryName
     - id
     - palette
+    - repeat
     - type
     properties:
       type:
         const: agentCreated
       id:
         type: integer
-      folderName:
+      directoryName:
         type: string
       palette:
         type: integer
-      hueShift:
+      repeat:
         type: integer
       isExternal:
         type: boolean
@@ -205,8 +205,8 @@ messages:
     required:
     - agentMeta
     - agents
+    - directoryNames
     - externalAgents
-    - folderNames
     - headlessAgents
     - type
     properties:
@@ -218,7 +218,7 @@ messages:
           type: integer
       agentMeta:
         type: object
-      folderNames:
+      directoryNames:
         type: object
       externalAgents:
         type: object

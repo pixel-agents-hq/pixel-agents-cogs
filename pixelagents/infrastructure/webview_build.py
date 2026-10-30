@@ -31,19 +31,24 @@ from typing import cast
 
 from .furniture_style_builder import MANIFEST_SCHEMA_VERSION, build_furniture_style_manifest
 
-REPO_URL = "https://github.com/pixel-agents-hq/pixel-agents.git"
-
 
 def _commit_url(commit: str) -> str:
     # /tree/<sha> rather than /commit/<sha>: lets a reader browse the
     # checkout at that pin, not just view the (irrelevant, single-commit)
     # diff.
-    return f"{REPO_URL.removesuffix('.git')}/tree/{commit}"
+    return f"{pinned_repo_url().removesuffix('.git')}/tree/{commit}"
 
 
 REQUIRED_TOOLS = ("git", "node", "npm")
 
 _PIN_FILE = Path(__file__).with_name("webview_vendor.commit")
+# The repository the pinned commit is cloned from. Upstream itself whenever
+# the pin is on upstream `main`; a branch on a fork while the pin has to
+# carry upstream PRs that haven't merged yet, because GitHub only serves a
+# commit from the repository (or pull-request ref) that actually holds it --
+# `git fetch <upstream> <sha>` refuses a fork-only commit ("not our ref").
+# See .claude/skills/advance-vendor/SKILL.md.
+_REPO_FILE = Path(__file__).with_name("webview_vendor.repo")
 _EMIT_SCRIPT = Path(__file__).parent / "webview_build_scripts" / "emit_decoded_assets.ts"
 _BUILT_COMMIT_MARKER = ".built_commit"
 _BUILT_BASE_PATH_MARKER = ".built_base_path"
@@ -74,8 +79,9 @@ RELATIVE_BASE_PATH = "./"
 # handful of unrelated promo images into the build output. Nothing in the
 # served bundle or in WebviewAssetProvider reads them -- the production
 # bundle receives sprites as pre-decoded pixel arrays instead -- so only what
-# is actually served gets synced: the entry HTML, the hashed JS/CSS bundle,
-# the font it references, and the JSON WebviewAssetProvider reads.
+# is actually served gets synced: the entry HTML, the web-app manifest and
+# icons it links, the hashed JS/CSS bundle, the font it references, and the
+# JSON WebviewAssetProvider reads.
 
 
 class WebviewBuildError(RuntimeError):
@@ -118,6 +124,12 @@ def pinned_commit() -> str:
     """The upstream commit `webview_dist` should be built from."""
 
     return _PIN_FILE.read_text(encoding="utf-8").strip()
+
+
+def pinned_repo_url() -> str:
+    """The git URL `pinned_commit()` (and any admin override) is cloned from."""
+
+    return _REPO_FILE.read_text(encoding="utf-8").strip()
 
 
 def missing_tools() -> tuple[str, ...]:
@@ -347,7 +359,8 @@ def build_webview(
 
     verb = "built" if result.rebuilt else "already up to date"
     short = result.commit[:7]
-    link = f"[pixel-agents-hq/pixel-agents@{short}]({_commit_url(result.commit)})"
+    repo = pinned_repo_url().removesuffix(".git").removeprefix("https://github.com/")
+    link = f"[{repo}@{short}]({_commit_url(result.commit)})"
     return BuildOutcome(ok=True, status_line=f"✅ Webview {verb} ({link}).")
 
 
@@ -401,10 +414,19 @@ def _run(args: list[str], *, cwd: Path | None, timeout: float, log: logging.Logg
 
 
 def _checkout(vendor_dir: Path, commit: str, log: logging.Logger) -> None:
+    repo_url = pinned_repo_url()
     if not (vendor_dir / ".git").exists():
         vendor_dir.parent.mkdir(parents=True, exist_ok=True)
-        _run(["git", "clone", REPO_URL, str(vendor_dir)], cwd=None, timeout=300, log=log)
+        _run(["git", "clone", repo_url, str(vendor_dir)], cwd=None, timeout=300, log=log)
     else:
+        # A checkout cloned before the pin moved repositories still points
+        # `origin` at the old one, which doesn't have the new commit.
+        _run(
+            ["git", "-C", str(vendor_dir), "remote", "set-url", "origin", repo_url],
+            cwd=None,
+            timeout=60,
+            log=log,
+        )
         _run(["git", "-C", str(vendor_dir), "fetch", "origin"], cwd=None, timeout=300, log=log)
     _run(
         ["git", "-C", str(vendor_dir), "checkout", "--detach", commit],
@@ -474,6 +496,10 @@ def _sync_dist(
     (webview_dist / "fonts").mkdir(parents=True)
 
     shutil.copy2(build_out_dir / "index.html", webview_dist / "index.html")
+    # index.html links both: the web-app manifest and the icon it and the
+    # page's own <link rel="icon"> name.
+    shutil.copy2(build_out_dir / "manifest.webmanifest", webview_dist / "manifest.webmanifest")
+    shutil.copytree(build_out_dir / "icons", webview_dist / "icons")
     for pattern in ("*.js", "*.css"):
         for src in (build_out_dir / "assets").glob(pattern):
             shutil.copy2(src, webview_dist / "assets" / src.name)
@@ -499,7 +525,8 @@ def _sync_dist(
         f"{MANIFEST_SCHEMA_VERSION}\n", encoding="utf-8"
     )
     log.info(
-        "pixelagents: webview built from pixel-agents-hq/pixel-agents@%s (base %s)",
+        "pixelagents: webview built from %s@%s (base %s)",
+        pinned_repo_url(),
         commit,
         base_path,
     )

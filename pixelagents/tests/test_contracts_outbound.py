@@ -35,34 +35,34 @@ class TestOutboundBuilders:
         ("builder", "expected"),
         [
             (
-                lambda: agent_created(-1, "online", 2, 45),
+                lambda: agent_created(-1, "online", 2, 1),
                 {
                     "type": "agentCreated",
                     "id": -1,
-                    "folderName": "online",
+                    "directoryName": "online",
                     "palette": 2,
-                    "hueShift": 45,
+                    "repeat": 1,
                 },
             ),
             (
-                lambda: agent_created(-1, "online", 2, 45, is_external=True),
+                lambda: agent_created(-1, "online", 2, 1, is_external=True),
                 {
                     "type": "agentCreated",
                     "id": -1,
-                    "folderName": "online",
+                    "directoryName": "online",
                     "palette": 2,
-                    "hueShift": 45,
+                    "repeat": 1,
                     "isExternal": True,
                 },
             ),
             (
-                lambda: agent_created(-1, "online", 2, 45, is_external=True, is_headless=True),
+                lambda: agent_created(-1, "online", 2, 1, is_external=True, is_headless=True),
                 {
                     "type": "agentCreated",
                     "id": -1,
-                    "folderName": "online",
+                    "directoryName": "online",
                     "palette": 2,
-                    "hueShift": 45,
+                    "repeat": 1,
                     "isExternal": True,
                     "isHeadless": True,
                 },

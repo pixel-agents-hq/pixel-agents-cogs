@@ -108,7 +108,7 @@ class TestCheckConsumerContractDrift(unittest.TestCase):
         schemas = MessageSchemas(
             by_type={
                 "agentCreated": {
-                    "properties": {"id": {"type": "integer"}, "folderName": {"type": "string"}},
+                    "properties": {"id": {"type": "integer"}, "directoryName": {"type": "string"}},
                     "required": ["id"],
                 }
             },

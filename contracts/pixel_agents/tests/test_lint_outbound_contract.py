@@ -28,9 +28,9 @@ class TestCheck(unittest.TestCase):
         bad_message = {
             "type": "agentCreated",
             "id": "not-an-int",
-            "folderName": "x",
+            "directoryName": "x",
             "palette": 0,
-            "hueShift": 0,
+            "repeat": 0,
         }
 
         ok, problems = loc.check(contract, [bad_message])

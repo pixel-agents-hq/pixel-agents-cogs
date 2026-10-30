@@ -68,12 +68,16 @@ def validate_seat_records(seats: object) -> SeatRecords:
             raise OfficeStateValidationError("seat entries must map string IDs to objects")
         record = deepcopy(value)
         palette = record.get("palette")
+        repeat = record.get("repeat")
         hue_shift = record.get("hueShift")
         seat_id = record.get("seatId")
         if palette is not None and (
             type(palette) is not int or not 0 <= palette < DEFAULT_PALETTE_COUNT
         ):
             raise OfficeStateValidationError(f"seat {agent_id!r} has an invalid palette")
+        if repeat is not None and (type(repeat) is not int or repeat < 0):
+            raise OfficeStateValidationError(f"seat {agent_id!r} has an invalid repeat")
+        # Upstream's older clothes hue, still readable (see `seat_repeat`).
         if hue_shift is not None and (type(hue_shift) is not int or not 0 <= hue_shift <= 360):
             raise OfficeStateValidationError(f"seat {agent_id!r} has an invalid hueShift")
         if seat_id is not None and not isinstance(seat_id, str):

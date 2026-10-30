@@ -32,7 +32,8 @@ installed cog when Downloader will neither copy nor build one? office-cogs
 answers it without a submodule at all: no `webview_dist/` build output is
 committed anywhere in the repo. Instead,
 `pixelagents/infrastructure/webview_build.py` clones the pinned commit
-(`pixelagents/infrastructure/webview_vendor.commit`, shipped *inside*
+(`pixelagents/infrastructure/webview_vendor.commit`, from the repository
+named in `webview_vendor.repo` next to it, both shipped *inside*
 `pixelagents/` for the same "Downloader only copies this directory" reason
 the pin file for a hypothetical nested submodule would need to be) and runs
 the frontend build itself, from inside the installed cog, at `cog_load`

@@ -27,6 +27,7 @@ on:
       - "corridor/**/*.py"
       - "pixelagents/**/*.py"
       - "pixelagents/infrastructure/webview_vendor.commit"
+      - "pixelagents/infrastructure/webview_vendor.repo"
       - "architect/**/*.py"
       - "cctv/**/*.py"
       - "floorplan/**/*.py"

@@ -37,7 +37,7 @@ class SaveLayoutMessage(BaseModel):
 class SeatAssignmentPatch(BaseModel):
     model_config = _INGRESS_CONFIG
     palette: int | None = Field(default=None, ge=0)
-    hue_shift: int | None = Field(default=None, alias="hueShift", ge=0, le=360)
+    repeat: int | None = Field(default=None, ge=0)
     seat_id: str | None = Field(default=None, alias="seatId")
 
 

@@ -330,7 +330,7 @@ def write_fake_vite_build(build_out_dir: Path) -> None:
     assets = build_out_dir / "assets"
     (assets / "decoded").mkdir(parents=True)
     (build_out_dir / "fonts").mkdir(parents=True)
-    (assets / "characters").mkdir(parents=True)
+    (assets / "floors").mkdir(parents=True)
 
     (build_out_dir / "index.html").write_text(
         "<!doctype html><html><head>"
@@ -341,9 +341,12 @@ def write_fake_vite_build(build_out_dir: Path) -> None:
         '</head><body><div id="root"></div></body></html>',
         encoding="utf-8",
     )
+    (build_out_dir / "manifest.webmanifest").write_text('{"name": "Pixel Agents"}', encoding="utf-8")
+    (build_out_dir / "icons").mkdir()
+    (build_out_dir / "icons" / "icon-256.png").write_bytes(b"not-a-real-png")
     (assets / "index-abc.js").write_text("console.log('office');", encoding="utf-8")
     (assets / "index-abc.css").write_text("body { margin: 0; }", encoding="utf-8")
-    (assets / "characters" / "char_0.png").write_bytes(b"not-a-real-png")
+    (assets / "floors" / "floor_0.png").write_bytes(b"not-a-real-png")
 
     catalog = [
         {
@@ -360,7 +363,7 @@ def write_fake_vite_build(build_out_dir: Path) -> None:
     (assets / "furniture-catalog.json").write_text(json.dumps(catalog), encoding="utf-8")
     (assets / "asset-index.json").write_text(
         json.dumps(
-            {"floors": [], "walls": [], "characters": [], "defaultLayout": "default-layout-1.json"}
+            {"floors": [], "walls": [], "defaultLayout": "default-layout-1.json"}
         ),
         encoding="utf-8",
     )
@@ -378,7 +381,7 @@ def write_fake_vite_build(build_out_dir: Path) -> None:
         encoding="utf-8",
     )
     decoded = {
-        "characters.json": [{"down": [], "up": [], "left": [], "right": []}],
+        "character-profiles.json": [{"id": "char-0", "body": "flat", "v": 1}],
         "floors.json": [[["#ffffff"]]],
         "walls.json": [[[["#ffffff"]]]],
         "carpets.json": [[[["#ffffff"]]]],

@@ -233,7 +233,7 @@ sequenceDiagram
     participant Cctv as cctv (CctvBase)
     participant OS as OfficeService
 
-    Arch->>C: register_agent(RegisteredAgent(<br/>agent_key="architect", avatar_path=...))
+    Arch->>C: register_agent(RegisteredAgent(<br/>agent_key="architect", ...))
     C->>C: card_with_url(...) rewrites the card's URL/icon_url,<br/>rebuilds A2A routes
     C->>Bus: publish(AgentPresenceChanged(<br/>agent_key="architect", status="online"))
     Bus->>Cctv: dispatch(event)

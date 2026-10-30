@@ -99,7 +99,6 @@ def _agent(
     *,
     url: str = "http://localhost:8931/architect/",
     icon_url: str = "",
-    avatar_path: Path | None = None,
     required_permission_group: str | None = None,
 ) -> SimpleNamespace:
     card = SimpleNamespace(
@@ -110,7 +109,6 @@ def _agent(
     return SimpleNamespace(
         agent_key=agent_key,
         card=card,
-        avatar_path=avatar_path,
         required_permission_group=required_permission_group,
     )
 
@@ -131,6 +129,33 @@ class TestAgentTools(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual({tool.name for tool in tools}, {"consult_architect", "consult_agent-n"})
         self.assertTrue(all(isinstance(tool, ConsultAgentTool) for tool in tools))
+
+    async def test_the_consult_footer_wears_the_agents_office_character(self) -> None:
+        corridor = FakeCorridor()
+        corridor.agents = [
+            _agent("architect"),
+            _agent("painter"),
+        ]
+        corridor.avatars = {"architect": Path("/pixelagents/avatars/0123.png")}
+
+        tools = await _agent_tools(
+            corridor,
+            corridor.reply_sender(owner="Pico"),
+            ArchitectClient(),
+            _ctx(),
+            guild_id=1,
+            bot_user_id=999,
+        )
+
+        footers = {tool.name: tool._footer_icon_path for tool in tools}  # type: ignore[attr-defined]
+        self.assertEqual(
+            footers,
+            {
+                "consult_architect": Path("/pixelagents/avatars/0123.png"),
+                # No character avatar (pixatar unavailable): no footer icon.
+                "consult_painter": None,
+            },
+        )
 
     async def test_zero_registered_agents_yields_zero_tools(self) -> None:
         corridor = FakeCorridor()

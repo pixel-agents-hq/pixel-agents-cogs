@@ -50,6 +50,9 @@ together.
 | `[p]cctv character` | Any member | Show your office character, its seed code, and a designer link that opens it |
 | `[p]cctv character set <px.…>` | Any member | Wear the character a seed code stands for, e.g. one copied from the designer |
 | `[p]cctv character reset` | Any member | Go back to the character dealt from your Discord user id |
+| `[p]cctv character agent <agent>` | Bot owner | Show an agent's office character; `<agent>` is a registered agent key, or `pico` for the bot's own account |
+| `[p]cctv character agentset <agent> <px.…>` | Bot owner | Dress an agent in a seed code's character, on both pages and in its Discord replies |
+| `[p]cctv character agentreset <agent>` | Bot owner | Go back to the character dealt from the agent's key (pico: the bot's user id) |
 
 ## Characters
 
@@ -61,6 +64,11 @@ Discord user id. To change it, design one in Pixel Index's character
 designer (`https://pixel-index-staging.nntin.xyz/assets/design` by default),
 press "Copy seed", and run `[p]cctv character set <seed>`; both pages
 re-dress the member live.
+
+Agents (pico, architect, painter, animator, every bootcamp agent) wear
+characters too, dealt from their key, and their Discord replies use that
+character as their avatar. The bot owner changes one with
+`[p]cctv character agentset <agent> <seed>`.
 
 ## Configuration
 

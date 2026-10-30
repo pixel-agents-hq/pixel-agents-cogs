@@ -2,23 +2,15 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 from redbot.core.bot import Red
 
-from corridor.domain import ReplyCategory
+from corridor.domain import AgentRef, ReplyCategory
 
 from ..application import GateService, ToolLoopService
 from ..dependency_loader import ensure_corridor_loaded
 from ..infrastructure import ArchitectClient, CorridorLLMClient, RedPicoRepository
-
-# Conventional path for pico's own bundled avatar image -- passed to
-# corridor.reply_sender() regardless of whether a real file exists here
-# yet; existence is checked fresh on every send, so dropping a real image
-# at this exact path later needs no code change. See
-# docs/reply-identity-design.md.
-AVATAR_PATH = Path(__file__).resolve().parent.parent / "assets" / "avatar.png"
 
 
 class CogBase:
@@ -52,8 +44,17 @@ class CogBase:
         # leaving it running with a stale corridor reference.
         self._corridor.register_dependent("pico")
         self._reply = self._corridor.reply_sender(
-            owner="Pico", avatar_path=AVATAR_PATH, category=ReplyCategory.AGENT
+            owner="Pico",
+            category=ReplyCategory.AGENT,
+            # Pico is the bot's own Discord account: it wears that account's
+            # office character, known once the bot has logged in.
+            agent=self._bot_agent_ref,
         )
+
+    def _bot_agent_ref(self) -> AgentRef | None:
+        if self.bot.user is None:
+            return None
+        return AgentRef(discord_user_id=self.bot.user.id, guild_id=None, is_bot=True)
 
     async def cog_unload(self) -> None:
         if self._corridor is not None:

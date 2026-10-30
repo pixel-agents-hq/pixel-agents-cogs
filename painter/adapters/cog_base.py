@@ -7,7 +7,6 @@ through pixelagents. It owns no browser-facing resources; CCTV owns those.
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 from typing import Any
 
 from redbot.core.bot import Red
@@ -35,12 +34,6 @@ PAINTER_AGENT_KEY = "painter"
 # not a Discord bot login, and isn't scoped to one guild, same shape
 # architect's own ARCHITECT_AGENT_REF uses.
 PAINTER_AGENT_REF = AgentRef(discord_user_id=None, guild_id=None, is_bot=True, agent_key="painter")
-
-# Conventional path for painter's own bundled avatar image -- passed to
-# both corridor.reply_sender() and RegisteredAgent.avatar_path regardless
-# of whether a real file exists here yet; existence is checked fresh on
-# every send. See docs/reply-identity-design.md.
-AVATAR_PATH = Path(__file__).resolve().parent.parent / "assets" / "avatar.png"
 
 
 async def _mcp_tools(corridor: Any) -> list[ToolSpec]:
@@ -112,7 +105,9 @@ class CogBase:
             # leaving it running with a stale corridor reference.
             self._corridor.register_dependent("painter")
             self._reply = self._corridor.reply_sender(
-                owner="Painter", avatar_path=AVATAR_PATH, category=ReplyCategory.AGENT
+                owner="Painter",
+                category=ReplyCategory.AGENT,
+                agent=PAINTER_AGENT_REF,
             )
             self._pixelagents = await ensure_loaded(self.bot, "pixelagents", "PixelAgents")
             await self._register_with_corridor()
@@ -146,9 +141,7 @@ class CogBase:
         card = build_agent_card(tools=self._tools)
         try:
             await self._corridor.register_agent(
-                RegisteredAgent(
-                    agent_key="painter", card=card, executor=self._executor, avatar_path=AVATAR_PATH
-                ),
+                RegisteredAgent(agent_key="painter", card=card, executor=self._executor),
                 # Matches AgentDirectoryService.register's own documented
                 # convention (the cog's class name, same as
                 # unregister_agent_owner above and reply_sender's owner=

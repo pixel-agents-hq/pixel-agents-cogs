@@ -81,7 +81,6 @@ class RegisteredAgent:
     agent_key: str
     card: AgentCard          # real a2a-sdk protobuf message
     executor: AgentExecutor  # the a2a-sdk extension point
-    avatar_path: Path | None = None
     required_permission_group: str | None = None
 ```
 
@@ -94,8 +93,8 @@ class RegisteredAgent:
   client the exact card it needs to call `create_client`, and
   re-deriving a neutral shape from the real card (then re-deriving the
   real card back out of it client-side) buys nothing. Corridor overwrites
-  the card's one `supported_interfaces[0].url` (and `icon_url`, when
-  `avatar_path` is set) with its own configured host/port plus
+  the card's one `supported_interfaces[0].url` and its `icon_url`
+  (`avatar.png` under it) with its own configured host/port plus
   `/<agent_key>/` before storing it -- the registering agent has no way
   to know what host/port it will ultimately be reachable at, since it no
   longer binds a listener of its own.
@@ -103,11 +102,10 @@ class RegisteredAgent:
   registering agent built to bridge one inbound A2A message to its own
   tool-calling loop. Corridor never inspects it; it's only wired into a
   `DefaultRequestHandler` mounted under that agent's path.
-- **`avatar_path`** -- an optional bundled image file on the registering
-  agent's own disk. When set, corridor serves it at
-  `/<agent_key>/avatar.png` on its shared listener and sets the card's
-  `icon_url` to that address, so a consulting agent can show it as a
-  `FooterOverride` distinct from its own author identity (see
+- There is no avatar field: an agent's avatar is its office character.
+  Corridor serves `avatar_for(agent)` (answered by pixelagents) at
+  `/<agent_key>/avatar.png` on its shared listener, the card's `icon_url`;
+  pico shows the same file as the consult `FooterOverride` (see
   `docs/reply-identity-design.md`).
 - **`required_permission_group`** -- an optional corridor permission-group
   key (`PermissionGroupDef.key`, see `docs/corridor.md`'s Permissions
@@ -139,7 +137,7 @@ sequenceDiagram
     participant Server as A2AServer
 
     Agent->>Agent: build_agent_card(tools=...)
-    Agent->>Corridor: register_agent(RegisteredAgent(agent_key, card, executor,<br/>avatar_path), owner="architect")
+    Agent->>Corridor: register_agent(RegisteredAgent(agent_key, card, executor),<br/>owner="architect")
     Corridor->>Corridor: rewrite card's URL to corridor's own<br/>configured a2a_host:a2a_port, plus agent_key
     Corridor->>Dir: register(rewritten, owner=owner)
     Dir-->>Corridor: stored (idempotent re-registration by same owner --<br/>raises on a different owner claiming agent_key)

@@ -12,7 +12,6 @@ native tool that turns a finished render job into real Discord attachments
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 from typing import Any
 
 import httpx
@@ -39,11 +38,6 @@ ANIMATOR_AGENT_REF = AgentRef(
     discord_user_id=None, guild_id=None, is_bot=True, agent_key=ANIMATOR_AGENT_KEY
 )
 
-# Conventional path for animator's own bundled avatar image -- passed to
-# both corridor.reply_sender() and RegisteredAgent.avatar_path regardless
-# of whether a real file exists here yet; existence is checked fresh on
-# every send. See docs/reply-identity-design.md.
-AVATAR_PATH = Path(__file__).resolve().parent.parent / "assets" / "avatar.png"
 
 # A render job's tool loop may make several sequential MCP round trips
 # (create_project, execute_blender_python, render_preview, render_sprites,
@@ -139,7 +133,9 @@ class CogBase:
         # leaving it running with a stale corridor reference.
         self._corridor.register_dependent("animator")
         self._reply = self._corridor.reply_sender(
-            owner="Animator", avatar_path=AVATAR_PATH, category=ReplyCategory.AGENT
+            owner="Animator",
+            category=ReplyCategory.AGENT,
+            agent=ANIMATOR_AGENT_REF,
         )
         await self._register_with_corridor()
 
@@ -164,7 +160,6 @@ class CogBase:
                     agent_key=ANIMATOR_AGENT_KEY,
                     card=card,
                     executor=self._executor,
-                    avatar_path=AVATAR_PATH,
                 ),
                 # Matches AgentDirectoryService.register's own documented
                 # convention (the cog's class name) -- see painter's own
@@ -188,4 +183,4 @@ class CogBase:
             log.exception("animator: failed to publish tool/thinking activity")
 
 
-__all__ = ["ANIMATOR_AGENT_KEY", "ANIMATOR_AGENT_REF", "AVATAR_PATH", "CogBase"]
+__all__ = ["ANIMATOR_AGENT_KEY", "ANIMATOR_AGENT_REF", "CogBase"]

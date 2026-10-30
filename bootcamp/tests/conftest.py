@@ -115,22 +115,27 @@ class FakeCorridor:
         return self.permission_groups
 
     def reply_sender(
-        self, *, owner: str, avatar_path: Any = None, category: Any = None
+        self, *, owner: str, category: Any = None, agent: Any = None
     ) -> FakeReplySender:
         """Stands in for corridor.reply_sender -- author identity/category is
         a corridor-side concern, covered by corridor's own test suite; this
         cog's tests only need the same `self.replies` recording `send_reply`
-        already provides."""
+        already provides, plus who replied (`owner`, and the `agent` whose
+        office character is its avatar)."""
 
-        return FakeReplySender(self)
+        return FakeReplySender(self, owner=owner, agent=agent)
 
 
 class FakeReplySender:
-    def __init__(self, corridor: FakeCorridor) -> None:
+    def __init__(self, corridor: FakeCorridor, *, owner: str, agent: Any = None) -> None:
         self._corridor = corridor
+        self.owner = owner
+        self.agent = agent
 
     async def send_reply(self, ctx: object, **kwargs: object) -> None:
         await self._corridor.send_reply(ctx, **kwargs)  # type: ignore[arg-type]
+        self._corridor.replies[-1]["owner"] = self.owner
+        self._corridor.replies[-1]["agent_key"] = getattr(self.agent, "agent_key", None)
 
 
 @dataclass(frozen=True)

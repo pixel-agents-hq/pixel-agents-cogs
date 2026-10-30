@@ -160,7 +160,9 @@ class TestAskCommand(unittest.IsolatedAsyncioTestCase):
         answer = await self.cog.run_agent(self.ctx, "recruiter", "Evaluate this resume.")
 
         self.assertEqual(answer, "Looks like a strong candidate.")
-        self.assertEqual(self.bot.corridor.replies[-1]["title"], "recruiter")
+        # The agent answers as itself, wearing its office character.
+        self.assertEqual(self.bot.corridor.replies[-1]["owner"], "recruiter")
+        self.assertEqual(self.bot.corridor.replies[-1]["agent_key"], "recruiter")
         self.assertEqual(
             self.bot.corridor.replies[-1]["description"], "Looks like a strong candidate."
         )

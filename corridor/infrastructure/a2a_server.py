@@ -19,7 +19,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
+from pathlib import Path
 from typing import cast
 
 import uvicorn
@@ -35,6 +36,10 @@ from starlette.routing import BaseRoute, Mount, Route
 from ..domain.agent_directory import RegisteredAgent
 
 log = logging.getLogger("red.corridor")
+
+# An agent's avatar image by agent key (corridor's `avatar_for`: its office
+# character), or None while it has none.
+AvatarProvider = Callable[[str], Awaitable[Path | None]]
 
 # This process runs more than one `uvicorn.Server` as a concurrent asyncio
 # task (this listener, plus suggestionbox's own MCP listener) -- and, as of
@@ -75,31 +80,29 @@ cast(Callable[[], None], AppStatus.disable_automatic_graceful_drain)()
 AppStatus.should_exit = False
 
 
-def _avatar_route(agent: RegisteredAgent) -> Route:
-    """Serves `agent.avatar_path`'s bytes fresh on every request -- same
-    no-caching tradeoff `ReplySender`'s own attachment re-upload accepts
-    (docs/reply-identity-design.md section 2). 404 if the configured file
-    doesn't currently exist, never a 500 -- a missing avatar is an
-    absent-icon condition, not a server error."""
-
-    avatar_path = agent.avatar_path
-    assert avatar_path is not None
+def _avatar_route(agent_key: str, avatar: AvatarProvider) -> Route:
+    """Serves the agent's avatar (its office character) as asked for on
+    every request. 404 while it has none, never a 500 -- a missing avatar
+    is an absent-icon condition, not a server error."""
 
     async def handler(request: Request) -> Response:
-        if not avatar_path.exists():
+        path = await avatar(agent_key)
+        if path is None:
             return Response(status_code=404)
-        return FileResponse(avatar_path)
+        return FileResponse(path)
 
     return Route("/avatar.png", handler)
 
 
-def _build_routes(agents: Sequence[RegisteredAgent]) -> list[BaseRoute]:
+def _build_routes(
+    agents: Sequence[RegisteredAgent], avatar: AvatarProvider | None = None
+) -> list[BaseRoute]:
     """One Starlette `Mount` per agent, at `/<agent_key>/` -- a fresh
     `InMemoryTaskStore` per agent (matching architect's former
     one-task-store-per-agent scope, not shared across agents) and a
     fresh `DefaultRequestHandler` built from that agent's own
-    `card`/`executor`. An agent with `avatar_path` set additionally gets
-    a static `/avatar.png` route under the same mount -- see
+    `card`/`executor`. With an `avatar` provider, every agent also gets an
+    `/avatar.png` route under the same mount -- see
     docs/reply-identity-design.md section 7."""
 
     routes: list[BaseRoute] = []
@@ -109,14 +112,16 @@ def _build_routes(agents: Sequence[RegisteredAgent]) -> list[BaseRoute]:
             *create_agent_card_routes(agent.card),
             *create_jsonrpc_routes(handler, "/"),
         ]
-        if agent.avatar_path is not None:
-            agent_routes.append(_avatar_route(agent))
+        if avatar is not None:
+            agent_routes.append(_avatar_route(agent.agent_key, avatar))
         routes.append(Mount(f"/{agent.agent_key}", routes=agent_routes))
     return routes
 
 
-def _build_app(agents: Sequence[RegisteredAgent]) -> Starlette:
-    return Starlette(routes=_build_routes(agents))
+def _build_app(
+    agents: Sequence[RegisteredAgent], avatar: AvatarProvider | None = None
+) -> Starlette:
+    return Starlette(routes=_build_routes(agents, avatar))
 
 
 class A2AServer:
@@ -126,8 +131,11 @@ class A2AServer:
     NOT per-agent. A separate bind from Discord and from Red Dashboard's
     HTTP server, same as architect's former listener was."""
 
-    def __init__(self, *, logger: logging.Logger | None = None) -> None:
+    def __init__(
+        self, *, logger: logging.Logger | None = None, avatar: AvatarProvider | None = None
+    ) -> None:
         self._log = logger or log
+        self._avatar = avatar
         self._server: uvicorn.Server | None = None
         self._task: asyncio.Task[None] | None = None
         self._app: Starlette | None = None
@@ -190,7 +198,7 @@ class A2AServer:
         probe.close()
         await probe.wait_closed()
 
-        app = _build_app(agents)
+        app = _build_app(agents, self._avatar)
         config = uvicorn.Config(app, host=host, port=port, log_level="warning")
         server = uvicorn.Server(config)
         # `server.run()` is NOT called here (that installs signal handlers
@@ -249,7 +257,7 @@ class A2AServer:
 
         if self._app is None:
             return
-        self._app.router.routes = _build_routes(agents)
+        self._app.router.routes = _build_routes(agents, self._avatar)
 
 
-__all__ = ["A2AServer"]
+__all__ = ["A2AServer", "AvatarProvider"]

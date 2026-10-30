@@ -5,6 +5,8 @@ from __future__ import annotations
 import unittest
 from collections.abc import Callable
 from copy import deepcopy
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any, TypeVar
 
 from pixelagents.application.characters import (
@@ -50,6 +52,7 @@ class _Pixatar:
     def __init__(self) -> None:
         self.codes = {"px.designed": {"body": "flat", "hair": "long_bangs"}}
         self.dealt: list[str] = []
+        self.drawn: list[str] = []
 
     async def from_text(self, text: str) -> PixatarCharacter:
         self.dealt.append(text)
@@ -61,6 +64,7 @@ class _Pixatar:
         return PixatarCharacter(seed, dict(self.codes[seed]))
 
     async def avatar_png(self, seed: str, *, scale: int) -> bytes:
+        self.drawn.append(seed)
         return f"{seed}@{scale}".encode()
 
 
@@ -156,6 +160,36 @@ class TestCharacterService(unittest.IsolatedAsyncioTestCase):
 
         assert record is not None
         self.assertEqual(record.seed, "px.text-42")
+
+    async def test_an_avatar_file_is_drawn_once_per_seed(self) -> None:
+        directory = Path(self.enterContext(TemporaryDirectory()))
+        assert self.pixatar is not None
+
+        first = await self.service.avatar_file(GenuineAgentKey("architect"), directory)
+        again = await self.service.avatar_file(GenuineAgentKey("architect"), directory)
+
+        assert first is not None
+        self.assertEqual(first, again)
+        self.assertEqual(first.read_bytes(), b"px.text-architect@8")
+        self.assertEqual(self.pixatar.drawn, ["px.text-architect"])
+
+    async def test_a_changed_character_gets_a_new_avatar_file(self) -> None:
+        directory = Path(self.enterContext(TemporaryDirectory()))
+        before = await self.service.avatar_file(MEMBER, directory)
+
+        await self.service.set_seed(MEMBER, "px.designed")
+        after = await self.service.avatar_file(MEMBER, directory)
+
+        assert before is not None and after is not None
+        self.assertNotEqual(before, after)
+        self.assertEqual(after.read_bytes(), b"px.designed@8")
+
+    async def test_without_pixatar_there_is_no_avatar_file(self) -> None:
+        self.pixatar = None
+        directory = Path(self.enterContext(TemporaryDirectory())) / "avatars"
+
+        self.assertIsNone(await self.service.avatar_file(MEMBER, directory))
+        self.assertFalse(directory.exists())
 
     def test_keys_from_a_re_executed_module_are_read_the_same(self) -> None:
         # Red re-executes pixelagents' modules on load, so a consuming cog's

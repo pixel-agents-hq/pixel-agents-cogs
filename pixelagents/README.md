@@ -54,7 +54,11 @@ with `[p]cctv character set <px.…>`.
 `office_character_profile(identity)` is the profile a character wears on the
 canvas; `office_character`, `set_office_character_seed`,
 `reset_office_character` and `office_character_avatar` back CCTV's
-`[p]cctv character` commands. While pixatar can't run, each character
+`[p]cctv character` commands. `office_character_avatar_path` renders a
+character's avatar once per seed code into `cog_data_path/avatars/`; it is
+also registered with corridor as the avatar resolver, so every agent's
+Discord replies wear its character (see
+[`docs/reply-identity-design.md`](../docs/reply-identity-design.md)). While pixatar can't run, each character
 wears one of the built default cast, chosen by its key, and nothing is
 stored.
 

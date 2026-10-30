@@ -67,12 +67,13 @@ from .api import (
     send_rendered_reply_to_channel,
 )
 from .llm_tool_registration import collect_registered_tools
-from .reply_sender import ReplySender
+from .reply_sender import ReplyAgent, ReplySender
 
 log = logging.getLogger("red.corridor")
 
 _EventT = TypeVar("_EventT")
 _MutationT = TypeVar("_MutationT")
+AvatarResolver = Callable[[AgentRef], Awaitable[Path | None]]
 
 # Conventional path for corridor's own bundled avatar image -- passed to
 # reply_sender() below regardless of whether a real file exists here yet;
@@ -98,9 +99,10 @@ class CogBase:
         self._office_state_repository = RedOfficeStateRepository.create(self)
         self._office_states = OfficeStateService(self._office_state_repository, self._event_bus)
         self._office_characters = OfficeCharacterService(self._office_state_repository)
+        self._avatar_resolver: tuple[str, AvatarResolver] | None = None
         self._tool_registry = ToolRegistryService()
         self._agent_directory = AgentDirectoryService()
-        self._a2a_server = A2AServer(logger=log)
+        self._a2a_server = A2AServer(logger=log, avatar=self._agent_avatar)
         self._mcp_client_pool = McpClientPool(logger=log)
         self._agent_tool_servers = AgentToolServerRegistry(self._mcp_client_pool)
         # No eager start() here -- most cog_load sequences never touch the
@@ -393,6 +395,7 @@ class CogBase:
         owner: str,
         avatar_path: Path | None = None,
         category: ReplyCategory | None = None,
+        agent: ReplyAgent | None = None,
     ) -> ReplySender:
         """A per-cog bound sender, obtained once (typically in the calling
         cog's own `cog_load`, alongside `register_dependent`/
@@ -409,9 +412,51 @@ class CogBase:
 
         `category` (see docs/embed-colors.md) is `None` by default --
         Discord's own gray -- for any cog that doesn't fit the shared
-        Agent/Room/Furniture scheme, rather than guessing a bucket for it."""
+        Agent/Room/Furniture scheme, rather than guessing a bucket for it.
 
-        return ReplySender(self, owner=owner, avatar_path=avatar_path, category=category)
+        `agent` names who is replying (an `AgentRef`, or a callable returning
+        one) in place of `avatar_path`: each send's author icon is then
+        `avatar_for(agent)` -- that agent's office character, once
+        pixelagents has registered its resolver -- and no icon while it has
+        none. An agent never has a bundled image."""
+
+        return ReplySender(
+            self, owner=owner, avatar_path=avatar_path, category=category, agent=agent
+        )
+
+    # --- Agent avatars ----------------------------------------------------------
+
+    def register_avatar_resolver(self, resolver: AvatarResolver, *, owner: str) -> None:
+        """Let `owner` (pixelagents) answer `avatar_for`: corridor can't import
+        it, since it depends on corridor. One resolver at a time; a re-register
+        (the owner reloaded) replaces it."""
+
+        self._avatar_resolver = (owner, resolver)
+
+    def unregister_avatar_resolver(self, owner: str) -> None:
+        if self._avatar_resolver is not None and self._avatar_resolver[0] == owner:
+            self._avatar_resolver = None
+
+    async def avatar_for(self, agent: AgentRef) -> Path | None:
+        """An image of `agent` for a reply icon, or None. Best-effort: a
+        failing resolver means no avatar, never a failed reply."""
+
+        if self._avatar_resolver is None:
+            return None
+        owner, resolver = self._avatar_resolver
+        try:
+            path = await resolver(agent)
+        except Exception:
+            log.exception("corridor: %s's avatar resolver failed for %r", owner, agent)
+            return None
+        return path if path is not None and path.is_file() else None
+
+    async def _agent_avatar(self, agent_key: str) -> Path | None:
+        """The A2A listener's `/<agent_key>/avatar.png`."""
+
+        return await self.avatar_for(
+            AgentRef(discord_user_id=None, guild_id=None, is_bot=True, agent_key=agent_key)
+        )
 
     async def default_prefix(self) -> str:
         """The bot's global default command prefix -- what Red resolves DM
@@ -669,25 +714,24 @@ class CogBase:
         `AgentExecutor` are built. `owner` should be that cog's class
         name, matching `subscribe_event`'s convention.
 
-        Overwrites `agent.card`'s one `supported_interfaces[0].url` (and
-        `icon_url`, when `agent.avatar_path` is set) with corridor's own
-        configured host/port plus `/<agent_key>/` before storing it --
+        Overwrites `agent.card`'s one `supported_interfaces[0].url` and its
+        `icon_url` (`avatar.png` under it: the agent's office character)
+        with corridor's own configured host/port plus `/<agent_key>/` before
+        storing it --
         the registering agent has no way to know what host/port it will
         ultimately be reachable at, since it no longer binds a listener
         of its own. Async (unlike `register_tool`) because it needs
         corridor's own current A2A settings to build that URL. Also
         rebuilds the live route table, so the new agent (and its avatar
-        route, if any -- see docs/reply-identity-design.md section 7) is
+        route -- see docs/reply-identity-design.md section 7) is
         reachable immediately, not just on corridor's next `cog_load`."""
 
         settings = await self._repository.a2a_settings()
         base = f"http://{settings.a2a_host}:{settings.a2a_port}/{agent.agent_key}/"
-        icon_url = f"{base}avatar.png" if agent.avatar_path is not None else None
         rewritten = RegisteredAgent(
             agent_key=agent.agent_key,
-            card=card_with_url(agent.card, base, icon_url=icon_url),
+            card=card_with_url(agent.card, base, icon_url=f"{base}avatar.png"),
             executor=agent.executor,
-            avatar_path=agent.avatar_path,
             required_permission_group=agent.required_permission_group,
         )
         self._agent_directory.register(rewritten, owner=owner)

@@ -6,18 +6,30 @@ them. See docs/reply-identity-design.md.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypeAlias
 
 import discord
 from redbot.core import commands
 
-from ..domain import FooterOverride, RenderedReply, ReplyCategory, ReplyField, ReplyIdentity
+from ..domain import (
+    AgentRef,
+    FooterOverride,
+    RenderedReply,
+    ReplyCategory,
+    ReplyField,
+    ReplyIdentity,
+)
 from .api import send_rendered_reply, send_rendered_reply_to_channel
 
 if TYPE_CHECKING:
     from .cog_base import CogBase
+
+# Who is replying, for a per-send avatar (`CogBase.avatar_for`): an
+# `AgentRef`, or a callable for one only known later (the bot's own account
+# before the bot is ready).
+ReplyAgent: TypeAlias = AgentRef | Callable[[], AgentRef | None]
 
 
 class ReplySender:
@@ -34,7 +46,12 @@ class ReplySender:
     (see `build_reply_payload`), so dropping a real image there later
     lights up icons everywhere with zero code change. Passing `None`
     outright (rather than a not-yet-existing conventional path) is only
-    appropriate for a cog that will never want author icons at all."""
+    appropriate for a cog that will never want author icons at all.
+
+    `agent`, given in place of `avatar_path`, names who is replying: each
+    send asks `CogBase.avatar_for(agent)` for its avatar (pixelagents
+    answers with that agent's office character), and the reply carries no
+    icon while there's none. An agent never has a bundled image."""
 
     def __init__(
         self,
@@ -43,14 +60,31 @@ class ReplySender:
         owner: str,
         avatar_path: Path | None = None,
         category: ReplyCategory | None = None,
+        agent: ReplyAgent | None = None,
     ) -> None:
+        if agent is not None and avatar_path is not None:
+            raise ValueError("an agent's avatar is its office character, not a bundled image")
         self._cog_base = cog_base
+        self._owner = owner
         self._avatar_path = avatar_path
         self._category = category
+        self._agent = agent
         self._identity = ReplyIdentity(
             owner=owner,
             avatar_filename=avatar_path.name if avatar_path is not None else None,
         )
+
+    async def _avatar(self) -> tuple[ReplyIdentity, Path | None]:
+        """This send's identity and author icon: the agent's avatar (its
+        office character) for an agent, else the bundled `avatar_path`."""
+
+        if self._agent is None:
+            return self._identity, self._avatar_path
+        agent = self._agent() if callable(self._agent) else self._agent
+        resolved = await self._cog_base.avatar_for(agent) if agent is not None else None
+        if resolved is None:
+            return self._identity, None
+        return ReplyIdentity(owner=self._owner, avatar_filename=resolved.name), resolved
 
     async def render_reply(
         self,
@@ -62,6 +96,7 @@ class ReplySender:
         fields: Sequence[ReplyField] = (),
         code: Sequence[str] = (),
     ) -> RenderedReply:
+        identity, _ = await self._avatar()
         return await self._cog_base.render_reply(
             ctx,
             title=title,
@@ -69,7 +104,7 @@ class ReplySender:
             content=content,
             fields=fields,
             code=code,
-            identity=self._identity,
+            identity=identity,
             category=self._category,
         )
 
@@ -86,6 +121,7 @@ class ReplySender:
         footer_icon_path: Path | None = None,
         extra_files: Sequence[discord.File] = (),
     ) -> discord.Message:
+        identity, avatar_path = await self._avatar()
         rendered = await self._cog_base.render_reply(
             ctx,
             title=title,
@@ -93,14 +129,14 @@ class ReplySender:
             content=content,
             fields=fields,
             code=code,
-            identity=self._identity,
+            identity=identity,
             footer_override=footer_override,
             category=self._category,
         )
         return await send_rendered_reply(
             ctx,
             rendered,
-            avatar_path=self._avatar_path,
+            avatar_path=avatar_path,
             footer_icon_path=footer_icon_path,
             extra_files=extra_files,
         )
@@ -115,6 +151,7 @@ class ReplySender:
         fields: Sequence[ReplyField] = (),
         code: Sequence[str] = (),
     ) -> RenderedReply:
+        identity, _ = await self._avatar()
         return await self._cog_base.render_channel_reply(
             guild_id,
             title=title,
@@ -122,7 +159,7 @@ class ReplySender:
             content=content,
             fields=fields,
             code=code,
-            identity=self._identity,
+            identity=identity,
             category=self._category,
         )
 
@@ -140,6 +177,7 @@ class ReplySender:
         footer_icon_path: Path | None = None,
         extra_files: Sequence[discord.File] = (),
     ) -> discord.Message:
+        identity, avatar_path = await self._avatar()
         rendered = await self._cog_base.render_channel_reply(
             guild_id,
             title=title,
@@ -147,14 +185,14 @@ class ReplySender:
             content=content,
             fields=fields,
             code=code,
-            identity=self._identity,
+            identity=identity,
             footer_override=footer_override,
             category=self._category,
         )
         return await send_rendered_reply_to_channel(
             channel,
             rendered,
-            avatar_path=self._avatar_path,
+            avatar_path=avatar_path,
             footer_icon_path=footer_icon_path,
             extra_files=extra_files,
         )
@@ -169,4 +207,4 @@ class ReplySender:
         await self._cog_base.publish_event(event)
 
 
-__all__ = ["ReplySender"]
+__all__ = ["ReplyAgent", "ReplySender"]

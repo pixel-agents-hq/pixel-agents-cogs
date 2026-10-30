@@ -78,6 +78,8 @@ class FakeCorridor:
         self._llm_settings = FakeLLMSettings()
         self.allow_capabilities = True
         self.capabilities_checks: list[tuple[Any, str]] = []
+        # agent_key -> what `avatar_for` resolves it to.
+        self.avatars: dict[str, Any] = {}
 
     async def llm_settings(self) -> FakeLLMSettings:
         return self._llm_settings
@@ -99,6 +101,11 @@ class FakeCorridor:
     async def list_tools_for(self, ctx: object) -> list[Any]:
         self.list_tools_for_calls.append(ctx)
         return self.tools_for_member
+
+    async def avatar_for(self, agent: Any) -> Any:
+        """Stands in for corridor.avatar_for (an agent's office character)."""
+
+        return self.avatars.get(agent.agent_key)
 
     def list_agents(self) -> list[Any]:
         """Stands in for corridor.AgentDirectoryService.list_agents --
@@ -130,7 +137,7 @@ class FakeCorridor:
         return message
 
     def reply_sender(
-        self, *, owner: str, avatar_path: Any = None, category: Any = None
+        self, *, owner: str, category: Any = None, agent: Any = None
     ) -> FakeReplySender:
         """Stands in for corridor.reply_sender -- author identity is a
         corridor-side concern, covered by corridor's own test suite;

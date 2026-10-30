@@ -39,6 +39,9 @@ together.
 | `[p]cctv dashboard` | Guild admin | Dashboard readiness and both page paths |
 | `[p]cctv enable` / `disable` | Guild admin | Enable or disable this guild's Discord roster |
 | `[p]cctv includebots <bool>` | Guild admin | Include or exclude bot accounts from this guild's roster |
+| `[p]cctv showoffline <bool>` | Guild admin | Show or hide offline members in this guild's roster |
+| `[p]cctv ghostoffline <bool>` | Guild admin | Draw shown offline members translucent or normally |
+| `[p]cctv ghostbots <bool>` | Guild admin | Draw bot accounts translucent or normally |
 | `[p]cctv richpresence <bool>` | Guild admin | Show or suppress rich-presence activity on the Discord page |
 | `[p]cctv messages <bool>` | Guild admin | Show or suppress chat-message activity |
 | `[p]cctv sync` | Guild admin | Force a full resync of this guild's Discord roster |
@@ -106,7 +109,11 @@ CCTV uses its own, fresh Config identity: no Floorplan or Architect setting
 is read or migrated into it. Global defaults are listener host
 `127.0.0.1`, port `3210`, both activity-clear delays at `2.0` seconds, and
 rich-presence/message display enabled. Per-guild defaults are `disabled`
-with bots included.
+with bots included and drawn translucent, and offline members hidden
+(translucent when shown). See "Who the Discord page shows" in
+[`docs/cctv-design.md`](../docs/cctv-design.md) for how presence and
+translucency reach the canvas, and the gateway intents showing offline
+members needs.
 
 A listener bind failure, a missing webview bundle, an invalid persisted
 aggregate, or a missing Dashboard does not unload CCTV. `[p]cctv status`

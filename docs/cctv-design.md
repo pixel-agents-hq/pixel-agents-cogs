@@ -195,6 +195,9 @@ class GuildSettings:
     guild_id: int
     enabled: bool
     include_bots: bool
+    show_offline: bool
+    ghost_offline: bool
+    ghost_bots: bool
 ```
 
 CCTV registers these under its own fresh Red Config identity (no Floorplan
@@ -202,10 +205,88 @@ or Architect setting is read into it). Defaults: host `127.0.0.1`, port
 `3210`, both clear delays `2.0` seconds, rich-presence and message display
 enabled globally, the character designer at
 `https://pixel-index-staging.nntin.xyz/assets/design`, and every guild
-starts disabled with bots included.
-Guild enablement, include-bots, rich-presence, and message-display settings
-apply only to the Discord page; the two activity-clear delays are
-independent per page.
+starts disabled with bots included and drawn translucent, and offline
+members hidden (drawn translucent once `showoffline` shows them).
+Guild enablement, include-bots, offline/ghosting, rich-presence, and
+message-display settings apply only to the Discord page; the two
+activity-clear delays are independent per page.
+
+### Who the Discord page shows
+
+Each enabled guild's roster policy is three settings on top of
+`include_bots`, turned into a `pixelagents.domain.OfficeVisibility` on
+every reconcile:
+
+| Setting | Command | Default | Effect |
+|---|---|---|---|
+| `show_offline` | `[p]cctv showoffline <bool>` | off | Show members whose Discord status is offline (or invisible) too |
+| `ghost_offline` | `[p]cctv ghostoffline <bool>` | on | Draw those offline members translucent; only consulted with `show_offline` |
+| `ghost_bots` | `[p]cctv ghostbots <bool>` | on | Draw bot accounts translucent; off draws them like anyone else |
+
+How a member's presence and translucency reach the canvas, end to end:
+
+1. **Gateway.** corridor's `DiscordGatewayMixin` turns `on_presence_update`
+   (status or activities changed), `on_member_update` (display name
+   changed) and `on_member_join` into an `AgentPresenceChanged` built by
+   `_presence_event`: `status` is `str(member.status)` (forced `"online"`
+   for the bot's own account), anything outside online/idle/dnd/offline
+   (e.g. `invisible`) becomes `"offline"`, and `is_bot` is `member.bot`.
+   `on_member_remove` publishes `status="offline"` with `left_guild=True`.
+2. **Subscriber.** `CctvBase._on_agent_presence_changed` resolves an
+   `AgentKey`, maps `"offline"` to `AgentSnapshot.status=None`
+   (`_event_snapshot`), and, if the guild is enabled, calls
+   `reconcile_discord` with the guild's `include_bots` and visibility. A
+   member who left is reconciled under the default visibility, which
+   hides an offline snapshot, so a leaver is removed even where offline
+   members show.
+3. **Initial sync.** No presence event is needed for a member to appear.
+   `cog_load` seeds every enabled guild from `guild.members`
+   (`member_snapshot`, the same status mapping), and once Red is ready
+   `_full_sync` runs `OfficeService.sync_guild` over the whole member
+   list, which closes characters for members no longer listed and
+   reconciles everyone else. Every policy command re-runs `_full_sync`.
+4. **Office.** `OfficeService.reconcile` asks the visibility for the
+   member's directory (`status.value`, `"offline"` under `show_offline`,
+   or None to hide) and whether it's ghosted
+   (`is_bot and ghost_bots`, or offline and `ghost_offline`). A hidden or
+   excluded bot is closed; a new one is created with `agentCreated`
+   (`directoryName`, `isExternal=true`, `isHeadless=<ghosted>`); a change of
+   directory *or* of translucency closes and re-creates the character.
+   `existingAgents.headlessAgents` repeats each character's last
+   `isHeadless`, and bootstrap's `settingsLoaded.ghostHeadlessAgents` is
+   always `true`.
+5. **Webview.** The vendored webview resolves headless as the explicit
+   `isHeadless` when sent (`resolveHeadless` in
+   `webview-ui/src/office/engine/headlessAgent.ts`) and draws a headless
+   character at `HEADLESS_CHARACTER_ALPHA` only while
+   `ghostHeadlessAgents` is on (`renderer.ts`). On this canvas that alpha
+   is the flag's only effect (its other use, unlinking a teammate, needs
+   team messages this office never sends), so "translucent" and
+   "headless" are the same wire value and no upstream change is needed for
+   an opaque bot or a translucent human. The webview reads the flag only
+   when it creates a character (`syncAgent` on an `existingAgents` resend
+   ignores it), which is why step 4 re-creates on a translucency change.
+
+A member in several enabled guilds is one character; it wears the policy
+of whichever guild last created it. Registered A2A agents (genuine agents)
+are outside this policy: always shown translucent while registered, closed
+when they unregister. The editor page shows only the bot's own account,
+under the default policy.
+
+Showing offline members depends on Discord's member cache:
+
+- Without the **presences** intent Discord reports every member as
+  offline, so `showoffline` would show everyone as offline.
+- Without the **members** intent the cache holds only members seen in an
+  event since startup, so offline members who haven't been seen can't be
+  shown.
+- With it, discord.py chunks every guild at startup; `_full_sync` also
+  calls `guild.chunk()` for a guild that isn't chunked yet when
+  `showoffline` is on.
+
+`[p]cctv status` shows a **Member Cache** field, and the replies of
+`sync`/`enable`/the policy commands carry a warning, whenever one of
+these limits applies with `showoffline` on.
 
 ### Client wire messages
 
@@ -300,7 +381,7 @@ sequenceDiagram
         C->>D: reconcile_genuine(identity, name, status)
         C->>E: reconcile_genuine(identity, name, status)
     else Discord guild member
-        C->>D: reconcile_discord(snapshot) if guild enabled
+        C->>D: reconcile_discord(snapshot, guild visibility) if guild enabled
         C->>E: reconcile_discord(snapshot) if it's the bot's own account
     end
 
@@ -346,6 +427,9 @@ presence change occurring during startup can be missed.
 | `[p]cctv dashboard` | Guild admin | Dashboard readiness and page paths |
 | `[p]cctv enable` / `disable` | Guild admin | Enable or disable this guild's Discord roster; re-authorizes connected sockets and syncs/despawns |
 | `[p]cctv includebots <bool>` | Guild admin | Include/exclude bot accounts; triggers a full resync if the guild is enabled |
+| `[p]cctv showoffline <bool>` | Guild admin | Show/hide offline members (default hidden); triggers a full resync if the guild is enabled |
+| `[p]cctv ghostoffline <bool>` | Guild admin | Draw shown offline members translucent (default) or normally; triggers a full resync if the guild is enabled |
+| `[p]cctv ghostbots <bool>` | Guild admin | Draw bot accounts translucent (default) or normally; triggers a full resync if the guild is enabled |
 | `[p]cctv richpresence <bool>` | Guild admin | Toggle rich-presence display; clears presence immediately when turned off |
 | `[p]cctv messages <bool>` | Guild admin | Toggle chat-message activity display |
 | `[p]cctv sync` | Guild admin | Force a full resync of this guild's roster |

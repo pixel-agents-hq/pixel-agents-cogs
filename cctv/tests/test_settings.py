@@ -21,6 +21,9 @@ class TestCctvSettings(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(global_settings.broadcast_messages)
         self.assertFalse(guild.enabled)
         self.assertTrue(guild.include_bots)
+        self.assertFalse(guild.show_offline)
+        self.assertTrue(guild.ghost_offline)
+        self.assertTrue(guild.ghost_bots)
 
     async def test_settings_are_independently_mutable(self) -> None:
         await self.repository.set_listener_host("localhost")
@@ -31,6 +34,9 @@ class TestCctvSettings(unittest.IsolatedAsyncioTestCase):
         await self.repository.set_broadcast_messages(False)
         await self.repository.set_guild_enabled(42, True)
         await self.repository.set_guild_include_bots(42, False)
+        await self.repository.set_guild_show_offline(42, True)
+        await self.repository.set_guild_ghost_offline(42, False)
+        await self.repository.set_guild_ghost_bots(42, False)
 
         global_settings = await self.repository.global_settings()
         guild = await self.repository.guild_settings(42)
@@ -42,6 +48,9 @@ class TestCctvSettings(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(global_settings.broadcast_messages)
         self.assertTrue(guild.enabled)
         self.assertFalse(guild.include_bots)
+        self.assertTrue(guild.show_offline)
+        self.assertFalse(guild.ghost_offline)
+        self.assertFalse(guild.ghost_bots)
 
     async def test_invalid_listener_and_delay_values_are_rejected(self) -> None:
         with self.assertRaises(ValueError):

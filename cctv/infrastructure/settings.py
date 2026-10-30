@@ -20,7 +20,13 @@ GLOBAL_DEFAULTS: dict[str, object] = {
     "broadcast_messages": True,
     "designer_url": "https://pixel-index-staging.nntin.xyz/assets/design",
 }
-GUILD_DEFAULTS: dict[str, object] = {"enabled": False, "include_bots": True}
+GUILD_DEFAULTS: dict[str, object] = {
+    "enabled": False,
+    "include_bots": True,
+    "show_offline": False,
+    "ghost_offline": True,
+    "ghost_bots": True,
+}
 
 
 class GuildReference(Protocol):
@@ -69,6 +75,9 @@ class RedSettingsRepository:
             guild_id=guild_id,
             enabled=cast(bool, await group.enabled()),
             include_bots=cast(bool, await group.include_bots()),
+            show_offline=cast(bool, await group.show_offline()),
+            ghost_offline=cast(bool, await group.ghost_offline()),
+            ghost_bots=cast(bool, await group.ghost_bots()),
         )
 
     async def guild_enabled(self, guild: int | GuildReference) -> bool:
@@ -120,6 +129,21 @@ class RedSettingsRepository:
         if not isinstance(value, bool):
             raise ValueError("Include-bots setting must be a boolean.")
         await self._config.guild_from_id(guild_id).include_bots.set(value)
+
+    async def set_guild_show_offline(self, guild_id: int, value: bool) -> None:
+        if not isinstance(value, bool):
+            raise ValueError("Show-offline setting must be a boolean.")
+        await self._config.guild_from_id(guild_id).show_offline.set(value)
+
+    async def set_guild_ghost_offline(self, guild_id: int, value: bool) -> None:
+        if not isinstance(value, bool):
+            raise ValueError("Ghost-offline setting must be a boolean.")
+        await self._config.guild_from_id(guild_id).ghost_offline.set(value)
+
+    async def set_guild_ghost_bots(self, guild_id: int, value: bool) -> None:
+        if not isinstance(value, bool):
+            raise ValueError("Ghost-bots setting must be a boolean.")
+        await self._config.guild_from_id(guild_id).ghost_bots.set(value)
 
 
 __all__ = [

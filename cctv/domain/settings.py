@@ -22,6 +22,12 @@ class GuildSettings:
     guild_id: int
     enabled: bool
     include_bots: bool
+    # Show members whose Discord status is offline/invisible too.
+    show_offline: bool
+    # Draw those offline members translucent (only with show_offline).
+    ghost_offline: bool
+    # Draw bot accounts translucent.
+    ghost_bots: bool
 
 
 __all__ = ["GlobalSettings", "GuildSettings"]

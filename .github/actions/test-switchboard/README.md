@@ -12,8 +12,9 @@ three phases:
    switchboard through Downloader's `RepoManager` and records it in
    Downloader's Config, which is what `[p]repo add` + `[p]cog install` leave
    behind.
-2. **fresh**: starts Red with `--load-cogs switchboard` and drives it over
-   Red's RPC:
+2. **fresh**: starts Red and drives it over Red's RPC. On an instance's
+   first start Red ignores `--load-cogs`, so this phase loads switchboard
+   with `CORE__LOAD`. Then:
    - `SWITCHBOARD__STATUS` reports switchboard's own source (and, for
      `downloader`, its shadowed addpath copy). It also reports corridor as
      addpath with missing requirements.
@@ -23,7 +24,8 @@ three phases:
    - `SWITCHBOARD__UNLOAD corridor` unloads every dependent first.
    - Everything is loaded again, which leaves a managed set.
 3. **restarted**: `run.sh` stops Red, empties Downloader's lib directory (a
-   fresh container), and restarts. Red's own autoload fails on corridor.
+   fresh container), and restarts. This second start does honour
+   `--load-cogs switchboard`. Red's own autoload fails on corridor.
    Switchboard's autorepair must reinstall and reload every managed cog,
    checked over RPC and in the bot log.
 

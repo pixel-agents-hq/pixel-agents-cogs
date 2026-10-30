@@ -185,6 +185,15 @@ async def fresh(args: argparse.Namespace) -> None:
     async with aiohttp.ClientSession() as session:
         rpc = Rpc(session, args.port)
         await rpc.wait_ready()
+        # Red ignores --load-cogs on an instance's very first start (it only
+        # records the Python version then -- see Red._pre_connect), so load
+        # switchboard and the dashboard stub explicitly. The `restarted`
+        # phase is a second start and relies on --load-cogs for real.
+        first = await rpc.call("CORE__LOAD", [[SELF, "dashboard"]])
+        check(
+            {SELF, "dashboard"} <= set(first["loaded_packages"] + first["alreadyloaded_packages"]),
+            f"switchboard and the dashboard stub load ({first})",
+        )
         await rpc.wait_for_method("SWITCHBOARD__STATUS")
 
         print("switchboard knows where it came from")

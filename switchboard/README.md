@@ -68,6 +68,12 @@ the managed set on every start:
 redbot <instance> --cog-path /cogs/office-cogs --load-cogs switchboard
 ```
 
+Red ignores `--load-cogs` on an instance's very first start, and on the
+first start after a Python minor-version change. In both cases it only
+records the Python version and loads nothing. Load switchboard once by hand
+then (`[p]load switchboard`, or RPC `CORE__LOAD`). Every later start loads
+it from `--load-cogs` and from Red's own autoload list.
+
 ## Commands
 
 Bot owner only. `<cogs>` are cog names, `all` (every enabled cog on an

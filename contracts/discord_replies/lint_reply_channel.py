@@ -77,7 +77,9 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 # Every cog package this check applies to. Each is scanned (and its call
 # graph walked) independently -- add a new cog here when it's created (the
 # cookiecutter template's `commands.py` already follows the compliant
-# pattern this check enforces).
+# pattern this check enforces). `switchboard` is deliberately absent: it
+# installs and loads corridor, so it has to reply while corridor cannot even
+# import, and uses plain `ctx.send` (see switchboard/adapters/commands.py).
 COG_PACKAGES = (
     "animator",
     "architect",

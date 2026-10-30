@@ -1,0 +1,23 @@
+{
+    "$schema": "https://raw.githubusercontent.com/Cog-Creators/Red-DiscordBot/V3/develop/schema/red_cog.schema.json",
+    "name": "switchboard",
+    "short": "Install addpath cogs' requirements and load/unload cogs in dependency order.",
+    "description": "Red only installs a cog's info.json requirements through Downloader ([p]cog install), and never reads required_cogs. Switchboard fills both gaps for cogs loaded from [p]addpath or --cog-path directories: it installs their requirements into Downloader's own lib directory, loads and unloads several cogs in required_cogs order, reports whether each cog came from Downloader, addpath, a CLI path, or Red itself, and reloads the cogs it manages after a restart. It needs no other cog and no requirements of its own.",
+    "end_user_data_statement": "This cog does not persistently store any data or metadata about users.",
+    "install_msg": "Bot owner only. Start with `[p]switchboard status`, then `[p]switchboard load <cogs>` (or `all`) to install requirements and load cogs in dependency order.",
+    "author": ["Tin Nguyen"],
+    "required_cogs": {},
+    "requirements": [],
+    "tags": [
+        "cogs",
+        "requirements",
+        "addpath",
+        "loading",
+        "tooling"
+    ],
+    "min_bot_version": "3.5.24",
+    "min_python_version": [3, 11, 0],
+    "hidden": false,
+    "disabled": false,
+    "type": "COG"
+}

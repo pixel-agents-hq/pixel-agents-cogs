@@ -56,7 +56,9 @@ native tool, deliver_pixel_agents_assets, that turns a finished render
 job's output files into real Discord attachments instead of an unreachable
 internal download_url), `testbench`
 (owner-only bus-event publisher for testing), `deskutils`
-(small utilities), `contracts` (CI-only, not a runtime cog).
+(small utilities), `switchboard` (owner-only: installs requirements for
+`[p]addpath` cogs and loads/unloads cogs in `required_cogs` order --
+deliberately corridor-free), `contracts` (CI-only, not a runtime cog).
 
 ## Commands
 
@@ -84,11 +86,12 @@ python -m pytest -q bootcamp/
 python -m pytest -q testbench/
 python -m pytest -q deskutils/
 python -m pytest -q animator/
+python -m pytest -q switchboard/  # needs red-discordbot installed (no corridor stubs)
 
 # lint/format/types run fine across all cogs at once:
-python -m ruff format --check corridor floorplan pixelagents cctv toolbox pico architect painter suggestionbox telephonepole bootcamp testbench deskutils animator e2e
-python -m ruff check corridor floorplan pixelagents cctv toolbox pico architect painter suggestionbox telephonepole bootcamp testbench deskutils animator e2e
-python -m mypy corridor floorplan pixelagents cctv toolbox pico architect painter suggestionbox telephonepole bootcamp testbench deskutils animator e2e
+python -m ruff format --check corridor floorplan pixelagents cctv toolbox pico architect painter suggestionbox telephonepole bootcamp testbench deskutils animator switchboard e2e
+python -m ruff check corridor floorplan pixelagents cctv toolbox pico architect painter suggestionbox telephonepole bootcamp testbench deskutils animator switchboard e2e
+python -m mypy corridor floorplan pixelagents cctv toolbox pico architect painter suggestionbox telephonepole bootcamp testbench deskutils animator switchboard e2e
 
 # CI-only contract/lint checks:
 python -m unittest discover -s contracts/tests
@@ -104,8 +107,9 @@ real loopback aiohttp listener for the same reason. `floorplan`'s suite
 additionally needs `pip install -r contracts/pixel_index/requirements.txt`.
 
 See [`.github/workflows/cogs-quality.yml`](../.github/workflows/cogs-quality.yml)
-for the exact per-cog dependency matrix if a test run fails on a missing
-package.
+(and [`.github/workflows/switchboard.yml`](../.github/workflows/switchboard.yml)
+for switchboard) for the exact per-cog dependency matrix if a test run
+fails on a missing package.
 
 ### `e2e/`: multi-cog end-to-end tests
 
@@ -154,8 +158,11 @@ each package's own `Architecture.md` (where present) covers its specifics.
 ## Rules that will bite you if ignored
 
 - **corridor is load-bearing infrastructure, not optional.** Every cog
-  declares it in `required_cogs` and auto-loads it via
-  `dependency_loader.ensure_corridor_loaded()`. All permission checks go
+  except `switchboard` declares it in `required_cogs` and auto-loads it via
+  `dependency_loader.ensure_corridor_loaded()`. `switchboard` is the one
+  exception: it installs and loads corridor, so it must never import
+  corridor, uses plain `ctx.send`, and is not in the reply-channel lint.
+  All permission checks go
   through `corridor.require_permission(ctx, group_key)` /
   `corridor.capabilities_satisfy(member, group_key)`; **all replies go
   through `corridor.send_reply(...)` / `render_reply(...)`, never a raw

@@ -1,7 +1,7 @@
 # Cross-cog architecture
 
 This document describes ownership and runtime data flow across the repository's
-thirteen cogs plus the CI-only `contracts` package. Package-specific architecture
+fifteen cogs plus the CI-only `contracts` package. Package-specific architecture
 documents remain the source for internal layering.
 
 ## Runtime dependencies
@@ -24,6 +24,8 @@ flowchart BT
     Telephonepole["telephonepole"]
     Bootcamp["bootcamp"]
     Testbench["testbench"]
+    Animator["animator<br/>pixel-art agent"]
+    Switchboard["switchboard<br/>requirements + load order"]
 
     Pixelagents --> Corridor
     CCTV --> Corridor
@@ -41,7 +43,14 @@ flowchart BT
     Telephonepole --> Corridor
     Bootcamp --> Corridor
     Testbench --> Corridor
+    Animator --> Corridor
 ```
+
+Switchboard has no edge: it depends on no other cog and declares no
+requirements, because it is the cog that installs the other cogs'
+requirements and loads them in `required_cogs` order. Corridor cannot be
+loaded until that has happened (see
+[`dependency-loading.md`](dependency-loading.md#requirements-and-load-order-for-addpath-cogs-switchboard)).
 
 Painter's optional A2A call to Architect and Pico's calls to registered agents
 are network interactions through Corridor's shared listener, not dependency

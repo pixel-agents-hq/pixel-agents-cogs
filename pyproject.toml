@@ -47,6 +47,7 @@ files = [
     "telephonepole",
     "bootcamp",
     "animator",
+    "switchboard",
 ]
 exclude = [
     "^pixelagents/conftest\\.py$",
@@ -78,6 +79,7 @@ exclude = [
     "^bootcamp/tests/",
     "^animator/conftest\\.py$",
     "^animator/tests/",
+    "^switchboard/tests/",
 ]
 
 [[tool.mypy.overrides]]
@@ -319,4 +321,18 @@ disable_error_code = ["arg-type", "no-any-return", "untyped-decorator"]
 # above: `commands.Cog` resolves to Any without Red's real Cog metaclass
 # installed.
 module = ["animator.animator"]
+disable_error_code = ["misc"]
+
+[[tool.mypy.overrides]]
+# Unlike every other cog's type job, switchboard's installs the real
+# red-discordbot (switchboard cannot share corridor's stubs -- it must not
+# depend on corridor), whose command decorators and Context methods are
+# untyped.
+module = ["switchboard.adapters.commands", "switchboard.adapters.cog_base"]
+disable_error_code = ["untyped-decorator", "no-untyped-call"]
+
+[[tool.mypy.overrides]]
+# Same as animator.animator and the others above, for a type run without Red
+# installed: `commands.Cog` resolves to Any.
+module = ["switchboard.switchboard"]
 disable_error_code = ["misc"]

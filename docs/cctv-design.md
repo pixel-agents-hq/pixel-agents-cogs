@@ -410,7 +410,7 @@ sequenceDiagram
         B->>S: {"type": "authorize", ticket} (only to make writes)
         S->>Pi: authorize(user_id) for that guild
     else private office, or no open office for that id
-        S->>S: send nothing; hold an early webviewReady
+        S->>S: send nothing, hold an early webviewReady
         B->>S: {"type": "authorize", ticket} within 10 s
         S->>S: spend the ticket: same guild, a member? else close 4404
         S->>Pi: mark the socket a viewer, replay the held webviewReady

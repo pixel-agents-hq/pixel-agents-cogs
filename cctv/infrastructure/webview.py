@@ -7,7 +7,8 @@ import json
 import logging
 import mimetypes
 import re
-from collections.abc import Mapping, Sized
+from collections.abc import Mapping, Sequence, Sized
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, cast
 
@@ -60,7 +61,26 @@ class WebviewStatus(Protocol):
     built_commit: str | None
 
 
-def _connection_shim(page: str) -> str:
+def office_ws_path(guild_id: int) -> str:
+    """The WebSocket path of one guild's office."""
+
+    return f"/cctv/office/{int(guild_id)}/ws"
+
+
+EDITOR_WS_PATH = "/cctv/editor/ws"
+PICKER_PATH = "/third-party/cctv"
+
+
+def office_page_path(guild_id: int) -> str:
+    """The Dashboard path of one guild's office page."""
+
+    return f"/third-party/cctv/office?guild={int(guild_id)}"
+
+
+def _connection_shim(ws_path: str, *, identify: bool) -> str:
+    # The Dashboard renders a page's source as a Jinja template, so nothing
+    # user-controlled may ever be spliced in here: `ws_path` is built only
+    # from an integer guild id (office_ws_path) or a constant.
     ticket = (
         """
   var ticketPromise = fetch('/third-party/cctv/session', {
@@ -69,7 +89,7 @@ def _connection_shim(page: str) -> str:
     .then(function (data) { return (data && data.ticket) || null; })
     .catch(function () { return null; });
 """
-        if page == "discord"
+        if identify
         else ""
     )
     authorize = (
@@ -85,7 +105,7 @@ def _connection_shim(page: str) -> str:
       }
     });
 """
-        if page == "discord"
+        if identify
         else ""
     )
     return f"""<script>
@@ -96,7 +116,7 @@ def _connection_shim(page: str) -> str:
     var target = new URL(url, location.href);
     target.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
     target.host = location.host;
-    target.pathname = '/cctv/{page}/ws';
+    target.pathname = '{ws_path}';
     target.search = '';
     var socket = protocols === undefined
       ? new Native(target.toString()) : new Native(target.toString(), protocols);
@@ -166,12 +186,14 @@ class WebviewAssets:
         guessed, _ = mimetypes.guess_type(asset_path)
         return guessed or "application/octet-stream"
 
-    def page_response(self, page: str) -> dict[str, object]:
+    def page_response(self, ws_path: str, *, identify: bool) -> dict[str, object]:
         index = self.resolve("index.html") if self.ready else None
         if index is None:
             return self.unavailable_response(self.error or "Pixel Agents bundle is missing.")
         source = index.read_text("utf-8")
-        injection = f'<base href="{WEBVIEW_BASE_PATH}">' + _connection_shim(page)
+        injection = f'<base href="{WEBVIEW_BASE_PATH}">' + _connection_shim(
+            ws_path, identify=identify
+        )
         match = re.search(r"<head[^>]*>", source, re.IGNORECASE)
         source = (
             source[: match.end()] + "\n" + injection + source[match.end() :]
@@ -183,6 +205,14 @@ class WebviewAssets:
     @staticmethod
     def unavailable_response(message: str) -> dict[str, object]:
         return {"status": 1, "error_code": 503, "error_message": message}
+
+    @staticmethod
+    def not_found_response() -> dict[str, object]:
+        return {"status": 1, "error_code": 404, "error_message": "There is no such office."}
+
+    @staticmethod
+    def redirect_response(path: str) -> dict[str, object]:
+        return {"status": 0, "redirect_url": path}
 
     def static_response(self, asset_path: str, *, head_only: bool = False) -> dict[str, object]:
         resolved = self.resolve(asset_path)
@@ -246,6 +276,86 @@ class WebviewAssets:
         return len(value) if isinstance(value, Sized) else 0
 
 
+@dataclass(frozen=True, slots=True)
+class PickerEntry:
+    """One guild office listed on the server picker."""
+
+    guild_id: int
+    name: str
+    icon_url: str | None
+    headcount: int
+
+    @property
+    def href(self) -> str:
+        return office_page_path(self.guild_id)
+
+
+# Rendered by the Dashboard's Jinja (`render_template_string`, autoescaped):
+# guild names reach it only as the `cctv_guilds` template variable, never
+# spliced into this source, since any guild's admins choose its name.
+PICKER_TEMPLATE = """<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Pixel Agents offices</title>
+<style>
+  :root { color-scheme: dark; --bg: #1e1e2e; --card: #2a2a3c; --text: #e6e6f0; --muted: #a6a6c0; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 16px/1.4 system-ui, sans-serif; padding: 24px 16px; }
+  h1 { font-size: 1.4rem; margin: 0 0 16px; }
+  ul { list-style: none; padding: 0; margin: 0; display: grid; gap: 12px;
+       grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); }
+  a.office { display: flex; gap: 12px; align-items: center; padding: 12px;
+             background: var(--card); border-radius: 10px; color: inherit; text-decoration: none; }
+  a.office:hover, a.office:focus-visible { outline: 2px solid var(--muted); }
+  img, .blank { width: 48px; height: 48px; border-radius: 50%; flex: none; background: #3a3a50; }
+  .name { font-weight: 600; overflow-wrap: anywhere; }
+  .count, .empty { color: var(--muted); font-size: 0.9rem; }
+</style>
+</head>
+<body>
+<h1>Pixel Agents offices</h1>
+{% if cctv_guilds %}
+<ul>
+{% for g in cctv_guilds %}
+  <li><a class="office" href="{{ g.href }}">
+    {% if g.icon_url %}<img src="{{ g.icon_url }}" alt="">{% else %}<span class="blank"></span>{% endif %}
+    <span><span class="name">{{ g.name }}</span><br>
+    <span class="count">{{ g.headcount }} in the office</span></span>
+  </a></li>
+{% endfor %}
+</ul>
+{% else %}
+<p class="empty">No server has a public office yet.</p>
+{% endif %}
+</body>
+</html>
+"""
+
+
+def picker_response(entries: Sequence[PickerEntry]) -> dict[str, object]:
+    """The server picker page: every listed guild office, as template data."""
+
+    return {
+        "status": 0,
+        "web_content": {
+            "standalone": True,
+            "source": PICKER_TEMPLATE,
+            "cctv_guilds": [
+                {
+                    "href": entry.href,
+                    "name": entry.name,
+                    "icon_url": entry.icon_url,
+                    "headcount": entry.headcount,
+                }
+                for entry in entries
+            ],
+        },
+    }
+
+
 def degraded_asset_notification(degraded: tuple[str, ...]) -> str:
     """DM text for `Red.send_to_owners` when `WebviewAssets.degraded` is
     non-empty. Mirrors `pixelagents.infrastructure.webview_build.
@@ -266,8 +376,15 @@ def degraded_asset_notification(degraded: tuple[str, ...]) -> str:
 
 
 __all__ = [
+    "EDITOR_WS_PATH",
+    "PICKER_PATH",
+    "PICKER_TEMPLATE",
+    "PickerEntry",
     "WEBVIEW_BASE_PATH",
     "WEBVIEW_CACHE_CONTROL",
     "WebviewAssets",
     "degraded_asset_notification",
+    "office_page_path",
+    "office_ws_path",
+    "picker_response",
 ]

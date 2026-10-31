@@ -11,10 +11,11 @@ class GlobalSettings:
     listener_port: int
     discord_clear_delay: float
     editor_clear_delay: float
-    broadcast_rich_presence: bool
-    broadcast_messages: bool
     # Pixel Index's character designer, where a member copies a seed code.
     designer_url: str
+    # Where browsers reach the Dashboard (`https://host`), so `[p]cctv url`
+    # can hand out an absolute link; None until the bot owner sets it.
+    public_base_url: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,6 +29,11 @@ class GuildSettings:
     ghost_offline: bool
     # Draw bot accounts translucent.
     ghost_bots: bool
+    # Show members' Discord rich presence (Spotify, games) on this office.
+    broadcast_rich_presence: bool
+    # Show members' chat messages, from every channel the bot reads, as
+    # speech bubbles on this office.
+    broadcast_messages: bool
 
 
 __all__ = ["GlobalSettings", "GuildSettings"]

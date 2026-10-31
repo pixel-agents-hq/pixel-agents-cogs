@@ -9,7 +9,7 @@ import types
 import unittest
 from collections.abc import Mapping
 
-from corridor.domain import OfficeState, OfficeStateKind
+from corridor.domain import OfficeRef, OfficeState, OfficeStateKind
 from pixelagents.domain import FurnitureKind, GridPosition, GridRect
 from pixelagents.infrastructure.furniture_styles import FurnitureStyleLoader
 
@@ -61,13 +61,13 @@ class FakeSettingsRepository:
     async def layout(self) -> dict[str, object] | None:
         return self._state.layout
 
-    async def office_state(self, kind: OfficeStateKind) -> OfficeState:
+    async def office_state(self, ref: OfficeRef) -> OfficeState:
+        kind = ref.kind
         assert kind is OfficeStateKind.EDITOR
         return self._state
 
-    async def set_office_layout(
-        self, kind: OfficeStateKind, layout: Mapping[str, object]
-    ) -> OfficeState:
+    async def set_office_layout(self, ref: OfficeRef, layout: Mapping[str, object]) -> OfficeState:
+        kind = ref.kind
         assert kind is OfficeStateKind.EDITOR
         self._state = OfficeState(kind, dict(layout), self._state.seats, self._state.revision + 1)
         return self._state

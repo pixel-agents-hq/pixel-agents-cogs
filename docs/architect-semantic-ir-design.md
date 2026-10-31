@@ -122,7 +122,7 @@ flowchart TB
     REPO_P["OfficeLayoutRepository\n(painter/infrastructure)"]
 
     subgraph corridor["corridor"]
-        OS["office_state / set_office_layout\n(OfficeStateKind.EDITOR aggregate)"]
+        OS["office_state / set_office_layout\n(OfficeRef.editor() aggregate)"]
         EVT["OfficeStateChanged event"]
     end
 
@@ -154,7 +154,7 @@ flowchart TB
   call the same methods; there is exactly one mutation surface per cog,
   two callers each.
 - **corridor** persists the raw JSON opaquely as one revision of its
-  `editor`-kind `OfficeState` aggregate (`OfficeStateKind.EDITOR`) and
+  `editor`-kind `OfficeState` aggregate (`OfficeRef.editor()`) and
   publishes `OfficeStateChanged` whenever a save succeeds. Corridor never
   parses the layout it stores — it is exactly as opaque to corridor as it
   was to the old single-Config-value design, just versioned and
@@ -724,7 +724,7 @@ sequenceDiagram
     LLM->>Tool: Input(style, facing, position, ...)
     Tool->>Svc: place_furniture(...)
     Svc->>Repo: load(styles)
-    Repo->>Corridor: office_state(EDITOR)
+    Repo->>Corridor: office_state(OfficeRef.editor())
     Corridor-->>Repo: OfficeState(layout=raw JSON, revision=N)
     Repo->>Codec: decode(raw, styles)
     Codec-->>Repo: Office
@@ -752,7 +752,7 @@ Every mutation method on `OfficeLayoutService` and
 persist shape:
 
 1. Load the current `Office` via `Repository.load()`, which calls
-   `pixelagents`' `office_state(OfficeStateKind.EDITOR)` and decodes the
+   `pixelagents`' `office_state(OfficeRef.editor())` and decodes the
    raw layout it returns.
 2. Apply the change to a **new** `Office` value — every IR dataclass is
    frozen, so this is always `dataclasses.replace(...)` or
@@ -892,8 +892,8 @@ of a mutation method.
 | `build_furniture_style_manifest` | `pixelagents.infrastructure.furniture_style_builder` | The catalog→manifest generator, run at webview-build time. |
 | `OfficeLayoutService`, `OfficeValidationError`, `Touching` | `architect.application.office_layout_service` | architect's structural mutation surface (§6, §7). |
 | `PainterLayoutService`, `PainterValidationError` | `painter.application.painter_layout_service` | painter's color-only mutation surface (§6, §7). |
-| `OfficeLayoutRepository` | `architect.infrastructure.office_layout_repository` / painter's own equivalent | Thin adapter from the IR to `pixelagents`' `office_state`/`set_office_layout` facade (`OfficeStateKind.EDITOR`). |
-| `OfficeState`, `OfficeStateChanged`, `OfficeStateKind` | `corridor.domain` | Corridor's revisioned aggregate and the event it publishes on every save. |
+| `OfficeLayoutRepository` | `architect.infrastructure.office_layout_repository` / painter's own equivalent | Thin adapter from the IR to `pixelagents`' `office_state`/`set_office_layout` facade (`OfficeRef.editor()`). |
+| `OfficeRef`, `OfficeState`, `OfficeStateChanged`, `OfficeStateKind` | `corridor.domain` | Corridor's revisioned aggregate and the event it publishes on every save. |
 
 **architect's tool surface** (`architect/tools/office_tools.py`, one file
 of thin pydantic `Input`/`Output` wrappers around `OfficeLayoutService`):

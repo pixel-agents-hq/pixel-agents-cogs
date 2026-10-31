@@ -4,7 +4,7 @@ import unittest
 from copy import deepcopy
 from typing import Any
 
-from corridor.domain import OfficeState, OfficeStateKind
+from corridor.domain import OfficeRef, OfficeState, OfficeStateKind
 
 from ..domain import Office
 from ..infrastructure.furniture_styles import FurnitureStyleManifest
@@ -32,11 +32,13 @@ class _FakePixelAgents:
             kind=OfficeStateKind.EDITOR, layout=editor_layout, seats={}, revision=1
         )
 
-    async def office_state(self, kind: OfficeStateKind) -> OfficeState:
+    async def office_state(self, ref: OfficeRef) -> OfficeState:
+        kind = ref.kind
         assert kind == OfficeStateKind.EDITOR
         return deepcopy(self._state)
 
-    async def set_office_layout(self, kind: OfficeStateKind, layout: dict[str, Any]) -> OfficeState:
+    async def set_office_layout(self, ref: OfficeRef, layout: dict[str, Any]) -> OfficeState:
+        kind = ref.kind
         assert kind == OfficeStateKind.EDITOR
         self._state = OfficeState(
             kind=kind,
@@ -66,7 +68,7 @@ class TestOfficeLayoutRepository(unittest.IsolatedAsyncioTestCase):
 
         await repository.save(office, styles)
 
-        saved = await pixelagents.office_state(OfficeStateKind.EDITOR)
+        saved = await pixelagents.office_state(OfficeRef.editor())
         self.assertEqual(saved.layout["cols"], 3)
         self.assertEqual(saved.revision, 2)
 

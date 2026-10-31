@@ -6,7 +6,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from corridor.domain import OfficeStateKind
+from corridor.domain import OfficeRef
 
 from floorplan.floorplan import Floorplan
 from floorplan.tests.conftest import FakeCorridor
@@ -57,15 +57,15 @@ class TestFloorplanLifecycle(unittest.IsolatedAsyncioTestCase):
         assert corridor.unregistered_tool_owners == ["Floorplan"]
         cog._pixel_index_client.close.assert_awaited_once_with()
 
-    async def test_catalogue_layout_updates_the_discord_aggregate(self) -> None:
+    async def test_catalogue_layout_updates_only_that_guilds_office(self) -> None:
         cog = make_cog()
         cog._pixelagents = MagicMock()
         cog._pixelagents.set_office_layout = AsyncMock()
         layout = {"version": 1, "cols": 1, "rows": 1, "tiles": [1], "furniture": []}
 
-        await cog._apply_catalogue_layout(layout)
+        await cog._apply_catalogue_layout(9, layout)
 
-        cog._pixelagents.set_office_layout.assert_awaited_once_with(OfficeStateKind.DISCORD, layout)
+        cog._pixelagents.set_office_layout.assert_awaited_once_with(OfficeRef.discord(9), layout)
 
     async def test_refresh_pixelagents_replaces_the_cached_reference(self) -> None:
         # Regression test for: pixelagents reloading independently of
@@ -89,28 +89,41 @@ class TestFloorplanAuthorization(unittest.IsolatedAsyncioTestCase):
         cog = make_cog()
         cog.bot.is_owner = AsyncMock(return_value=True)
 
-        assert await cog._can_edit_layout_user(7)
+        assert await cog._can_edit_layout_user(9, 7)
 
-    async def test_keyholder_in_any_guild_can_load_a_layout(self) -> None:
+    async def test_a_keyholder_of_that_guild_can_load_a_layout(self) -> None:
         cog = make_cog()
         member = SimpleNamespace(id=7)
         guild = MagicMock()
         guild.get_member.return_value = member
-        cog.bot.guilds = [guild]
+        cog.bot.get_guild = MagicMock(return_value=guild)
         cog._corridor = FakeCorridor(keyholders={7})
 
-        assert await cog._can_edit_layout_user(7)
+        assert await cog._can_edit_layout_user(9, 7)
+        cog.bot.get_guild.assert_called_with(9)
         assert cog._corridor.capability_checks == [(7, "keyholder")]
+
+    async def test_a_keyholder_of_another_guild_cannot_load_a_layout(self) -> None:
+        cog = make_cog()
+        theirs = MagicMock()
+        theirs.get_member.return_value = SimpleNamespace(id=7)
+        mine = MagicMock()
+        mine.get_member.return_value = None
+        cog.bot.guilds = [theirs, mine]
+        cog.bot.get_guild = MagicMock(return_value=mine)
+        cog._corridor = FakeCorridor(keyholders={7})
+
+        assert not await cog._can_edit_layout_user(9, 7)
 
     async def test_unknown_user_cannot_load_a_layout(self) -> None:
         cog = make_cog()
         guild = MagicMock()
         guild.get_member.return_value = None
-        cog.bot.guilds = [guild]
+        cog.bot.get_guild = MagicMock(return_value=guild)
         cog._corridor = FakeCorridor()
 
-        assert not await cog._can_edit_layout_user(7)
-        assert not await cog._can_edit_layout_user(0)
+        assert not await cog._can_edit_layout_user(9, 7)
+        assert not await cog._can_edit_layout_user(9, 0)
 
 
 if __name__ == "__main__":

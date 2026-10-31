@@ -15,6 +15,8 @@ from corridor.domain import ReplyField
 from pixelagents.domain import AgentKey, GenuineAgentKey, OfficeIdentity
 from pixelagents.domain.characters import CharacterRecord, PixatarFailure
 
+from ..domain import GlobalSettings
+from ..infrastructure import EDITOR_WS_PATH, PICKER_PATH, office_page_path, office_ws_path
 from .cog_base import CctvBase, roster_warnings
 from .dashboard import dashboard_cog_loaded
 
@@ -50,35 +52,38 @@ class CommandsMixin(CctvBase):
     @cctv_group.command(name="status")
     @commands.admin_or_permissions(administrator=True)
     async def cmd_status(self, ctx: commands.Context) -> None:
-        """Show CCTV's listener, dashboard, pipeline, and guild settings."""
+        """Show CCTV's listener, dashboard, this server's office, and its settings."""
 
         settings = await self._settings.global_settings()
-        guild = await self._settings.guild_settings(self._guild(ctx))
-        warnings = roster_warnings(self._guild(ctx), self.bot.intents)
+        guild_obj = self._guild(ctx)
+        guild = await self._settings.guild_settings(guild_obj)
+        warnings = roster_warnings(guild_obj, self.bot.intents)
         reasons = self._degraded_reasons()
         listener = self._server.running if self._server is not None else False
+        office = self.office(guild_obj.id)
         fields = (
             ReplyField(
                 "Listener",
                 f"{settings.listener_host}:{settings.listener_port} "
                 f"({'running' if listener else 'stopped'})",
             ),
-            ReplyField("Discord WS", "/cctv/discord/ws"),
-            ReplyField("Editor WS", "/cctv/editor/ws"),
-            ReplyField("Discord Dashboard", "/third-party/cctv/discord"),
-            ReplyField("Editor Dashboard", "/third-party/cctv/editor"),
+            ReplyField("Office WS", office_ws_path(guild_obj.id)),
+            ReplyField("Editor WS", EDITOR_WS_PATH),
+            ReplyField("Office Page", self._page_link(settings, office_page_path(guild_obj.id))),
+            ReplyField("Editor Page", self._page_link(settings, "/third-party/cctv/editor")),
             ReplyField(
                 "Dashboard",
                 "✅ loaded" if dashboard_cog_loaded(self.bot) else "⚠️ not loaded",
             ),
             ReplyField("Assets", "✅ loaded" if self._assets.ready else "⚠️ unavailable"),
             ReplyField(
-                "Discord Pipeline",
-                f"revision={self.discord_pipeline.revision}, "
-                f"clients={self.discord_pipeline.clients.client_count}",
+                "Office",
+                f"revision={office.revision}, clients={office.clients.client_count}"
+                if office is not None
+                else "closed (CCTV is disabled here)",
             ),
             ReplyField(
-                "Editor Pipeline",
+                "Editor Office",
                 f"revision={self.editor_pipeline.revision}, "
                 f"clients={self.editor_pipeline.clients.client_count}",
             ),
@@ -91,11 +96,8 @@ class CommandsMixin(CctvBase):
                 "Member Cache",
                 "✅ complete" if not warnings else "⚠️ " + " ".join(warnings),
             ),
-            ReplyField(
-                "Rich Presence",
-                "✅" if settings.broadcast_rich_presence else "🛑",
-            ),
-            ReplyField("Messages", "✅" if settings.broadcast_messages else "🛑"),
+            ReplyField("Rich Presence", "✅" if guild.broadcast_rich_presence else "🛑"),
+            ReplyField("Messages", "✅" if guild.broadcast_messages else "🛑"),
             ReplyField("Discord Clear Delay", f"{settings.discord_clear_delay}s"),
             ReplyField("Editor Clear Delay", f"{settings.editor_clear_delay}s"),
             ReplyField("Health", "✅ healthy" if not reasons else "⚠️ " + "; ".join(reasons)),
@@ -107,12 +109,85 @@ class CommandsMixin(CctvBase):
     async def cmd_dashboard(self, ctx: commands.Context) -> None:
         """Show whether Red Web Dashboard is loaded and CCTV's page links."""
 
+        settings = await self._settings.global_settings()
         status = "loaded and ready" if dashboard_cog_loaded(self.bot) else "not loaded"
         await self._reply(
             ctx,
             f"Red Web Dashboard is {status}. Pages:",
-            code=["/third-party/cctv/discord", "/third-party/cctv/editor"],
+            code=[
+                self._page_link(settings, PICKER_PATH),
+                self._page_link(settings, office_page_path(self._guild(ctx).id)),
+                self._page_link(settings, "/third-party/cctv/editor"),
+            ],
         )
+
+    @cctv_group.command(name="url")
+    @commands.guild_only()
+    async def cmd_url(self, ctx: commands.Context) -> None:
+        """Show the link to this server's Pixel Agents office."""
+
+        guild = self._guild(ctx)
+        settings = await self._settings.global_settings()
+        guild_settings = await self._settings.guild_settings(guild)
+        if not guild_settings.enabled:
+            await self._reply(
+                ctx,
+                "CCTV isn't enabled on this server, so it has no office yet. "
+                "An admin can open one with `[p]cctv enable`.",
+            )
+            return
+        if not dashboard_cog_loaded(self.bot):
+            await self._reply(
+                ctx, "Red Web Dashboard isn't loaded, so the office page can't be served yet."
+            )
+            return
+        lines = ["Anyone with this link can watch this server's office."]
+        if guild_settings.broadcast_messages:
+            lines.append(
+                "Chat messages from every channel the bot can read appear there as speech "
+                "bubbles; an admin can turn that off with `[p]cctv messages false`."
+            )
+        if settings.public_base_url is None:
+            lines.append(
+                "The bot owner hasn't set the Dashboard's public address yet "
+                "(`[p]cctv publicurl`), so this is the path on the Dashboard's host."
+            )
+        await self._reply(
+            ctx,
+            "\n".join(lines),
+            title="This server's office",
+            code=[self._page_link(settings, office_page_path(guild.id))],
+        )
+
+    @cctv_group.command(name="publicurl")
+    @commands.is_owner()
+    async def cmd_public_url(self, ctx: commands.Context, url: str | None = None) -> None:
+        """Set the address browsers reach the Dashboard at, e.g. https://dash.example.com.
+
+        `[p]cctv url` builds each server's office link from it. Bot owner only.
+        """
+
+        if url is None:
+            current = (await self._settings.global_settings()).public_base_url
+            await self._reply(
+                ctx,
+                f"The Dashboard's public address is <{current}>."
+                if current is not None
+                else "The Dashboard's public address isn't set. Set it with "
+                "`[p]cctv publicurl https://…`.",
+            )
+            return
+        try:
+            clean = await self._settings.set_public_base_url(url)
+        except ValueError as exc:
+            await self._reply(ctx, str(exc))
+            return
+        await self._reply(ctx, f"The Dashboard's public address is now <{clean}>.")
+
+    @staticmethod
+    def _page_link(settings: GlobalSettings, path: str) -> str:
+        base = settings.public_base_url
+        return f"{base}{path}" if base is not None else path
 
     @cctv_group.command(name="host")
     @commands.is_owner()
@@ -154,43 +229,48 @@ class CommandsMixin(CctvBase):
     @cctv_group.command(name="richpresence")
     @commands.admin_or_permissions(administrator=True)
     async def cmd_rich_presence(self, ctx: commands.Context, value: bool) -> None:
-        """Enable or disable broadcasting Discord rich presence to CCTV pages."""
+        """Show or hide members' Discord rich presence on this server's office."""
 
-        await self._settings.set_broadcast_rich_presence(value)
-        if value:
-            await self._sync_all_guilds()
-        else:
-            await self.discord_pipeline.office.clear_presence()
+        guild = self._guild(ctx)
+        await self._settings.set_guild_broadcast_rich_presence(guild.id, value)
+        office = self.office(guild.id)
+        if office is not None:
+            if value:
+                await self._full_sync(guild)
+            else:
+                await office.office.clear_presence()
         await self._reply(ctx, f"Rich-presence display set to `{value}`.")
 
     @cctv_group.command(name="messages")
     @commands.admin_or_permissions(administrator=True)
     async def cmd_messages(self, ctx: commands.Context, value: bool) -> None:
-        """Enable or disable broadcasting chat messages to CCTV pages."""
+        """Show or hide members' chat messages on this server's office.
 
-        await self._settings.set_broadcast_messages(value)
+        Messages come from every channel the bot can read, so turn this off
+        if the office's viewers shouldn't see a channel's messages.
+        """
+
+        await self._settings.set_guild_broadcast_messages(self._guild(ctx).id, value)
         await self._reply(ctx, f"Message display set to `{value}`.")
 
     @cctv_group.command(name="enable")
     @commands.admin_or_permissions(administrator=True)
     async def cmd_enable(self, ctx: commands.Context) -> None:
-        """Enable CCTV for this guild and sync its current roster."""
+        """Open this server's office and sync its current roster."""
 
         guild = self._guild(ctx)
         await self._settings.set_guild_enabled(guild.id, True)
-        await self.discord_pipeline.clients.reauthorize(self._can_edit_discord)
         await self._reply(ctx, await self._full_sync(guild))
 
     @cctv_group.command(name="disable")
     @commands.admin_or_permissions(administrator=True)
     async def cmd_disable(self, ctx: commands.Context) -> None:
-        """Disable CCTV for this guild and despawn its Discord roster."""
+        """Close this server's office: its viewers are disconnected."""
 
         guild = self._guild(ctx)
         await self._settings.set_guild_enabled(guild.id, False)
-        await self.discord_pipeline.clients.reauthorize(self._can_edit_discord)
-        await self._despawn_guild(guild)
-        await self._reply(ctx, "Guild disabled and its Discord roster despawned.")
+        await self._close_office(guild.id)
+        await self._reply(ctx, "Guild disabled and its office closed.")
 
     @cctv_group.command(name="includebots")
     @commands.admin_or_permissions(administrator=True)

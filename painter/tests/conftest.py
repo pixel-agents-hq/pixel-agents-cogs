@@ -11,7 +11,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from corridor.domain import AgentPresenceChanged, AgentRef, OfficeState, OfficeStateKind
+from corridor.domain import AgentPresenceChanged, AgentRef, OfficeRef, OfficeState, OfficeStateKind
 
 
 class FakeGuild:
@@ -194,12 +194,12 @@ class FakePixelAgents:
     def furniture_style_manifest(self) -> dict[str, Any] | None:
         return self._furniture_styles
 
-    async def office_state(self, kind: OfficeStateKind) -> OfficeState:
+    async def office_state(self, ref: OfficeRef) -> OfficeState:
+        kind = ref.kind
         return self._states[kind]
 
-    async def set_office_layout(
-        self, kind: OfficeStateKind, layout: Mapping[str, object]
-    ) -> OfficeState:
+    async def set_office_layout(self, ref: OfficeRef, layout: Mapping[str, object]) -> OfficeState:
+        kind = ref.kind
         current = self._states[kind]
         updated = OfficeState(
             kind=kind,

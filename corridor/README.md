@@ -131,18 +131,19 @@ is the sole A2A coordinator and the only one with a real Discord bot login.
 handler, owner=...)` dispatch a closed set of `Agent*` events (presence,
 replies, tool-use steps, highlight/select) by concrete type, synchronously,
 with per-subscriber error isolation. Corridor, `pico`, `architect`, and
-`painter` all publish; `cctv` is the current sole subscriber, rendering the
-shared office canvas.
+`painter` all publish; `cctv` is the current sole subscriber, rendering each
+guild's office canvas.
 
-Corridor persists two independent opaque aggregates, `discord` and
-`editor`. Each holds a Pixel Agents layout, avatar-seat records, and a
+Corridor persists independent opaque office aggregates, each named by an
+`OfficeRef`: one `discord` office per guild and the single `editor` office.
+Each holds a Pixel Agents layout, avatar-seat records, and a
 monotonically increasing revision. Corridor never interprets either JSON
 schema; [`pixelagents`](../pixelagents) owns the Semantic IR domain model
 and provides the validated facade (`office_state`/`set_office_layout`/
 `set_office_seats`) that `architect`/`painter` call through. Every
 successful field mutation preserves the other field, advances the
 revision, then publishes a complete `OfficeStateChanged` after releasing
-the per-kind lock; subscribers are awaited sequentially with exception
+that aggregate's lock; subscribers are awaited sequentially with exception
 isolation and a five-second timeout.
 
 See [`docs/corridor.md`](../docs/corridor.md) for the full reference —

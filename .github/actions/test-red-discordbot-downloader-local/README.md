@@ -72,7 +72,7 @@ supported for testing a cog directory that isn't pushed anywhere yet:
 ## Troubleshooting
 - **Invalid repo name**: Downloader repo names must be valid identifiers; `normalize_repo_name` converts hyphens to underscores and runs Downloader's own `RepoManager.validate_and_normalize_repo_name`, but other invalid characters will still raise errors.
 - **Requirement installation failures**: Review the action log to see which dependency pip command failed; you may need to add wheels or pin compatible versions.
-- **RPC timeout**: The helper waits 30 seconds for the websocket endpoint (`RPC_WAIT_TIMEOUT` in `test_downloader_cogs.py`). Check the Red log tail dumped by the action when failures occur.
+- **RPC timeout**: The helper waits 30 seconds for the websocket endpoint (`RPC_WAIT_TIMEOUT` in `test_downloader_cogs.py`) and up to 300 seconds for each cog load (`CORE_LOAD_TIMEOUT`), since a cog may build assets on its first load (pixelagents builds the vendored webview and the pixatar CLI). Check the Red log tail dumped by the action when failures occur.
 - **Git errors**: Verify each cog directory includes necessary files and can be committed. Ensure your cogs don't include very large binaries or files requiring Git LFS.
 - **Remote-only installs**: When `repo_url` is set the action does not mirror local files. Make sure the specified remote repo already contains the cogs you expect to load; leave `cog_paths` empty to test every cog Downloader finds there, or set it to match a subset by name.
 - **Known limitations**: The helper assumes Downloader installs requirements with pip and the auto-generated local repo (the `cog_paths`-without-`repo_url` path) uses a `master` branch; specify `repo_branch` if your remote uses a different branch layout.

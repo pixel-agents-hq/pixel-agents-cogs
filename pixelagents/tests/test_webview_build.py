@@ -202,6 +202,17 @@ class TestCheckout(unittest.TestCase):
         self.assertEqual(run.call_args_list[0].args[0][-1], webview_build.pinned_repo_url())
 
 
+class TestInstallDependencies(unittest.TestCase):
+    def test_installs_only_the_webview_workspace_without_scripts_audit_or_fund(self) -> None:
+        with patch.object(webview_build, "_run") as run:
+            webview_build._install_dependencies(Path("/vendor"), logging.getLogger("test"))
+
+        command = run.call_args.args[0]
+        self.assertEqual(command[:2], ["npm", "ci"])
+        for flag in ("--workspace=webview-ui", "--ignore-scripts", "--no-audit", "--no-fund"):
+            self.assertIn(flag, command)
+
+
 class TestEnsureWebviewBuilt(unittest.TestCase):
     def test_skips_the_build_when_already_up_to_date(self) -> None:
         with TemporaryDirectory() as tmp:

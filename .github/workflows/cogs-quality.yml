@@ -181,7 +181,9 @@ jobs:
             test_target: "cctv/tests"
             lint_target: "cctv"
             mypy_target: "cctv"
-            extra_deps: "aiohttp 'pydantic>=2.11.3,<2.12' 'a2a-sdk[http-server]' uvicorn 'mcp>=1.29,<2' 'typing-inspection<0.4.3' 'anyio<4.15'"
+            # jinja2: the server picker's escaping tests render its template
+            # the way the Dashboard does (autoescaped Jinja).
+            extra_deps: "aiohttp 'pydantic>=2.11.3,<2.12' 'a2a-sdk[http-server]' uvicorn 'mcp>=1.29,<2' 'typing-inspection<0.4.3' 'anyio<4.15' jinja2"
             pixel_index_contracts: false
           # pico talks to aiohttp (LiteLLM proxy) and pydantic (wire/tool
           # models) like floorplan, plus httpx and a2a-sdk for its

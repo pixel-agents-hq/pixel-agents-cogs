@@ -12,19 +12,14 @@ from corridor.domain import (
     AgentRef,
     AgentStatusChanged,
     AgentToolStarted,
-    OfficeStateKind,
 )
 
 from ..adapters.cog_base import CctvBase
+from ..application import GuildOffices
 
 ENABLED_GUILD = 10
 DISABLED_GUILD = 20
 AGENT = AgentRef(discord_user_id=None, guild_id=None, is_bot=True, agent_key="architect")
-
-
-class _Settings:
-    async def guild_enabled(self, guild: object) -> bool:
-        return guild == ENABLED_GUILD
 
 
 class _Office:
@@ -49,18 +44,18 @@ class _Pipeline:
 
 class _Harness(CctvBase):
     def __init__(self) -> None:
-        self._settings = _Settings()  # type: ignore[assignment]
-        self._pipelines = {
-            OfficeStateKind.DISCORD: _Pipeline("discord"),  # type: ignore[dict-item]
-            OfficeStateKind.EDITOR: _Pipeline("editor"),  # type: ignore[dict-item]
-        }
+        # Only an enabled guild has an open office.
+        self.mine = _Pipeline(f"office/{ENABLED_GUILD}")
+        self.theirs = _Pipeline("office/30")
+        self._offices = GuildOffices()
+        self._offices.add(ENABLED_GUILD, self.mine)  # type: ignore[arg-type]
+        self._offices.add(30, self.theirs)  # type: ignore[arg-type]
+        self._editor = _Pipeline("editor")  # type: ignore[assignment]
         self.bot = SimpleNamespace(user=SimpleNamespace(id=99))  # type: ignore[assignment]
 
     def calls(self) -> tuple[list[str], list[str]]:
-        return (
-            self._pipelines[OfficeStateKind.DISCORD].office.calls,  # type: ignore[attr-defined]
-            self._pipelines[OfficeStateKind.EDITOR].office.calls,  # type: ignore[attr-defined]
-        )
+        assert self.theirs.office.calls == []
+        return (self.mine.office.calls, self._editor.office.calls)  # type: ignore[union-attr]
 
 
 class TestGenuineActivityRouting(unittest.IsolatedAsyncioTestCase):

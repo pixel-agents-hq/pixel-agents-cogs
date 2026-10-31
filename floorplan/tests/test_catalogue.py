@@ -294,13 +294,16 @@ class TestCatalogueService(unittest.IsolatedAsyncioTestCase):
         repository = MemoryCatalogueRepository()
         gateway = FakeGateway()
         applied: list[dict[str, object]] = []
+        self.applied_guilds: list[int] = []
 
-        async def can_edit(_: int) -> bool:
+        async def can_edit(guild_id: int, user_id: int) -> bool:
+            del guild_id, user_id
             return authorized
 
-        async def apply(layout: dict[str, object]) -> None:
+        async def apply(guild_id: int, layout: dict[str, object]) -> None:
             if layout.get("cols") is True:
                 raise ValueError("cols must be an integer")
+            self.applied_guilds.append(guild_id)
             applied.append(layout)
 
         return (
@@ -331,7 +334,7 @@ class TestCatalogueService(unittest.IsolatedAsyncioTestCase):
     async def test_unauthorized_load_does_not_fetch_or_persist(self) -> None:
         service, _, gateway, applied = self.make_service(authorized=False)
 
-        result = await service.load_layout(42, "office")
+        result = await service.load_layout(9, 42, "office")
 
         assert result.error is not None
         assert result.error.code is CatalogueErrorCode.UNAUTHORIZED
@@ -346,7 +349,7 @@ class TestCatalogueService(unittest.IsolatedAsyncioTestCase):
             )
         )
 
-        result = await service.load_layout(42, "office")
+        result = await service.load_layout(9, 42, "office")
 
         assert result.error is not None
         assert result.error.code is CatalogueErrorCode.INVALID_LAYOUT
@@ -364,17 +367,18 @@ class TestCatalogueService(unittest.IsolatedAsyncioTestCase):
         }
         gateway.detail_result = CatalogueResult(value=layout_detail(layout=raw_layout))
 
-        result = await service.load_layout(42, "office")
+        result = await service.load_layout(9, 42, "office")
 
         assert result.value == "Loaded `Office` into the office."
         assert applied == [raw_layout]
+        assert self.applied_guilds == [9]
 
     async def test_gateway_error_is_propagated_without_applying(self) -> None:
         service, _, gateway, applied = self.make_service()
         error = CatalogueError(CatalogueErrorCode.HTTP_STATUS, "HTTP 404", status=404)
         gateway.detail_result = CatalogueResult(error=error)
 
-        result = await service.load_layout(42, "missing")
+        result = await service.load_layout(9, 42, "missing")
 
         assert result.error is error
         assert applied == []

@@ -39,6 +39,7 @@ from .fixtures import (
     FakeBot,
     capture_websocket_frames,
     construct_core_cogs,
+    open_guild_office,
     real_webview_build_enabled,
     start_frontend_app,
     wait_for_bootstrap,
@@ -80,10 +81,9 @@ class TestAgentActivityReachesCctv(unittest.IsolatedAsyncioTestCase):
 
     async def test_agent_replied_reaches_only_the_discord_pipeline(self) -> None:
         # GUILD_DEFAULTS["enabled"] is False (cctv/infrastructure/settings.py)
-        # and _on_agent_presence_changed's real-Discord branch gates
-        # discord_pipeline.reconcile_discord(...) on it -- without this, the
+        # and a guild has an office only while enabled -- without this, the
         # member below is never tracked and every event drops silently.
-        await self.cctv._settings.set_guild_enabled(_DISCORD_MEMBER_GUILD_ID, True)  # noqa: SLF001
+        await open_guild_office(self.cctv, _DISCORD_MEMBER_GUILD_ID)
 
         from playwright.async_api import async_playwright
 
@@ -95,7 +95,9 @@ class TestAgentActivityReachesCctv(unittest.IsolatedAsyncioTestCase):
             discord_frames = capture_websocket_frames(discord_page)
             editor_frames = capture_websocket_frames(editor_page)
 
-            await discord_page.goto(f"http://127.0.0.1:{self._port}/e2e/page/discord")
+            await discord_page.goto(
+                f"http://127.0.0.1:{self._port}/e2e/page/{_DISCORD_MEMBER_GUILD_ID}"
+            )
             await editor_page.goto(f"http://127.0.0.1:{self._port}/e2e/page/editor")
             await wait_for_bootstrap(discord_page, discord_frames)
             await wait_for_bootstrap(editor_page, editor_frames)
@@ -154,7 +156,7 @@ class TestAgentActivityReachesCctv(unittest.IsolatedAsyncioTestCase):
             )
 
     async def test_tool_started_reaches_both_pipelines(self) -> None:
-        await self.cctv._settings.set_guild_enabled(_DISCORD_MEMBER_GUILD_ID, True)  # noqa: SLF001
+        await open_guild_office(self.cctv, _DISCORD_MEMBER_GUILD_ID)
 
         from playwright.async_api import async_playwright
 
@@ -166,7 +168,9 @@ class TestAgentActivityReachesCctv(unittest.IsolatedAsyncioTestCase):
             discord_frames = capture_websocket_frames(discord_page)
             editor_frames = capture_websocket_frames(editor_page)
 
-            await discord_page.goto(f"http://127.0.0.1:{self._port}/e2e/page/discord")
+            await discord_page.goto(
+                f"http://127.0.0.1:{self._port}/e2e/page/{_DISCORD_MEMBER_GUILD_ID}"
+            )
             await editor_page.goto(f"http://127.0.0.1:{self._port}/e2e/page/editor")
             await wait_for_bootstrap(discord_page, discord_frames)
             await wait_for_bootstrap(editor_page, editor_frames)
@@ -202,6 +206,57 @@ class TestAgentActivityReachesCctv(unittest.IsolatedAsyncioTestCase):
             )
             assert discord_frame is not None and editor_frame is not None
             self.assertEqual(discord_frame["id"], editor_frame["id"])
+
+
+class TestGuildOfficesAreIsolated(TestAgentActivityReachesCctv):
+    """Two guilds' offices open side by side in two real browsers: what a
+    member says in one never reaches the other's page."""
+
+    async def test_agent_replied_reaches_only_the_discord_pipeline(self) -> None:
+        self.skipTest("inherited scenario; covered by the parent class")
+
+    async def test_tool_started_reaches_both_pipelines(self) -> None:
+        self.skipTest("inherited scenario; covered by the parent class")
+
+    async def test_a_members_activity_never_reaches_another_guilds_office(self) -> None:
+        other_guild_id = _DISCORD_MEMBER_GUILD_ID + 1
+        await open_guild_office(self.cctv, _DISCORD_MEMBER_GUILD_ID)
+        await open_guild_office(self.cctv, other_guild_id)
+
+        from playwright.async_api import async_playwright
+
+        async with async_playwright() as playwright:
+            browser = await playwright.chromium.launch()
+            self.addAsyncCleanup(browser.close)
+            mine = await browser.new_page()
+            theirs = await browser.new_page()
+            mine_frames = capture_websocket_frames(mine)
+            theirs_frames = capture_websocket_frames(theirs)
+
+            await mine.goto(f"http://127.0.0.1:{self._port}/e2e/page/{_DISCORD_MEMBER_GUILD_ID}")
+            await theirs.goto(f"http://127.0.0.1:{self._port}/e2e/page/{other_guild_id}")
+            await wait_for_bootstrap(mine, mine_frames)
+            await wait_for_bootstrap(theirs, theirs_frames)
+
+            await self.corridor.publish_event(
+                AgentPresenceChanged(agent=_DISCORD_MEMBER_REF, display_name="Ada", status="online")
+            )
+            await self.corridor.publish_event(
+                AgentReplied(agent=_DISCORD_MEMBER_REF, summary="only for my guild")
+            )
+
+            def _said_it(frame: dict[str, object]) -> bool:
+                return frame.get("type") == "agentToolStart" and "only for my guild" in str(
+                    frame.get("status", "")
+                )
+
+            self.assertIsNotNone(await wait_for_frame(mine, mine_frames, _said_it))
+            leaked = await wait_for_frame(
+                theirs,
+                theirs_frames,
+                lambda f: _said_it(f) or "Ada" in str(f),
+            )
+            self.assertIsNone(leaked, "another guild's office received this member's activity")
 
 
 if __name__ == "__main__":

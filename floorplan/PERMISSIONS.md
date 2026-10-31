@@ -25,8 +25,8 @@ flowchart TD
     D -->|no| D1[permission_denied]
     D -->|yes| D2[Runs; results shown to everyone in the channel]
     B -->|Load into office button| E{Bot owner?}
-    E -->|yes| E2[Layout applied to the discord aggregate]
-    E -->|no| F{keyholder in a guild<br/>bot can resolve the member in?}
+    E -->|yes| E2[Layout applied to this guild's office]
+    E -->|no| F{keyholder in the guild<br/>the button was pressed in?}
     F -->|yes| E2
     F -->|no| F1[unauthorized: not applied]
 ```
@@ -42,21 +42,20 @@ carry no write risk, so they sit at the same `employee` tier as other
 low-stakes bot features — open to any member Corridor considers staff,
 without requiring elevated capability.
 
-Loading a layout is a write to the shared `discord` office-state aggregate
-that every member in an enabled guild sees rendered on `cctv`'s Discord page,
-so it requires the same `keyholder` bar that `cctv` itself uses to gate
-writes to that page — one write policy for one shared resource, whichever
+Loading a layout is a write to the guild's own office-state aggregate, the
+office every viewer of that guild's `cctv` page sees, so it requires the same
+`keyholder` bar that `cctv` itself uses to gate writes to that office — one write policy for one shared resource, whichever
 cog is the one performing the write. The load button re-checks
 `keyholder`/ownership at click time inside `CatalogueService.load_layout`
 rather than trusting the `employee` gate already passed to reach
 `layout view`: viewing a layout and being allowed to apply it are different
 privileges, and the view that renders the button is shared by every viewer
 regardless of their own capability. The check resolves the *clicking* user
-across every guild the bot can see them in — not just the guild the command
-was run in — because the Discord aggregate `cctv` renders is not scoped to a
-single guild either.
+in the guild the button was pressed in, and the layout goes into that
+guild's office only: a keyholder of one guild can't change another guild's
+office. Pressing it outside a guild loads nothing.
 
 Floorplan never authorizes edits to any browser page: `cctv` separately
-authorizes writes to its own Discord and editor pages using its own
-policies (bot-owner/keyholder for the Discord page, open for the editor
-page).
+authorizes writes to its own guild office and editor pages using its own
+policies (bot-owner/keyholder of that guild for a guild office, open for
+the editor page).

@@ -10,7 +10,7 @@ from typing import Any
 
 from redbot.core import commands
 
-from corridor.domain import OfficeStateKind, ReplyField
+from corridor.domain import OfficeRef, ReplyField
 
 from ..infrastructure import RedArchitectRepository
 
@@ -96,7 +96,7 @@ class CommandsMixin:
         settings = await self._repository.global_settings()
         llm_settings: Any = await self._corridor.llm_settings()
         try:
-            editor_state = await self._pixelagents.office_state(OfficeStateKind.EDITOR)
+            editor_state = await self._pixelagents.office_state(OfficeRef.editor())
             editor_status = f"✅ revision {editor_state.revision}"
         except (RuntimeError, TypeError, ValueError) as exc:
             editor_status = f"⚠️ unavailable: {exc}"

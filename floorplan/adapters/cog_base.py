@@ -9,7 +9,7 @@ import discord
 from redbot.core import commands
 from redbot.core.bot import Red
 
-from corridor.domain import OfficeStateKind
+from corridor.domain import OfficeRef
 
 from ..application import CatalogueService
 from ..dependency_loader import ensure_corridor_loaded
@@ -64,22 +64,22 @@ class FloorplanBase:
 
         self._pixelagents = pixelagents
 
-    async def _apply_catalogue_layout(self, layout: dict[str, object]) -> None:
-        await self._pixelagents.set_office_layout(OfficeStateKind.DISCORD, layout)
+    async def _apply_catalogue_layout(self, guild_id: int, layout: dict[str, object]) -> None:
+        await self._pixelagents.set_office_layout(OfficeRef.discord(guild_id), layout)
 
-    async def _can_edit_layout_user(self, user_id: int) -> bool:
-        if user_id == 0:
+    async def _can_edit_layout_user(self, guild_id: int, user_id: int) -> bool:
+        """The bot owner, or a keyholder in that guild."""
+
+        if user_id <= 0:
             return False
         owner = cast("discord.User", discord.Object(id=user_id))
         if await self.bot.is_owner(owner):
             return True
-        for guild in self.bot.guilds:
-            member = guild.get_member(user_id)
-            if member is not None and await self._corridor.capabilities_satisfy(
-                member, "keyholder"
-            ):
-                return True
-        return False
+        guild = self.bot.get_guild(guild_id)
+        member = guild.get_member(user_id) if guild is not None else None
+        return member is not None and bool(
+            await self._corridor.capabilities_satisfy(member, "keyholder")
+        )
 
     async def _reply(
         self, ctx: commands.Context, content: str | None = None, **kwargs: Any

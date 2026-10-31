@@ -6,12 +6,14 @@ from collections.abc import Callable, Mapping
 from copy import deepcopy
 from typing import Any, TypeVar
 
-from corridor.domain import OfficeState, OfficeStateChanged, OfficeStateKind, SeatRecords
+from corridor.domain import OfficeRef, OfficeState, OfficeStateChanged, OfficeStateKind, SeatRecords
 from pixelagents.domain import AgentKey, AgentSnapshot, GenuineAgentKey, PresenceStatus
 from pixelagents.domain.characters import character_key
 
 from ..application import CctvPipeline
 
+GUILD = 10
+OFFICE = OfficeRef.discord(GUILD)
 MutationResult = TypeVar("MutationResult")
 
 
@@ -46,33 +48,33 @@ class _PixelAgents:
         key = character_key(identity)  # type: ignore[arg-type]
         return {"body": "flat", "hair": self.looks.get(key, f"hair-of-{key}")}
 
-    async def office_state(self, kind: OfficeStateKind) -> OfficeState:
-        assert kind == self.state.kind
+    async def office_state(self, ref: OfficeRef) -> OfficeState:
+        assert ref == self.state.ref
         return deepcopy(self.state)
 
-    async def set_office_layout(
-        self, kind: OfficeStateKind, layout: Mapping[str, object]
-    ) -> OfficeState:
+    async def set_office_layout(self, ref: OfficeRef, layout: Mapping[str, object]) -> OfficeState:
         self.state = OfficeState(
-            kind,
+            ref.kind,
             deepcopy(dict(layout)),
             deepcopy(self.state.seats),
             self.state.revision + 1,
+            ref.guild_id,
         )
         return deepcopy(self.state)
 
     async def mutate_office_seats(
         self,
-        kind: OfficeStateKind,
+        ref: OfficeRef,
         mutation: Callable[[SeatRecords], MutationResult],
     ) -> tuple[OfficeState, MutationResult]:
         seats = deepcopy(self.state.seats)
         result = mutation(seats)
         self.state = OfficeState(
-            kind,
+            ref.kind,
             deepcopy(self.state.layout),
             seats,
             self.state.revision + 1,
+            ref.guild_id,
         )
         return deepcopy(self.state), result
 
@@ -87,19 +89,17 @@ class _SeatRepository:
     async def mutate_seats(
         self, mutation: Callable[[SeatRecords], MutationResult]
     ) -> MutationResult:
-        _, result = await self.pixelagents.mutate_office_seats(
-            self.pixelagents.state.kind, mutation
-        )
+        _, result = await self.pixelagents.mutate_office_seats(self.pixelagents.state.ref, mutation)
         return result
 
 
 class TestCctvPipeline(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
-        state = OfficeState(OfficeStateKind.DISCORD, _layout(), {}, 1)
+        state = OfficeState(OfficeStateKind.DISCORD, _layout(), {}, 1, GUILD)
         self.pixelagents = _PixelAgents(state)
         self.pipeline = CctvPipeline(
-            "discord",
-            OfficeStateKind.DISCORD,
+            f"office/{GUILD}",
+            OFFICE,
             self.pixelagents,
             _SeatRepository(self.pixelagents),
             {},
@@ -118,9 +118,20 @@ class TestCctvPipeline(unittest.IsolatedAsyncioTestCase):
         self.assertLess(types.index("existingAgents"), types.index("layoutLoaded"))
         self.assertEqual(self.pipeline.revision, 1)
 
+    async def test_another_guilds_state_never_reaches_this_office(self) -> None:
+        await self.pipeline.seed_state(self.pixelagents.state)
+        theirs = OfficeState(OfficeStateKind.DISCORD, _layout(2), {}, 9, GUILD + 1)
+
+        await self.pipeline.state_changed(OfficeStateChanged(theirs))
+
+        self.assertEqual(self.pipeline.revision, 1)
+        self.assertEqual(self.socket.messages, [])
+        with self.assertRaises(ValueError):
+            await self.pipeline.seed_state(theirs)
+
     async def test_only_newer_state_events_are_applied(self) -> None:
         await self.pipeline.seed_state(self.pixelagents.state)
-        newer = OfficeState(OfficeStateKind.DISCORD, _layout(2), {}, 2)
+        newer = OfficeState(OfficeStateKind.DISCORD, _layout(2), {}, 2, GUILD)
 
         await self.pipeline.state_changed(OfficeStateChanged(newer))
         await self.pipeline.state_changed(OfficeStateChanged(newer))
@@ -233,7 +244,7 @@ class TestCctvPipeline(unittest.IsolatedAsyncioTestCase):
 
         await self.pipeline.seed_state(self.pixelagents.state)
         seats_only = OfficeState(
-            OfficeStateKind.DISCORD, self.pixelagents.state.layout, {"1": {"palette": 0}}, 2
+            OfficeStateKind.DISCORD, self.pixelagents.state.layout, {"1": {"palette": 0}}, 2, GUILD
         )
 
         await self.pipeline.state_changed(OfficeStateChanged(seats_only))
@@ -245,7 +256,7 @@ class TestCctvPipeline(unittest.IsolatedAsyncioTestCase):
 
     async def test_a_genuine_layout_change_still_broadcasts_layoutLoaded(self) -> None:
         await self.pipeline.seed_state(self.pixelagents.state)
-        layout_changed = OfficeState(OfficeStateKind.DISCORD, _layout(2), {}, 2)
+        layout_changed = OfficeState(OfficeStateKind.DISCORD, _layout(2), {}, 2, GUILD)
 
         await self.pipeline.state_changed(OfficeStateChanged(layout_changed))
 

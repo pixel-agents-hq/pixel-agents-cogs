@@ -90,7 +90,7 @@ def test_editor_repository_reexports_pixelagents_shared_repository() -> None:
     shared_source = (
         PACKAGE_ROOT.parent / "pixelagents" / "infrastructure" / "office_layout_repository.py"
     ).read_text(encoding="utf-8")
-    assert "OfficeStateKind.EDITOR" in shared_source
+    assert "OfficeRef.editor()" in shared_source
     assert ".office_state(" in shared_source
     assert ".set_office_layout(" in shared_source
     assert "Config.get_conf(" not in shared_source

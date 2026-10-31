@@ -25,7 +25,7 @@ from aiohttp import web
 
 from cctv.cctv import CCTV
 from cctv.infrastructure import settings as cctv_settings
-from cctv.infrastructure.webview import WEBVIEW_BASE_PATH
+from cctv.infrastructure.webview import EDITOR_WS_PATH, WEBVIEW_BASE_PATH, office_ws_path
 from corridor.corridor import Corridor
 from corridor.infrastructure.llm_client import (
     ChatCompletionChoice,
@@ -278,7 +278,7 @@ async def build_frontend_app(cctv_cog: CCTV, server: object) -> web.Application:
     real client actually talks to."""
 
     app = web.Application()
-    app.router.add_get("/cctv/discord/ws", server.handle_discord)  # type: ignore[attr-defined]
+    app.router.add_get("/cctv/office/{guild_id}/ws", server.handle_office)  # type: ignore[attr-defined]
     app.router.add_get("/cctv/editor/ws", server.handle_editor)  # type: ignore[attr-defined]
     app.router.add_get("/cctv/health", server.handle_health)  # type: ignore[attr-defined]
 
@@ -286,7 +286,12 @@ async def build_frontend_app(cctv_cog: CCTV, server: object) -> web.Application:
 
     async def page_handler(request: web.Request) -> web.Response:
         page = request.match_info["page"]
-        response = assets.page_response(page)
+        if page == "editor":
+            response = assets.page_response(EDITOR_WS_PATH, identify=False)
+        elif page.isdecimal():
+            response = assets.page_response(office_ws_path(int(page)), identify=True)
+        else:
+            return web.Response(status=404)
         if response.get("status") != 0:
             return web.Response(status=503, text=str(response.get("error_message")))
         web_content = cast("dict[str, object]", response["web_content"])
@@ -313,9 +318,9 @@ async def build_frontend_app(cctv_cog: CCTV, server: object) -> web.Application:
 
 async def start_frontend_app(cctv_cog: CCTV, *, add_async_cleanup: AddAsyncCleanup) -> int:
     """Starts `build_frontend_app` on a real ephemeral loopback port and
-    returns it. One app/port serves both `/e2e/page/discord` and
-    `/e2e/page/editor` (plus both pages' real WebSocket routes), so a test
-    needing both pages open at once still only calls this once."""
+    returns it. One app/port serves `/e2e/page/<guild id>` (that guild's
+    office) and `/e2e/page/editor`, plus their real WebSocket routes, so a
+    test needing several pages open at once still only calls this once."""
 
     server = cctv_cog._server  # noqa: SLF001
     assert server is not None
@@ -327,6 +332,15 @@ async def start_frontend_app(cctv_cog: CCTV, *, add_async_cleanup: AddAsyncClean
     raw_server = site._server  # noqa: SLF001
     assert raw_server is not None
     return cast(int, raw_server.sockets[0].getsockname()[1])  # type: ignore[attr-defined]
+
+
+async def open_guild_office(cctv_cog: CCTV, guild_id: int) -> None:
+    """Enable CCTV for `guild_id` and open its office -- what
+    `[p]cctv enable` does, minus the member sync (the fake bot has no guild
+    cache to sync from)."""
+
+    await cctv_cog._settings.set_guild_enabled(guild_id, True)  # noqa: SLF001
+    await cctv_cog._open_office(guild_id)  # noqa: SLF001
 
 
 def capture_websocket_frames(page: Page) -> list[dict[str, object]]:

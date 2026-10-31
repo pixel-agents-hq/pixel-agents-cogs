@@ -9,7 +9,7 @@ from typing import Any, Protocol
 
 from aiohttp import web
 
-from corridor.domain import OfficeState, OfficeStateChanged, OfficeStateKind, SeatRecords
+from corridor.domain import OfficeRef, OfficeState, OfficeStateChanged, SeatRecords
 from pixelagents.application import DEFAULT_PALETTE_COUNT, OfficeService, PresenceService
 from pixelagents.application.office import merge_seat_patch
 from pixelagents.domain import (
@@ -34,15 +34,15 @@ Authorize = Callable[[int], Awaitable[bool]]
 
 
 class PixelAgentsStateGateway(Protocol):
-    async def office_state(self, kind: OfficeStateKind) -> OfficeState: ...
+    async def office_state(self, ref: OfficeRef) -> OfficeState: ...
 
     async def set_office_layout(
-        self, kind: OfficeStateKind, layout: Mapping[str, object]
+        self, ref: OfficeRef, layout: Mapping[str, object]
     ) -> OfficeState: ...
 
     async def mutate_office_seats(
         self,
-        kind: OfficeStateKind,
+        ref: OfficeRef,
         mutation: Callable[[SeatRecords], None],
     ) -> tuple[OfficeState, None]: ...
 
@@ -69,7 +69,7 @@ class CctvPipeline:
     def __init__(
         self,
         page: str,
-        kind: OfficeStateKind,
+        ref: OfficeRef,
         pixelagents: PixelAgentsStateGateway,
         seat_repository: SeatRepository,
         assets: dict[str, object],
@@ -79,7 +79,7 @@ class CctvPipeline:
         logger: logging.Logger | None = None,
     ) -> None:
         self.page = page
-        self.kind = kind
+        self.ref = ref
         self.open_editor = open_editor
         self.clients = ClientHub(page, logger=logger)
         self._pixelagents = pixelagents
@@ -117,8 +117,8 @@ class CctvPipeline:
         await self.clients.broadcast(message)
 
     async def seed_state(self, state: OfficeState) -> None:
-        if state.kind != self.kind:
-            raise ValueError(f"{self.page} pipeline received {state.kind.value} state")
+        if state.ref != self.ref:
+            raise ValueError(f"{self.page} pipeline received {state.ref.describe()} state")
         async with self._lock:
             if self._state is None or state.revision >= self._state.revision:
                 self._state = state
@@ -126,7 +126,7 @@ class CctvPipeline:
 
     async def state_changed(self, event: OfficeStateChanged) -> None:
         state = event.state
-        if state.kind != self.kind:
+        if state.ref != self.ref:
             return
         async with self._lock:
             if self._state is not None and state.revision <= self._state.revision:
@@ -150,7 +150,7 @@ class CctvPipeline:
             await self.clients.broadcast(self.office.existing_agents_message(state.seats))
 
     async def bootstrap(self, socket: web.WebSocketResponse) -> None:
-        fresh = await self._pixelagents.office_state(self.kind)
+        fresh = await self._pixelagents.office_state(self.ref)
         async with self._lock:
             if self._state is None or fresh.revision > self._state.revision:
                 self._state = fresh
@@ -168,7 +168,7 @@ class CctvPipeline:
         if isinstance(message, WebviewReadyMessage):
             await self.bootstrap(socket)
         elif isinstance(message, SaveLayoutMessage):
-            await self._pixelagents.set_office_layout(self.kind, message.layout.to_raw())
+            await self._pixelagents.set_office_layout(self.ref, message.layout.to_raw())
         elif isinstance(message, SaveAgentSeatsMessage):
             # The roster decides what each agent wears, so only the seat of a
             # patch is kept.
@@ -188,7 +188,7 @@ class CctvPipeline:
                 for agent_id, patch in incoming.items():
                     merge_seat_patch(seats, agent_id, palette_count, patch)
 
-            await self._pixelagents.mutate_office_seats(self.kind, merge)
+            await self._pixelagents.mutate_office_seats(self.ref, merge)
         elif isinstance(message, RequestDiagnosticsMessage):
             await self.clients.send_to(
                 socket,

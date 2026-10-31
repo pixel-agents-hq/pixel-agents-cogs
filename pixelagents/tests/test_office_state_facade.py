@@ -6,7 +6,7 @@ from copy import deepcopy
 from typing import Any, TypeVar
 from unittest.mock import patch
 
-from corridor.domain import OfficeState, OfficeStateChanged, OfficeStateKind, SeatRecords
+from corridor.domain import OfficeRef, OfficeState, OfficeStateChanged, OfficeStateKind, SeatRecords
 
 from ..application import (
     OfficeStateFacade,
@@ -28,47 +28,53 @@ def _layout(*, cols: int = 1) -> dict[str, Any]:
     }
 
 
+DISCORD = OfficeRef.discord(111)
+OTHER_GUILD = OfficeRef.discord(222)
+EDITOR = OfficeRef.editor()
+
+
 class _FakeCorridor:
     def __init__(self) -> None:
-        self.states: dict[OfficeStateKind, OfficeState] = {}
+        self.states: dict[OfficeRef, OfficeState] = {}
         self.watchers: dict[
             OfficeStateKind, list[Callable[[OfficeStateChanged], Awaitable[None]]]
         ] = {kind: [] for kind in OfficeStateKind}
 
-    async def office_state(self, kind: OfficeStateKind) -> OfficeState | None:
-        return deepcopy(self.states.get(kind))
+    async def office_state(self, ref: OfficeRef) -> OfficeState | None:
+        return deepcopy(self.states.get(ref))
 
-    async def initialize_office_state(
-        self, kind: OfficeStateKind, layout: dict[str, Any]
-    ) -> OfficeState:
-        if kind not in self.states:
-            self.states[kind] = OfficeState(kind, deepcopy(layout), {}, 1)
-            await self._publish(self.states[kind])
-        return deepcopy(self.states[kind])
+    async def initialize_office_state(self, ref: OfficeRef, layout: dict[str, Any]) -> OfficeState:
+        if ref not in self.states:
+            self.states[ref] = OfficeState(ref.kind, deepcopy(layout), {}, 1, ref.guild_id)
+            await self._publish(self.states[ref])
+        return deepcopy(self.states[ref])
 
-    async def set_office_layout(self, kind: OfficeStateKind, layout: dict[str, Any]) -> OfficeState:
-        current = self.states[kind]
-        updated = OfficeState(kind, deepcopy(layout), deepcopy(current.seats), current.revision + 1)
-        self.states[kind] = updated
+    async def set_office_layout(self, ref: OfficeRef, layout: dict[str, Any]) -> OfficeState:
+        current = self.states[ref]
+        updated = OfficeState(
+            ref.kind, deepcopy(layout), deepcopy(current.seats), current.revision + 1, ref.guild_id
+        )
+        self.states[ref] = updated
         await self._publish(updated)
         return deepcopy(updated)
 
-    async def set_office_seats(self, kind: OfficeStateKind, seats: SeatRecords) -> OfficeState:
-        current = self.states[kind]
-        updated = OfficeState(kind, deepcopy(current.layout), deepcopy(seats), current.revision + 1)
-        self.states[kind] = updated
+    async def set_office_seats(self, ref: OfficeRef, seats: SeatRecords) -> OfficeState:
+        current = self.states[ref]
+        updated = OfficeState(
+            ref.kind, deepcopy(current.layout), deepcopy(seats), current.revision + 1, ref.guild_id
+        )
+        self.states[ref] = updated
         await self._publish(updated)
         return deepcopy(updated)
 
     async def mutate_office_seats(
         self,
-        kind: OfficeStateKind,
+        ref: OfficeRef,
         mutation: Callable[[SeatRecords], MutationResult],
     ) -> tuple[OfficeState, MutationResult]:
-        current = self.states[kind]
-        seats = deepcopy(current.seats)
+        seats = deepcopy(self.states[ref].seats)
         result = mutation(seats)
-        state = await self.set_office_seats(kind, seats)
+        state = await self.set_office_seats(ref, seats)
         return state, result
 
     async def watch_office_state(
@@ -79,7 +85,7 @@ class _FakeCorridor:
         owner: str,
     ) -> OfficeState | None:
         self.watchers[kind].append(handler)
-        return deepcopy(self.states.get(kind))
+        return deepcopy(self.states.get(EDITOR)) if kind == OfficeStateKind.EDITOR else None
 
     async def _publish(self, state: OfficeState) -> None:
         for handler in self.watchers[state.kind]:
@@ -97,8 +103,8 @@ class TestOfficeStateFacade(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_both_aggregates_lazily_initialize_from_the_same_default(self) -> None:
-        discord = await self.facade.state(OfficeStateKind.DISCORD)
-        editor = await self.facade.state(OfficeStateKind.EDITOR)
+        discord = await self.facade.state(DISCORD)
+        editor = await self.facade.state(EDITOR)
 
         self.assertEqual(discord.layout, self.default)
         self.assertEqual(editor.layout, self.default)
@@ -108,32 +114,27 @@ class TestOfficeStateFacade(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(editor.revision, 1)
 
     async def test_layout_write_preserves_seats(self) -> None:
-        await self.facade.state(OfficeStateKind.DISCORD)
+        await self.facade.state(DISCORD)
         await self.facade.merge_seat_patch(
-            OfficeStateKind.DISCORD,
+            DISCORD,
             "-1",
             {"palette": 2, "seatId": "chair:1"},
         )
 
-        state = await self.facade.set_layout(OfficeStateKind.DISCORD, _layout(cols=2))
+        state = await self.facade.set_layout(DISCORD, _layout(cols=2))
 
         self.assertEqual(state.layout["cols"], 2)
         self.assertEqual(state.seats["-1"], {"palette": 2, "seatId": "chair:1"})
         self.assertEqual(state.revision, 3)
 
     async def test_invalid_persisted_state_is_reported_without_reset(self) -> None:
-        invalid = OfficeState(
-            OfficeStateKind.DISCORD,
-            {"version": 99},
-            {},
-            4,
-        )
-        self.corridor.states[OfficeStateKind.DISCORD] = invalid
+        invalid = OfficeState(OfficeStateKind.DISCORD, {"version": 99}, {}, 4, 111)
+        self.corridor.states[DISCORD] = invalid
 
         with self.assertRaises(OfficeStateValidationError):
-            await self.facade.state(OfficeStateKind.DISCORD)
+            await self.facade.state(DISCORD)
 
-        self.assertEqual(self.corridor.states[OfficeStateKind.DISCORD], invalid)
+        self.assertEqual(self.corridor.states[DISCORD], invalid)
 
     async def test_editor_validation_uses_semantic_codec(self) -> None:
         with patch("pixelagents.application.office_state.decode") as decode_layout:
@@ -152,23 +153,45 @@ class TestOfficeStateFacade(unittest.IsolatedAsyncioTestCase):
 
     async def test_seat_patch_ignores_invalid_fields_and_preserves_valid_fields(self) -> None:
         state = await self.facade.merge_seat_patch(
-            OfficeStateKind.EDITOR,
+            EDITOR,
             "agent",
             {"palette": 999, "repeat": 1, "seatId": "chair:2"},
         )
 
         self.assertEqual(state.seats["agent"], {"repeat": 1, "seatId": "chair:2"})
 
-    async def test_watch_subscribes_before_lazy_initialization(self) -> None:
+    async def test_editor_watch_subscribes_before_lazy_initialization(self) -> None:
         received: list[int] = []
 
         async def record(event: OfficeStateChanged) -> None:
             received.append(event.state.revision)
 
-        snapshot = await self.facade.watch(OfficeStateKind.DISCORD, record, owner="cctv")
+        snapshot = await self.facade.watch(OfficeStateKind.EDITOR, record, owner="cctv")
 
+        assert snapshot is not None
         self.assertEqual(snapshot.revision, 1)
         self.assertEqual(received, [1])
+
+    async def test_a_discord_watch_returns_no_snapshot_and_sees_every_guild(self) -> None:
+        received: list[int | None] = []
+
+        async def record(event: OfficeStateChanged) -> None:
+            received.append(event.state.guild_id)
+
+        snapshot = await self.facade.watch(OfficeStateKind.DISCORD, record, owner="cctv")
+        await self.facade.state(DISCORD)
+        await self.facade.state(OTHER_GUILD)
+
+        self.assertIsNone(snapshot)
+        self.assertEqual(received, [111, 222])
+
+    async def test_each_guild_initializes_its_own_office_from_the_default(self) -> None:
+        await self.facade.set_layout(DISCORD, _layout(cols=3))
+        other = await self.facade.state(OTHER_GUILD)
+
+        self.assertEqual(other.layout, self.default)
+        self.assertEqual((other.revision, other.guild_id), (1, 222))
+        self.assertEqual((await self.facade.state(DISCORD)).layout["cols"], 3)
 
     async def test_missing_default_is_a_degraded_error(self) -> None:
         facade = OfficeStateFacade(
@@ -178,22 +201,22 @@ class TestOfficeStateFacade(unittest.IsolatedAsyncioTestCase):
         )
 
         with self.assertRaises(OfficeStateUnavailableError):
-            await facade.state(OfficeStateKind.DISCORD)
+            await facade.state(DISCORD)
 
     async def test_invalid_known_seat_field_is_rejected(self) -> None:
-        await self.facade.state(OfficeStateKind.DISCORD)
+        await self.facade.state(DISCORD)
 
         with self.assertRaises(OfficeStateValidationError):
             await self.facade.set_seats(
-                OfficeStateKind.DISCORD,
+                DISCORD,
                 {"-1": {"hueShift": 361}},
             )
 
     async def test_negative_repeat_is_rejected(self) -> None:
-        await self.facade.state(OfficeStateKind.DISCORD)
+        await self.facade.state(DISCORD)
 
         with self.assertRaises(OfficeStateValidationError):
-            await self.facade.set_seats(OfficeStateKind.DISCORD, {"-1": {"repeat": -1}})
+            await self.facade.set_seats(DISCORD, {"-1": {"repeat": -1}})
 
 
 if __name__ == "__main__":

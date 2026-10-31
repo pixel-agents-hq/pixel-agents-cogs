@@ -297,7 +297,14 @@ class LayoutDetailView(discord.ui.LayoutView):  # type: ignore[misc, unused-igno
         self.add_item(container)
 
     async def _on_load(self, interaction: discord.Interaction) -> None:
-        result = await self.catalogue.load_layout(interaction.user.id, self.detail.slug)
+        guild = interaction.guild
+        if guild is None:
+            await interaction.response.send_message(
+                "Load a layout from a server: it replaces that server's office.",
+                ephemeral=True,
+            )
+            return
+        result = await self.catalogue.load_layout(guild.id, interaction.user.id, self.detail.slug)
         if result.error is not None:
             message = result.error.message
         else:

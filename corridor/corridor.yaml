@@ -31,6 +31,9 @@ events:
     fields:
       agent:
         type: AgentRef
+      context_guild_id:
+        type: int | None
+        default: null
   AgentPresenceChanged:
     kind: event
     fields:
@@ -65,6 +68,9 @@ events:
         type: AgentRef
       summary:
         type: str
+      context_guild_id:
+        type: int | None
+        default: null
   AgentStatusChanged:
     kind: event
     fields:
@@ -74,6 +80,9 @@ events:
         type: Literal['active', 'waiting']
       awaiting_input:
         type: bool | None
+        default: null
+      context_guild_id:
+        type: int | None
         default: null
   AgentToolStarted:
     kind: event
@@ -87,8 +96,14 @@ events:
       tool_name:
         type: str | None
         default: null
+      context_guild_id:
+        type: int | None
+        default: null
   AgentUnhighlighted:
     kind: event
     fields:
       agent:
         type: AgentRef
+      context_guild_id:
+        type: int | None
+        default: null

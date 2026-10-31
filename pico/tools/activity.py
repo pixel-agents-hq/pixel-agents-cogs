@@ -26,10 +26,17 @@ class CorridorEventPublisher(Protocol):
 
 
 async def publish_agent_replied(
-    corridor: CorridorEventPublisher, agent: AgentRef, summary: str, *, tool_name: str
+    corridor: CorridorEventPublisher,
+    agent: AgentRef,
+    summary: str,
+    *,
+    tool_name: str,
+    context_guild_id: int | None = None,
 ) -> None:
     try:
-        await corridor.publish_event(AgentReplied(agent=agent, summary=summary))
+        await corridor.publish_event(
+            AgentReplied(agent=agent, summary=summary, context_guild_id=context_guild_id)
+        )
     except Exception:
         log.warning("pico: %s could not publish an AgentReplied event", tool_name, exc_info=True)
 

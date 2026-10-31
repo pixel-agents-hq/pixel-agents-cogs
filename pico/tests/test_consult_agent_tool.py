@@ -38,6 +38,7 @@ class FakeArchitectAsker:
         self.debug_events = debug_events or []
         self.attachments = attachments
         self.calls: list[dict[str, str]] = []
+        self.guild_ids: list[int | None] = []
 
     async def ask(
         self,
@@ -45,8 +46,10 @@ class FakeArchitectAsker:
         base_url: str,
         text: str,
         on_activity: Callable[[str], Awaitable[None]] | None = None,
+        guild_id: int | None = None,
     ) -> AgentAskResult:
         self.calls.append({"base_url": base_url, "text": text})
+        self.guild_ids.append(guild_id)
         if on_activity is not None:
             for event in self.debug_events:
                 await on_activity(event)
@@ -482,6 +485,17 @@ class TestConsultAgentToolOfficeVisualization(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(replied.agent.is_bot)
         self.assertEqual(replied.agent.agent_key, "architect")
         self.assertEqual(replied.summary, "38 items total")
+        # The consulted agent has no guild; the conversation's guild rides
+        # along, so the answer reaches that guild's office.
+        self.assertEqual(replied.context_guild_id, 1)
+
+    async def test_asks_on_behalf_of_the_conversations_guild(self) -> None:
+        client = FakeArchitectAsker(answer="ok")
+        tool = _tool(client, FakeReplySender(), guild_id=42)
+
+        await tool.handler(ConsultAgentInput(prompt="hi"))
+
+        self.assertEqual(client.guild_ids, [42])
 
     async def test_a_failure_only_publishes_the_question_not_a_reply(self) -> None:
         corridor = FakeCorridor()

@@ -88,8 +88,15 @@ class ArchitectClient:
             raise ArchitectRequestError(f"Could not reach architect at {base_url}: {exc}") from exc
 
         try:
+            from corridor.domain import activity_guild_id, guild_metadata
+
+            # Painter's own turn works for a guild; architect's activity for
+            # this consultation belongs to the same one.
             message = Message(
-                message_id=uuid.uuid4().hex, role=Role.ROLE_USER, parts=[Part(text=text)]
+                message_id=uuid.uuid4().hex,
+                role=Role.ROLE_USER,
+                parts=[Part(text=text)],
+                metadata=guild_metadata(activity_guild_id()),
             )
             request = SendMessageRequest(message=message)
             final_text: str | None = None

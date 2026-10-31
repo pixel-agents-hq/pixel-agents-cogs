@@ -13,14 +13,15 @@ No `Architect`/`Painter` cog is constructed here at all.
 
 cctv's discord/editor routing (`cctv/adapters/cog_base.py::_event_targets`)
 is per-agent-identity, not per-event-type: a genuine agent (an `AgentRef`
-with `agent_key` set, no Discord ids) always reaches *both* pipelines for
-any event type; only a real Discord member identity can be
-discord-pipeline-exclusive. So:
+with `agent_key` set, no Discord ids) always reaches the editor, and the
+Discord office too when the event's `context_guild_id` names an enabled
+guild; only a real Discord member identity can be discord-pipeline-exclusive.
+So:
 - the "message" scenario uses a real Discord member and asserts discord-only
   delivery (the case where exclusivity is actually achievable);
-- the "tool call" scenario uses a genuine agent and asserts delivery to
-  *both* pipelines explicitly, rather than attempting (impossible)
-  editor-exclusivity.
+- the "tool call" scenario uses a genuine agent working for an enabled guild
+  and asserts delivery to *both* pipelines explicitly, rather than
+  attempting (impossible) editor-exclusivity.
 
 Gated identically to `test_live_office.py`: set
 `PIXELAGENTS_REAL_WEBVIEW_BUILD=1` to run it (cctv's own `cog_load()` still
@@ -153,6 +154,8 @@ class TestAgentActivityReachesCctv(unittest.IsolatedAsyncioTestCase):
             )
 
     async def test_tool_started_reaches_both_pipelines(self) -> None:
+        await self.cctv._settings.set_guild_enabled(_DISCORD_MEMBER_GUILD_ID, True)  # noqa: SLF001
+
         from playwright.async_api import async_playwright
 
         async with async_playwright() as playwright:
@@ -168,15 +171,16 @@ class TestAgentActivityReachesCctv(unittest.IsolatedAsyncioTestCase):
             await wait_for_bootstrap(discord_page, discord_frames)
             await wait_for_bootstrap(editor_page, editor_frames)
 
-            # A genuine agent identity always targets both pipelines
-            # (_event_targets), unconditionally -- no presence event needed
-            # first, unlike the real-Discord-member scenario above.
+            # A genuine agent working for an enabled guild targets both
+            # pipelines (_event_targets) -- no presence event needed first,
+            # unlike the real-Discord-member scenario above.
             await self.corridor.publish_event(
                 AgentToolStarted(
                     agent=_GENUINE_AGENT_REF,
                     tool_id="test-tool-1",
                     status="painting",
                     tool_name="paint_tiles",
+                    context_guild_id=_DISCORD_MEMBER_GUILD_ID,
                 )
             )
 

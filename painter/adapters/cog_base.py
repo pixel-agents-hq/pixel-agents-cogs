@@ -11,7 +11,13 @@ from typing import Any
 
 from redbot.core.bot import Red
 
-from corridor.domain import AgentRef, AgentReplied, RegisteredAgent, ReplyCategory
+from corridor.domain import (
+    AgentRef,
+    AgentReplied,
+    RegisteredAgent,
+    ReplyCategory,
+    activity_guild_id,
+)
 from pixelagents.infrastructure.furniture_styles import FurnitureStyleLoader
 
 from ..application import ToolLoopService
@@ -161,7 +167,11 @@ class CogBase:
 
         try:
             await self._corridor.publish_event(
-                AgentReplied(agent=PAINTER_AGENT_REF, summary=summary)
+                AgentReplied(
+                    agent=PAINTER_AGENT_REF,
+                    summary=summary,
+                    context_guild_id=activity_guild_id(),
+                )
             )
         except Exception:
             log.exception("painter: failed to publish tool/thinking activity")

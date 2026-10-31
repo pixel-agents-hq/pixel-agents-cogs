@@ -31,6 +31,13 @@ jobs:
       - name: Install Red-DiscordBot
         run: pip install red-discordbot
 
+      # Loading pixelagents (directly, or as architect's/cctv's dependency)
+      # clones and `npm ci`s the vendored webview and the pixatar CLI inside
+      # cog_load; a warm npm cache keeps that first load independent of the
+      # npm registry's latency on the day.
+      - name: Warm the npm cache for pixelagents' vendored builds
+        run: .github/scripts/warm-vendored-npm-cache.sh
+
       - name: Test Cogs
         uses: ./.github/actions/test-red-discordbot-downloader-local
         with:

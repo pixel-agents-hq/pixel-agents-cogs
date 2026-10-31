@@ -43,6 +43,11 @@ def _strip_optional(type_str: str) -> tuple[str, bool]:
 
 def classify(field: FieldSpec) -> FieldKind:
     base, _optional = _strip_optional(field.type_str)
+    if field.name == "context_guild_id":
+        # Testbench publishes as a picked Discord member, whose own
+        # AgentRef.guild_id already names the guild -- this genuine-agent
+        # field stays at its default (None), like a skipped TUPLE field.
+        return FieldKind.TUPLE
     if base == "AgentRef":
         return FieldKind.AGENT_REF
     if base.startswith("Literal["):

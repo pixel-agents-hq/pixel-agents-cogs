@@ -407,9 +407,18 @@ class CctvBase:
                 snapshot, include_bots=True, rich_presence_enabled=False
             )
 
-    def _event_targets(self, identity: OfficeIdentity) -> tuple[CctvPipeline, ...]:
+    async def _event_targets(
+        self, identity: OfficeIdentity, context_guild_id: int | None
+    ) -> tuple[CctvPipeline, ...]:
         if isinstance(identity, GenuineAgentKey):
-            return (self.discord_pipeline, self.editor_pipeline)
+            # A genuine agent's activity belongs to the guild whose
+            # conversation produced it; activity of unknown origin reaches
+            # the editor page only, never a guild's office.
+            if context_guild_id is not None and await self._settings.guild_enabled(
+                context_guild_id
+            ):
+                return (self.discord_pipeline, self.editor_pipeline)
+            return (self.editor_pipeline,)
         targets = []
         if self.discord_pipeline.is_tracked(identity):
             targets.append(self.discord_pipeline)
@@ -426,7 +435,7 @@ class CctvBase:
         if identity is None:
             return
         global_settings = await self._settings.global_settings()
-        for pipeline in self._event_targets(identity):
+        for pipeline in await self._event_targets(identity, event.context_guild_id):
             if pipeline.page == "discord" and not global_settings.broadcast_messages:
                 continue
             if isinstance(identity, GenuineAgentKey):
@@ -474,19 +483,19 @@ class CctvBase:
     async def _on_agent_highlighted(self, event: AgentHighlighted) -> None:
         identity = _office_identity(event.agent)
         if identity is not None:
-            for pipeline in self._event_targets(identity):
+            for pipeline in await self._event_targets(identity, event.context_guild_id):
                 await pipeline.office.highlight_agent(identity)
 
     async def _on_agent_unhighlighted(self, event: AgentUnhighlighted) -> None:
         identity = _office_identity(event.agent)
         if identity is not None:
-            for pipeline in self._event_targets(identity):
+            for pipeline in await self._event_targets(identity, event.context_guild_id):
                 await pipeline.office.unhighlight_agent(identity)
 
     async def _on_agent_tool_started(self, event: AgentToolStarted) -> None:
         identity = _office_identity(event.agent)
         if identity is not None:
-            for pipeline in self._event_targets(identity):
+            for pipeline in await self._event_targets(identity, event.context_guild_id):
                 await pipeline.office.start_tool_activity(
                     identity, event.tool_id, event.status, event.tool_name
                 )
@@ -494,7 +503,7 @@ class CctvBase:
     async def _on_agent_status_changed(self, event: AgentStatusChanged) -> None:
         identity = _office_identity(event.agent)
         if identity is not None:
-            for pipeline in self._event_targets(identity):
+            for pipeline in await self._event_targets(identity, event.context_guild_id):
                 await pipeline.office.set_status(identity, event.status, event.awaiting_input)
 
     async def _can_edit_editor(self, user_id: int) -> bool:

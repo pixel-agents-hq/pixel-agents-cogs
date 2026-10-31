@@ -8,7 +8,13 @@ from typing import Any, cast
 
 from redbot.core.bot import Red
 
-from corridor.domain import AgentRef, AgentReplied, RegisteredAgent, ReplyCategory
+from corridor.domain import (
+    AgentRef,
+    AgentReplied,
+    RegisteredAgent,
+    ReplyCategory,
+    activity_guild_id,
+)
 from pixelagents.infrastructure.furniture_styles import FurnitureStyleLoader
 
 from ..application import ToolLoopService
@@ -158,7 +164,11 @@ class CogBase:
     async def _publish_activity(self, summary: str) -> None:
         try:
             await self._corridor.publish_event(
-                AgentReplied(agent=ARCHITECT_AGENT_REF, summary=summary)
+                AgentReplied(
+                    agent=ARCHITECT_AGENT_REF,
+                    summary=summary,
+                    context_guild_id=activity_guild_id(),
+                )
             )
         except Exception:
             log.exception("architect: failed to publish tool/thinking activity")

@@ -114,6 +114,7 @@ class AgentReplied:
 
     agent: AgentRef
     summary: str
+    context_guild_id: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,6 +123,7 @@ class AgentToolStarted:
     tool_id: str
     status: str            # required on the wire -- human-readable label
     tool_name: str | None = None   # optional on the wire
+    context_guild_id: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -129,6 +131,7 @@ class AgentStatusChanged:
     agent: AgentRef
     status: Literal["active", "waiting"]   # matches AgentActivityStatus exactly
     awaiting_input: bool | None = None     # matches AgentStatus.awaitingInput
+    context_guild_id: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -136,6 +139,7 @@ class AgentHighlighted:
     """-> agentSelected(id)."""
 
     agent: AgentRef
+    context_guild_id: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -209,12 +213,42 @@ message" one.
 |---|---|---|---|
 | `AgentRef` | `discord_user_id`, `guild_id`, `is_bot`, `agent_key` | *(value object — carried by every event below)* | identifies the agent a snapshot belongs to |
 | `AgentActivity` | `kind`, `name`, `title`, `artist`, `details`, `state` | *(value object — carried inside `AgentPresenceChanged.activities`)* | one Discord rich-presence entry |
-| `AgentReplied` | `agent`, `summary` | corridor (message mirroring), pico (`ReplyTool`), architect and painter (tool use/thinking) | `agentToolStart` then `agentSelected`, later `agentToolsClear` |
+| `AgentReplied` | `agent`, `summary`, `context_guild_id` | corridor (message mirroring), pico (`ReplyTool`, `ConsultAgentTool`), architect, painter, animator and bootcamp agents (tool use/thinking) | `agentToolStart` then `agentSelected`, later `agentToolsClear` |
 | `AgentPresenceChanged` | `agent`, `display_name`, `status`, `activities`, `left_guild` | corridor (gateway listeners; `register_agent`/`unregister_agent_owner`/`unregister_agent`) | spawns/closes/renames the agent, forwards each activity |
-| `AgentStatusChanged` | `agent`, `status`, `awaiting_input` | manual only (testbench) | `agentStatus` |
-| `AgentToolStarted` | `agent`, `tool_id`, `status`, `tool_name` | manual only (testbench) | `agentToolStart` |
-| `AgentHighlighted` | `agent` | manual only (testbench) | `agentSelected(id)` |
-| `AgentUnhighlighted` | `agent` | manual only (testbench) | `agentDeselected(id)` |
+| `AgentStatusChanged` | `agent`, `status`, `awaiting_input`, `context_guild_id` | manual only (testbench) | `agentStatus` |
+| `AgentToolStarted` | `agent`, `tool_id`, `status`, `tool_name`, `context_guild_id` | manual only (testbench) | `agentToolStart` |
+| `AgentHighlighted` | `agent`, `context_guild_id` | manual only (testbench) | `agentSelected(id)` |
+| `AgentUnhighlighted` | `agent`, `context_guild_id` | manual only (testbench) | `agentDeselected(id)` |
+
+### Which guild a genuine agent's activity belongs to
+
+A genuine agent has no guild, but every turn it runs was asked for from
+one. The four activity events (`AgentReplied`, `AgentToolStarted`,
+`AgentStatusChanged`, `AgentHighlighted`/`AgentUnhighlighted`) carry that
+guild as `context_guild_id`; it is `None` when the origin is unknown, and
+always `None` for a Discord member, whose `agent.guild_id` already says
+it. A subscriber shows a genuine agent's activity only in the office of
+`context_guild_id` (CCTV's editor page, which belongs to no guild, shows
+it regardless).
+
+The guild reaches the agent like this:
+
+1. pico's `ConsultAgentTool` (and painter consulting architect) sends it
+   as A2A message metadata, `{"guild_id": "<id>"}` -- a string, since a
+   protobuf `Struct` number is a double and would round a snowflake
+   (`corridor.domain.guild_metadata`).
+2. `GenericAgentExecutor.execute` reads it back (`guild_from_metadata`)
+   and runs the turn inside `activity_guild(guild_id)`, a context variable
+   (`corridor/domain/activity_context.py`).
+3. The agent's `_publish_activity` stamps
+   `context_guild_id=activity_guild_id()` on every event it publishes.
+   `[p]bootcamp ask` runs its in-process turn inside `activity_guild` the
+   same way, and pico stamps the consulted agent's echoed answer with the
+   conversation's guild directly.
+
+Anyone who can reach corridor's A2A listener can name any guild in that
+metadata; the worst it does is put that agent's activity bubble in the
+named guild's office.
 
 ## Key flows
 
@@ -287,7 +321,8 @@ Each publisher's own activity reporting:
   `ToolLoopService.run()` takes an optional `on_activity` callback,
   awaited once per tool call (`"using tool <name>"`) and once per thinking
   turn (`"thinking: <content>"`); `_publish_activity` wraps that into
-  `AgentReplied(agent=ARCHITECT_AGENT_REF, summary=...)` through corridor.
+  `AgentReplied(agent=ARCHITECT_AGENT_REF, summary=...,
+  context_guild_id=activity_guild_id())` through corridor.
 - **painter** — the identical shape: a fixed `PAINTER_AGENT_REF` constant
   in `painter/adapters/cog_base.py`, no self-published
   `AgentPresenceChanged` (register/unregister covers it), and its own

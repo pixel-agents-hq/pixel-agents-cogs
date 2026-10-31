@@ -387,6 +387,7 @@ sequenceDiagram
 
     Co->>C: AgentReplied
     C->>C: route to tracked pipeline(s), honoring broadcast_messages on discord
+    Note over C,D: a registered agent's activity reaches D only for an enabled context_guild_id
     C-->>D: send_genuine_agent_activity / send_message_activity
     C->>C: schedule clear after that page's clear-delay
 
@@ -399,6 +400,13 @@ sequenceDiagram
     Co->>C: AgentStatusChanged
     C-->>D: set_status(status, awaiting_input)
 ```
+
+A registered agent's *presence* reaches both pages, but its *activity*
+(the last four events, and its `AgentReplied`) reaches the Discord page
+only when the event's `context_guild_id` names an enabled guild -- the
+guild whose conversation produced it (see "Which guild a genuine agent's
+activity belongs to" in [`docs/corridor-pubsub-design.md`](corridor-pubsub-design.md)).
+Activity of unknown origin reaches the editor page alone.
 
 CCTV subscribes to all six of these `Agent*` events at startup in one
 atomic `watch_agent_events` call alongside `list_agents()`, then performs

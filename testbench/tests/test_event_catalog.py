@@ -47,6 +47,7 @@ class TestListPublishableEvents(unittest.TestCase):
             (
                 FieldSpec(name="agent", type_str="AgentRef", required=True),
                 FieldSpec(name="summary", type_str="str", required=True),
+                FieldSpec(name="context_guild_id", type_str="int | None", required=False),
             ),
         )
 

@@ -19,7 +19,14 @@ from typing import Any
 from redbot.core import commands
 from redbot.core.bot import Red
 
-from corridor.domain import AgentRef, AgentReplied, RegisteredAgent, ReplyCategory
+from corridor.domain import (
+    AgentRef,
+    AgentReplied,
+    RegisteredAgent,
+    ReplyCategory,
+    activity_guild,
+    activity_guild_id,
+)
 from corridor.domain.agent_executor import GenericAgentExecutor, build_agent_card
 
 from ..application import BootcampService, ToolLoopService
@@ -235,6 +242,7 @@ class CogBase:
                         discord_user_id=None, guild_id=None, is_bot=True, agent_key=agent_key
                     ),
                     summary=summary,
+                    context_guild_id=activity_guild_id(),
                 )
             )
         except Exception:
@@ -283,18 +291,22 @@ class CogBase:
             return None
 
         tools: Sequence[ToolSpec] = await _mcp_tools(self._corridor, agent_key)
-        result = await self._tool_loop_service.run(
-            base_url=llm_settings.llm_base_url,
-            api_key=llm_settings.llm_api_key or "",
-            model=llm_settings.llm_model or "",
-            system_prompt=agent.system_prompt,
-            user_input=prompt,
-            tools=tools,
-            max_tool_calls=agent.max_tool_calls,
-            debug=agent.debug_logging,
-            on_activity=lambda summary: self._publish_activity(agent_key, summary),
-            request_timeout_seconds=agent.request_timeout_seconds,
-        )
+        guild = getattr(ctx, "guild", None)
+        # The agent works for this guild for the turn, so its activity
+        # reaches this guild's office (see corridor's activity_context).
+        with activity_guild(guild.id if guild is not None else None):
+            result = await self._tool_loop_service.run(
+                base_url=llm_settings.llm_base_url,
+                api_key=llm_settings.llm_api_key or "",
+                model=llm_settings.llm_model or "",
+                system_prompt=agent.system_prompt,
+                user_input=prompt,
+                tools=tools,
+                max_tool_calls=agent.max_tool_calls,
+                debug=agent.debug_logging,
+                on_activity=lambda summary: self._publish_activity(agent_key, summary),
+                request_timeout_seconds=agent.request_timeout_seconds,
+            )
         if result.stopped_reason != "final_text" or result.text is None:
             await reply.send_reply(
                 ctx,

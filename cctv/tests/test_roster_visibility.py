@@ -67,6 +67,8 @@ class _Office:
 
 
 class _Pipeline:
+    private = False
+
     def __init__(self) -> None:
         self.office = _Office()
         self.reconciled: list[tuple[AgentSnapshot, OfficeVisibility]] = []

@@ -17,7 +17,7 @@ office per guild, plus the editor office) and publishes their change events.
 | `infrastructure/settings.py` | CCTV's own Red Config identity for listener/display settings |
 | `infrastructure/client_hub.py` | Per-office connection registry, editor flags, and broadcasts |
 | `infrastructure/server.py` | One aiohttp listener: a WebSocket route per guild office, the editor's, and a JSON health route |
-| `infrastructure/tickets.py` | Short-lived guild-office browser identity tickets |
+| `infrastructure/tickets.py` | Single-use, 60-second, guild-bound browser identity tickets |
 | `infrastructure/webview.py` | Pixelagents bundle loading, per-office HTML/WebSocket-target rewriting, and the server picker page |
 | `adapters/dashboard.py` | Picker/office/editor/session/static Dashboard route registrations (and the old `discord` page's redirect) |
 | `adapters/cog_base.py` | Dependency wiring, atomic startup watches, pub/sub projection, lifecycle, health |
@@ -100,8 +100,8 @@ sequenceDiagram
     participant Co as corridor
 
     B->>S: WebSocket connect (/cctv/office/<guild id>/ws or /cctv/editor/ws)
-    S->>S: route to that guild's office (close 4404 if none is open)
-    S->>S: resolve ticket (guild offices only)
+    S->>S: route to that guild's office
+    S->>S: private or no office: send nothing until a valid in-band ticket, else close 4404
     S-->>Pi: register client (user_id, is_editor)
     B->>S: {"type": "webviewReady"}
     S->>Pi: handle_message

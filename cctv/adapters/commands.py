@@ -15,15 +15,24 @@ from corridor.domain import ReplyField
 from pixelagents.domain import AgentKey, GenuineAgentKey, OfficeIdentity
 from pixelagents.domain.characters import CharacterRecord, PixatarFailure
 
-from ..domain import GlobalSettings
+from ..domain import GlobalSettings, OfficeAccess
 from ..infrastructure import EDITOR_WS_PATH, PICKER_PATH, office_page_path, office_ws_path
 from .cog_base import CctvBase, roster_warnings
 from .dashboard import dashboard_cog_loaded
 
 # The corridor permission group allowed to show/set/reset another member's
-# character (`[p]cctv character member…`). The reserved `owner` group (bot
+# character (`[p]cctv character member…`) and to choose who may watch the
+# server's office (`[p]cctv visibility`). The reserved `owner` group (bot
 # owner or guild Administrator) always satisfies it too.
 MEMBER_CHARACTER_GROUP = "building_manager"
+
+ACCESS_DESCRIPTIONS = {
+    OfficeAccess.PUBLIC: "Anyone can watch it, and it's listed on the server picker.",
+    OfficeAccess.UNLISTED: "Anyone with the link can watch it; it isn't listed.",
+    OfficeAccess.PRIVATE: (
+        "Only this server's members can watch it, after signing in to the Dashboard with Discord."
+    ),
+}
 
 
 def _pixatar_failure(exc: Exception) -> PixatarFailure | None:
@@ -141,7 +150,7 @@ class CommandsMixin(CctvBase):
                 ctx, "Red Web Dashboard isn't loaded, so the office page can't be served yet."
             )
             return
-        lines = ["Anyone with this link can watch this server's office."]
+        lines = [ACCESS_DESCRIPTIONS[guild_settings.access]]
         if guild_settings.broadcast_messages:
             lines.append(
                 "Chat messages from every channel the bot can read appear there as speech "
@@ -157,6 +166,38 @@ class CommandsMixin(CctvBase):
             "\n".join(lines),
             title="This server's office",
             code=[self._page_link(settings, office_page_path(guild.id))],
+        )
+
+    @cctv_group.command(name="visibility")
+    @commands.guild_only()
+    @app_commands.describe(access="public, unlisted, or private")
+    async def cmd_visibility(self, ctx: commands.Context, access: str | None = None) -> None:
+        """Show or set who may watch this server's office. Building Manager.
+
+        public: anyone, listed on the server picker. unlisted: anyone with the
+        link. private: only members of this server, signed in to the Dashboard.
+        """
+
+        guild = self._guild(ctx)
+        if access is None:
+            current = (await self._settings.guild_settings(guild)).access
+            await self._reply(
+                ctx,
+                f"This server's office is **{current.value}**: {ACCESS_DESCRIPTIONS[current]}",
+            )
+            return
+        try:
+            chosen = OfficeAccess(access.strip().lower())
+        except ValueError:
+            await self._reply(ctx, "Choose `public`, `unlisted`, or `private`.")
+            return
+        if not await self._corridor.require_permission(ctx, MEMBER_CHARACTER_GROUP):
+            return
+        await self._set_office_access(guild.id, chosen)
+        await self._reply(
+            ctx,
+            f"This server's office is now **{chosen.value}**: {ACCESS_DESCRIPTIONS[chosen]} "
+            "Everyone watching it was reconnected under the new rule.",
         )
 
     @cctv_group.command(name="publicurl")

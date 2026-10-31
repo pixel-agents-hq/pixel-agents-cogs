@@ -15,12 +15,17 @@ through Pixelagents' office-state facade:
 
 | Page | Dashboard route | WebSocket route | Roster | Write policy |
 |---|---|---|---|---|
-| Server picker | `/third-party/cctv` | -- | Every open guild office: name, icon, live headcount | -- |
-| A guild's office | `/third-party/cctv/office?guild=<server id>` | `/cctv/office/<server id>/ws` | That guild's members plus every registered A2A agent | Bot owner or a member satisfying Corridor's `keyholder` capability in that guild |
+| Server picker | `/third-party/cctv` (`/third-party/cctv/mine` signed in) | -- | Every public guild office (plus your own servers' unlisted and private ones): name, icon, live headcount | -- |
+| A guild's office | `/third-party/cctv/office?guild=<server id>` (private: `/dashboard/<server id>/third-party/cctv/private`) | `/cctv/office/<server id>/ws` | That guild's members plus every registered A2A agent | Bot owner or a member satisfying Corridor's `keyholder` capability in that guild |
 | Editor | `/third-party/cctv/editor` | `/cctv/editor/ws` | Registered A2A agents plus the bot's own Discord account | Open to any connected client |
 
 A guild has an office while CCTV is enabled there (`[p]cctv enable`);
-`[p]cctv url` gives its link. The offices share static assets and one
+`[p]cctv url` gives its link. Each office is `public` (anyone, listed on the
+picker; the default), `unlisted` (anyone with the link) or `private` (only
+the server's members, signed in to the Dashboard with Discord); a Building
+Manager picks with `[p]cctv visibility`. A private office's socket is sent
+nothing until it presents a single-use ticket proving a member, and leavers
+are disconnected. The offices share static assets and one
 aiohttp listener, but each keeps its own client hub, projection service,
 current revision, bootstrap lock, and state aggregate, so nothing one
 guild's office shows reaches another guild's page or socket. A Pixel Index
@@ -40,7 +45,8 @@ together.
 
 | Command | Scope | Description |
 |---|---|---|
-| `[p]cctv url` | Any member | The link to this server's office |
+| `[p]cctv url` | Any member | The link to this server's office, and who may watch it |
+| `[p]cctv visibility [public\|unlisted\|private]` | Building Manager | Show or set who may watch this server's office |
 | `[p]cctv status` | Guild admin | Listener, this server's office route/page, assets, revisions/clients, guild settings, and health |
 | `[p]cctv dashboard` | Guild admin | Dashboard readiness and the picker, office and editor page links |
 | `[p]cctv enable` / `disable` | Guild admin | Open this server's office / close it, disconnecting its viewers |
@@ -119,7 +125,7 @@ is read or migrated into it. Global defaults are listener host
 `127.0.0.1`, port `3210`, both activity-clear delays at `2.0` seconds, and
 no public URL. Per-guild defaults are `disabled` with bots included and
 drawn translucent, offline members hidden (translucent when shown), and
-rich-presence and message display on. A newly enabled guild's office
+rich-presence and message display on, and a public office. A newly enabled guild's office
 starts from the bundled default layout. See "Who a guild's office shows" in
 [`docs/cctv-design.md`](../docs/cctv-design.md) for how presence and
 translucency reach the canvas, and the gateway intents showing offline

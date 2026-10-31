@@ -8,7 +8,7 @@ from urllib.parse import urlsplit
 
 from redbot.core import Config
 
-from ..domain import GlobalSettings, GuildSettings
+from ..domain import GlobalSettings, GuildSettings, OfficeAccess
 
 CONFIG_IDENTIFIER = 0x636374765F73657474696E6773  # "cctv_settings"
 
@@ -28,6 +28,7 @@ GUILD_DEFAULTS: dict[str, object] = {
     "ghost_bots": True,
     "broadcast_rich_presence": True,
     "broadcast_messages": True,
+    "visibility": "public",
 }
 
 
@@ -60,6 +61,16 @@ def validate_public_base_url(url: str) -> str:
     except ValueError as exc:
         raise ValueError("The public URL has an invalid port.") from exc
     return f"{parsed.scheme}://{parsed.netloc}"
+
+
+def _access(raw: object) -> OfficeAccess:
+    """A stored visibility; anything unreadable is treated as private, so a
+    corrupt value can only ever hide an office, never expose it."""
+
+    try:
+        return OfficeAccess(str(raw))
+    except ValueError:
+        return OfficeAccess.PRIVATE
 
 
 class GuildReference(Protocol):
@@ -112,6 +123,7 @@ class RedSettingsRepository:
             ghost_bots=cast(bool, await group.ghost_bots()),
             broadcast_rich_presence=cast(bool, await group.broadcast_rich_presence()),
             broadcast_messages=cast(bool, await group.broadcast_messages()),
+            access=_access(await group.visibility()),
         )
 
     async def guild_enabled(self, guild: int | GuildReference) -> bool:
@@ -158,6 +170,9 @@ class RedSettingsRepository:
         if not isinstance(value, bool):
             raise ValueError("Message setting must be a boolean.")
         await self._config.guild_from_id(guild_id).broadcast_messages.set(value)
+
+    async def set_guild_access(self, guild_id: int, access: OfficeAccess) -> None:
+        await self._config.guild_from_id(guild_id).visibility.set(OfficeAccess(access).value)
 
     async def set_guild_enabled(self, guild_id: int, value: bool) -> None:
         if not isinstance(value, bool):

@@ -158,9 +158,11 @@ flowchart TB
 ```
 
 Every page uses one bundle and listener, while each office's client hub,
-projection, revision and authorization remain isolated. A guild office page
-uses a Dashboard session ticket and requires bot-owner/keyholder access in that
-guild for writes. The editor page is intentionally open. On every
+projection, revision and authorization remain isolated. A guild office is
+public, unlisted or private: a private one is reached through the
+Dashboard's members-only guild route, and its socket is sent nothing until it
+presents a single-use, guild-bound Dashboard session ticket for a member
+(checked bot-side). Writes require bot-owner/keyholder access in that guild. The editor page is intentionally open. On every
 `webviewReady`, CCTV reads the current aggregate and serializes bootstrap with
 event application.
 

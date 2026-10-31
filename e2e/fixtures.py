@@ -25,7 +25,12 @@ from aiohttp import web
 
 from cctv.cctv import CCTV
 from cctv.infrastructure import settings as cctv_settings
-from cctv.infrastructure.webview import EDITOR_WS_PATH, WEBVIEW_BASE_PATH, office_ws_path
+from cctv.infrastructure.webview import (
+    EDITOR_WS_PATH,
+    WEBVIEW_BASE_PATH,
+    office_ws_path,
+    session_path,
+)
 from corridor.corridor import Corridor
 from corridor.infrastructure.llm_client import (
     ChatCompletionChoice,
@@ -287,9 +292,14 @@ async def build_frontend_app(cctv_cog: CCTV, server: object) -> web.Application:
     async def page_handler(request: web.Request) -> web.Response:
         page = request.match_info["page"]
         if page == "editor":
-            response = assets.page_response(EDITOR_WS_PATH, identify=False)
+            response = assets.page_response(EDITOR_WS_PATH)
         elif page.isdecimal():
-            response = assets.page_response(office_ws_path(int(page)), identify=True)
+            office = cctv_cog.office(int(page))
+            response = assets.page_response(
+                office_ws_path(int(page)),
+                ticket_path=session_path(int(page)),
+                private=office is not None and office.private,
+            )
         else:
             return web.Response(status=404)
         if response.get("status") != 0:

@@ -81,8 +81,10 @@ class CatalogueRepository(Protocol):
     async def pixel_index_web_url(self) -> str: ...
 
 
-CanEditLayout = Callable[[int], Awaitable[bool]]
-ApplyLayout = Callable[[dict[str, object]], Awaitable[None]]
+# (guild_id, user_id): may this user replace that guild's office layout?
+CanEditLayout = Callable[[int, int], Awaitable[bool]]
+# (guild_id, layout): loads the layout into that guild's own Discord office.
+ApplyLayout = Callable[[int, dict[str, object]], Awaitable[None]]
 
 
 class CatalogueService:
@@ -134,10 +136,11 @@ class CatalogueService:
         base_url = await self._repository.pixel_index_api_url()
         return await self._gateway.detail(base_url, slug)
 
-    async def load_layout(self, user_id: int, slug: str) -> CatalogueResult[str]:
-        """Authorize and apply one indexed layout through the state facade."""
+    async def load_layout(self, guild_id: int, user_id: int, slug: str) -> CatalogueResult[str]:
+        """Authorize and apply one indexed layout to `guild_id`'s office
+        through the state facade -- no other guild's office changes."""
 
-        if not await self._can_edit_layout(user_id):
+        if not await self._can_edit_layout(guild_id, user_id):
             return CatalogueResult(
                 error=CatalogueError(
                     CatalogueErrorCode.UNAUTHORIZED,
@@ -158,7 +161,7 @@ class CatalogueService:
             )
 
         try:
-            await self._apply_layout(detail.layout)
+            await self._apply_layout(guild_id, detail.layout)
         except (RuntimeError, TypeError, ValueError) as exc:
             return CatalogueResult(
                 error=CatalogueError(

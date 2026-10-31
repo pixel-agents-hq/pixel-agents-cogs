@@ -121,10 +121,11 @@ extend this suite with a second scenario for those specifically.
    `testbench` uses to manually publish events for testing — see
    `test_agent_activity.py`.
 3. Call `start_frontend_app(cctv, add_async_cleanup=...)` (`e2e/fixtures.py`)
-   once per test to get a real port serving both `/e2e/page/discord` and
-   `/e2e/page/editor` plus both pages' real WebSocket routes. Observe the
+   once per test to get a real port serving `/e2e/page/<guild id>` (that
+   guild's office; open it first with `open_guild_office(cctv, guild_id)`)
+   and `/e2e/page/editor`, plus their real WebSocket routes. Observe the
    result either by reading real cog state back directly (e.g. `await
-   pixelagents.office_state(OfficeStateKind.EDITOR)`) or, for anything
+   pixelagents.office_state(OfficeRef.editor())`) or, for anything
    that should reach a browser, by capturing WebSocket frames with
    `capture_websocket_frames(page)` and polling for one with
    `wait_for_frame(page, frames, predicate)` (`e2e/fixtures.py`) — a

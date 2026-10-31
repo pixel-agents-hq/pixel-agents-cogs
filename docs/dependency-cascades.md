@@ -259,7 +259,7 @@ whatever it cached:
 | `architect` | `self._pixelagents = pixelagents` | `_style_loader`/`_office_layout_repository` both already read `self._pixelagents` lazily, through a closure (`_LazyPixelAgents(lambda: self._pixelagents)`) — updating the attribute is the whole fix. |
 | `painter` | `self._pixelagents = pixelagents` | Same lazy-closure shape as `architect`. |
 | `floorplan` | `self._pixelagents = pixelagents` | Only ever reads `self._pixelagents` directly at the call site — no separate object captured a copy. |
-| `cctv` | `self._pixelagents = pixelagents`, then `pipeline.set_pixelagents(pixelagents)` for every live `CctvPipeline` | `_create_pipelines()` hands each `CctvPipeline` its own copy of `self._pixelagents` at construction time — updating the cog-level attribute alone would leave the two already-built pipelines (`OfficeStateKind.DISCORD`/`EDITOR`) still pointing at the old instance. This is the one dependent where the fix needed two lines instead of one. |
+| `cctv` | `self._pixelagents = pixelagents`, then `pipeline.set_pixelagents(pixelagents)` for every live `CctvPipeline` | `_create_pipeline()` hands each `CctvPipeline` its own copy of `self._pixelagents` at construction time — updating the cog-level attribute alone would leave every already-built pipeline (each guild office's and the editor's) still pointing at the old instance. This is the one dependent where the fix needed two lines instead of one. |
 
 `architect` and `painter`'s lazy-closure pattern (`_LazyPixelAgents`,
 `OfficeLayoutRepository(lambda: self._pixelagents)`) already existed for an

@@ -68,7 +68,7 @@ equivalent for seats. Corridor performs the locked read-modify-write,
 preserves the other field, increments the revision, then publishes the
 complete post-write state.
 
-For `OfficeStateKind.EDITOR`, layout validation also decodes and
+For the editor office, layout validation also decodes and
 re-encodes the Semantic IR using the current furniture manifest. This
 makes malformed or unsupported editor state fail before persistence. The
 Discord state needs the wire-layout validation only.

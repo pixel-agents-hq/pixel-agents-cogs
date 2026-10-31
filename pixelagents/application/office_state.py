@@ -8,7 +8,7 @@ from typing import Any, Protocol, TypeVar
 
 from pydantic import ValidationError
 
-from corridor.domain import OfficeState, OfficeStateChanged, OfficeStateKind, SeatRecords
+from corridor.domain import OfficeRef, OfficeState, OfficeStateChanged, OfficeStateKind, SeatRecords
 
 from ..contracts.layout import OfficeLayout, RawOfficeLayout
 from ..infrastructure.furniture_styles import FurnitureStyleManifest
@@ -28,21 +28,19 @@ class OfficeStateUnavailableError(RuntimeError):
 
 
 class CorridorOfficeStateGateway(Protocol):
-    async def office_state(self, kind: OfficeStateKind) -> OfficeState | None: ...
+    async def office_state(self, ref: OfficeRef) -> OfficeState | None: ...
 
     async def initialize_office_state(
-        self, kind: OfficeStateKind, layout: dict[str, Any]
+        self, ref: OfficeRef, layout: dict[str, Any]
     ) -> OfficeState: ...
 
-    async def set_office_layout(
-        self, kind: OfficeStateKind, layout: dict[str, Any]
-    ) -> OfficeState: ...
+    async def set_office_layout(self, ref: OfficeRef, layout: dict[str, Any]) -> OfficeState: ...
 
-    async def set_office_seats(self, kind: OfficeStateKind, seats: SeatRecords) -> OfficeState: ...
+    async def set_office_seats(self, ref: OfficeRef, seats: SeatRecords) -> OfficeState: ...
 
     async def mutate_office_seats(
         self,
-        kind: OfficeStateKind,
+        ref: OfficeRef,
         mutation: Callable[[SeatRecords], MutationResult],
     ) -> tuple[OfficeState, MutationResult]: ...
 
@@ -87,7 +85,7 @@ def validate_seat_records(seats: object) -> SeatRecords:
 
 
 class OfficeStateFacade:
-    """The only schema-aware read/write surface for both office aggregates."""
+    """The only schema-aware read/write surface for every office aggregate."""
 
     def __init__(
         self,
@@ -119,36 +117,37 @@ class OfficeStateFacade:
             layout=deepcopy(layout),
             seats=seats,
             revision=state.revision,
+            guild_id=state.guild_id,
         )
 
-    async def state(self, kind: OfficeStateKind) -> OfficeState:
-        state = await self._corridor.office_state(kind)
+    async def state(self, ref: OfficeRef) -> OfficeState:
+        state = await self._corridor.office_state(ref)
         if state is None:
             default = self._default_layout()
             if default is None:
                 raise OfficeStateUnavailableError(
-                    f"the {kind.value} office is absent and the bundled default is unavailable"
+                    f"the {ref.describe()} office is absent and the bundled default is unavailable"
                 )
-            layout = self.validate_layout(kind, default)
-            state = await self._corridor.initialize_office_state(kind, layout)
+            layout = self.validate_layout(ref.kind, default)
+            state = await self._corridor.initialize_office_state(ref, layout)
         return self.validate_state(state)
 
-    async def set_layout(self, kind: OfficeStateKind, raw: Mapping[str, object]) -> OfficeState:
-        await self.state(kind)
-        layout = self.validate_layout(kind, raw)
-        return self.validate_state(await self._corridor.set_office_layout(kind, layout))
+    async def set_layout(self, ref: OfficeRef, raw: Mapping[str, object]) -> OfficeState:
+        await self.state(ref)
+        layout = self.validate_layout(ref.kind, raw)
+        return self.validate_state(await self._corridor.set_office_layout(ref, layout))
 
-    async def set_seats(self, kind: OfficeStateKind, seats: object) -> OfficeState:
-        await self.state(kind)
+    async def set_seats(self, ref: OfficeRef, seats: object) -> OfficeState:
+        await self.state(ref)
         validated = validate_seat_records(seats)
-        return self.validate_state(await self._corridor.set_office_seats(kind, validated))
+        return self.validate_state(await self._corridor.set_office_seats(ref, validated))
 
     async def mutate_seats(
         self,
-        kind: OfficeStateKind,
+        ref: OfficeRef,
         mutation: Callable[[SeatRecords], MutationResult],
     ) -> tuple[OfficeState, MutationResult]:
-        await self.state(kind)
+        await self.state(ref)
 
         def mutate_and_validate(seats: SeatRecords) -> MutationResult:
             result = mutation(seats)
@@ -157,12 +156,12 @@ class OfficeStateFacade:
             seats.update(validated)
             return result
 
-        state, result = await self._corridor.mutate_office_seats(kind, mutate_and_validate)
+        state, result = await self._corridor.mutate_office_seats(ref, mutate_and_validate)
         return self.validate_state(state), result
 
     async def merge_seat_patch(
         self,
-        kind: OfficeStateKind,
+        ref: OfficeRef,
         agent_id: str,
         patch: Mapping[str, object],
         *,
@@ -171,7 +170,7 @@ class OfficeStateFacade:
         def merge(seats: SeatRecords) -> None:
             merge_seat_patch(seats, agent_id, palette_count, patch)
 
-        state, _ = await self.mutate_seats(kind, merge)
+        state, _ = await self.mutate_seats(ref, merge)
         return state
 
     async def watch(
@@ -180,30 +179,37 @@ class OfficeStateFacade:
         handler: OfficeStateHandler,
         *,
         owner: str,
-    ) -> OfficeState:
+    ) -> OfficeState | None:
+        """Subscribe to every office of `kind`. Returns the editor office's
+        current state (initialized if absent); a Discord office is one per
+        guild, so none is returned -- read each with `state` after
+        subscribing."""
+
         async def validate_event(event: OfficeStateChanged) -> None:
             await handler(OfficeStateChanged(state=self.validate_state(event.state)))
 
         snapshot = await self._corridor.watch_office_state(kind, validate_event, owner=owner)
+        if kind != OfficeStateKind.EDITOR:
+            return None
         if snapshot is None:
-            return await self.state(kind)
+            return await self.state(OfficeRef.editor())
         return self.validate_state(snapshot)
 
 
 class OfficeStateSeatRepository:
     """Adapt one aggregate to ``OfficeService``'s seat repository protocol."""
 
-    def __init__(self, facade: OfficeStateFacade, kind: OfficeStateKind) -> None:
+    def __init__(self, facade: OfficeStateFacade, ref: OfficeRef) -> None:
         self._facade = facade
-        self._kind = kind
+        self._ref = ref
 
     async def seats(self) -> SeatRecords:
-        return (await self._facade.state(self._kind)).seats
+        return (await self._facade.state(self._ref)).seats
 
     async def mutate_seats(
         self, mutation: Callable[[SeatRecords], MutationResult]
     ) -> MutationResult:
-        _, result = await self._facade.mutate_seats(self._kind, mutation)
+        _, result = await self._facade.mutate_seats(self._ref, mutation)
         return result
 
 

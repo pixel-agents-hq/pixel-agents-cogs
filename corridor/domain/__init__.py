@@ -49,6 +49,7 @@ from .models import (
 )
 from .office_state import (
     CharacterRecords,
+    OfficeRef,
     OfficeState,
     OfficeStateChanged,
     OfficeStateKind,
@@ -67,6 +68,7 @@ __all__ = [
     "EMPLOYEE_KEY",
     "LLMToolSpec",
     "OWNER_KEY",
+    "OfficeRef",
     "OfficeState",
     "OfficeStateChanged",
     "OfficeStateKind",

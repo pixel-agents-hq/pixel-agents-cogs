@@ -12,6 +12,14 @@ def build_contract() -> dict[str, Any]:
         "source_doc": "docs/cctv-design.md",
         "state_kinds": ["discord", "editor"],
         "events": {
+            "OfficeRef": {
+                "kind": "value-object",
+                "fields": {
+                    "kind": {"type": "OfficeStateKind"},
+                    "guild_id": {"type": "int | None"},
+                },
+                "invariant": "discord requires guild_id; editor has none",
+            },
             "OfficeState": {
                 "kind": "value-object",
                 "fields": {
@@ -19,6 +27,7 @@ def build_contract() -> dict[str, Any]:
                     "layout": {"type": "dict[str, Any]"},
                     "seats": {"type": "dict[str, dict[str, Any]]"},
                     "revision": {"type": "int"},
+                    "guild_id": {"type": "int | None"},
                 },
             },
             "CharacterRecords": {

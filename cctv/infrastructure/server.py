@@ -1,10 +1,10 @@
-"""One aiohttp listener routing two independent CCTV pipelines."""
+"""One aiohttp listener routing every guild office and the editor office."""
 
 from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from typing import Protocol
 
 from aiohttp import WSMsgType, web
@@ -23,6 +23,10 @@ from .tickets import TicketStore
 
 HealthSnapshot = Callable[[], Mapping[str, object]]
 _WRITE_MESSAGES = (SaveLayoutMessage, SaveAgentSeatsMessage, ImportLayoutMessage)
+# Close code for a socket to an office that isn't open (unknown guild, CCTV
+# disabled there): one code for every such case, so a client can't tell a
+# guild that doesn't exist from one that doesn't use CCTV.
+OFFICE_UNAVAILABLE_CLOSE_CODE = 4404
 
 
 class PagePipeline(Protocol):
@@ -36,17 +40,24 @@ class PagePipeline(Protocol):
     ) -> None: ...
 
 
+OfficeResolver = Callable[[int], "PagePipeline | None"]
+OfficeList = Callable[[], Iterable["PagePipeline"]]
+
+
 class CctvServer:
     def __init__(
         self,
-        discord: PagePipeline,
+        offices: OfficeResolver,
+        all_offices: OfficeList,
         editor: PagePipeline,
         tickets: TicketStore,
         health: HealthSnapshot,
         *,
         logger: logging.Logger | None = None,
     ) -> None:
-        self._pipelines = {"discord": discord, "editor": editor}
+        self._offices = offices
+        self._all_offices = all_offices
+        self._editor = editor
         self._tickets = tickets
         self._health = health
         self._log = logger or logging.getLogger(__name__)
@@ -63,7 +74,7 @@ class CctvServer:
         if self.runner is not None:
             return True
         app = web.Application()
-        app.router.add_get("/cctv/discord/ws", self.handle_discord)
+        app.router.add_get("/cctv/office/{guild_id}/ws", self.handle_office)
         app.router.add_get("/cctv/editor/ws", self.handle_editor)
         app.router.add_get("/cctv/health", self.handle_health)
         runner = web.AppRunner(app)
@@ -84,14 +95,14 @@ class CctvServer:
         self.site = site
         self.last_error = None
         self._log.info(
-            "cctv: listening on %s:%d (/cctv/discord/ws, /cctv/editor/ws)",
+            "cctv: listening on %s:%d (/cctv/office/<guild>/ws, /cctv/editor/ws)",
             host,
             port,
         )
         return True
 
     async def stop(self) -> None:
-        for pipeline in self._pipelines.values():
+        for pipeline in (*self._all_offices(), self._editor):
             await pipeline.clients.close_all()
         runner = self.runner
         self.runner = None
@@ -107,19 +118,28 @@ class CctvServer:
         del request
         return web.json_response(dict(self._health()))
 
-    async def handle_discord(self, request: web.Request) -> web.WebSocketResponse:
-        return await self._handle_ws("discord", request)
+    async def handle_office(self, request: web.Request) -> web.WebSocketResponse:
+        raw = request.match_info.get("guild_id", "")
+        pipeline = self._offices(int(raw)) if raw.isdecimal() and len(raw) <= 20 else None
+        if pipeline is None:
+            socket = web.WebSocketResponse()
+            await socket.prepare(request)
+            await socket.close(code=OFFICE_UNAVAILABLE_CLOSE_CODE, message=b"office unavailable")
+            return socket
+        return await self._handle_ws(pipeline, request)
 
     async def handle_editor(self, request: web.Request) -> web.WebSocketResponse:
-        return await self._handle_ws("editor", request)
+        return await self._handle_ws(self._editor, request)
 
-    async def _handle_ws(self, page: str, request: web.Request) -> web.WebSocketResponse:
-        pipeline = self._pipelines[page]
+    async def _handle_ws(
+        self, pipeline: PagePipeline, request: web.Request
+    ) -> web.WebSocketResponse:
+        page = pipeline.page
         socket = web.WebSocketResponse(heartbeat=30.0, max_msg_size=0)
         await socket.prepare(request)
         user_id: int | None = None
         is_editor = pipeline.open_editor
-        if page == "discord":
+        if not pipeline.open_editor:
             token = request.query.get("ticket", "")
             user_id = self._tickets.resolve(token) if token else None
             is_editor = (
@@ -142,15 +162,15 @@ class CctvServer:
                 except (TypeError, json.JSONDecodeError) as exc:
                     self._log.warning("cctv/%s: invalid JSON ignored: %s", page, exc)
                     continue
-                await self.handle_payload(page, socket, payload)
+                await self.handle_payload(pipeline, socket, payload)
         finally:
             pipeline.clients.remove(socket)
         return socket
 
     async def handle_payload(
-        self, page: str, socket: web.WebSocketResponse, payload: object
+        self, pipeline: PagePipeline, socket: web.WebSocketResponse, payload: object
     ) -> None:
-        pipeline = self._pipelines[page]
+        page = pipeline.page
         try:
             message = parse_client_message(payload)
         except InvalidClientMessageError as exc:
@@ -159,7 +179,7 @@ class CctvServer:
         if message is None:
             return
         if isinstance(message, AuthorizeMessage):
-            if page != "discord":
+            if pipeline.open_editor:
                 return
             user_id = self._tickets.resolve(message.ticket)
             if user_id is None:
@@ -173,9 +193,9 @@ class CctvServer:
         state = pipeline.clients.get(socket)
         if isinstance(message, _WRITE_MESSAGES):
             # A ticket proves browser identity, not perpetual authorization.
-            # Re-check Discord writes so a guild disable, role removal, or
+            # Re-check office writes so a guild disable, role removal, or
             # permission change takes effect even on an already-open socket.
-            if page == "discord" and state is not None and state.user_id is not None:
+            if not pipeline.open_editor and state is not None and state.user_id is not None:
                 state.is_editor = await self._authorize_safely(pipeline, state.user_id)
             if state is None or not state.is_editor:
                 self._log.info("cctv/%s: unauthorized %s dropped", page, message.type)
@@ -198,4 +218,11 @@ class CctvServer:
             return False
 
 
-__all__ = ["CctvServer", "HealthSnapshot", "PagePipeline"]
+__all__ = [
+    "OFFICE_UNAVAILABLE_CLOSE_CODE",
+    "CctvServer",
+    "HealthSnapshot",
+    "OfficeList",
+    "OfficeResolver",
+    "PagePipeline",
+]

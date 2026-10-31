@@ -396,21 +396,22 @@ sequenceDiagram
 
 ## Revisioned office state
 
-Corridor persists two independent, opaque-to-corridor aggregates,
-`discord` and `editor` (`OfficeStateKind`) — each a Pixel Agents layout,
-avatar-seat records, and a monotonically increasing revision — behind
-their own fresh `Config` identity
+Corridor persists independent, opaque-to-corridor office aggregates —
+one `discord` office per guild (guild-scoped Config) and the single
+`editor` office (global), each named by an `OfficeRef(kind, guild_id)` and
+each a Pixel Agents layout, avatar-seat records, and a monotonically
+increasing revision — behind their own fresh `Config` identity
 (`corridor/infrastructure/office_state_repository.py`), unrelated to
-corridor's own settings `Config`. `OfficeStateService` makes each kind's
-reads/writes atomic per-kind (one `asyncio.Lock` per kind, not one lock
-shared across both) and publishes a complete `OfficeStateChanged` after
+corridor's own settings `Config`. `OfficeStateService` makes each
+aggregate's reads/writes atomic (one `asyncio.Lock` per `OfficeRef`, so
+independent offices never serialize against each other) and publishes a complete `OfficeStateChanged` after
 every successful mutation, once the lock is released — subscribers are
 awaited sequentially with exception isolation and a five-second timeout.
 A failed subscriber never rolls back persisted state.
 
-Beside the two aggregates, the same `Config` identity holds the office
+Beside the office aggregates, the same `Config` identity holds the office
 characters (`characters`: the look each Discord account or genuine agent
-wears, shared by both pages). `OfficeCharacterService` serializes every
+wears, shared by every office). `OfficeCharacterService` serializes every
 read-modify-write of them under one lock; pixelagents' `CharacterService`
 is the one caller that interprets them.
 
@@ -430,10 +431,10 @@ sequenceDiagram
     participant Bus as EventBusService
     participant Sub as any watcher (owner=...)
 
-    Arch->>Cor: set_office_layout(OfficeStateKind.DISCORD, layout)
-    Cor->>Svc: set_layout(kind, layout)
-    Svc->>Svc: acquire per-kind lock
-    Svc->>Repo: state(kind) -- current seats/revision
+    Arch->>Cor: set_office_layout(OfficeRef.editor(), layout)
+    Cor->>Svc: set_layout(ref, layout)
+    Svc->>Svc: acquire that aggregate's lock
+    Svc->>Repo: state(ref) -- current seats/revision
     Svc->>Repo: save(OfficeState(layout, seats, revision + 1))
     Svc->>Svc: release lock
     Svc->>Bus: publish(OfficeStateChanged(state), timeout=5.0)

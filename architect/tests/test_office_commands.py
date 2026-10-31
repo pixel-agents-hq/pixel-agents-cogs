@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import unittest
 
-from corridor.domain import OfficeStateKind
+from corridor.domain import OfficeRef
 
 from ..architect import Architect
 from .conftest import FakeBot, FakeContext, FakePixelAgents
@@ -120,7 +120,7 @@ class TestOfficeCommandsFunctional(unittest.IsolatedAsyncioTestCase):
     async def test_mutation_advances_the_editor_aggregate(self) -> None:
         await self.cog.office_place_furniture.callback(self.cog, self.ctx, "desk", "desk", 0, 0)
 
-        state = await self.cog._pixelagents.office_state(OfficeStateKind.EDITOR)
+        state = await self.cog._pixelagents.office_state(OfficeRef.editor())
         self.assertEqual(state.revision, 2)
         self.assertEqual(state.layout["cols"], 5)
 

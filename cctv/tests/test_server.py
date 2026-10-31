@@ -6,7 +6,10 @@ from typing import Any
 
 from aiohttp import ClientSession
 
-from ..infrastructure import CctvServer, ClientHub, TicketStore
+from ..infrastructure import OFFICE_UNAVAILABLE_CLOSE_CODE, CctvServer, ClientHub, TicketStore
+
+GUILD = 10
+OTHER_GUILD = 20
 
 
 class _Pipeline:
@@ -41,11 +44,14 @@ class _Socket:
 
 class TestCctvServer(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
-        self.discord = _Pipeline("discord", open_editor=False)
+        self.discord = _Pipeline(f"office/{GUILD}", open_editor=False)
+        self.other = _Pipeline(f"office/{OTHER_GUILD}", open_editor=False)
+        self.offices = {GUILD: self.discord, OTHER_GUILD: self.other}
         self.editor = _Pipeline("editor", open_editor=True)
         self.tickets = TicketStore(token_factory=lambda: "ticket")
         self.server = CctvServer(
-            self.discord,
+            self.offices.get,
+            lambda: tuple(self.offices.values()),
             self.editor,
             self.tickets,
             lambda: {"status": "ok"},
@@ -59,7 +65,7 @@ class TestCctvServer(unittest.IsolatedAsyncioTestCase):
         routes = {route.resource.canonical for route in self.server.app.router.routes()}
         self.assertEqual(
             routes,
-            {"/cctv/discord/ws", "/cctv/editor/ws", "/cctv/health"},
+            {"/cctv/office/{guild_id}/ws", "/cctv/editor/ws", "/cctv/health"},
         )
 
     async def test_discord_write_requires_authorized_ticket(self) -> None:
@@ -74,7 +80,7 @@ class TestCctvServer(unittest.IsolatedAsyncioTestCase):
         }
 
         await self.server.handle_payload(
-            "discord",
+            self.discord,  # type: ignore[arg-type]
             socket,
             {"type": "saveLayout", "layout": layout},  # type: ignore[arg-type]
         )
@@ -82,12 +88,12 @@ class TestCctvServer(unittest.IsolatedAsyncioTestCase):
 
         self.tickets.mint(42)
         await self.server.handle_payload(
-            "discord",
+            self.discord,  # type: ignore[arg-type]
             socket,
             {"type": "authorize", "ticket": "ticket"},  # type: ignore[arg-type]
         )
         await self.server.handle_payload(
-            "discord",
+            self.discord,  # type: ignore[arg-type]
             socket,
             {"type": "saveLayout", "layout": layout},  # type: ignore[arg-type]
         )
@@ -98,7 +104,7 @@ class TestCctvServer(unittest.IsolatedAsyncioTestCase):
         self.editor.clients.add(socket, is_editor=True)  # type: ignore[arg-type]
 
         await self.server.handle_payload(
-            "editor",
+            self.editor,  # type: ignore[arg-type]
             socket,  # type: ignore[arg-type]
             {"type": "saveAgentSeats", "seats": {"agent": {"palette": 1}}},
         )
@@ -110,14 +116,14 @@ class TestCctvServer(unittest.IsolatedAsyncioTestCase):
         self.discord.clients.add(socket)  # type: ignore[arg-type]
         self.tickets.mint(42)
         await self.server.handle_payload(
-            "discord",
+            self.discord,  # type: ignore[arg-type]
             socket,
             {"type": "authorize", "ticket": "ticket"},  # type: ignore[arg-type]
         )
         self.discord.allowed = False
 
         await self.server.handle_payload(
-            "discord",
+            self.discord,  # type: ignore[arg-type]
             socket,
             {
                 "type": "saveLayout",
@@ -152,7 +158,9 @@ class TestCctvServer(unittest.IsolatedAsyncioTestCase):
         }
 
         async with ClientSession() as session:
-            unauthorized = await session.ws_connect(f"http://127.0.0.1:{port}/cctv/discord/ws")
+            unauthorized = await session.ws_connect(
+                f"http://127.0.0.1:{port}/cctv/office/{GUILD}/ws"
+            )
             await _wait_for(lambda: self.discord.clients.client_count == 1)
             await unauthorized.send_json({"type": "saveLayout", "layout": layout})
             await asyncio.sleep(0.02)
@@ -162,7 +170,7 @@ class TestCctvServer(unittest.IsolatedAsyncioTestCase):
 
             self.tickets.mint(42)
             authorized = await session.ws_connect(
-                f"http://127.0.0.1:{port}/cctv/discord/ws?ticket=ticket"
+                f"http://127.0.0.1:{port}/cctv/office/{GUILD}/ws?ticket=ticket"
             )
             await authorized.send_json({"type": "saveLayout", "layout": layout})
             await asyncio.wait_for(self.discord.message_received.wait(), timeout=1)
@@ -174,6 +182,58 @@ class TestCctvServer(unittest.IsolatedAsyncioTestCase):
             await asyncio.wait_for(self.editor.message_received.wait(), timeout=1)
             self.assertEqual(len(self.editor.messages), 1)
             await editor.close()
+
+
+class TestOfficeRouting(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self) -> None:
+        self.office = _Pipeline(f"office/{GUILD}", open_editor=False)
+        self.other = _Pipeline(f"office/{OTHER_GUILD}", open_editor=False)
+        self.offices = {GUILD: self.office, OTHER_GUILD: self.other}
+        self.server = CctvServer(
+            self.offices.get,
+            lambda: tuple(self.offices.values()),
+            _Pipeline("editor", open_editor=True),
+            TicketStore(),
+            lambda: {"status": "ok"},
+        )
+        self.assertTrue(await self.server.start("127.0.0.1", 0))
+        self.addAsyncCleanup(self.server.stop)
+        assert self.server.site is not None
+        raw_server = self.server.site._server  # type: ignore[attr-defined]
+        self.base = f"http://127.0.0.1:{raw_server.sockets[0].getsockname()[1]}"
+
+    async def test_a_socket_joins_only_its_own_guilds_office(self) -> None:
+        async with ClientSession() as session:
+            socket = await session.ws_connect(f"{self.base}/cctv/office/{GUILD}/ws")
+            await _wait_for(lambda: self.office.clients.client_count == 1)
+            await socket.send_json({"type": "webviewReady"})
+            await asyncio.wait_for(self.office.message_received.wait(), timeout=1)
+            self.assertEqual(self.other.clients.client_count, 0)
+            self.assertEqual(self.other.messages, [])
+            await socket.close()
+
+    async def test_every_unavailable_office_closes_the_same_way(self) -> None:
+        async with ClientSession() as session:
+            for path in ("999", "abc", "0" * 25, "-1"):
+                with self.subTest(path=path):
+                    socket = await session.ws_connect(f"{self.base}/cctv/office/{path}/ws")
+                    await socket.receive()
+                    self.assertEqual(socket.close_code, OFFICE_UNAVAILABLE_CLOSE_CODE)
+        self.assertEqual(self.office.clients.client_count, 0)
+
+    async def test_stop_closes_every_offices_clients(self) -> None:
+        async with ClientSession() as session:
+            first = await session.ws_connect(f"{self.base}/cctv/office/{GUILD}/ws")
+            second = await session.ws_connect(f"{self.base}/cctv/office/{OTHER_GUILD}/ws")
+            await _wait_for(
+                lambda: (
+                    self.office.clients.client_count == 1 and self.other.clients.client_count == 1
+                )
+            )
+            await self.server.stop()
+            await first.receive()
+            await second.receive()
+            self.assertTrue(first.closed and second.closed)
 
 
 async def _wait_for(predicate: Any) -> None:

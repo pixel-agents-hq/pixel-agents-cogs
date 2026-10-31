@@ -8,6 +8,14 @@ state_kinds:
 - discord
 - editor
 events:
+  OfficeRef:
+    kind: value-object
+    fields:
+      kind:
+        type: OfficeStateKind
+      guild_id:
+        type: int | None
+    invariant: discord requires guild_id; editor has none
   OfficeState:
     kind: value-object
     fields:
@@ -19,6 +27,8 @@ events:
         type: dict[str, dict[str, Any]]
       revision:
         type: int
+      guild_id:
+        type: int | None
   CharacterRecords:
     kind: value-object
     keyed_by: user:<discord user id> | agent:<agent key>

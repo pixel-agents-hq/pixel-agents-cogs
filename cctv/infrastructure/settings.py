@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from math import isfinite
 from typing import Any, Protocol, cast
+from urllib.parse import urlsplit
 
 from redbot.core import Config
 
@@ -16,9 +17,8 @@ GLOBAL_DEFAULTS: dict[str, object] = {
     "listener_port": 3210,
     "discord_clear_delay": 2.0,
     "editor_clear_delay": 2.0,
-    "broadcast_rich_presence": True,
-    "broadcast_messages": True,
     "designer_url": "https://pixel-index-staging.nntin.xyz/assets/design",
+    "public_base_url": None,
 }
 GUILD_DEFAULTS: dict[str, object] = {
     "enabled": False,
@@ -26,7 +26,40 @@ GUILD_DEFAULTS: dict[str, object] = {
     "show_offline": False,
     "ghost_offline": True,
     "ghost_bots": True,
+    "broadcast_rich_presence": True,
+    "broadcast_messages": True,
 }
+
+
+_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "[::1]"})
+
+
+def validate_public_base_url(url: str) -> str:
+    """`https://host[:port]` (or `http://` for a loopback host) with no
+    path, query or fragment -- the origin the Dashboard is served from."""
+
+    clean = url.strip().strip("<>").rstrip("/")
+    parsed = urlsplit(clean)
+    host = (parsed.hostname or "").lower()
+    if (
+        parsed.scheme not in {"https", "http"}
+        or not host
+        or (parsed.scheme == "http" and host not in _LOOPBACK_HOSTS)
+        or parsed.path
+        or parsed.query
+        or parsed.fragment
+        or parsed.username is not None
+        or any(character.isspace() for character in clean)
+    ):
+        raise ValueError(
+            "The public URL must be an https:// origin with no path, e.g. "
+            "`https://dashboard.example.com` (http:// only for localhost)."
+        )
+    try:
+        parsed.port  # noqa: B018 -- raises on an out-of-range port
+    except ValueError as exc:
+        raise ValueError("The public URL has an invalid port.") from exc
+    return f"{parsed.scheme}://{parsed.netloc}"
 
 
 class GuildReference(Protocol):
@@ -59,9 +92,8 @@ class RedSettingsRepository:
             listener_port=cast(int, await self._config.listener_port()),
             discord_clear_delay=cast(float, await self._config.discord_clear_delay()),
             editor_clear_delay=cast(float, await self._config.editor_clear_delay()),
-            broadcast_rich_presence=cast(bool, await self._config.broadcast_rich_presence()),
-            broadcast_messages=cast(bool, await self._config.broadcast_messages()),
             designer_url=cast(str, await self._config.designer_url()),
+            public_base_url=cast("str | None", await self._config.public_base_url()),
         )
 
     def _guild(self, guild: int | GuildReference) -> tuple[int, Any]:
@@ -78,6 +110,8 @@ class RedSettingsRepository:
             show_offline=cast(bool, await group.show_offline()),
             ghost_offline=cast(bool, await group.ghost_offline()),
             ghost_bots=cast(bool, await group.ghost_bots()),
+            broadcast_rich_presence=cast(bool, await group.broadcast_rich_presence()),
+            broadcast_messages=cast(bool, await group.broadcast_messages()),
         )
 
     async def guild_enabled(self, guild: int | GuildReference) -> bool:
@@ -103,22 +137,27 @@ class RedSettingsRepository:
             raise ValueError("Delay must be 0 or greater.")
         await getattr(self._config, f"{page}_clear_delay").set(float(seconds))
 
-    async def set_broadcast_rich_presence(self, value: bool) -> None:
-        if not isinstance(value, bool):
-            raise ValueError("Rich presence setting must be a boolean.")
-        await self._config.broadcast_rich_presence.set(value)
-
-    async def set_broadcast_messages(self, value: bool) -> None:
-        if not isinstance(value, bool):
-            raise ValueError("Message setting must be a boolean.")
-        await self._config.broadcast_messages.set(value)
-
     async def set_designer_url(self, url: str) -> str:
         clean = url.strip().strip("<>")
         if not clean.startswith(("https://", "http://")) or any(c.isspace() for c in clean):
             raise ValueError("The designer URL must be an http(s) link.")
         await self._config.designer_url.set(clean)
         return clean
+
+    async def set_public_base_url(self, url: str) -> str:
+        clean = validate_public_base_url(url)
+        await self._config.public_base_url.set(clean)
+        return clean
+
+    async def set_guild_broadcast_rich_presence(self, guild_id: int, value: bool) -> None:
+        if not isinstance(value, bool):
+            raise ValueError("Rich presence setting must be a boolean.")
+        await self._config.guild_from_id(guild_id).broadcast_rich_presence.set(value)
+
+    async def set_guild_broadcast_messages(self, guild_id: int, value: bool) -> None:
+        if not isinstance(value, bool):
+            raise ValueError("Message setting must be a boolean.")
+        await self._config.guild_from_id(guild_id).broadcast_messages.set(value)
 
     async def set_guild_enabled(self, guild_id: int, value: bool) -> None:
         if not isinstance(value, bool):
@@ -151,4 +190,5 @@ __all__ = [
     "GLOBAL_DEFAULTS",
     "GUILD_DEFAULTS",
     "RedSettingsRepository",
+    "validate_public_base_url",
 ]

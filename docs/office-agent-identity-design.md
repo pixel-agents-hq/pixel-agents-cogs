@@ -2,32 +2,32 @@
 
 ## Overview
 
-CCTV's office canvas (`cctv/`, see `docs/cctv-design.md`) renders every
-entity a guild might see as "present" in one shared roster: real Discord
-members, and A2A agents that have no Discord account at all (architect,
-painter). Both kinds are identified, reconciled, and rendered through the
-same `AgentPresenceChanged` event and the same `OfficeService`
+CCTV's guild offices (`cctv/`, see `docs/cctv-design.md`) each render
+every entity that guild might see as "present" in one roster: the guild's
+real Discord members, and A2A agents that have no Discord account at all
+(architect, painter). Both kinds are identified, reconciled, and rendered
+through the same `AgentPresenceChanged` event and the same `OfficeService`
 (`pixelagents/application/office.py`) — a Discord member and a genuine
 agent are structurally different identities, but neither gets a special
-canvas, a special wire message, or a per-guild copy of anything.
+canvas or a special wire message.
 
 A **genuine agent** is an LLM agent reachable over A2A, registered into
 corridor's `AgentDirectoryService`. It has no Discord snowflake and no
-guild scope — it's visible on the canvas unconditionally, the moment it
-registers, everywhere the canvas is rendered. Registering it (via
+guild scope — it's present in every office unconditionally, the moment it
+registers. Registering it (via
 `corridor.register_agent`) is the only step its own cog performs; presence
 publishing and canvas visibility follow automatically.
 
-## There is only one canvas
+## One canvas per office
 
-`OfficeService` is instantiated once per pixelagents-backed pipeline
-(`cctv/adapters/cog_base.py`'s `_create_pipelines`, one per
-`OfficeStateKind` — `DISCORD` and `EDITOR`), not once per guild. Its
-outward-facing methods take no guild parameter and apply no guild filter:
-a human present in two guilds is one merged entry on the canvas, keyed by
-their bare Discord user ID. A genuine agent, having no guild membership at
-all, needs exactly one entry — never a per-guild replica, never a fan-out
-step.
+`OfficeService` is instantiated once per pipeline: one per guild with
+CCTV enabled (`cctv/adapters/cog_base.py`'s `_open_office`, keyed by
+`OfficeRef.discord(guild_id)`), plus the editor's. A guild's office only
+ever receives that guild's members, so a human present in two guilds is a
+separate entry in each guild's office, under that guild's display policy
+and nickname. A genuine agent, having no guild membership at all, is
+seated in every office — CCTV remembers each registered agent's presence,
+so an office opened later seats the agents already registered.
 
 ## Architecture
 
@@ -70,9 +70,9 @@ flowchart TB
     Bus -- dispatch --> Sub["cctv: CctvBase<br/>._on_agent_presence_changed"]
     Sub -- "_office_identity(event.agent)" --> Branch{"AgentKey or<br/>GenuineAgentKey?"}
 
-    Branch -- AgentKey --> Disc["discord_pipeline.reconcile_discord<br/><small>gated on guild.enabled</small>"]
+    Branch -- AgentKey --> Disc["office(identity.guild_id).reconcile_discord<br/><small>only while that guild's office is open</small>"]
     Branch -- AgentKey --> Edit1["editor_pipeline.reconcile_discord<br/><small>only when identity.user_id == bot.user.id</small>"]
-    Branch -- GenuineAgentKey --> Disc2["discord_pipeline.reconcile_genuine_agent"]
+    Branch -- GenuineAgentKey --> Disc2["every open office: reconcile_genuine_agent"]
     Branch -- GenuineAgentKey --> Edit2["editor_pipeline.reconcile_genuine_agent"]
 
     Disc --> OS["OfficeService<br/>(pixelagents/application/office.py)"]
@@ -81,22 +81,22 @@ flowchart TB
     Edit2 --> OS
 ```
 
-A genuine agent is present on both the Discord-roster page and the editor
-page unconditionally (it has no guild to gate against). Its activity --
-speech bubbles, tool starts, status -- is another matter: it reaches the
-Discord-roster page only when the event's `context_guild_id` names an
-enabled guild, the one whose conversation produced it, and otherwise the
-editor page alone (see [`docs/corridor-pubsub-design.md`](corridor-pubsub-design.md)). A Discord identity
+A genuine agent is present in every guild office and on the editor page
+unconditionally (it has no guild to gate against). Its activity --
+speech bubbles, tool starts, status -- is another matter: it reaches a
+guild office only when the event's `context_guild_id` names that guild,
+the one whose conversation produced it, and otherwise the editor page
+alone (see [`docs/corridor-pubsub-design.md`](corridor-pubsub-design.md)). A Discord identity
 reaches the editor page only when it's the bot's own account — every
-other Discord member appears on the Discord-roster page alone.
+other Discord member appears only in their own guild's office.
 
 ## The three categories
 
 | | Identity | Guild scope | `is_bot` | `AgentRef` shape |
 |---|---|---|---|---|
-| **(a) Discord user account** | `AgentKey(guild_id, user_id)` | Per-guild membership, merged cross-guild into one canvas entry | `False`; rendered headless/"ghost" while shown offline, unless the guild turns `ghostoffline` off | `discord_user_id`/`guild_id` set, `agent_key=None` |
+| **(a) Discord user account** | `AgentKey(guild_id, user_id)` | Per-guild membership: one entry in each enabled guild's office | `False`; rendered headless/"ghost" while shown offline, unless the guild turns `ghostoffline` off | `discord_user_id`/`guild_id` set, `agent_key=None` |
 | **(b) Discord bot account** (including this bot's own account) | `AgentKey(guild_id, user_id)` — same shape as (a) | Same as (a) | `True`, rendered headless/"ghost" unless the guild turns `ghostbots` off | `discord_user_id`/`guild_id` set, `agent_key=None` |
-| **(c) Genuine agent** | `GenuineAgentKey(agent_key)` — no Discord snowflake | None — visible on the one shared canvas unconditionally | `True` (not a rendering flag here, just the value corridor's own presence-publisher sets) | `discord_user_id=None`, `guild_id=None`, `agent_key="architect"` (etc.) |
+| **(c) Genuine agent** | `GenuineAgentKey(agent_key)` — no Discord snowflake | None — present in every office unconditionally | `True` (not a rendering flag here, just the value corridor's own presence-publisher sets) | `discord_user_id=None`, `guild_id=None`, `agent_key="architect"` (etc.) |
 
 (a) and (b) are the same identity shape — `is_bot` is a rendering input on
 top of an otherwise-identical Discord-account identity: whether a Discord
@@ -250,14 +250,14 @@ sequenceDiagram
     Bus->>Cctv: dispatch(event)
     Cctv->>Cctv: _office_identity(event.agent)<br/>-> GenuineAgentKey("architect")
     Cctv->>OS: reconcile_genuine_agent(identity, "architect", "online")
-    OS-->>Cctv: canvas updated -- both the Discord-roster<br/>and editor pages
+    OS-->>Cctv: canvas updated -- every guild office<br/>and the editor page
 
     Note over Arch,C: later, cog_unload (or a crash -- on_cog_remove catches it)
     Arch->>C: unregister_agent_owner("architect")
     C->>Bus: publish(AgentPresenceChanged(<br/>agent_key="architect", status="offline"))
     Bus->>Cctv: dispatch(event)
     Cctv->>OS: reconcile_genuine_agent(identity, ..., "offline")
-    OS-->>Cctv: architect closed on both pages
+    OS-->>Cctv: architect closed in every office
 ```
 
 The bot's own Discord presence updates flow the identical event path, just
@@ -338,9 +338,9 @@ extraction.
 
 ## Non-goals
 
-- **No per-guild fan-out or replication.** A genuine agent needs exactly
-  one canvas entry, not one per guild — see "There is only one canvas"
-  above.
+- **No per-guild identity for a genuine agent.** It is one
+  `GenuineAgentKey`, seated in each office it appears in — see "One canvas
+  per office" above.
 - **No change to how Discord user/bot accounts are identified.**
   `AgentKey`/`is_bot` for (a) and (b) are unchanged by any of the above;
   genuine agents add a third, parallel identity shape alongside them.

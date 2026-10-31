@@ -8,7 +8,7 @@ from architect.application.office_layout_service import OfficeLayoutService
 from architect.infrastructure.office_layout_repository import (
     OfficeLayoutRepository as ArchitectLayoutRepository,
 )
-from corridor.domain import OfficeState, OfficeStateKind
+from corridor.domain import OfficeRef, OfficeState, OfficeStateKind
 from painter.application.painter_layout_service import PainterLayoutService
 from painter.infrastructure.office_layout_repository import (
     OfficeLayoutRepository as PainterLayoutRepository,
@@ -30,7 +30,7 @@ class TestSharedEditorAggregate(unittest.IsolatedAsyncioTestCase):
                 "furniture": [],
             },
         )
-        initial = await pixelagents.office_state(OfficeStateKind.EDITOR)
+        initial = await pixelagents.office_state(OfficeRef.editor())
         pixelagents._states[OfficeStateKind.EDITOR] = OfficeState(
             kind=initial.kind,
             layout=initial.layout,
@@ -51,7 +51,7 @@ class TestSharedEditorAggregate(unittest.IsolatedAsyncioTestCase):
             color={"h": 220, "s": 80, "b": 0, "c": 0},
         )
 
-        state = await pixelagents.office_state(OfficeStateKind.EDITOR)
+        state = await pixelagents.office_state(OfficeRef.editor())
         self.assertEqual(state.revision, 3)
         self.assertEqual(state.layout["tiles"], [3, 1])
         self.assertEqual(

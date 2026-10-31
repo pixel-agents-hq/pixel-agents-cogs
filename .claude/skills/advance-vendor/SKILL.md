@@ -18,7 +18,7 @@ There is no submodule here. `pixelagents/` ships two small files next to
 
 At `cog_load` (and `[p]pixelagents webview rebuild`), `ensure_webview_built`
 clones that repo into Red's per-cog data dir. It then checks out the pin, runs
-`npm ci --workspace=webview-ui --ignore-scripts` and `vite build --base ./`, and
+`npm ci --workspace=webview-ui --ignore-scripts --no-audit --no-fund` and `vite build --base ./`, and
 runs `webview_build_scripts/emit_decoded_assets.ts`. That script imports
 upstream's own TypeScript (`core/src/assets/*.ts`,
 `core/src/defaultCharacterProfiles.ts`) through `tsx`. Finally `_sync_dist`

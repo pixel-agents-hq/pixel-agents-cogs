@@ -442,7 +442,9 @@ def _install_dependencies(vendor_dir: Path, log: logging.Logger) -> None:
     # e2e suite, and its docs tooling (Playwright, @vscode/test-electron,
     # allure, ...), none of which the webview build needs, and lifecycle
     # scripts (husky's `prepare`) have no business running unattended on an
-    # end user's bot host.
+    # end user's bot host. --no-audit/--no-fund, as the pixatar build does:
+    # the registry advisory lookup is a second network round trip nobody on
+    # a bot host reads, and it can stall the first cog load on its own.
     _run(
         [
             "npm",
@@ -451,6 +453,8 @@ def _install_dependencies(vendor_dir: Path, log: logging.Logger) -> None:
             str(vendor_dir),
             "--workspace=webview-ui",
             "--ignore-scripts",
+            "--no-audit",
+            "--no-fund",
         ],
         cwd=None,
         timeout=600,

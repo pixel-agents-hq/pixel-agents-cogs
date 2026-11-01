@@ -75,6 +75,12 @@ jobs:
       - name: Install Playwright's Chromium
         run: python -m playwright install --with-deps chromium
 
+      # Each test's PixelAgents.cog_load() does a fresh clone+build inside
+      # pytest's 30 s per-test timeout; a warm npm cache keeps the first
+      # one about the build, not the npm registry's latency on the day.
+      - name: Warm the npm cache for pixelagents' vendored builds
+        run: .github/scripts/warm-vendored-npm-cache.sh
+
       - name: Run the multi-cog e2e suite
         env:
           PIXELAGENTS_REAL_WEBVIEW_BUILD: "1"

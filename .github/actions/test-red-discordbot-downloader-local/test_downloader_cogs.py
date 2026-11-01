@@ -31,6 +31,10 @@ RPC_URL_TEMPLATE = "ws://127.0.0.1:{port}/"
 CORE_LOAD_METHOD = "CORE__LOAD"
 CORE_UNLOAD_METHOD = "CORE__UNLOAD"
 RPC_WAIT_TIMEOUT = 30
+# A cog's first load may build assets inside cog_load (pixelagents clones and
+# builds the vendored webview and the pixatar CLI, and loading architect or
+# cctv loads pixelagents first), which takes longer than an ordinary RPC.
+CORE_LOAD_TIMEOUT = 300
 RPC_WAIT_INTERVAL = 0.5
 
 # Cache for downloaded schemas to avoid rate limits
@@ -215,7 +219,7 @@ def cog_name_from_path(path: Path) -> str:
 
 async def load_cog(client: JsonRpcClient, cog_name: str) -> None:
     print(f"📥 Loading cog {cog_name}")
-    result = await client.request(CORE_LOAD_METHOD, [[cog_name]])
+    result = await client.request(CORE_LOAD_METHOD, [[cog_name]], timeout=CORE_LOAD_TIMEOUT)
     loaded = (result or {}).get("loaded_packages", [])
     failed = (result or {}).get("failed_packages", [])
     if cog_name not in loaded:

@@ -6,11 +6,12 @@ import unittest
 from types import SimpleNamespace
 from typing import Any
 
-from corridor.domain import AgentPresenceChanged, AgentRef, OfficeStateKind
+from corridor.domain import AgentPresenceChanged, AgentRef
 from pixelagents.domain import AgentSnapshot, OfficeVisibility
 
 from ..adapters.cog_base import CctvBase, roster_warnings
 from ..adapters.commands import CommandsMixin
+from ..application import GuildOffices
 from ..domain import GuildSettings
 
 
@@ -21,6 +22,8 @@ def _settings(**overrides: bool) -> GuildSettings:
         "show_offline": False,
         "ghost_offline": True,
         "ghost_bots": True,
+        "broadcast_rich_presence": False,
+        "broadcast_messages": True,
     }
     values.update(overrides)
     return GuildSettings(guild_id=1, **values)
@@ -102,10 +105,11 @@ def _member(user_id: int, status: str) -> Any:
 class _Harness(CommandsMixin):
     def __init__(self, guild: GuildSettings, *, intents: Any = None) -> None:
         self._settings = _Settings(guild)  # type: ignore[assignment]
-        self._pipelines = {
-            OfficeStateKind.DISCORD: _Pipeline(),  # type: ignore[dict-item]
-            OfficeStateKind.EDITOR: _Pipeline(),  # type: ignore[dict-item]
-        }
+        # CCTV keeps an office open exactly while the guild is enabled.
+        self._offices = GuildOffices()
+        if guild.enabled:
+            self._offices.add(1, _Pipeline())  # type: ignore[arg-type]
+        self._editor = _Pipeline()  # type: ignore[assignment]
         self.bot = SimpleNamespace(  # type: ignore[assignment]
             user=SimpleNamespace(id=99), intents=intents or _intents()
         )
@@ -132,7 +136,7 @@ class TestPresenceEvents(unittest.IsolatedAsyncioTestCase):
 
         await CctvBase._on_agent_presence_changed(cog, _presence("offline"))
 
-        snapshot, visibility = cog.discord_pipeline.reconciled[-1]  # type: ignore[attr-defined]
+        snapshot, visibility = cog.office(1).reconciled[-1]  # type: ignore[attr-defined]
         self.assertIsNone(snapshot.status)
         self.assertEqual(
             visibility,
@@ -144,7 +148,7 @@ class TestPresenceEvents(unittest.IsolatedAsyncioTestCase):
 
         await CctvBase._on_agent_presence_changed(cog, _presence("offline", left_guild=True))
 
-        snapshot, visibility = cog.discord_pipeline.reconciled[-1]  # type: ignore[attr-defined]
+        snapshot, visibility = cog.office(1).reconciled[-1]  # type: ignore[attr-defined]
         self.assertIsNone(visibility.directory(snapshot))
 
 
@@ -155,7 +159,7 @@ class TestFullSync(unittest.IsolatedAsyncioTestCase):
 
         result = await CctvBase._full_sync(cog, guild)  # type: ignore[arg-type]
 
-        snapshots, visibility = cog.discord_pipeline.office.synced[-1]  # type: ignore[attr-defined]
+        snapshots, visibility = cog.office(1).office.synced[-1]  # type: ignore[attr-defined]
         self.assertEqual([s.key.user_id for s in snapshots], [2, 3])
         self.assertIsNone(snapshots[1].status)
         self.assertTrue(visibility.show_offline)
@@ -218,13 +222,13 @@ class TestPolicyCommands(unittest.IsolatedAsyncioTestCase):
             with self.subTest(name):
                 cog = await self._run(command, _settings())
                 self.assertEqual(cog._settings.changes, [(name, False)])  # type: ignore[attr-defined]
-                self.assertEqual(len(cog.discord_pipeline.office.synced), 1)  # type: ignore[attr-defined]
+                self.assertEqual(len(cog.office(1).office.synced), 1)  # type: ignore[attr-defined]
                 self.assertIn("Sync complete.", cog.replies[-1])
 
     async def test_a_disabled_guild_only_stores_the_setting(self) -> None:
         cog = await self._run(CommandsMixin.cmd_ghost_bots, _settings(enabled=False))
 
-        self.assertEqual(cog.discord_pipeline.office.synced, [])  # type: ignore[attr-defined]
+        self.assertIsNone(cog.office(1))
         self.assertEqual(cog.replies, ["Ghost-bots set to `False`."])
 
 

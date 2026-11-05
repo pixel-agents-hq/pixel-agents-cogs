@@ -9,16 +9,37 @@ from pixelagents.domain.characters import CharacterRecord, CharacterSource, Pixa
 
 from ..adapters.commands import CommandsMixin
 
+GUILD_ID = 10
+
 
 class _Settings:
     def __init__(self) -> None:
-        self.rich_presence: list[bool] = []
+        self.rich_presence: list[tuple[int, bool]] = []
+        self.messages: list[tuple[int, bool]] = []
+        self.public_base_url: str | None = None
+        self.enabled = True
+        self.broadcast_messages = True
 
     async def global_settings(self) -> Any:
-        return SimpleNamespace(designer_url="https://designer.example/assets/design")
+        return SimpleNamespace(
+            designer_url="https://designer.example/assets/design",
+            public_base_url=self.public_base_url,
+        )
 
-    async def set_broadcast_rich_presence(self, value: bool) -> None:
-        self.rich_presence.append(value)
+    async def guild_settings(self, guild: object) -> Any:
+        return SimpleNamespace(enabled=self.enabled, broadcast_messages=self.broadcast_messages)
+
+    async def set_guild_broadcast_rich_presence(self, guild_id: int, value: bool) -> None:
+        self.rich_presence.append((guild_id, value))
+
+    async def set_guild_broadcast_messages(self, guild_id: int, value: bool) -> None:
+        self.messages.append((guild_id, value))
+
+    async def set_public_base_url(self, url: str) -> str:
+        from ..infrastructure.settings import validate_public_base_url
+
+        self.public_base_url = validate_public_base_url(url)
+        return self.public_base_url
 
 
 class _Office:
@@ -30,43 +51,126 @@ class _Office:
 
 
 class _Harness(CommandsMixin):
-    def __init__(self) -> None:
-        self._settings = _Settings()
-        self._pipelines = {"discord": type("Pipeline", (), {"office": _Office()})()}
-        self.sync_calls = 0
+    def __init__(self, *, office_open: bool = True, dashboard: bool = True) -> None:
+        self._settings = _Settings()  # type: ignore[assignment]
+        self._open = SimpleNamespace(office=_Office()) if office_open else None
+        self.synced: list[int] = []
         self.replies: list[str] = []
+        self.codes: list[list[str]] = []
+        dashboard_cog = (
+            SimpleNamespace(rpc=SimpleNamespace(third_parties_handler=object()))
+            if dashboard
+            else None
+        )
+        self.bot = SimpleNamespace(get_cog=lambda name: dashboard_cog)  # type: ignore[assignment]
 
-    @property
-    def discord_pipeline(self) -> Any:
-        return self._pipelines["discord"]
+    def office(self, guild_id: int) -> Any:
+        assert guild_id == GUILD_ID
+        return self._open
 
-    async def _sync_all_guilds(self) -> None:
-        self.sync_calls += 1
+    async def _full_sync(self, guild: Any) -> str:
+        self.synced.append(guild.id)
+        return "Sync complete."
 
     async def _reply(self, ctx: object, content: str | None = None, **kwargs: object) -> None:
-        del ctx, kwargs
+        del ctx
         if content is not None:
             self.replies.append(content)
+        self.codes.append(list(kwargs.get("code", ())))  # type: ignore[call-overload]
+
+
+def _office_ctx() -> Any:
+    return SimpleNamespace(guild=SimpleNamespace(id=GUILD_ID))
 
 
 class TestCctvDisplayCommands(unittest.IsolatedAsyncioTestCase):
-    async def test_enabling_rich_presence_reconciles_enabled_guilds(self) -> None:
+    async def test_enabling_rich_presence_resyncs_only_this_guild(self) -> None:
         cog = _Harness()
 
-        await CommandsMixin.cmd_rich_presence.callback(cog, object(), True)
+        await CommandsMixin.cmd_rich_presence.callback(cog, _office_ctx(), True)
 
-        self.assertEqual(cog._settings.rich_presence, [True])
-        self.assertEqual(cog.sync_calls, 1)
-        self.assertEqual(cog.discord_pipeline.office.clear_calls, 0)
+        self.assertEqual(cog._settings.rich_presence, [(GUILD_ID, True)])
+        self.assertEqual(cog.synced, [GUILD_ID])
+        self.assertEqual(cog._open.office.clear_calls, 0)  # type: ignore[union-attr]
 
-    async def test_disabling_rich_presence_clears_existing_activity(self) -> None:
+    async def test_disabling_rich_presence_clears_this_offices_activity(self) -> None:
         cog = _Harness()
 
-        await CommandsMixin.cmd_rich_presence.callback(cog, object(), False)
+        await CommandsMixin.cmd_rich_presence.callback(cog, _office_ctx(), False)
 
-        self.assertEqual(cog._settings.rich_presence, [False])
-        self.assertEqual(cog.sync_calls, 0)
-        self.assertEqual(cog.discord_pipeline.office.clear_calls, 1)
+        self.assertEqual(cog._settings.rich_presence, [(GUILD_ID, False)])
+        self.assertEqual(cog.synced, [])
+        self.assertEqual(cog._open.office.clear_calls, 1)  # type: ignore[union-attr]
+
+    async def test_rich_presence_on_a_closed_office_only_stores_the_setting(self) -> None:
+        cog = _Harness(office_open=False)
+
+        await CommandsMixin.cmd_rich_presence.callback(cog, _office_ctx(), True)
+
+        self.assertEqual(cog._settings.rich_presence, [(GUILD_ID, True)])
+        self.assertEqual(cog.synced, [])
+
+    async def test_messages_is_a_per_guild_setting(self) -> None:
+        cog = _Harness()
+
+        await CommandsMixin.cmd_messages.callback(cog, _office_ctx(), False)
+
+        self.assertEqual(cog._settings.messages, [(GUILD_ID, False)])
+
+
+class TestUrlCommand(unittest.IsolatedAsyncioTestCase):
+    async def test_gives_the_absolute_office_link(self) -> None:
+        cog = _Harness()
+        cog._settings.public_base_url = "https://dash.example.com"
+
+        await CommandsMixin.cmd_url.callback(cog, _office_ctx())
+
+        self.assertEqual(
+            cog.codes[-1], [f"https://dash.example.com/third-party/cctv/office?guild={GUILD_ID}"]
+        )
+        self.assertIn("Anyone with this link", cog.replies[-1])
+        self.assertIn("[p]cctv messages false", cog.replies[-1])
+
+    async def test_without_a_public_url_gives_the_path_and_says_why(self) -> None:
+        cog = _Harness()
+        cog._settings.broadcast_messages = False
+
+        await CommandsMixin.cmd_url.callback(cog, _office_ctx())
+
+        self.assertEqual(cog.codes[-1], [f"/third-party/cctv/office?guild={GUILD_ID}"])
+        self.assertIn("[p]cctv publicurl", cog.replies[-1])
+        self.assertNotIn("messages false", cog.replies[-1])
+
+    async def test_a_disabled_guild_has_no_office(self) -> None:
+        cog = _Harness(office_open=False)
+        cog._settings.enabled = False
+
+        await CommandsMixin.cmd_url.callback(cog, _office_ctx())
+
+        self.assertIn("isn't enabled", cog.replies[-1])
+        self.assertEqual(cog.codes[-1], [])
+
+    async def test_without_the_dashboard_says_so(self) -> None:
+        cog = _Harness(dashboard=False)
+
+        await CommandsMixin.cmd_url.callback(cog, _office_ctx())
+
+        self.assertIn("Dashboard isn't loaded", cog.replies[-1])
+
+
+class TestPublicUrlCommand(unittest.IsolatedAsyncioTestCase):
+    async def test_sets_shows_and_rejects(self) -> None:
+        cog = _Harness()
+
+        await CommandsMixin.cmd_public_url.callback(cog, _office_ctx(), None)
+        self.assertIn("isn't set", cog.replies[-1])
+
+        await CommandsMixin.cmd_public_url.callback(cog, _office_ctx(), "https://dash.example.com/")
+        self.assertIn("<https://dash.example.com>", cog.replies[-1])
+
+        await CommandsMixin.cmd_public_url.callback(cog, _office_ctx(), "http://dash.example.com")
+        self.assertIn("https:// origin", cog.replies[-1])
+        self.assertEqual(cog._settings.public_base_url, "https://dash.example.com")
 
 
 _DEALT = CharacterRecord("px.dealt", CharacterSource.DERIVED, {"body": "flat"})

@@ -14,7 +14,7 @@ allowlist is LiteLLM and Discord only, and Pixel Index is neither.
 
 Real chain: `CatalogueService.search()`/`.load_layout()` (a real HTTP
 call) -> `Floorplan._apply_catalogue_layout()` ->
-`pixelagents.set_office_layout(OfficeStateKind.DISCORD, ...)` -> a real
+`pixelagents.set_office_layout(OfficeRef.discord(guild_id), ...)` -> a real
 corridor `Config` write -> `OfficeStateChanged` -> cctv's real
 `CctvPipeline` (discord, not editor) -> a real WebSocket broadcast.
 
@@ -34,11 +34,14 @@ from .fixtures import (
     FakeBot,
     capture_websocket_frames,
     construct_core_cogs,
+    open_guild_office,
     real_webview_build_enabled,
     start_frontend_app,
     wait_for_bootstrap,
     wait_for_frame,
 )
+
+_GUILD_ID = 999333
 
 
 @unittest.skipUnless(
@@ -92,13 +95,14 @@ class TestFloorplanLoadsARealLayoutOntoTheDiscordPipeline(unittest.IsolatedAsync
             page = await browser.new_page()
             frames = capture_websocket_frames(page)
 
-            # The discord pipeline, not editor -- DISCORD is the kind
-            # Floorplan writes.
-            await page.goto(f"http://127.0.0.1:{self._port}/e2e/page/discord")
+            # The guild's own office, not the editor -- a guild's Discord
+            # office is what Floorplan writes.
+            await open_guild_office(self.cctv, _GUILD_ID)
+            await page.goto(f"http://127.0.0.1:{self._port}/e2e/page/{_GUILD_ID}")
             await wait_for_bootstrap(page, frames)
 
             load_result = await self.floorplan._catalogue_service.load_layout(  # noqa: SLF001
-                self.bot.user.id, slug
+                _GUILD_ID, self.bot.user.id, slug
             )
             self.assertIsNone(
                 load_result.error, f"failed to load real layout {slug!r}: {load_result.error}"

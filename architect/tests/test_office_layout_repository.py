@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from corridor.domain import OfficeStateKind
+from corridor.domain import OfficeRef, OfficeStateKind
 from pixelagents.infrastructure.furniture_styles import FurnitureStyleManifest
 
 from ..domain import Office
@@ -33,7 +33,7 @@ class TestOfficeLayoutRepository(unittest.IsolatedAsyncioTestCase):
 
     async def test_save_updates_only_the_editor_layout_field(self) -> None:
         pixelagents = FakePixelAgents(editor_layout=_flat_layout())
-        before = await pixelagents.office_state(OfficeStateKind.EDITOR)
+        before = await pixelagents.office_state(OfficeRef.editor())
         pixelagents._states[OfficeStateKind.EDITOR] = type(before)(
             kind=before.kind,
             layout=before.layout,
@@ -46,7 +46,7 @@ class TestOfficeLayoutRepository(unittest.IsolatedAsyncioTestCase):
 
         await repository.save(office, styles)
 
-        saved = await pixelagents.office_state(OfficeStateKind.EDITOR)
+        saved = await pixelagents.office_state(OfficeRef.editor())
         self.assertEqual(saved.layout["cols"], 3)
         self.assertEqual(saved.seats, {"architect": {"seatId": "desk-1"}})
         self.assertEqual(saved.revision, 2)

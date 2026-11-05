@@ -214,6 +214,11 @@ class OfficeService:
             ordered.append(user_id)
         return ordered
 
+    def headcount(self) -> int:
+        """How many characters the office shows: members and genuine agents."""
+
+        return len(self._representative_agents()) + len(self._genuine_agents)
+
     def _representative_agents(self) -> dict[int, tuple[str, str]]:
         representatives: dict[int, tuple[str, str]] = {}
         for (_, user_id), agent_state in sorted(self._agents.items()):

@@ -15,6 +15,7 @@ from redbot.core.bot import Red
 
 from corridor.domain import (
     AgentRef,
+    OfficeRef,
     OfficeState,
     OfficeStateChanged,
     OfficeStateKind,
@@ -236,34 +237,32 @@ class PixelAgentsBase:
             raise RuntimeError("pixelagents office-state facade is not loaded")
         return self._office_state
 
-    async def office_state(self, kind: OfficeStateKind) -> OfficeState:
-        return await self._states().state(kind)
+    async def office_state(self, ref: OfficeRef) -> OfficeState:
+        return await self._states().state(ref)
 
-    async def set_office_layout(
-        self, kind: OfficeStateKind, layout: Mapping[str, object]
-    ) -> OfficeState:
-        return await self._states().set_layout(kind, layout)
+    async def set_office_layout(self, ref: OfficeRef, layout: Mapping[str, object]) -> OfficeState:
+        return await self._states().set_layout(ref, layout)
 
-    async def set_office_seats(self, kind: OfficeStateKind, seats: object) -> OfficeState:
-        return await self._states().set_seats(kind, seats)
+    async def set_office_seats(self, ref: OfficeRef, seats: object) -> OfficeState:
+        return await self._states().set_seats(ref, seats)
 
     async def mutate_office_seats(
         self,
-        kind: OfficeStateKind,
+        ref: OfficeRef,
         mutation: Callable[[SeatRecords], MutationResult],
     ) -> tuple[OfficeState, MutationResult]:
-        return await self._states().mutate_seats(kind, mutation)
+        return await self._states().mutate_seats(ref, mutation)
 
     async def merge_office_seat_patch(
         self,
-        kind: OfficeStateKind,
+        ref: OfficeRef,
         agent_id: str,
         patch: Mapping[str, object],
         *,
         palette_count: int,
     ) -> OfficeState:
         return await self._states().merge_seat_patch(
-            kind, agent_id, patch, palette_count=palette_count
+            ref, agent_id, patch, palette_count=palette_count
         )
 
     async def watch_office_state(
@@ -272,11 +271,11 @@ class PixelAgentsBase:
         handler: Callable[[OfficeStateChanged], Awaitable[None]],
         *,
         owner: str,
-    ) -> OfficeState:
+    ) -> OfficeState | None:
         return await self._states().watch(kind, handler, owner=owner)
 
-    def office_seat_repository(self, kind: OfficeStateKind) -> OfficeStateSeatRepository:
-        return OfficeStateSeatRepository(self._states(), kind)
+    def office_seat_repository(self, ref: OfficeRef) -> OfficeStateSeatRepository:
+        return OfficeStateSeatRepository(self._states(), ref)
 
     async def _notify_owners_webview_build_failed(self) -> None:
         outcome = self._webview_build_outcome

@@ -126,8 +126,10 @@ class CatalogueCommandsMixin(FloorplanBase):
     async def _pixel_index_layout(self, slug: str) -> tuple[bool, Any]:
         return self._legacy_catalogue_result(await self._catalogue_service.detail(slug))
 
-    async def _load_pixel_index_layout(self, user_id: int, slug: str) -> tuple[bool, str]:
-        result = await self._catalogue_service.load_layout(user_id, slug)
+    async def _load_pixel_index_layout(
+        self, guild_id: int, user_id: int, slug: str
+    ) -> tuple[bool, str]:
+        result = await self._catalogue_service.load_layout(guild_id, user_id, slug)
         ok, value = self._legacy_catalogue_result(result)
         return ok, str(value)
 

@@ -50,7 +50,7 @@ flowchart TB
     paintertools -->|MCP tools| corridor
 ```
 
-The repository always selects `OfficeStateKind.EDITOR`. It reads the
+The repository always selects the editor office (`OfficeRef.editor()`). It reads the
 current aggregate, decodes the layout into the shared Semantic IR
 (`pixelagents.domain.Office`), applies a color mutation, encodes it, and
 calls `set_office_layout`. Pixelagents preserves seats and Corridor

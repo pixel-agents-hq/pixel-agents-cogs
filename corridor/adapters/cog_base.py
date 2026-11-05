@@ -41,6 +41,7 @@ from ..domain import (
     IconSource,
     LLMSettings,
     ModelCatalogResult,
+    OfficeRef,
     OfficeState,
     OfficeStateKind,
     PermissionGroupDef,
@@ -550,30 +551,28 @@ class CogBase:
 
     # --- Revisioned office state ----------------------------------------------
 
-    async def office_state(self, kind: OfficeStateKind) -> OfficeState | None:
-        return await self._office_states.state(kind)
+    async def office_state(self, ref: OfficeRef) -> OfficeState | None:
+        return await self._office_states.state(ref)
 
-    async def initialize_office_state(
-        self, kind: OfficeStateKind, layout: dict[str, Any]
-    ) -> OfficeState:
-        return await self._office_states.initialize(kind, layout)
+    async def initialize_office_state(self, ref: OfficeRef, layout: dict[str, Any]) -> OfficeState:
+        return await self._office_states.initialize(ref, layout)
 
-    async def set_office_layout(self, kind: OfficeStateKind, layout: dict[str, Any]) -> OfficeState:
-        return await self._office_states.set_layout(kind, layout)
+    async def set_office_layout(self, ref: OfficeRef, layout: dict[str, Any]) -> OfficeState:
+        return await self._office_states.set_layout(ref, layout)
 
     async def set_office_seats(
         self,
-        kind: OfficeStateKind,
+        ref: OfficeRef,
         seats: dict[str, dict[str, Any]],
     ) -> OfficeState:
-        return await self._office_states.set_seats(kind, seats)
+        return await self._office_states.set_seats(ref, seats)
 
     async def mutate_office_seats(
         self,
-        kind: OfficeStateKind,
+        ref: OfficeRef,
         mutation: Callable[[dict[str, dict[str, Any]]], _MutationT],
     ) -> tuple[OfficeState, _MutationT]:
-        return await self._office_states.mutate_seats(kind, mutation)
+        return await self._office_states.mutate_seats(ref, mutation)
 
     async def watch_office_state(
         self,

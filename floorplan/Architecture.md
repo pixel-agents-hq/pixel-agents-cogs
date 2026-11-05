@@ -61,12 +61,12 @@ flowchart TB
 `CatalogueRepository` protocols it defines, plus two injected callables
 (`can_edit_layout`, `apply_layout`) — it never imports `discord`, `redbot`,
 or `corridor` directly. `adapters/cog_base.py` supplies those callables at
-composition time: `_can_edit_layout_user` checks bot ownership then
-Corridor's `keyholder` capability across every guild the bot can resolve the
-member in, and `_apply_catalogue_layout` calls
-`pixelagents.set_office_layout(OfficeStateKind.DISCORD, layout)` — always the
-`DISCORD` aggregate, never the `EDITOR` aggregate that Architect and Painter
-write.
+composition time: `_can_edit_layout_user(guild_id, user_id)` checks bot
+ownership then Corridor's `keyholder` capability in that guild, and
+`_apply_catalogue_layout(guild_id, layout)` calls
+`pixelagents.set_office_layout(OfficeRef.discord(guild_id), layout)` —
+always that guild's office, never another guild's nor the editor office
+that Architect and Painter write.
 
 `adapters/replies.py` renders every reply through Corridor's
 `render_reply` (a `RenderedReply` DTO, not a raw send) and then does its own
@@ -110,7 +110,7 @@ Both commands are also registered as Corridor LLM tools
 it renders into Discord, with the full layout blob omitted from the detail
 output.
 
-### Loading a layout into the Discord aggregate
+### Loading a layout into a guild's office
 
 ```mermaid
 sequenceDiagram
@@ -122,8 +122,8 @@ sequenceDiagram
     participant P as pixelagents facade
 
     U->>V: click "Load into office"
-    V->>Svc: load_layout(user_id, slug)
-    Svc->>C: is_owner(user_id) or capabilities_satisfy(member, "keyholder")
+    V->>Svc: load_layout(guild_id, user_id, slug)
+    Svc->>C: is_owner(user_id) or capabilities_satisfy(member of guild_id, "keyholder")
     alt not authorized
         C-->>Svc: false
         Svc-->>V: CatalogueError(UNAUTHORIZED)
@@ -132,7 +132,7 @@ sequenceDiagram
         C-->>Svc: true
         Svc->>I: GET /api/v1/layouts/{slug}
         I-->>Svc: layout detail JSON
-        Svc->>P: set_office_layout(OfficeStateKind.DISCORD, layout)
+        Svc->>P: set_office_layout(OfficeRef.discord(guild_id), layout)
         P->>P: validate Pixel Agents layout
         P-->>Svc: OfficeState at revision + 1 (seats unchanged)
         Svc-->>V: CatalogueResult("Loaded the layout into the office.")

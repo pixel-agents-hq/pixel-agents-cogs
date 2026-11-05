@@ -8,6 +8,7 @@ from pixelagents.domain import AgentKey, GenuineAgentKey
 from pixelagents.domain.characters import CharacterRecord, CharacterSource, PixatarFailure
 
 from ..adapters.commands import CommandsMixin
+from ..domain import OfficeAccess
 
 GUILD_ID = 10
 
@@ -19,6 +20,7 @@ class _Settings:
         self.public_base_url: str | None = None
         self.enabled = True
         self.broadcast_messages = True
+        self.access = OfficeAccess.PUBLIC
 
     async def global_settings(self) -> Any:
         return SimpleNamespace(
@@ -27,7 +29,9 @@ class _Settings:
         )
 
     async def guild_settings(self, guild: object) -> Any:
-        return SimpleNamespace(enabled=self.enabled, broadcast_messages=self.broadcast_messages)
+        return SimpleNamespace(
+            enabled=self.enabled, broadcast_messages=self.broadcast_messages, access=self.access
+        )
 
     async def set_guild_broadcast_rich_presence(self, guild_id: int, value: bool) -> None:
         self.rich_presence.append((guild_id, value))
@@ -128,7 +132,7 @@ class TestUrlCommand(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             cog.codes[-1], [f"https://dash.example.com/third-party/cctv/office?guild={GUILD_ID}"]
         )
-        self.assertIn("Anyone with this link", cog.replies[-1])
+        self.assertIn("Anyone can watch it", cog.replies[-1])
         self.assertIn("[p]cctv messages false", cog.replies[-1])
 
     async def test_without_a_public_url_gives_the_path_and_says_why(self) -> None:
@@ -156,6 +160,59 @@ class TestUrlCommand(unittest.IsolatedAsyncioTestCase):
         await CommandsMixin.cmd_url.callback(cog, _office_ctx())
 
         self.assertIn("Dashboard isn't loaded", cog.replies[-1])
+
+
+class TestVisibilityCommand(unittest.IsolatedAsyncioTestCase):
+    def _cog(self, *, allowed: bool) -> _Harness:
+        cog = _Harness()
+        cog.changes: list[tuple[int, OfficeAccess]] = []  # type: ignore[misc]
+        cog.checks: list[str] = []  # type: ignore[misc]
+
+        async def require_permission(ctx: object, group: str) -> bool:
+            cog.checks.append(group)  # type: ignore[attr-defined]
+            return allowed
+
+        async def set_office_access(guild_id: int, access: OfficeAccess) -> None:
+            cog.changes.append((guild_id, access))  # type: ignore[attr-defined]
+
+        cog._corridor = SimpleNamespace(require_permission=require_permission)
+        cog._set_office_access = set_office_access  # type: ignore[method-assign]
+        return cog
+
+    async def test_a_building_manager_sets_it(self) -> None:
+        cog = self._cog(allowed=True)
+
+        await CommandsMixin.cmd_visibility.callback(cog, _office_ctx(), "Private")
+
+        self.assertEqual(cog.checks, ["building_manager"])  # type: ignore[attr-defined]
+        self.assertEqual(cog.changes, [(GUILD_ID, OfficeAccess.PRIVATE)])  # type: ignore[attr-defined]
+        self.assertIn("now **private**", cog.replies[-1])
+
+    async def test_without_the_group_nothing_changes(self) -> None:
+        cog = self._cog(allowed=False)
+
+        await CommandsMixin.cmd_visibility.callback(cog, _office_ctx(), "private")
+
+        self.assertEqual(cog.changes, [])  # type: ignore[attr-defined]
+
+    async def test_shows_the_current_setting_and_rejects_unknown_values(self) -> None:
+        cog = self._cog(allowed=True)
+        cog._settings.access = OfficeAccess.UNLISTED
+
+        await CommandsMixin.cmd_visibility.callback(cog, _office_ctx(), None)
+        self.assertIn("**unlisted**", cog.replies[-1])
+
+        await CommandsMixin.cmd_visibility.callback(cog, _office_ctx(), "secret")
+        self.assertIn("Choose `public`, `unlisted`, or `private`", cog.replies[-1])
+        self.assertEqual(cog.changes, [])  # type: ignore[attr-defined]
+
+    async def test_url_describes_a_private_office(self) -> None:
+        cog = _Harness()
+        cog._settings.access = OfficeAccess.PRIVATE
+
+        await CommandsMixin.cmd_url.callback(cog, _office_ctx())
+
+        self.assertIn("Only this server's members", cog.replies[-1])
 
 
 class TestPublicUrlCommand(unittest.IsolatedAsyncioTestCase):

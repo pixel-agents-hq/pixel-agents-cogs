@@ -15,6 +15,8 @@ from ..infrastructure.webview import (
     degraded_asset_notification,
     office_ws_path,
     picker_response,
+    private_page_path,
+    session_path,
 )
 
 
@@ -50,9 +52,9 @@ class TestWebviewAssets(unittest.TestCase):
         self.provider.sync(_Status(self.root))
 
     def test_pages_share_base_but_rewrite_to_distinct_ws_routes(self) -> None:
-        office = self.provider.page_response(office_ws_path(10), identify=True)
-        other = self.provider.page_response(office_ws_path(20), identify=True)
-        editor = self.provider.page_response(EDITOR_WS_PATH, identify=False)
+        office = self.provider.page_response(office_ws_path(10), ticket_path=session_path(10))
+        other = self.provider.page_response(office_ws_path(20), ticket_path=session_path(20))
+        editor = self.provider.page_response(EDITOR_WS_PATH)
         office_source = office["web_content"]["source"]  # type: ignore[index]
         other_source = other["web_content"]["source"]  # type: ignore[index]
         editor_source = editor["web_content"]["source"]  # type: ignore[index]
@@ -61,9 +63,30 @@ class TestWebviewAssets(unittest.TestCase):
         self.assertIn("'/cctv/office/10/ws'", office_source)
         self.assertNotIn("/cctv/office/20/ws", office_source)
         self.assertIn("'/cctv/office/20/ws'", other_source)
-        self.assertIn("/third-party/cctv/session", office_source)
+        self.assertIn("'/third-party/cctv/session?guild=10'", office_source)
+        self.assertIn("var PRIVATE = false;", office_source)
         self.assertIn("/cctv/editor/ws", editor_source)
         self.assertNotIn("/third-party/cctv/session", editor_source)
+
+    def test_a_private_office_page_notices_a_refused_socket(self) -> None:
+        page = self.provider.page_response(
+            office_ws_path(10), ticket_path=session_path(10), private=True
+        )
+        source = page["web_content"]["source"]  # type: ignore[index]
+
+        self.assertIn("var PRIVATE = true;", source)
+        self.assertIn("event.code === 4404", source)
+        self.assertIn("private to its server's members", source)
+        # The ticket is fetched per socket and sent in-band, never in a URL.
+        self.assertIn("type: 'authorize'", source)
+        self.assertIn("target.search = '';", source)
+
+    def test_paths_are_built_from_an_integer_only(self) -> None:
+        self.assertEqual(session_path(10), "/third-party/cctv/session?guild=10")
+        self.assertEqual(private_page_path(10), "/dashboard/10/third-party/cctv/private")
+        for build in (session_path, private_page_path):
+            with self.assertRaises(ValueError):
+                build("10'/x")  # type: ignore[arg-type]
 
     def test_an_office_ws_path_is_built_from_an_integer_only(self) -> None:
         self.assertEqual(office_ws_path(10), "/cctv/office/10/ws")
@@ -75,7 +98,7 @@ class TestWebviewAssets(unittest.TestCase):
 
     def test_missing_bundle_returns_503(self) -> None:
         provider = WebviewAssets()
-        response = provider.page_response(office_ws_path(10), identify=True)
+        response = provider.page_response(office_ws_path(10))
         self.assertEqual(response["error_code"], 503)
 
     def test_degraded_is_empty_when_every_family_and_catalog_decode(self) -> None:
@@ -190,3 +213,22 @@ class TestPicker(unittest.TestCase):
 
     def test_no_offices_says_so(self) -> None:
         self.assertIn("No server has a public office yet.", self._render([]))
+
+    def test_the_public_picker_links_to_the_signed_in_one(self) -> None:
+        self.assertIn('href="/third-party/cctv/mine"', self._render([]))
+
+    def test_a_members_own_picker_links_private_offices_to_their_members_page(self) -> None:
+        import jinja2
+
+        content = picker_response([PickerEntry(10, "Club", None, 2, private=True)], mine=True)[
+            "web_content"
+        ]
+        assert isinstance(content, dict)
+        variables = {key: value for key, value in content.items() if key != "source"}
+        html = (
+            jinja2.Environment(autoescape=True).from_string(content["source"]).render(**variables)
+        )
+
+        self.assertIn('href="/dashboard/10/third-party/cctv/private"', html)
+        self.assertIn("private", html)
+        self.assertNotIn('href="/third-party/cctv/mine"', html)

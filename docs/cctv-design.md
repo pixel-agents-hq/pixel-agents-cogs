@@ -219,6 +219,7 @@ class GuildSettings:
     ghost_bots: bool
     broadcast_rich_presence: bool
     broadcast_messages: bool
+    access: OfficeAccess   # public | unlisted | private (stored as "visibility")
 ```
 
 CCTV registers these under its own fresh Red Config identity (no Floorplan
@@ -227,8 +228,8 @@ or Architect setting is read into it). Defaults: host `127.0.0.1`, port
 `https://pixel-index-staging.nntin.xyz/assets/design`, no public base URL,
 and every guild starts disabled with bots included and drawn translucent,
 offline members hidden (drawn translucent once `showoffline` shows them),
-and rich-presence and message display on. Guild enablement, include-bots,
-offline/ghosting, rich-presence, and message-display settings apply only
+rich-presence and message display on, and a `public` office. Guild
+enablement, include-bots, offline/ghosting, rich-presence, and message-display settings apply only
 to that guild's office; the two activity-clear delays (`discord` for every
 guild office, `editor`) are bot-wide. `public_base_url` is the origin
 browsers reach the Dashboard at (`[p]cctv publicurl`), from which
@@ -239,6 +240,57 @@ Message display shows a member's chat messages from **every** channel the
 bot can read, so a viewer of the office may see text from a channel they
 can't open in Discord. A guild that doesn't want that turns messages off
 with `[p]cctv messages false`; `[p]cctv url` says so whenever they are on.
+
+### Who may watch a guild's office
+
+| `access` | Who can watch | On the public picker |
+|---|---|---|
+| `public` (default) | anyone | listed |
+| `unlisted` | anyone with the link | not listed |
+| `private` | members of the guild signed in to the Dashboard, and the bot owner | not listed (on a member's own picker, `/third-party/cctv/mine`) |
+
+A member of the corridor `building_manager` group (or the reserved `owner`
+group) sets it with `[p]cctv visibility <public|unlisted|private>`.
+Changing it disconnects everyone watching (close `1012`), so each viewer
+reconnects under the new rule. A stored value CCTV can't read counts as
+`private`, so corruption can only hide an office.
+
+The Dashboard signs users in with Discord OAuth2 `identify` only, so it
+knows who a user is but not their guilds. Membership is checked **bot-side**
+(`_is_member`: the bot owner, or `guild.get_member`/`fetch_member` finds
+them) every time it matters: when the Dashboard serves the private page
+(its own `guild_id` page check), when a ticket is minted, when a socket
+presents it, when a member leaves or is banned (their sockets on that
+office are closed), and in a sweep of every private office's viewers every
+five minutes. No Discord token is stored and no extra OAuth scope is
+needed; a kick or leave takes effect at once.
+
+A private office is reached like this:
+
+1. `/third-party/cctv/office?guild=<id>` serves the page only for a
+   `public` or `unlisted` open office. For **every** other id -- private,
+   CCTV disabled, unknown, not a guild -- it redirects to
+   `/dashboard/<id>/third-party/cctv/private`, so an anonymous visitor
+   can't tell which ids are private offices.
+2. That route declares `user_id` and `guild_id`, so the Dashboard demands
+   a login and that the user is a member of the guild (or the bot owner)
+   before calling CCTV. CCTV serves the page only if the office is
+   private; a public or unlisted one redirects back to its office page.
+3. The page's script fetches a ticket from
+   `/third-party/cctv/session?guild=<id>` for each socket. A ticket is
+   bound to `(user, guild)`, lives 60 seconds, is spent the first time it
+   is presented, and is minted only for an office the user may watch.
+4. The socket presents it in-band (`{"type": "authorize"}`) -- never in the
+   URL, where proxies log it. Until then a private office's socket is sent
+   nothing, broadcasts included; a `webviewReady` sent early is held and
+   replayed. No valid ticket within ten seconds, a ticket for another
+   guild or a non-member, or (once `[p]cctv publicurl` is set) an `Origin`
+   other than the Dashboard's: closed with `4404` -- the same close, after
+   the same wait, as a socket to an id with no office. The page then shows
+   a notice that the office is private to its server's members.
+
+A public or unlisted office's socket is shown everything at once; it
+presents a ticket only to make keyholder writes.
 
 ### Who a guild's office shows
 
@@ -354,10 +406,14 @@ sequenceDiagram
     participant Co as corridor
 
     B->>S: WebSocket connect (/cctv/office/<guild id>/ws or /cctv/editor/ws)
-    alt guild office
-        S->>S: no open office for that id: close (4404)
-        S->>S: resolve ?ticket= to a user id
+    alt public or unlisted guild office
+        B->>S: {"type": "authorize", ticket} (only to make writes)
         S->>Pi: authorize(user_id) for that guild
+    else private office, or no open office for that id
+        S->>S: send nothing, hold an early webviewReady
+        B->>S: {"type": "authorize", ticket} within 10 s
+        S->>S: spend the ticket: same guild, a member? else close 4404
+        S->>Pi: mark the socket a viewer, replay the held webviewReady
     else editor page
         S->>Pi: mark client is_editor=true (open by design)
     end
@@ -451,14 +507,16 @@ presence change occurring during startup can be missed.
 
 | Route | Method | Purpose |
 |---|---|---|
-| `/cctv/office/<guild id>/ws` | WebSocket | One guild office's live connection. An id with no open office (unknown, not a guild, CCTV disabled there) is closed right after the upgrade with code `4404`, the same for every such case |
+| `/cctv/office/<guild id>/ws` | WebSocket | One guild office's live connection. A private office's socket, and one to an id with no open office (unknown, not a guild, CCTV disabled there), is sent nothing until it presents a valid ticket, and is closed with `4404` -- the same for every such case |
 | `/cctv/editor/ws` | WebSocket | Editor office live connection |
 | `/cctv/health` | GET | JSON status snapshot (`status`, `listener`, `assets`, `offices` totals -- open offices, clients, agents, errors -- and `editor` health) for a reverse proxy or uptime monitor; it names no guild |
-| `/third-party/cctv` | Dashboard GET | Server picker: every open guild office with its name, icon and live headcount, linking to its office page |
-| `/third-party/cctv/office?guild=<guild id>` | Dashboard GET | That guild's office page; one 404 for every id without an open office |
+| `/third-party/cctv` | Dashboard GET | Server picker: every `public` guild office with its name, icon and live headcount, linking to its office page, and a link to the signed-in picker |
+| `/third-party/cctv/mine` | Dashboard GET (login) | A signed-in user's picker: public offices plus the unlisted and private offices of their own servers (every office, for the bot owner) |
+| `/third-party/cctv/office?guild=<guild id>` | Dashboard GET | A `public` or `unlisted` office's page; every other numeric id redirects to the members-only page, a malformed one is a 404 |
+| `/dashboard/<guild id>/third-party/cctv/private` | Dashboard GET (login + membership) | A `private` office's page; the Dashboard checks the login and membership |
 | `/third-party/cctv/discord` | Dashboard GET (hidden) | Redirects to the server picker |
 | `/third-party/cctv/editor` | Dashboard GET | Editor office page |
-| `/third-party/cctv/session` | Dashboard GET (hidden) | Mints a short-lived ticket for the current Dashboard user |
+| `/third-party/cctv/session?guild=<guild id>` | Dashboard GET (hidden, login) | Mints a single-use, 60-second ticket bound to the signed-in user and that guild, for an open office they may watch; otherwise answers 403 with no ticket |
 | `/third-party/cctv/static/<path>` | Dashboard GET/HEAD | Shared webview asset |
 
 The Dashboard renders every page's source as a Jinja template
@@ -475,7 +533,8 @@ per-guild asset belongs behind a guild-scoped route.
 
 | Command | Scope | Description |
 |---|---|---|
-| `[p]cctv url` | Any member | This server's office link (absolute once `publicurl` is set), with a note that chat messages from every channel show while `messages` is on |
+| `[p]cctv url` | Any member | This server's office link (absolute once `publicurl` is set), who may watch it, and a note that chat messages from every channel show while `messages` is on |
+| `[p]cctv visibility [public\|unlisted\|private]` | Building Manager | Show or set who may watch this server's office; changing it reconnects every viewer |
 | `[p]cctv status` | Guild admin | Listener, this server's office route/page, assets, this office's and the editor's revision/client counts, guild settings, health |
 | `[p]cctv dashboard` | Guild admin | Dashboard readiness and the picker, this server's office, and the editor page links |
 | `[p]cctv enable` / `disable` | Guild admin | Open this guild's office and sync its roster / close it, disconnecting its viewers |
@@ -523,7 +582,9 @@ guild** while CCTV is enabled there -- a keyholder of one guild can't edit
 another's office. It fails closed at
 every branch: a synthetic or zero user id is rejected outright, and any
 exception fetching a guild member or checking the `keyholder` capability is
-caught and treated as "not authorized" rather than propagated. A ticket
+caught and treated as "not authorized" rather than propagated. Watching a
+private office is a separate, weaker check (membership, see "Who may watch
+a guild's office"); writing always needs keyholder. A ticket
 only proves the browser's identity at connect time; every write re-checks
 authorization against current guild/role state rather than trusting the
 socket's state from when it opened.
@@ -574,9 +635,28 @@ to cross-contaminate in code, not just by convention.
 **Guild ids in URLs, not secrets.** An office is addressed by its Discord
 server id (`?guild=<id>`, `/cctv/office/<id>/ws`): stable across renames,
 needing no slug registry. Ids aren't secret, so nothing relies on them
-being unguessable; unknown, disabled and non-guild ids all answer the same
-404 page and the same `4404` close, so probing ids doesn't tell which
-servers use CCTV.
+being unguessable; private, unknown, disabled and non-guild ids all get
+the same redirect to the members-only page and the same `4404` close after
+the same wait, so probing ids doesn't tell which servers use CCTV or keep
+their office private. (After signing in, the Dashboard's own guild check
+answers "I'm not in this server" and "you're not in this server"
+differently; that reveals only whether the bot is in a guild.)
+
+**Bot-side membership, not an OAuth guild list.** The Dashboard's login
+asks Discord for `identify` only. Checking membership against the bot's own
+member list instead of a `guilds` scope needs no extra scope, stores no
+user tokens, and sees a kick, leave or ban the moment it happens rather
+than at the next token refresh. The bot is in every guild that can have an
+office, so it can always answer.
+
+**Tickets in-band, single-use, guild-bound.** The Dashboard session cookie
+never reaches the listener, so a socket proves its user with a ticket. It
+travels inside the socket rather than in the URL (where reverse proxies log
+it), is spent on first use, lives a minute, and only opens the guild it was
+minted for, so a leaked ticket is worth at most one connection to one
+office. Because sockets authenticate by ticket and never by cookie, a
+hostile page can't ride a viewer's session into a socket; the `Origin`
+check is a second fence once `public_base_url` is set.
 
 **Subscribe first, then read.** For the editor office Corridor registers
 a subscriber and captures the current aggregate under the same lock, so a

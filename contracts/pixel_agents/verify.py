@@ -148,7 +148,7 @@ def _check_layout_decode(provider: WebviewAssets) -> tuple[bool, str]:
 
 def _check_dashboard_bundle(provider: WebviewAssets) -> tuple[bool, str]:
     # Any guild office serves the same bundle; the id only names its socket.
-    response = provider.page_response(office_ws_path(1), identify=True)
+    response = provider.page_response(office_ws_path(1))
     if response.get("status") != 0:
         return False, str(response.get("error_message", "webview response was not servable"))
     source = str(response["web_content"]["source"])  # type: ignore[index]

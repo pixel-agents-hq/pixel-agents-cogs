@@ -3,6 +3,19 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import StrEnum
+
+
+class OfficeAccess(StrEnum):
+    """Who may watch a guild's office."""
+
+    PUBLIC = "public"  # anyone; listed on the server picker
+    UNLISTED = "unlisted"  # anyone with the link; not listed
+    PRIVATE = "private"  # signed-in members of the guild (and the bot owner)
+
+    @property
+    def open_to_anyone(self) -> bool:
+        return self is not OfficeAccess.PRIVATE
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,6 +47,8 @@ class GuildSettings:
     # Show members' chat messages, from every channel the bot reads, as
     # speech bubbles on this office.
     broadcast_messages: bool
+    # Who may watch this guild's office.
+    access: OfficeAccess = OfficeAccess.PUBLIC
 
 
-__all__ = ["GlobalSettings", "GuildSettings"]
+__all__ = ["GlobalSettings", "GuildSettings", "OfficeAccess"]

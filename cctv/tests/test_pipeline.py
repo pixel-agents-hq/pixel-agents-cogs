@@ -35,8 +35,9 @@ class _Socket:
     async def send_str(self, payload: str) -> None:
         self.messages.append(json.loads(payload))
 
-    async def close(self) -> None:
+    async def close(self, *, code: int = 1000) -> None:
         self.closed = True
+        self.close_code = code
 
 
 class _PixelAgents:

@@ -19,9 +19,12 @@ from corridor.domain import (
 
 from ..adapters.dashboard import DashboardMixin, parse_guild_id
 from ..application import GuildOffices
+from ..domain import OfficeAccess
+from ..infrastructure import OFFICE_UNAVAILABLE_CLOSE_CODE, TicketStore
 
 GUILD_A = 111
 GUILD_B = 222
+OWNER = 900
 
 
 def _layout() -> dict[str, Any]:
@@ -54,6 +57,10 @@ class _PixelAgents:
 class _Settings:
     def __init__(self, enabled: set[int]) -> None:
         self.enabled = enabled
+        self.access: dict[int, OfficeAccess] = {}
+
+    async def set_guild_access(self, guild_id: int, access: OfficeAccess) -> None:
+        self.access[guild_id] = access
 
     async def guild_enabled(self, guild: object) -> bool:
         return guild in self.enabled
@@ -67,6 +74,7 @@ class _Settings:
             ghost_bots=True,
             broadcast_rich_presence=False,
             broadcast_messages=True,
+            access=self.access.get(guild, OfficeAccess.PUBLIC),  # type: ignore[call-overload]
         )
 
 
@@ -103,8 +111,9 @@ class _Socket:
     async def send_str(self, payload: str) -> None:
         self.sent.append(payload)
 
-    async def close(self) -> None:
+    async def close(self, *, code: int = 1000) -> None:
         self.closed = True
+        self.close_code = code
 
 
 class _Assets:
@@ -117,8 +126,10 @@ class _Assets:
     def redirect_response(self, path: str) -> dict[str, object]:
         return {"status": 0, "redirect_url": path}
 
-    def page_response(self, ws_path: str, *, identify: bool) -> dict[str, object]:
-        return {"status": 0, "ws_path": ws_path, "identify": identify}
+    def page_response(
+        self, ws_path: str, *, ticket_path: str | None = None, private: bool = False
+    ) -> dict[str, object]:
+        return {"status": 0, "ws_path": ws_path, "ticket_path": ticket_path, "private": private}
 
 
 class _Cctv(DashboardMixin):
@@ -135,6 +146,7 @@ class _Cctv(DashboardMixin):
         self._editor = None
         self._genuine_agents = {"architect": ("Architect", "online")}
         self._server = None
+        self._tickets = TicketStore(token_factory=lambda: "ticket")
         self.bot = SimpleNamespace(  # type: ignore[assignment]
             user=SimpleNamespace(id=99),
             get_guild=guilds.get,
@@ -142,7 +154,7 @@ class _Cctv(DashboardMixin):
         )
 
     async def _is_owner(self, user: object) -> bool:
-        return False
+        return getattr(user, "id", None) == OWNER
 
     async def _ensure_office_page(self, office: Any) -> str | None:
         return None
@@ -218,6 +230,50 @@ class TestGuildOffices(unittest.IsolatedAsyncioTestCase):
         self.cctv._settings.enabled.discard(GUILD_A)  # type: ignore[attr-defined]
         self.assertFalse(await self.cctv._can_edit_guild(GUILD_A, 2))
 
+    async def test_changing_access_reconnects_viewers_under_the_new_rule(self) -> None:
+        socket = _Socket()
+        self.a.clients.add(socket)  # type: ignore[arg-type]
+
+        await self.cctv._set_office_access(GUILD_A, OfficeAccess.PRIVATE)
+
+        self.assertTrue(self.a.private)
+        self.assertFalse(self.b.private)
+        self.assertTrue(socket.closed)
+        self.assertEqual(self.cctv._settings.access[GUILD_A], OfficeAccess.PRIVATE)  # type: ignore[attr-defined]
+
+    async def test_a_member_who_leaves_loses_a_private_office(self) -> None:
+        await self.cctv._set_office_access(GUILD_A, OfficeAccess.PRIVATE)
+        leaver, other = _Socket(), _Socket()
+        self.a.clients.add(leaver, user_id=1)  # type: ignore[arg-type]
+        self.a.clients.add(other, user_id=2)  # type: ignore[arg-type]
+
+        await self.cctv._on_agent_presence_changed(
+            AgentPresenceChanged(
+                agent=AgentRef(discord_user_id=1, guild_id=GUILD_A, is_bot=False),
+                display_name="Ada",
+                status="offline",
+                left_guild=True,
+            )
+        )
+
+        self.assertTrue(leaver.closed)
+        self.assertEqual(leaver.close_code, OFFICE_UNAVAILABLE_CLOSE_CODE)
+        self.assertFalse(other.closed)
+
+    async def test_membership_is_checked_bot_side(self) -> None:
+        self.assertTrue(await self.cctv._is_member(GUILD_A, 1))
+        self.assertFalse(await self.cctv._is_member(GUILD_A, 3))
+        self.assertTrue(await self.cctv._is_member(GUILD_A, OWNER))
+        self.assertFalse(await self.cctv._is_member(999, 1))
+        self.assertFalse(await self.cctv._is_member(GUILD_A, 0))
+
+    async def test_an_office_opens_with_its_stored_access(self) -> None:
+        self.cctv._settings.access[333] = OfficeAccess.PRIVATE  # type: ignore[attr-defined]
+
+        office = await self.cctv._open_office(333)
+
+        self.assertTrue(office.private)
+
     async def test_health_names_no_guild(self) -> None:
         self.cctv._degraded_reasons = lambda: ()  # type: ignore[method-assign]
         health = self.cctv._health_snapshot()
@@ -236,19 +292,85 @@ class TestDashboardPages(unittest.IsolatedAsyncioTestCase):
         response = await self.cctv.dashboard_office(guild=str(GUILD_A))
 
         self.assertEqual(response["ws_path"], f"/cctv/office/{GUILD_A}/ws")
+        self.assertEqual(response["ticket_path"], f"/third-party/cctv/session?guild={GUILD_A}")
+        self.assertFalse(response["private"])
 
-    async def test_every_unavailable_office_answers_the_same(self) -> None:
-        for raw in (str(GUILD_B), "999", "", "abc", "-1", "1" * 30):
+    async def test_every_office_anyone_cannot_watch_answers_the_same(self) -> None:
+        await self.cctv._set_office_access(GUILD_A, OfficeAccess.PRIVATE)
+        for raw in (str(GUILD_A), str(GUILD_B), "999"):
             with self.subTest(raw=raw):
                 self.assertEqual(
                     await self.cctv.dashboard_office(guild=raw),
-                    {"status": 1, "error_code": 404},
+                    {"status": 0, "redirect_url": f"/dashboard/{raw}/third-party/cctv/private"},
                 )
+        for raw in ("", "abc", "-1", "1" * 30):
+            with self.subTest(raw=raw):
+                self.assertEqual(
+                    await self.cctv.dashboard_office(guild=raw), {"status": 1, "error_code": 404}
+                )
+
+    async def test_the_members_page_serves_only_a_private_office(self) -> None:
+        self.assertEqual(
+            await self.cctv.dashboard_private(user_id=1, guild_id=GUILD_A),
+            {"status": 0, "redirect_url": f"/third-party/cctv/office?guild={GUILD_A}"},
+        )
+        await self.cctv._set_office_access(GUILD_A, OfficeAccess.PRIVATE)
+
+        page = await self.cctv.dashboard_private(user_id=1, guild_id=GUILD_A)
+
+        self.assertTrue(page["private"])
+        self.assertEqual(page["ws_path"], f"/cctv/office/{GUILD_A}/ws")
+        self.assertEqual(
+            await self.cctv.dashboard_private(user_id=1, guild_id=GUILD_B),
+            {"status": 1, "error_code": 404},
+        )
 
     async def test_the_old_discord_page_redirects_to_the_picker(self) -> None:
         self.assertEqual(
             await self.cctv.dashboard_discord(), {"status": 0, "redirect_url": "/third-party/cctv"}
         )
+
+    async def test_a_ticket_is_minted_only_for_an_office_the_user_may_watch(self) -> None:
+        def ticket(response: dict[str, Any]) -> object:
+            import base64
+            import json
+
+            raw = response["raw_response"]
+            return json.loads(base64.b64decode(raw["body_base64"]))["ticket"]
+
+        self.assertEqual(
+            ticket(await self.cctv.dashboard_session(user_id=3, guild=str(GUILD_A))), "ticket"
+        )
+        await self.cctv._set_office_access(GUILD_A, OfficeAccess.PRIVATE)
+        # 3 is a member of guild B only; 1 is a member of A; the owner may watch any.
+        self.assertIsNone(ticket(await self.cctv.dashboard_session(user_id=3, guild=str(GUILD_A))))
+        self.assertEqual(
+            ticket(await self.cctv.dashboard_session(user_id=1, guild=str(GUILD_A))), "ticket"
+        )
+        self.assertEqual(
+            ticket(await self.cctv.dashboard_session(user_id=OWNER, guild=str(GUILD_A))), "ticket"
+        )
+        self.assertIsNone(ticket(await self.cctv.dashboard_session(user_id=1, guild="999")))
+        self.assertEqual(self.cctv._tickets.consume("ticket", GUILD_A), OWNER)
+
+    async def test_the_picker_lists_public_offices_and_members_see_their_own(self) -> None:
+        await self.cctv._open_office(GUILD_B)
+        await self.cctv._set_office_access(GUILD_B, OfficeAccess.PRIVATE)
+
+        public = (await self.cctv.dashboard_picker())["web_content"]["cctv_guilds"]  # type: ignore[index]
+        mine = (await self.cctv.dashboard_mine(user_id=3))["web_content"]  # type: ignore[index]
+        stranger = (await self.cctv.dashboard_mine(user_id=5))["web_content"]  # type: ignore[index]
+
+        self.assertEqual([g["name"] for g in public], ["Alpha"])
+        self.assertTrue(mine["cctv_mine"])
+        self.assertEqual(
+            {g["name"]: g["href"] for g in mine["cctv_guilds"]},
+            {
+                "Alpha": f"/third-party/cctv/office?guild={GUILD_A}",
+                "Beta": f"/dashboard/{GUILD_B}/third-party/cctv/private",
+            },
+        )
+        self.assertEqual([g["name"] for g in stranger["cctv_guilds"]], ["Alpha"])
 
     async def test_the_picker_lists_open_offices(self) -> None:
         response = await self.cctv.dashboard_picker()
@@ -262,6 +384,7 @@ class TestDashboardPages(unittest.IsolatedAsyncioTestCase):
                     "name": "Alpha",
                     "icon_url": None,
                     "headcount": 1,
+                    "private": False,
                 }
             ],
         )

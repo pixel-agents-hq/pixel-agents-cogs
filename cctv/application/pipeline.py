@@ -76,9 +76,15 @@ class CctvPipeline:
         authorize: Authorize,
         *,
         open_editor: bool,
+        can_view: Authorize | None = None,
+        private: bool = False,
         logger: logging.Logger | None = None,
     ) -> None:
         self.page = page
+        # A private guild office shows nothing to a socket until it proves
+        # membership through `can_view`; see CctvServer._handle_gated.
+        self.private = private
+        self._can_view = can_view
         self.ref = ref
         self.open_editor = open_editor
         self.clients = ClientHub(page, logger=logger)
@@ -110,8 +116,20 @@ class CctvPipeline:
     def revision(self) -> int | None:
         return self._state.revision if self._state is not None else None
 
+    @property
+    def guild_id(self) -> int | None:
+        return self.ref.guild_id
+
     async def authorize(self, user_id: int) -> bool:
         return self.open_editor or await self._authorize(user_id)
+
+    async def can_view(self, user_id: int) -> bool:
+        """Whether `user_id` may watch this office (a private office's
+        membership check; anyone may watch any other office)."""
+
+        if self._can_view is None:
+            return True
+        return await self._can_view(user_id)
 
     async def _send(self, message: Mapping[str, object]) -> None:
         await self.clients.broadcast(message)
@@ -227,6 +245,7 @@ class CctvPipeline:
     def health(self) -> dict[str, object]:
         return {
             "clients": self.clients.client_count,
+            "viewers": self.clients.viewer_count,
             "editors": self.clients.editor_count,
             "agents": len(self.office.tracked_user_ids()),
             "revision": self.revision,

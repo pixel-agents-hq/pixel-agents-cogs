@@ -77,41 +77,75 @@ def office_page_path(guild_id: int) -> str:
     return f"/third-party/cctv/office?guild={int(guild_id)}"
 
 
-def _connection_shim(ws_path: str, *, identify: bool) -> str:
+def session_path(guild_id: int) -> str:
+    """Where a guild office page fetches its socket's identity ticket."""
+
+    return f"/third-party/cctv/session?guild={int(guild_id)}"
+
+
+def private_page_path(guild_id: int) -> str:
+    """A private guild office's members-only Dashboard page. The Dashboard
+    itself requires the login and the guild membership for this route."""
+
+    return f"/dashboard/{int(guild_id)}/third-party/cctv/private"
+
+
+_DENIED_NOTICE = (
+    "This office is private to its server's members. "
+    "Sign in to the Dashboard with an account that's a member, then reload."
+)
+
+
+def _connection_shim(ws_path: str, *, ticket_path: str | None, private: bool) -> str:
     # The Dashboard renders a page's source as a Jinja template, so nothing
-    # user-controlled may ever be spliced in here: `ws_path` is built only
-    # from an integer guild id (office_ws_path) or a constant.
-    ticket = (
-        """
-  var ticketPromise = fetch('/third-party/cctv/session', {
-    credentials: 'same-origin', headers: { Accept: 'application/json' }
-  }).then(function (r) { return r.ok ? r.json() : null; })
-    .then(function (data) { return (data && data.ticket) || null; })
-    .catch(function () { return null; });
-"""
-        if identify
-        else ""
-    )
+    # user-controlled may ever be spliced in here: `ws_path` and
+    # `ticket_path` are built only from an integer guild id or constants.
+    #
+    # Each socket fetches its own ticket (tickets are single-use) and
+    # presents it in-band, never in the URL. On a private office, a socket
+    # the server refuses (close 4404) or a page that gets no ticket shows a
+    # notice instead of an empty office.
     authorize = (
-        """
-    ticketPromise.then(function (ticket) {
-      if (!ticket) { return; }
-      var payload = JSON.stringify({ type: 'authorize', ticket: ticket });
-      if (socket.readyState === Native.OPEN) { socket.send(payload); }
-      else if (socket.readyState === Native.CONNECTING) {
-        socket.addEventListener('open', function once() {
-          socket.removeEventListener('open', once); socket.send(payload);
-        });
-      }
-    });
+        f"""
+    fetch('{ticket_path}', {{
+      credentials: 'same-origin', headers: {{ Accept: 'application/json' }}
+    }}).then(function (r) {{ return r.ok ? r.json() : null; }})
+      .then(function (data) {{ return (data && data.ticket) || null; }})
+      .catch(function () {{ return null; }})
+      .then(function (ticket) {{
+        if (!ticket) {{ if (PRIVATE) {{ deny(); }} return; }}
+        var payload = JSON.stringify({{ type: 'authorize', ticket: ticket }});
+        if (socket.readyState === Native.OPEN) {{ socket.send(payload); }}
+        else if (socket.readyState === Native.CONNECTING) {{
+          socket.addEventListener('open', function once() {{
+            socket.removeEventListener('open', once); socket.send(payload);
+          }});
+        }}
+      }});
+    if (PRIVATE) {{
+      socket.addEventListener('close', function (event) {{
+        if (event.code === 4404) {{ deny(); }}
+      }});
+    }}
 """
-        if identify
+        if ticket_path is not None
         else ""
     )
     return f"""<script>
 (function () {{
   var Native = window.WebSocket;
-  {ticket}
+  var PRIVATE = {"true" if private else "false"};
+  function deny() {{
+    if (document.getElementById('cctv-denied')) {{ return; }}
+    var note = document.createElement('div');
+    note.id = 'cctv-denied';
+    note.setAttribute('role', 'alert');
+    note.textContent = {json.dumps(_DENIED_NOTICE)};
+    note.style.cssText = 'position:fixed;inset:0;display:flex;align-items:center;'
+      + 'justify-content:center;padding:24px;text-align:center;z-index:2147483647;'
+      + 'background:#1e1e2e;color:#e6e6f0;font:16px/1.5 system-ui,sans-serif';
+    (document.body || document.documentElement).appendChild(note);
+  }}
   function Patched(url, protocols) {{
     var target = new URL(url, location.href);
     target.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -186,13 +220,15 @@ class WebviewAssets:
         guessed, _ = mimetypes.guess_type(asset_path)
         return guessed or "application/octet-stream"
 
-    def page_response(self, ws_path: str, *, identify: bool) -> dict[str, object]:
+    def page_response(
+        self, ws_path: str, *, ticket_path: str | None = None, private: bool = False
+    ) -> dict[str, object]:
         index = self.resolve("index.html") if self.ready else None
         if index is None:
             return self.unavailable_response(self.error or "Pixel Agents bundle is missing.")
         source = index.read_text("utf-8")
         injection = f'<base href="{WEBVIEW_BASE_PATH}">' + _connection_shim(
-            ws_path, identify=identify
+            ws_path, ticket_path=ticket_path, private=private
         )
         match = re.search(r"<head[^>]*>", source, re.IGNORECASE)
         source = (
@@ -284,10 +320,12 @@ class PickerEntry:
     name: str
     icon_url: str | None
     headcount: int
+    # Listed on a signed-in member's own picker: links to the members-only page.
+    private: bool = False
 
     @property
     def href(self) -> str:
-        return office_page_path(self.guild_id)
+        return private_page_path(self.guild_id) if self.private else office_page_path(self.guild_id)
 
 
 # Rendered by the Dashboard's Jinja (`render_template_string`, autoescaped):
@@ -316,39 +354,45 @@ PICKER_TEMPLATE = """<!doctype html>
 </style>
 </head>
 <body>
-<h1>Pixel Agents offices</h1>
+<h1>{% if cctv_mine %}Your servers' offices{% else %}Pixel Agents offices{% endif %}</h1>
+{% if not cctv_mine %}
+<p class="count"><a href="/third-party/cctv/mine">Sign in to see the private offices of your servers</a></p>
+{% endif %}
 {% if cctv_guilds %}
 <ul>
 {% for g in cctv_guilds %}
   <li><a class="office" href="{{ g.href }}">
     {% if g.icon_url %}<img src="{{ g.icon_url }}" alt="">{% else %}<span class="blank"></span>{% endif %}
     <span><span class="name">{{ g.name }}</span><br>
-    <span class="count">{{ g.headcount }} in the office</span></span>
+    <span class="count">{{ g.headcount }} in the office{% if g.private %} · private{% endif %}</span></span>
   </a></li>
 {% endfor %}
 </ul>
 {% else %}
-<p class="empty">No server has a public office yet.</p>
+<p class="empty">{% if cctv_mine %}None of your servers has an office yet.{% else %}No server has a public office yet.{% endif %}</p>
 {% endif %}
 </body>
 </html>
 """
 
 
-def picker_response(entries: Sequence[PickerEntry]) -> dict[str, object]:
-    """The server picker page: every listed guild office, as template data."""
+def picker_response(entries: Sequence[PickerEntry], *, mine: bool = False) -> dict[str, object]:
+    """The server picker page: every listed guild office, as template data.
+    `mine` is a signed-in member's own picker, private offices included."""
 
     return {
         "status": 0,
         "web_content": {
             "standalone": True,
             "source": PICKER_TEMPLATE,
+            "cctv_mine": mine,
             "cctv_guilds": [
                 {
                     "href": entry.href,
                     "name": entry.name,
                     "icon_url": entry.icon_url,
                     "headcount": entry.headcount,
+                    "private": entry.private,
                 }
                 for entry in entries
             ],
@@ -387,4 +431,6 @@ __all__ = [
     "office_page_path",
     "office_ws_path",
     "picker_response",
+    "private_page_path",
+    "session_path",
 ]

@@ -40,8 +40,9 @@ from pixelagents.domain import (
 )
 
 from ..application import CctvPipeline, GuildOffices, TaskSupervisor
-from ..domain import GuildSettings
+from ..domain import GuildSettings, OfficeAccess
 from ..infrastructure import (
+    OFFICE_UNAVAILABLE_CLOSE_CODE,
     CctvServer,
     RedSettingsRepository,
     TicketStore,
@@ -51,6 +52,11 @@ from ..infrastructure import (
 )
 
 log = logging.getLogger("red.d_cogs.cctv")
+# How often a private office's viewers are re-checked for membership.
+PRIVATE_SWEEP_SECONDS = 300.0
+# Close code when a guild's office changes who may watch it: the page
+# reconnects under the new rule (WebSocket "service restart").
+ACCESS_CHANGED_CLOSE_CODE = 1012
 _synthetic_message_ids = itertools.count(1)
 
 
@@ -231,12 +237,14 @@ class CctvBase:
                 self.editor_pipeline,
                 self._tickets,
                 self._health_snapshot,
+                public_origin=self._public_origin,
                 logger=log,
             )
             await self._server.start(global_settings.listener_host, global_settings.listener_port)
             self._initial_sync_task = self._tasks.create(
                 self._sync_after_ready(), name="cctv-initial-sync"
             )
+            self._tasks.create(self._sweep_private_viewers(), name="cctv-private-sweep")
             await self._notify_owners_if_degraded()
         except Exception:
             await self.cog_unload()
@@ -259,6 +267,9 @@ class CctvBase:
         async def authorize(user_id: int) -> bool:
             return await self._can_edit_guild(guild_id, user_id)
 
+        async def can_view(user_id: int) -> bool:
+            return await self._is_member(guild_id, user_id)
+
         return CctvPipeline(
             f"office/{guild_id}",
             ref,
@@ -267,6 +278,7 @@ class CctvBase:
             self._assets.assets,
             authorize,
             open_editor=False,
+            can_view=can_view,
             logger=log,
         )
 
@@ -278,6 +290,7 @@ class CctvBase:
         if existing is not None:
             return existing
         office = self._create_pipeline(OfficeRef.discord(guild_id))
+        office.private = not (await self._settings.guild_settings(guild_id)).access.open_to_anyone
         self._offices.add(guild_id, office)
         try:
             await office.seed_state(await self._pixelagents.office_state(office.ref))
@@ -293,7 +306,61 @@ class CctvBase:
 
         office = self._offices.pop(guild_id)
         if office is not None:
-            await office.clients.close_all()
+            await office.clients.close_all(code=OFFICE_UNAVAILABLE_CLOSE_CODE)
+
+    async def _set_office_access(self, guild_id: int, access: OfficeAccess) -> None:
+        """Store who may watch the guild's office. Its viewers are
+        disconnected so each reconnects under the new rule: a private
+        office's anonymous viewers are gone at once."""
+
+        await self._settings.set_guild_access(guild_id, access)
+        office = self._offices.get(guild_id)
+        if office is not None:
+            office.private = not access.open_to_anyone
+            await office.clients.close_all(code=ACCESS_CHANGED_CLOSE_CODE)
+
+    async def _is_member(self, guild_id: int, user_id: int) -> bool:
+        """Whether `user_id` may watch `guild_id`'s private office: a member
+        of that guild right now, or the bot owner. Checked bot-side against
+        Discord's member list -- the Dashboard's login proves only who the
+        user is. Fails closed."""
+
+        if user_id <= 0:
+            return False
+        owner = cast("discord.User", discord.Object(id=user_id))
+        if await self.bot.is_owner(owner):
+            return True
+        guild = self.bot.get_guild(guild_id)
+        if guild is None:
+            return False
+        if guild.get_member(user_id) is not None:
+            return True
+        fetch_member = getattr(guild, "fetch_member", None)
+        if fetch_member is None:
+            return False
+        try:
+            return await fetch_member(user_id) is not None
+        except Exception:
+            return False
+
+    async def _sweep_private_viewers(self) -> None:
+        """Every few minutes, disconnect a private office's viewers who are
+        no longer members -- the backstop for a missed leave/ban event."""
+
+        while not self._closing:
+            await asyncio.sleep(PRIVATE_SWEEP_SECONDS)
+            for office in tuple(self._offices):
+                if not office.private or office.guild_id is None:
+                    continue
+                for state in tuple(office.clients.clients.values()):
+                    if state.can_view and state.user_id is not None:
+                        if not await self._is_member(office.guild_id, state.user_id):
+                            await office.clients.close_user(
+                                state.user_id, code=OFFICE_UNAVAILABLE_CLOSE_CODE
+                            )
+
+    async def _public_origin(self) -> str | None:
+        return (await self._settings.global_settings()).public_base_url
 
     async def _on_office_state_changed(self, event: OfficeStateChanged) -> None:
         guild_id = event.state.guild_id
@@ -456,6 +523,9 @@ class CctvBase:
             return
         snapshot = _event_snapshot(event, identity)
         office = self._offices.get(identity.guild_id)
+        if office is not None and event.left_guild and office.private:
+            # Left or was banned: no longer a member, so no longer a viewer.
+            await office.clients.close_user(identity.user_id, code=OFFICE_UNAVAILABLE_CLOSE_CODE)
         if office is not None:
             settings = await self._settings.guild_settings(identity.guild_id)
             # A member who left is removed even where offline members show:

@@ -259,5 +259,41 @@ class TestGuildOfficesAreIsolated(TestAgentActivityReachesCctv):
             self.assertIsNone(leaked, "another guild's office received this member's activity")
 
 
+class TestPrivateOffice(TestAgentActivityReachesCctv):
+    """A private office in a real browser without a Dashboard session: the
+    page gets no ticket, so its socket is sent nothing and the page says why."""
+
+    async def test_agent_replied_reaches_only_the_discord_pipeline(self) -> None:
+        self.skipTest("inherited scenario; covered by the parent class")
+
+    async def test_tool_started_reaches_both_pipelines(self) -> None:
+        self.skipTest("inherited scenario; covered by the parent class")
+
+    async def test_an_anonymous_browser_sees_nothing_of_a_private_office(self) -> None:
+        from cctv.domain import OfficeAccess
+
+        await open_guild_office(self.cctv, _DISCORD_MEMBER_GUILD_ID)
+        await self.cctv._set_office_access(  # noqa: SLF001
+            _DISCORD_MEMBER_GUILD_ID, OfficeAccess.PRIVATE
+        )
+        await self.corridor.publish_event(
+            AgentPresenceChanged(agent=_DISCORD_MEMBER_REF, display_name="Ada", status="online")
+        )
+
+        from playwright.async_api import async_playwright
+
+        async with async_playwright() as playwright:
+            browser = await playwright.chromium.launch()
+            self.addAsyncCleanup(browser.close)
+            page = await browser.new_page()
+            frames = capture_websocket_frames(page)
+
+            await page.goto(f"http://127.0.0.1:{self._port}/e2e/page/{_DISCORD_MEMBER_GUILD_ID}")
+            await page.wait_for_selector("#cctv-denied", timeout=5_000)
+
+            leaked = await wait_for_frame(page, frames, lambda f: True)
+            self.assertIsNone(leaked, "a private office sent data to an anonymous browser")
+
+
 if __name__ == "__main__":
     unittest.main()

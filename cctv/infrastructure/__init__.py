@@ -6,6 +6,7 @@ from .server import (
     HealthSnapshot,
     OfficeList,
     OfficeResolver,
+    OriginSource,
     PagePipeline,
 )
 from .settings import (
@@ -27,6 +28,8 @@ from .webview import (
     office_page_path,
     office_ws_path,
     picker_response,
+    private_page_path,
+    session_path,
 )
 
 __all__ = [
@@ -46,6 +49,7 @@ __all__ = [
     "HealthSnapshot",
     "OfficeList",
     "OfficeResolver",
+    "OriginSource",
     "PagePipeline",
     "PickerEntry",
     "RedSettingsRepository",
@@ -57,5 +61,7 @@ __all__ = [
     "office_page_path",
     "office_ws_path",
     "picker_response",
+    "private_page_path",
+    "session_path",
     "validate_public_base_url",
 ]

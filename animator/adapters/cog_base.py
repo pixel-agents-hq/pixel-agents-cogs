@@ -17,7 +17,13 @@ from typing import Any
 import httpx
 from redbot.core.bot import Red
 
-from corridor.domain import AgentRef, AgentReplied, RegisteredAgent, ReplyCategory
+from corridor.domain import (
+    AgentRef,
+    AgentReplied,
+    RegisteredAgent,
+    ReplyCategory,
+    activity_guild_id,
+)
 
 from ..application import ToolLoopService
 from ..dependency_loader import ensure_corridor_loaded
@@ -177,7 +183,11 @@ class CogBase:
 
         try:
             await self._corridor.publish_event(
-                AgentReplied(agent=ANIMATOR_AGENT_REF, summary=summary)
+                AgentReplied(
+                    agent=ANIMATOR_AGENT_REF,
+                    summary=summary,
+                    context_guild_id=activity_guild_id(),
+                )
             )
         except Exception:
             log.exception("animator: failed to publish tool/thinking activity")

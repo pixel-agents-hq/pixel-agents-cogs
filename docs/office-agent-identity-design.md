@@ -81,8 +81,12 @@ flowchart TB
     Edit2 --> OS
 ```
 
-A genuine agent reaches both the Discord-roster page and the editor page
-unconditionally (it has no guild to gate against). A Discord identity
+A genuine agent is present on both the Discord-roster page and the editor
+page unconditionally (it has no guild to gate against). Its activity --
+speech bubbles, tool starts, status -- is another matter: it reaches the
+Discord-roster page only when the event's `context_guild_id` names an
+enabled guild, the one whose conversation produced it, and otherwise the
+editor page alone (see [`docs/corridor-pubsub-design.md`](corridor-pubsub-design.md)). A Discord identity
 reaches the editor page only when it's the bot's own account — every
 other Discord member appears on the Discord-roster page alone.
 

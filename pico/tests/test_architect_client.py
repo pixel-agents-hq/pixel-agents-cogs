@@ -22,7 +22,7 @@ from animator.tools.attachment import Attachment as AnimatorAttachment
 from architect.application import ToolLoopResult
 from architect.domain import GlobalSettings
 from architect.infrastructure.a2a_server import ArchitectAgentExecutor, build_agent_card
-from corridor.domain import RegisteredAgent, card_with_url
+from corridor.domain import RegisteredAgent, activity_guild_id, card_with_url
 from corridor.infrastructure.a2a_server import A2AServer
 
 from ..infrastructure import architect_client as architect_client_module
@@ -53,8 +53,10 @@ class _ScriptedToolLoop:
     def __init__(self, result: ToolLoopResult, *, debug_events: list[str] | None = None) -> None:
         self._result = result
         self._debug_events = debug_events or []
+        self.guilds: list[int | None] = []
 
     async def run(self, **kwargs: object) -> ToolLoopResult:
+        self.guilds.append(activity_guild_id())
         on_debug_event = kwargs.get("on_debug_event")
         if on_debug_event is not None:
             for event in self._debug_events:
@@ -78,8 +80,9 @@ class TestArchitectClientLiveRoundTrip(unittest.IsolatedAsyncioTestCase):
     async def _start_server(
         self, result: ToolLoopResult, *, debug_events: list[str] | None = None
     ) -> A2AServer:
+        self.tool_loop = _ScriptedToolLoop(result, debug_events=debug_events)
         executor = ArchitectAgentExecutor(
-            tool_loop=_ScriptedToolLoop(result, debug_events=debug_events),
+            tool_loop=self.tool_loop,
             tools=[],
             settings=_settings,
             llm_settings=_llm_settings,
@@ -95,6 +98,14 @@ class TestArchitectClientLiveRoundTrip(unittest.IsolatedAsyncioTestCase):
         await server.start(host="127.0.0.1", port=_PORT, agents=[agent])
         self.addAsyncCleanup(server.stop)
         return server
+
+    async def test_the_consulted_turn_runs_for_the_askers_guild(self) -> None:
+        await self._start_server(ToolLoopResult(0, "final_text", "ok", 0, 0))
+
+        await ArchitectClient().ask(base_url=_BASE_URL, text="hi", guild_id=123456789012345678)
+        await ArchitectClient().ask(base_url=_BASE_URL, text="hi")
+
+        self.assertEqual(self.tool_loop.guilds, [123456789012345678, None])
 
     async def test_ask_returns_architects_final_text(self) -> None:
         await self._start_server(

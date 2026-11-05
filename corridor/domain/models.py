@@ -341,6 +341,12 @@ class AgentReplied:
 
     agent: AgentRef
     summary: str
+    # The guild whose conversation produced this activity, for a genuine
+    # agent (`agent.agent_key` set) -- it has no guild of its own, so
+    # without this a subscriber can't tell which guild's office it belongs
+    # to. `None` when unknown, and always for a Discord member, whose
+    # `agent.guild_id` already says it. See docs/corridor-pubsub-design.md.
+    context_guild_id: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -349,6 +355,12 @@ class AgentToolStarted:
     tool_id: str
     status: str  # required on the wire -- human-readable label
     tool_name: str | None = None  # optional on the wire
+    # The guild whose conversation produced this activity, for a genuine
+    # agent (`agent.agent_key` set) -- it has no guild of its own, so
+    # without this a subscriber can't tell which guild's office it belongs
+    # to. `None` when unknown, and always for a Discord member, whose
+    # `agent.guild_id` already says it. See docs/corridor-pubsub-design.md.
+    context_guild_id: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -363,6 +375,12 @@ class AgentStatusChanged:
     agent: AgentRef
     status: Literal["active", "waiting"]  # matches AgentActivityStatus exactly
     awaiting_input: bool | None = None  # matches AgentStatus.awaitingInput
+    # The guild whose conversation produced this activity, for a genuine
+    # agent (`agent.agent_key` set) -- it has no guild of its own, so
+    # without this a subscriber can't tell which guild's office it belongs
+    # to. `None` when unknown, and always for a Discord member, whose
+    # `agent.guild_id` already says it. See docs/corridor-pubsub-design.md.
+    context_guild_id: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -373,6 +391,12 @@ class AgentHighlighted:
     mechanism."""
 
     agent: AgentRef
+    # The guild whose conversation produced this activity, for a genuine
+    # agent (`agent.agent_key` set) -- it has no guild of its own, so
+    # without this a subscriber can't tell which guild's office it belongs
+    # to. `None` when unknown, and always for a Discord member, whose
+    # `agent.guild_id` already says it. See docs/corridor-pubsub-design.md.
+    context_guild_id: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -383,6 +407,12 @@ class AgentUnhighlighted:
     already moved the highlight elsewhere is always safe."""
 
     agent: AgentRef
+    # The guild whose conversation produced this activity, for a genuine
+    # agent (`agent.agent_key` set) -- it has no guild of its own, so
+    # without this a subscriber can't tell which guild's office it belongs
+    # to. `None` when unknown, and always for a Discord member, whose
+    # `agent.guild_id` already says it. See docs/corridor-pubsub-design.md.
+    context_guild_id: int | None = None
 
 
 @dataclass(frozen=True, slots=True)

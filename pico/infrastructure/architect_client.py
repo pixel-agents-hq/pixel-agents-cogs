@@ -101,6 +101,7 @@ class ArchitectClient:
         base_url: str,
         text: str,
         on_activity: Callable[[str], Awaitable[None]] | None = None,
+        guild_id: int | None = None,
     ) -> AgentAskResult:
         """`on_activity`, if given, is awaited once per intermediate debug
         event the consulted agent chooses to emit mid-task (see this
@@ -119,8 +120,15 @@ class ArchitectClient:
             raise ArchitectRequestError(f"Could not reach architect at {base_url}: {exc}") from exc
 
         try:
+            from corridor.domain import guild_metadata
+
+            # The guild this consultation is for, so the agent's activity
+            # reaches that guild's office (corridor's activity_context).
             message = Message(
-                message_id=uuid.uuid4().hex, role=Role.ROLE_USER, parts=[Part(text=text)]
+                message_id=uuid.uuid4().hex,
+                role=Role.ROLE_USER,
+                parts=[Part(text=text)],
+                metadata=guild_metadata(guild_id),
             )
             request = SendMessageRequest(message=message)
             final_text: str | None = None

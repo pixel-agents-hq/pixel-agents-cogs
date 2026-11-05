@@ -103,6 +103,7 @@ class ArchitectAsker(Protocol):
         base_url: str,
         text: str,
         on_activity: Callable[[str], Awaitable[None]] | None = None,
+        guild_id: int | None = None,
     ) -> AgentAskResult: ...
 
 
@@ -209,6 +210,7 @@ class ConsultAgentTool:
                 base_url=self._base_url,
                 text=raw_input.prompt,
                 on_activity=self._announce_debug_event,
+                guild_id=self._guild_id,
             )
         except ArchitectRequestError as exc:
             log.warning("pico: %s failed: %s", self.name, exc)
@@ -231,6 +233,7 @@ class ConsultAgentTool:
                 discord_user_id=None, guild_id=None, is_bot=True, agent_key=self._agent_key
             ),
             summary=result.answer,
+            context_guild_id=self._guild_id,
         )
         return ConsultAgentOutput(status="ok", answer=result.answer)
 
@@ -273,7 +276,9 @@ class ConsultAgentTool:
         except Exception:
             log.warning("pico: %s could not announce an A2A exchange", self.name, exc_info=True)
 
-    async def _publish_agent_replied(self, *, agent: AgentRef, summary: str) -> None:
+    async def _publish_agent_replied(
+        self, *, agent: AgentRef, summary: str, context_guild_id: int | None = None
+    ) -> None:
         """Drives CCTV's Discord projection with the same exchange
         `_announce` just posted to Discord -- `AgentReplied`, not
         `AgentToolStarted`, per that event's own docstring and
@@ -282,7 +287,13 @@ class ConsultAgentTool:
         `ReplyTool._publish_agent_replied` -- a bus failure must never fail
         the tool call or suppress the Discord announcement."""
 
-        await publish_agent_replied(self._corridor, agent, summary, tool_name=self.name)
+        await publish_agent_replied(
+            self._corridor,
+            agent,
+            summary,
+            tool_name=self.name,
+            context_guild_id=context_guild_id,
+        )
 
 
 _ANNOUNCEMENT_TRUNCATE_LENGTH = 1500

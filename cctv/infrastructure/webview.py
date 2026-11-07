@@ -193,15 +193,21 @@ class WebviewAssets:
             self.built_commit = commit
 
     def resolve(self, asset_path: str) -> Path | None:
-        clean = asset_path.strip().lstrip("/")
-        if not clean or "\x00" in clean:
+        if (
+            not asset_path
+            or any(char in asset_path for char in ("\\", ":"))
+            or any(ord(char) < 32 or ord(char) == 127 for char in asset_path)
+            or any(part in ("", ".", "..") for part in asset_path.split("/"))
+        ):
             return None
-        candidate = (self.root / clean).resolve()
         try:
-            candidate.relative_to(self.root)
-        except ValueError:
+            base = self.root.resolve()
+            candidate = (base / asset_path).resolve()
+            if not candidate.is_relative_to(base):
+                return None
+            return candidate if candidate.is_file() else None
+        except (OSError, RuntimeError, ValueError):
             return None
-        return candidate if candidate.is_file() else None
 
     @staticmethod
     def content_type(asset_path: str) -> str:

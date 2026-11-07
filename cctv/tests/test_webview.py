@@ -96,6 +96,40 @@ class TestWebviewAssets(unittest.TestCase):
     def test_traversal_is_rejected(self) -> None:
         self.assertIsNone(self.provider.resolve("../secret"))
 
+    def test_unsafe_paths_are_rejected_even_if_files_exist_on_posix(self) -> None:
+        (self.root / "C:").mkdir()
+        (self.root / "C:" / "secret.txt").write_text("secret", encoding="utf-8")
+        (self.root / "index.html:secret").write_text("secret", encoding="utf-8")
+        for asset_path in (
+            "C:/secret.txt",
+            "C:secret.txt",
+            "index.html:secret",
+            "C:\\Windows\\win.ini",
+            "\\\\server\\share\\secret",
+            "/index.html",
+            "assets/../index.html",
+            "./index.html",
+            "assets//decoded/floors.json",
+            "index.html\x00",
+        ):
+            with self.subTest(asset_path=asset_path):
+                self.assertIsNone(self.provider.resolve(asset_path))
+
+    def test_symlink_outside_bundle_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as outside:
+            secret = Path(outside) / "secret.txt"
+            secret.write_text("secret", encoding="utf-8")
+            (self.root / "leak.txt").symlink_to(secret)
+            self.assertEqual(self.provider.static_response("leak.txt")["error_code"], 404)
+
+    def test_symlink_inside_bundle_is_allowed(self) -> None:
+        (self.root / "alias.html").symlink_to(self.root / "index.html")
+        self.assertEqual(self.provider.resolve("alias.html"), self.root / "index.html")
+
+    def test_symlink_loop_is_rejected(self) -> None:
+        (self.root / "loop").symlink_to(self.root / "loop")
+        self.assertIsNone(self.provider.resolve("loop"))
+
     def test_missing_bundle_returns_503(self) -> None:
         provider = WebviewAssets()
         response = provider.page_response(office_ws_path(10))

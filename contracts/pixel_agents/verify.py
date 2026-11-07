@@ -157,12 +157,14 @@ def _check_dashboard_bundle(provider: WebviewAssets) -> tuple[bool, str]:
     bundle_paths = [match for match in _BUNDLE_ASSET_RE.findall(source) if match.startswith("./")]
     if not bundle_paths:
         return False, "index.html referenced no relative bundled asset"
-    # A query string (`icon-256.png?v=2`, a cache-buster) never reaches the
-    # static route as part of the path, so it doesn't take part in resolving.
+    # Resolve what the static route actually receives: the browser resolves
+    # `./x` against the <base href>, so the route sees `x`, and a query string
+    # (`icon-256.png?v=2`, a cache-buster) never reaches it as part of the path.
+    # `resolve()` rejects `.` segments, so the `./` must not be passed through.
     unresolved = [
         path.removeprefix("./")
         for path in bundle_paths
-        if provider.resolve(path.partition("?")[0]) is None
+        if provider.resolve(path.removeprefix("./").partition("?")[0]) is None
     ]
     if unresolved:
         return False, f"bundle referenced unresolved asset(s): {', '.join(unresolved)}"

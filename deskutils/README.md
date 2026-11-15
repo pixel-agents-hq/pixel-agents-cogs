@@ -42,7 +42,7 @@ Deskutils requires [`corridor`](../corridor); it's declared as a
 
 ```text
 [p]repo add pixel-agents-cogs https://github.com/pixel-agents-hq/pixel-agents-cogs
-[p]cog install pixel-agents-cogs deskutils
+[p]cog install pixel-agents-cogs corridor deskutils
 [p]load deskutils
 ```
 

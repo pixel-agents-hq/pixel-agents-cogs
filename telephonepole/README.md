@@ -10,7 +10,7 @@ Requires [`corridor`](../corridor) (auto-loaded on `cog_load` via `dependency_lo
 
 ```
 [p]repo add pixel-agents-cogs https://github.com/pixel-agents-hq/pixel-agents-cogs
-[p]cog install pixel-agents-cogs telephonepole
+[p]cog install pixel-agents-cogs corridor telephonepole
 [p]load telephonepole
 ```
 

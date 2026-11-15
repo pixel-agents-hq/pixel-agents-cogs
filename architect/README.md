@@ -54,7 +54,7 @@ Architect requires Corridor and Pixelagents; both are declared as
 `required_cogs` and loaded on demand at `cog_load`.
 
 ```text
-[p]cog install pixel-agents-cogs architect
+[p]cog install pixel-agents-cogs corridor pixelagents architect
 [p]load architect
 ```
 

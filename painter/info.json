@@ -4,6 +4,7 @@
     "short": "Recolors architect's office layout -- tiles, walls, and furniture -- without touching its structure.",
     "description": "Painter is an A2A-only LLM agent that recolors the revisioned editor aggregate through pixelagents. It cannot add, remove, move, or resize office structure, and owns no browser transport. CCTV renders the editor state.",
     "end_user_data_statement": "This cog sends A2A task messages it receives to corridor's configured LLM endpoint. It does not persistently store any data or metadata about Discord users.",
+    "install_msg": "Install corridor and pixelagents too ([p]cog install pixel-agents-cogs corridor pixelagents); both load automatically. Outside services: A2A task text and the office layout go to corridor's LLM endpoint; painter is reached only through corridor's A2A listener (127.0.0.1:8931 by default). Setup: [p]corridor llm endpoint/key/model and [p]corridor a2a host/port. Load cctv to watch the editor office in a browser.",
     "author": ["pixel-agents-hq"],
     "required_cogs": {
         "corridor": "https://github.com/pixel-agents-hq/pixel-agents-cogs",

@@ -41,13 +41,12 @@ concurrency:
 #   * upstream itself -> upstream `main` (`HEAD`).
 #   * anything else   -> TRACK_REF on that repository. The pin sits on a fork
 #     branch only while it has to carry upstream PRs that haven't merged
-#     (today pixel-agents#396's agentSelected/agentDeselected/headless
-#     fixes, which this repo's office protocol relies on, plus the #452
-#     stack whose character wardrobe pixatar draws with). Bumping to plain
-#     upstream `main` then would drop that work and move the office behind
-#     the pixatar CLI's own vendor pin, so this follows the tracking branch
-#     instead. Once both PRs merge, point webview_vendor.repo back at
-#     upstream and this goes back to tracking `main` with no edit here.
+#     (today pixel-agents#472, #396's agentSelected/agentDeselected/headless
+#     fixes ported onto v1.6.0, which this repo's office protocol relies
+#     on). Bumping to plain upstream `main` then would drop that work, so
+#     this follows the tracking branch instead. Once #472 merges, point
+#     webview_vendor.repo back at upstream and this goes back to tracking
+#     `main` with no edit here.
 #     See .claude/skills/advance-vendor/SKILL.md.
 env:
   PR_BRANCH: chore/vendor-pixel-agents

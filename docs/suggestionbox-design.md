@@ -136,7 +136,12 @@ signatures become the MCP tool descriptions/schemas the SDK generates
 automatically -- no hand-written JSON Schema, unlike corridor's
 `RegisteredTool.parameters`. It runs `stateless_http=True`: each MCP
 request is independent, matching corridor's `McpClientPool` opening a
-fresh connection per call rather than holding one open.
+fresh connection per call rather than holding one open. The cog serves it
+at a random path minted on each load (`/<token>/mcp`) that only corridor's
+registry is told, because the listener has no other authentication:
+anything else reaching `mcp_host:mcp_port` gets a 404 rather than a way to
+post into the feedback channel. FastMCP's own defaults add a 4 MiB request
+body limit and, on a loopback host, DNS-rebinding protection.
 
 ### Config shape
 
@@ -169,7 +174,7 @@ AgentAllowedCheck = Callable[[str], Awaitable[bool]]
 @dataclass(frozen=True, slots=True)
 class RegisteredMcpServer:
     owner: str
-    base_url: str  # e.g. "http://127.0.0.1:8934/mcp"
+    base_url: str  # e.g. "http://127.0.0.1:8934/<random token>/mcp"
     agent_allowed: AgentAllowedCheck  # agent_key -> may use this server
 ```
 

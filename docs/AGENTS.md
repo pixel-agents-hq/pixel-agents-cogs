@@ -149,6 +149,9 @@ Index lint/verify steps — see [`contracts/README.md`](../contracts/README.md).
   reload independently of the cog holding it: corridor cascades an unload,
   pixelagents pushes a fresh reference instead.
 - [`docs/corridor.md`](corridor.md) — corridor's permission model in full.
+- [`docs/security-review.md`](security-review.md) — what the agents can do
+  for whom, what each listener accepts, what data leaves the bot, input
+  validation and licensing, per Red's Cog Creator guide.
 - [`docs/contract-testing.md`](contract-testing.md) — why/how Pixel Index
   and Pixel Agents contracts are generated and verified in CI.
 - [`docs/red-downloader-submodules.md`](red-downloader-submodules.md) — what

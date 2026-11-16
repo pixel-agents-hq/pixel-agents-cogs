@@ -349,7 +349,10 @@ class TestOnMessageEarlyExits(unittest.IsolatedAsyncioTestCase):
         listener._repository.guild_enabled.assert_awaited_once_with(10)
 
     async def test_blocklisted_members_and_ignored_channels_never_start_a_turn(self) -> None:
-        for listener in (_Listener(enabled=True, allowed=False), _Listener(enabled=True, not_ignored=False)):
+        for listener in (
+            _Listener(enabled=True, allowed=False),
+            _Listener(enabled=True, not_ignored=False),
+        ):
             message = _guild_message()
             await listener.on_message(message)  # type: ignore[arg-type]
             listener._corridor.llm_settings.assert_not_awaited()

@@ -78,8 +78,10 @@ context.
    `report_error`/`suggest_improvement` post to.
 2. `[p]suggestionbox mcp host <host>` / `[p]suggestionbox mcp port <port>`
    -- configure and restart this cog's own MCP listener (`127.0.0.1:8934`
-   by default). Add a reverse-proxy rule if it needs to be reachable from
-   outside the bot's own host.
+   by default). It serves MCP at a random path chosen on each load, which
+   only corridor's registry knows, so nothing else that can reach the port
+   can post feedback. Add a reverse-proxy rule if it needs to be reachable
+   from outside the bot's own host.
 3. `[p]suggestionbox agents` -- open the Components v2 panel and enable
    MCP tool access for whichever registered A2A agents should have it.
    Off by default for a newly-registered agent.

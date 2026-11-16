@@ -255,9 +255,7 @@ class TestOfficeRouting(_LiveServer):
             try:
                 await editor.send_str("x" * (MAX_CLIENT_MESSAGE_BYTES + 1))
                 message = await asyncio.wait_for(editor.receive(), timeout=2)
-                self.assertIn(
-                    message.type, {WSMsgType.CLOSE, WSMsgType.CLOSED, WSMsgType.ERROR}
-                )
+                self.assertIn(message.type, {WSMsgType.CLOSE, WSMsgType.CLOSED, WSMsgType.ERROR})
             except ConnectionError:
                 pass  # the server dropped the connection mid-send
             await _wait_for(lambda: self.editor.clients.client_count == 0)

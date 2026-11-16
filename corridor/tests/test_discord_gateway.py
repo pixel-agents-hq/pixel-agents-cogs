@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, MagicMock
 import discord  # stubbed by ../conftest.py
 
 from ..corridor import Corridor
-from ..domain import AgentPresenceChanged, AgentReplied, AgentToolStarted, AgentRef, activity_guild
+from ..domain import AgentPresenceChanged, AgentRef, AgentReplied, AgentToolStarted, activity_guild
 from .conftest import FakeBot
 
 
@@ -263,7 +263,9 @@ class TestPrivateTurnActivity(unittest.IsolatedAsyncioTestCase):
     async def test_activity_inside_a_private_turn_is_dropped(self) -> None:
         with activity_guild(100, private=True):
             await self.cog.publish_event(AgentReplied(agent=self.agent, summary="secret"))
-            await self.cog.publish_event(AgentToolStarted(agent=self.agent, tool_id="1", status="working"))
+            await self.cog.publish_event(
+                AgentToolStarted(agent=self.agent, tool_id="1", status="working")
+            )
             # A nested turn can't make it public again.
             with activity_guild(100):
                 await self.cog.publish_event(AgentReplied(agent=self.agent, summary="nested"))

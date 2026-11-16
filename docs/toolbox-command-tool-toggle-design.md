@@ -241,7 +241,14 @@ run `[p]toolbox tools` in.
 Candidates for `[p]toolbox tools` are enumerated with `bot.walk_commands()`
 and filtered by `list_candidate_commands`, the same way Red's own help
 formatter filters commands for `[p]help`: skip `hidden`, skip a command
-that's `not enabled`, skip one the invoking owner can't `can_run`. An
+that's `not enabled`, skip one the invoking owner can't `can_run`, and,
+unlike `[p]help`, skip every bot-owner-only command (Red's
+`requires.privilege_level` is `BOT_OWNER` on it or a parent group, as
+`@commands.is_owner()` sets): a pico turn's input includes other members'
+messages, so an owner-only command offered while the owner talks could be
+steered by someone else. `collect_wrappable_tools` applies the same rule to
+names already saved as selected, and skips a command with no `can_run` to
+gate it. An
 optional `search` argument narrows this to commands whose qualified name
 contains it (case-insensitive substring match), checked before the
 hidden/enabled/can_run filters. `[p]toolbox tools guild` still resolves as

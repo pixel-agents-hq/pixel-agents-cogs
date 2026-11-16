@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, cast
 
 from corridor.domain import RegisteredTool, ToolAvailabilityCheck, infer_parameters
 from corridor.domain.llm_tools import llm_tool_spec
@@ -77,7 +77,7 @@ def _build_wrapped_tool(
 
     description = inspect.getdoc(callback) or f"Run the Discord command `{qualified_name}`."
 
-    can_run = getattr(command, "can_run")
+    can_run = cast(Any, command).can_run
 
     async def inferred_availability_check(ctx: object) -> bool:
         return bool(await can_run(ctx, check_all_parents=True))

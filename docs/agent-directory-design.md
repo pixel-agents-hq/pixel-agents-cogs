@@ -288,10 +288,17 @@ agent binds anything of its own.
   directory means "this agent registered and hasn't unregistered," not
   "this agent is currently reachable." A dead-but-still-registered agent
   behaves exactly like an unreachable URL: the A2A call fails, surfaces
-  as a tool error to pico's LLM, and pico keeps working. Any auth/signing
-  on the shared listener, or genuine liveness checking, is out of scope
-  here -- if an agent is ever exposed outside a trusted network, that
-  needs its own design pass.
+  as a tool error to pico's LLM, and pico keeps working. Genuine liveness
+  checking is out of scope here.
+- **Only in-process callers get through.** The shared listener answers
+  401 to any request without `Authorization: Bearer <token>`, a random
+  token minted on each corridor load and handed out only through
+  `corridor.a2a_auth_headers()` (pico's `ConsultAgentTool` and painter's
+  `consult_architect` send it), and 413 to a request body over 1 MiB. So
+  another process on the host, or anything that can reach a non-loopback
+  `[p]corridor a2a host`, cannot consult an agent directly, and in
+  particular cannot reach a bootcamp agent past the
+  `required_permission_group` pico checks.
 
 See [`docs/architect-design.md`](architect-design.md) for architect's own
 side of registering with this directory, and

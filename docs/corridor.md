@@ -149,7 +149,11 @@ methods with that identity attached. In `ReplyMode.EMBED` the owner name
 always shows as the embed author; `avatar_path` is a conventional path
 whose existence is checked fresh on every send and, when present,
 attached as a real `discord.File` for the author icon. In `ReplyMode.TEXT`
-the owner name instead prefixes the content (`"**MyCog:** ..."`).
+the owner name instead prefixes the content (`"**MyCog:** ..."`). Every
+reply in either mode is sent with `allowed_mentions=AllowedMentions.none()`
+(`api.NO_MENTIONS`): an agent's reply text is LLM-written and may echo
+`@everyone`, role or user mentions from what it read, so they render as
+names and never ping, whatever the bot's own default is.
 `pico`'s `ConsultAgentTool` additionally passes a one-off
 `FooterOverride(name, icon_filename)` per call, replacing the guild's
 configured footer for that one message with the identity of the agent it
@@ -246,7 +250,11 @@ before storing it and mounting the agent's real `AgentExecutor` — the
 registering agent has no way to know that address itself. `[p]corridor
 a2a host`/`port` (bot owner only) reconfigure and live-restart the shared
 listener, re-mounting every already-registered agent via
-`A2AServer.rebuild_routes`.
+`A2AServer.rebuild_routes`. The listener answers 401 to any request
+without the per-load bearer token `corridor.a2a_auth_headers()` returns
+(pico and painter send it with every consultation), and 413 to a request
+body over 1 MiB, so only callers inside the bot process can consult an
+agent.
 
 Three A2A agents exist: `architect` (every structural layout mutation) and
 `painter` (every color mutation on the same shared layout) are both

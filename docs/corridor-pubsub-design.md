@@ -318,6 +318,15 @@ Each publisher's own activity reporting:
   `is_bot=True`). Pico is the Discord-user-facing bot — publishing its own
   replies directly is correct, rather than corridor inferring them from
   `on_message`.
+
+Corridor's own `on_message` publishes a member's message only from a
+channel `@everyone` can view, and not from a private thread
+(`CogBase.channel_is_public`). A turn asked for from any other channel is
+*private*: pico's `on_message` and `[p]bootcamp ask` run it inside
+`activity_guild(guild_id, private=True)`, the flag rides the A2A request's
+metadata (`private_channel`, read back by `GenericAgentExecutor`) into any
+agent it consults, and while it is set `CogBase.publish_event` drops
+`AgentReplied` and `AgentToolStarted`. Office-state changes still publish.
 - **architect** — a fixed `ARCHITECT_AGENT_REF` module-level constant in
   `architect/adapters/cog_base.py`, reused for every event it publishes.
   `ToolLoopService.run()` takes an optional `on_activity` callback,

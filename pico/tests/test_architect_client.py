@@ -112,7 +112,9 @@ class TestArchitectClientLiveRoundTrip(unittest.IsolatedAsyncioTestCase):
     async def test_the_consulted_turn_runs_for_the_askers_guild(self) -> None:
         await self._start_server(ToolLoopResult(0, "final_text", "ok", 0, 0))
 
-        await ArchitectClient().ask(headers=self.headers, base_url=_BASE_URL, text="hi", guild_id=123456789012345678)
+        await ArchitectClient().ask(
+            headers=self.headers, base_url=_BASE_URL, text="hi", guild_id=123456789012345678
+        )
         await ArchitectClient().ask(headers=self.headers, base_url=_BASE_URL, text="hi")
 
         self.assertEqual(self.tool_loop.guilds, [123456789012345678, None])
@@ -186,7 +188,9 @@ class TestArchitectClientLiveRoundTrip(unittest.IsolatedAsyncioTestCase):
         async def on_activity(text: str) -> None:
             seen.append(text)
 
-        result = await ArchitectClient().ask(headers=self.headers, base_url=_BASE_URL, text="hi", on_activity=on_activity)
+        result = await ArchitectClient().ask(
+            headers=self.headers, base_url=_BASE_URL, text="hi", on_activity=on_activity
+        )
 
         self.assertEqual(seen, ["thinking: let me check", "calling move_furniture({...})"])
         self.assertEqual(result.answer, "moved the table")
@@ -224,7 +228,9 @@ class TestArchitectClientLiveRoundTrip(unittest.IsolatedAsyncioTestCase):
 
     async def test_ask_raises_when_architect_is_unreachable(self) -> None:
         with self.assertRaises(ArchitectRequestError):
-            await ArchitectClient().ask(headers=self.headers, base_url="http://127.0.0.1:1/", text="hi")
+            await ArchitectClient().ask(
+                headers=self.headers, base_url="http://127.0.0.1:1/", text="hi"
+            )
 
     async def test_ask_uses_a_generous_client_timeout_not_httpxs_5s_default(self) -> None:
         """Regression test for a real production incident: httpx's own
@@ -320,7 +326,9 @@ class TestArchitectClientCollectsAttachments(unittest.IsolatedAsyncioTestCase):
             )
         )
 
-        result = await ArchitectClient().ask(headers=self.headers, base_url=_ANIMATOR_BASE_URL, text="hi")
+        result = await ArchitectClient().ask(
+            headers=self.headers, base_url=_ANIMATOR_BASE_URL, text="hi"
+        )
 
         self.assertEqual(result.attachments, ())
 
@@ -343,7 +351,9 @@ class TestArchitectClientCollectsAttachments(unittest.IsolatedAsyncioTestCase):
             )
         )
 
-        result = await ArchitectClient().ask(headers=self.headers, base_url=_ANIMATOR_BASE_URL, text="render it")
+        result = await ArchitectClient().ask(
+            headers=self.headers, base_url=_ANIMATOR_BASE_URL, text="render it"
+        )
 
         self.assertEqual(result.answer, "attached the files")
         self.assertEqual(

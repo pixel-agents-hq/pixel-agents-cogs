@@ -8,10 +8,11 @@ import tempfile
 import textwrap
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from ..domain import CogSource
 from ..infrastructure import CogCatalog, PipInstaller, build_lookup
-from ..infrastructure.downloader_index import index_from_installed_cogs
+from ..infrastructure.downloader_index import index_from_installed_cogs, read_downloader_index
 
 
 def make_cog(root: Path, name: str, info: dict[str, object] | None = None) -> Path:
@@ -171,6 +172,52 @@ class TestDownloaderIndex(unittest.TestCase):
 
     def test_never_used_downloader(self) -> None:
         self.assertEqual(index_from_installed_cogs(None), {})
+
+
+class _Module:
+    def __init__(self, name: str, repo_name: str) -> None:
+        self.name = name
+        self.repo_name = repo_name
+
+
+class _Downloader:
+    async def installed_cogs(self) -> tuple[_Module, ...]:
+        return (_Module("corridor", "pixel-agents-cogs"), _Module("audio2", "other"))
+
+
+class _Bot:
+    def __init__(self, downloader: object | None) -> None:
+        self._downloader = downloader
+
+    def get_cog(self, name: str) -> object | None:
+        return self._downloader if name == "Downloader" else None
+
+
+class TestReadDownloaderIndex(unittest.IsolatedAsyncioTestCase):
+    async def test_uses_downloaders_public_method_while_it_is_loaded(self) -> None:
+        index = await read_downloader_index(_Bot(_Downloader()))
+
+        self.assertEqual(index, {"corridor": "pixel-agents-cogs", "audio2": "other"})
+
+    async def test_falls_back_to_downloaders_config_when_the_public_method_fails(self) -> None:
+        class Broken:
+            async def installed_cogs(self) -> tuple[_Module, ...]:
+                raise FileNotFoundError("info.json")
+
+        class Value:
+            async def __call__(self) -> object:
+                return {"pixel-agents-cogs": {"corridor": {}}}
+
+        class FakeConfig:
+            installed_cogs = Value()
+
+        with (
+            mock.patch("redbot.core.Config.get_conf", return_value=FakeConfig()),
+            self.assertLogs("red.office-cogs.switchboard.downloader", "WARNING"),
+        ):
+            index = await read_downloader_index(_Bot(Broken()))
+
+        self.assertEqual(index, {"corridor": "pixel-agents-cogs"})
 
 
 @unittest.skipIf(os.name == "nt", "fake python is a POSIX shell script")

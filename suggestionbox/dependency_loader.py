@@ -15,6 +15,9 @@ async def ensure_corridor_loaded(bot: Any) -> Any:
     # Unloaded third-party cogs are not guaranteed to be importable by name.
     # Red resolves them from its configured cog paths and load_extension then
     # consumes the resulting ModuleSpec.
+    # Red has no public cog lookup: `_cog_mgr` (redbot.core._cog_manager) is
+    # private, so info.json pins min/max_bot_version to the tested Red range
+    # (docs/dependency-loading.md, "Private Red APIs").
     try:
         spec = await bot._cog_mgr.find_cog("corridor")
     except Exception as exc:

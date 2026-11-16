@@ -9,11 +9,14 @@ from typing import Any
 from contracts.info_json.lint_info_json import (
     MAX_INSTALL_MSG,
     README_REQUIRED,
+    check_bot_version_range,
     check_cog_info,
     check_readme,
     check_repo_info,
     discover_cogs,
     lint,
+    main,
+    tested_red_versions,
 )
 
 
@@ -27,6 +30,7 @@ def _cog(name: str = "newcog", **overrides: Any) -> dict[str, Any]:
         "end_user_data_statement": "Stores nothing.",
         "requirements": [],
         "min_bot_version": "3.5.24",
+        "max_bot_version": "3.5.24",
         "min_python_version": [3, 11, 0],
         "hidden": False,
         "type": "COG",
@@ -60,6 +64,12 @@ class TestRealRepository(unittest.TestCase):
         self.assertIn("corridor", cogs)
         self.assertNotIn("contracts", cogs)
         self.assertNotIn("e2e", cogs)
+
+    def test_red_versions_are_the_shared_range(self) -> None:
+        corridor = discover_cogs()["corridor"]
+        expected = list(dict.fromkeys([corridor["min_bot_version"], corridor["max_bot_version"]]))
+
+        self.assertEqual(tested_red_versions(), expected)
 
 
 class TestRepoInfo(unittest.TestCase):
@@ -121,6 +131,31 @@ class TestCogInfo(unittest.TestCase):
             check_cog_info("newcog", data), ["newcog/info.json: missing 'min_python_version'"]
         )
 
+    def test_missing_max_bot_version_fails(self) -> None:
+        data = _cog()
+        del data["max_bot_version"]
+
+        self.assertEqual(
+            check_cog_info("newcog", data), ["newcog/info.json: missing 'max_bot_version'"]
+        )
+
+    def test_bot_version_must_be_dotted_numbers(self) -> None:
+        self.assertEqual(
+            check_cog_info("newcog", _cog(max_bot_version="3.5")),
+            ["newcog/info.json: 'max_bot_version' must be an 'X.Y.Z' Red version, not '3.5'"],
+        )
+
+    def test_min_bot_version_must_not_exceed_max(self) -> None:
+        self.assertEqual(
+            check_cog_info("newcog", _cog(min_bot_version="3.5.25")),
+            ["newcog/info.json: 'min_bot_version' is newer than 'max_bot_version'"],
+        )
+
+    def test_bot_versions_compare_numerically(self) -> None:
+        data = _cog(min_bot_version="3.5.9", max_bot_version="3.5.24")
+
+        self.assertEqual(check_cog_info("newcog", data), [])
+
     def test_overlong_install_msg_fails(self) -> None:
         problems = check_cog_info("newcog", _cog(install_msg="x" * (MAX_INSTALL_MSG + 1)))
 
@@ -148,6 +183,55 @@ class TestCogInfo(unittest.TestCase):
             check_cog_info("newcog", data),
             ["newcog/info.json: 'install_msg' does not name required cog 'corridor'"],
         )
+
+
+class TestBotVersionRange(unittest.TestCase):
+    def test_one_shared_range_passes(self) -> None:
+        cogs = {"alpha": _cog("alpha"), "beta": _cog("beta")}
+
+        self.assertEqual(check_bot_version_range(cogs, _cog()), [])
+
+    def test_a_cog_out_of_step_fails(self) -> None:
+        cogs = {"alpha": _cog("alpha"), "beta": _cog("beta", max_bot_version="3.5.25")}
+
+        self.assertEqual(
+            check_bot_version_range(cogs),
+            [
+                "min/max_bot_version must be the same everywhere: "
+                "alpha 3.5.24..3.5.24, beta 3.5.24..3.5.25"
+            ],
+        )
+
+    def test_the_cookiecutter_defaults_must_match(self) -> None:
+        template = {"min_bot_version": "3.5.24", "max_bot_version": "3.5.23"}
+
+        problems = check_bot_version_range({"alpha": _cog("alpha")}, template)
+
+        self.assertEqual(len(problems), 1)
+        self.assertIn("cookiecutter.json 3.5.24..3.5.23", problems[0])
+
+    def test_red_versions_lists_each_end_once(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "alpha").mkdir()
+            data = _cog("alpha", min_bot_version="3.5.20")
+            (root / "alpha" / "info.json").write_text(json.dumps(data))
+
+            self.assertEqual(tested_red_versions(root), ["3.5.20", "3.5.24"])
+
+    def test_red_versions_refuses_a_split_range(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for name, high in (("alpha", "3.5.24"), ("beta", "3.5.25")):
+                (root / name).mkdir()
+                data = _cog(name, max_bot_version=high)
+                (root / name / "info.json").write_text(json.dumps(data))
+
+            with self.assertRaises(ValueError):
+                tested_red_versions(root)
+
+    def test_unknown_argument_is_a_usage_error(self) -> None:
+        self.assertEqual(main(["--nope"]), 2)
 
 
 class TestReadme(unittest.TestCase):

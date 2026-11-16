@@ -2,13 +2,15 @@ name: "info.json and README"
 
 # Red's Approved Cog Creator guide requires a root README and, in every
 # info.json, author/short/description plus an install_msg disclosure. This
-# keeps them from silently going missing. Stdlib only: no dependencies.
+# keeps them from silently going missing, and keeps every cog's
+# min/max_bot_version on one tested Red range. Stdlib only: no dependencies.
 on:
   push:
     paths:
       - "info.json"
       - "*/info.json"
       - "README.md"
+      - ".cookiecutter/cog-cookiecutter/cookiecutter.json"
       - "contracts/info_json/**"
       - ".github/workflows/info-json.yml"
   pull_request:
@@ -16,6 +18,7 @@ on:
       - "info.json"
       - "*/info.json"
       - "README.md"
+      - ".cookiecutter/cog-cookiecutter/cookiecutter.json"
       - "contracts/info_json/**"
       - ".github/workflows/info-json.yml"
 

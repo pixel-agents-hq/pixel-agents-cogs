@@ -96,7 +96,7 @@ python -m mypy corridor floorplan pixelagents cctv toolbox pico architect painte
 # CI-only contract/lint checks:
 python -m unittest discover -s contracts/tests
 python -m contracts.discord_replies.lint_reply_channel
-python -m contracts.info_json.lint_info_json  # info.json keys/install_msg + root README
+python -m contracts.info_json.lint_info_json  # info.json keys/install_msg/bot-version range + root README
 ```
 
 A single test: `python -m pytest -q corridor/tests/test_reply_sender.py::TestReplySender::test_foo`.
@@ -200,6 +200,13 @@ each package's own `Architecture.md` (where present) covers its specifics.
   (Downloader never installs them), and every cog must be named in the
   root `README.md`; `contracts/info_json/lint_info_json.py` enforces both
   in CI (`.github/workflows/info-json.yml`).
+- **Every cog pins one tested Red range** (`min_bot_version` *and*
+  `max_bot_version`, identical in every `info.json` and the cookiecutter
+  defaults) because every cog uses Red's private `bot._cog_mgr`, and
+  switchboard more Red internals besides. Don't add a new private Red
+  call without listing it in `docs/dependency-loading.md`'s "Private Red
+  APIs" and pinning it in `switchboard/tests/test_red_private_api.py`;
+  raise the range only after running switchboard's suite on the new Red.
 - **`corridor/ui_limits.py` has no discord/redbot import and must stay
   that way** — it's a pure Discord-component-limit checker imported by
   UI test suites across multiple cogs (corridor, floorplan, toolbox,

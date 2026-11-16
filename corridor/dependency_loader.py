@@ -39,6 +39,9 @@ async def ensure_loaded(bot: Any, package: str, cog_name: str) -> Any:
     # Unloaded third-party cogs are not guaranteed to be importable by name.
     # Red resolves them from its configured cog paths and load_extension then
     # consumes the resulting ModuleSpec.
+    # Red has no public cog lookup: `_cog_mgr` (redbot.core._cog_manager) is
+    # private, so info.json pins min/max_bot_version to the tested Red range
+    # (docs/dependency-loading.md, "Private Red APIs").
     try:
         spec = await bot._cog_mgr.find_cog(package)
     except Exception as exc:
@@ -86,6 +89,9 @@ async def ensure_importable(bot: Any, package: str) -> None:
     if package in sys.modules:
         return
 
+    # Red has no public cog lookup: `_cog_mgr` (redbot.core._cog_manager) is
+    # private, so info.json pins min/max_bot_version to the tested Red range
+    # (docs/dependency-loading.md, "Private Red APIs").
     try:
         spec = await bot._cog_mgr.find_cog(package)
     except Exception as exc:

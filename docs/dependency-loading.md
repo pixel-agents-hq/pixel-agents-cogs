@@ -18,8 +18,9 @@ So `required_cogs` in `info.json` is descriptive metadata for humans, not
 something Red enforces. Every cog here hand-rolls its own dependency
 loading in `setup()`/`cog_load()`, via `bot._cog_mgr.find_cog(name)` +
 `bot.load_extension(spec)` — the same two calls Red's own loader uses
-internally. This doc is the single place that explains the resulting
-pattern.
+internally. The first is private Red API; see
+[Private Red APIs](#private-red-apis). This doc is the single place that
+explains the resulting pattern.
 
 This doc only covers *acquiring* a dependency reference. What happens to
 that reference afterward, if the dependency itself reloads independently of
@@ -186,6 +187,52 @@ fresh Red instance with the repo on `[p]addpath`, corridor failing to load
 through Red alone, `switchboard load all` / `unload corridor` over Red's
 RPC, and autorepair after a restart with an emptied lib directory. See
 [`switchboard/Architecture.md`](../switchboard/Architecture.md).
+
+## Private Red APIs
+
+Red's [cog-creator guide](https://docs.discord.red/en/latest/guide_cog_creators.html)
+asks cogs to use Red's public methods, and to lock a cog with both
+`min_bot_version` and `max_bot_version` when a private one is
+unavoidable. Checked against Red's own source (`redbot/core/bot.py`,
+`redbot/core/_cog_manager.py`, `redbot/core/core_commands.py`,
+`redbot/cogs/downloader/downloader.py`), these have no public equivalent:
+
+| Private API | Used by | Why no public route works |
+|---|---|---|
+| `bot._cog_mgr.find_cog(name)` | every cog's `dependency_loader.py` (and the cookiecutter template's) | The cog manager lives in the private `redbot.core._cog_manager` module and is only reachable as `bot._cog_mgr`. Third-party cog paths are not on `sys.path` (Red scans them with `pkgutil.iter_modules`), and `--cog-path` directories exist only in that object's memory, so the lookup cannot be rebuilt from public pieces. |
+| `bot._cog_mgr.paths()` / `install_path()` / `user_defined_paths()` / `CORE_PATH` | switchboard's `CogCatalog` | The same private object. |
+| `CoreLogic._load` / `_unload` | switchboard's `RedExtensions` | The only way to load or unload a cog by name and get a per-package result. The `[p]load` command replies in chat, and the `CORE__LOAD` RPC method needs Red started with `--rpc`. |
+| `bot._last_exception` | switchboard's `RedExtensions` | The traceback Red keeps for `[p]traceback`; Red has no accessor for it. |
+| Downloader's Config (identifier `998240343`, `installed_cogs`) | switchboard's `read_downloader_index`, only while the Downloader cog is unloaded | Downloader's public `installed_cogs()` needs the Downloader cog loaded, and switchboard uses it whenever it is. |
+
+The public calls around them stay public: `bot.get_cog`,
+`bot.load_extension(spec)`, `bot.add_loaded_package` and
+`cog_data_path(raw_name="Downloader")`.
+
+Because the private ones stay, every cog's `info.json` (and the
+cookiecutter template's defaults) carries the same `min_bot_version` /
+`max_bot_version` range, and Downloader refuses to install a cog on a Red
+outside it. `contracts/info_json/lint_info_json.py` fails CI if any cog
+drops either key or falls out of step. `python -m
+contracts.info_json.lint_info_json --red-versions` prints the range's two
+ends, and `.github/workflows/switchboard.yml` and `check-cogs.yml` install
+exactly those Red versions. On each, switchboard's
+`tests/test_red_private_api.py` checks every internal in the table against
+the installed Red and fails if Red is outside the pinned range.
+
+To support a newer Red: install it, run
+`python -m pytest -q switchboard/`, fix anything
+`test_red_private_api.py` reports, then raise `max_bot_version` in every
+`info.json` and in `.cookiecutter/cog-cookiecutter/cookiecutter.json`
+together.
+
+Red would need these public methods for the pins to go away:
+
+- a public cog lookup on `Red`, e.g. `await bot.find_cog_spec(name)`,
+  plus the cog-path lists switchboard reports;
+- a public load/unload by package name that returns the per-package result
+  `CoreLogic._load` already builds;
+- read access to the last stored command traceback.
 
 ## The CI smoke test's unload-then-test mechanism
 

@@ -13,9 +13,15 @@ Checks, all static (stdlib `json` only -- no cog, redbot or discord import):
   as a lowercase `cog`, as an unknown installable), `name` matching its
   folder, non-empty `author`, `short`, `description`, `install_msg` and
   `end_user_data_statement`, plus `requirements`, `min_bot_version`,
-  `min_python_version`, `hidden` and `type`. Every cog here talks to an
+  `max_bot_version`, `min_python_version`, `hidden` and `type`. Every cog here talks to an
   outside service, stores data outside Config, or needs another cog
   installed first, so every one carries an `install_msg`.
+- **One tested Red range**: every cog calls Red's private cog manager
+  (`bot._cog_mgr`, see docs/dependency-loading.md "Private Red APIs"), so
+  the guide wants each one locked with `min_bot_version` *and*
+  `max_bot_version`. Both must be `X.Y.Z` with min <= max, and every cog
+  plus the cookiecutter template's defaults must carry the same range --
+  the one `--red-versions` hands to the CI jobs that test against real Red.
 - **`required_cogs` disclosed**: Downloader never installs `required_cogs`,
   so each one must be named in the cog's `install_msg`.
 - **Known keys only**: Red matches `info.json` keys case-sensitively and
@@ -33,6 +39,8 @@ Checks, all static (stdlib `json` only -- no cog, redbot or discord import):
   named in backticks.
 
 Run: python -m contracts.info_json.lint_info_json
+     python -m contracts.info_json.lint_info_json --red-versions
+       (prints the JSON list of Red versions CI installs: min and max)
 """
 
 from __future__ import annotations
@@ -67,7 +75,17 @@ COG_KEYS = REPO_KEYS | frozenset(
 )
 REPO_REQUIRED_TEXT = ("short", "description", "install_msg")
 COG_REQUIRED_TEXT = ("short", "description", "install_msg", "end_user_data_statement")
-COG_REQUIRED_PRESENT = ("requirements", "min_bot_version", "min_python_version", "hidden", "type")
+COG_REQUIRED_PRESENT = (
+    "requirements",
+    "min_bot_version",
+    "max_bot_version",
+    "min_python_version",
+    "hidden",
+    "type",
+)
+BOT_VERSION_KEYS = ("min_bot_version", "max_bot_version")
+BOT_VERSION_RE = re.compile(r"\d+\.\d+\.\d+")
+COOKIECUTTER_JSON = Path(".cookiecutter") / "cog-cookiecutter" / "cookiecutter.json"
 
 # Leaves headroom under Discord's 2000-character message limit for `[p]`
 # expanding to a long prefix.
@@ -151,6 +169,7 @@ def check_cog_info(name: str, data: dict[str, Any]) -> list[str]:
     problems += [f"{label}: missing {key!r}" for key in COG_REQUIRED_PRESENT if key not in data]
     if "type" in data and data["type"] != "COG":
         problems.append(f"{label}: 'type' must be 'COG' or 'SHARED_LIBRARY', not {data['type']!r}")
+    problems += _bot_version_problems(label, data)
     install_msg = data.get("install_msg")
     if isinstance(install_msg, str):
         problems += [
@@ -159,6 +178,53 @@ def check_cog_info(name: str, data: dict[str, Any]) -> list[str]:
             if not re.search(rf"\b{re.escape(dep)}\b", install_msg)
         ]
     return problems
+
+
+def _version_tuple(value: object) -> tuple[int, ...] | None:
+    if isinstance(value, str) and BOT_VERSION_RE.fullmatch(value):
+        return tuple(int(part) for part in value.split("."))
+    return None
+
+
+def _bot_version_problems(label: str, data: dict[str, Any]) -> list[str]:
+    problems = [
+        f"{label}: {key!r} must be an 'X.Y.Z' Red version, not {data[key]!r}"
+        for key in BOT_VERSION_KEYS
+        if key in data and _version_tuple(data[key]) is None
+    ]
+    low = _version_tuple(data.get("min_bot_version"))
+    high = _version_tuple(data.get("max_bot_version"))
+    if low is not None and high is not None and low > high:
+        problems.append(f"{label}: 'min_bot_version' is newer than 'max_bot_version'")
+    return problems
+
+
+def _bot_range(data: dict[str, Any]) -> tuple[object, object]:
+    return data.get("min_bot_version"), data.get("max_bot_version")
+
+
+def check_bot_version_range(
+    cogs: dict[str, dict[str, Any]], template: dict[str, Any] | None = None
+) -> list[str]:
+    """Every cog (and the cookiecutter defaults) must pin the same Red range."""
+
+    ranges = {name: _bot_range(data) for name, data in cogs.items()}
+    if template is not None:
+        ranges[str(COOKIECUTTER_JSON)] = _bot_range(template)
+    if len(set(ranges.values())) <= 1:
+        return []
+    listing = ", ".join(f"{name} {low}..{high}" for name, (low, high) in sorted(ranges.items()))
+    return [f"min/max_bot_version must be the same everywhere: {listing}"]
+
+
+def tested_red_versions(root: Path = REPO_ROOT) -> list[str]:
+    """The Red versions CI tests against: the shared range's two ends."""
+
+    ranges = {_bot_range(data) for data in discover_cogs(root).values()}
+    if len(ranges) != 1:
+        raise ValueError("cogs do not share one min/max_bot_version range")
+    low, high = ranges.pop()
+    return [str(version) for version in dict.fromkeys((low, high))]
 
 
 def check_readme(text: str | None, cog_names: list[str]) -> list[str]:
@@ -178,6 +244,8 @@ def lint(root: Path = REPO_ROOT) -> list[str]:
     cogs = discover_cogs(root)
     for name, data in cogs.items():
         problems += check_cog_info(name, data)
+    template = root / COOKIECUTTER_JSON
+    problems += check_bot_version_range(cogs, _load(template) if template.is_file() else None)
     readme = root / "README.md"
     problems += check_readme(
         readme.read_text(encoding="utf-8") if readme.is_file() else None, sorted(cogs)
@@ -185,7 +253,14 @@ def lint(root: Path = REPO_ROOT) -> list[str]:
     return problems
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    args = sys.argv[1:] if argv is None else argv
+    if args == ["--red-versions"]:
+        print(json.dumps(tested_red_versions()))
+        return 0
+    if args:
+        print("usage: python -m contracts.info_json.lint_info_json [--red-versions]")
+        return 2
     problems = lint()
     if problems:
         print("info.json / README.md problems:")

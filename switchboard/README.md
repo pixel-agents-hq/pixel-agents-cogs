@@ -101,6 +101,43 @@ cogs (JSON-RPC params `[["corridor"]]`, the same shape as Red's
 [`.github/workflows/switchboard.yml`](../.github/workflows/switchboard.yml)
 drives a real bot through them.
 
+## Next to Red's Downloader and Core
+
+Switchboard calls Red's own load, unload and pip code instead of
+reimplementing it, and it cannot make one of Red's core cogs fail to load:
+
+- **Loading and unloading** go through the Core cog's `CoreLogic._load` /
+  `_unload`, the code behind `[p]load` / `[p]unload`. Red's own startup
+  autoload runs first. Autorepair waits for `wait_until_red_ready()` and
+  then loads only managed cogs that are not loaded.
+- **Core cogs are touched only when named.** `all` and directory names
+  expand to addpath and `--cog-path` cogs only. An unload cascade follows
+  `required_cogs`, which no core cog declares. Autorepair loads only managed
+  cogs. Naming a core cog (`[p]switchboard unload audio`) does exactly what
+  `[p]unload audio` does.
+- **Requirements** go into Downloader's lib directory with Downloader's own
+  pip command. Red appends that directory after site-packages, so nothing
+  installed there can shadow a package Red or its core cogs import.
+- **Cog paths** are only read. Switchboard never adds, removes or reorders a
+  cog path, and never changes Red's install path.
+- **Names**: its commands live under `[p]switchboard` and its RPC methods
+  under `SWITCHBOARD__`, so none clashes with a core command or method.
+
+It deliberately replaces two parts of Red's behaviour. It installs
+requirements for addpath cogs, which Downloader only does for
+`[p]cog install`. And autorepair takes over from Red's autoload list for
+managed cogs: a managed cog unloaded with a plain `[p]unload` is loaded
+again on the next start. Use `[p]switchboard unload`, or
+`[p]switchboard autorepair false`, to stop that.
+
+`tests/test_service.py`'s `TestCoreCogs` covers the core-cog guarantees.
+
+Red has no public API for any of the internals listed in
+[`docs/dependency-loading.md`](../docs/dependency-loading.md#private-red-apis),
+so `info.json` pins `min_bot_version` and `max_bot_version` to the Red
+versions CI tests, and `tests/test_red_private_api.py` checks each internal
+against the installed Red.
+
 ## Limits
 
 - A requirement counts as satisfied when the distribution Python would

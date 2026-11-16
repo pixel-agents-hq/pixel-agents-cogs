@@ -11,6 +11,7 @@
     "requirements": [],
     "tags": {{ tags | jsonify | indent(4) }},
     "min_bot_version": "{{ cookiecutter.min_bot_version }}",
+    "max_bot_version": "{{ cookiecutter.max_bot_version }}",
     "min_python_version": [3, 11, 0],
     "hidden": false,
     "disabled": false,

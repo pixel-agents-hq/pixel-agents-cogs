@@ -540,27 +540,16 @@ Every `/third-party/cctv` route above is a third-party page of AAA3A's
 ([docs](https://red-web-dashboard.readthedocs.io/en/latest/)). CCTV
 registers through the Dashboard cog's `rpc.third_parties_handler`
 (`on_dashboard_cog_add`, `cctv/adapters/dashboard.py`) and
-`[p]cctv dashboard` reports whether it is loaded. What each page needs from
-the Dashboard's web server:
+`[p]cctv dashboard` reports whether it is loaded. The Dashboard features
+each page uses:
 
-| Dashboard feature | Used by | Released Dashboard | [nntin/Red-Web-Dashboard](https://github.com/nntin/Red-Web-Dashboard) fork |
-|---|---|---|---|
-| `web_content` with `standalone: True` | picker, `mine`, office, private and editor pages | yes | yes |
-| `redirect_url` | `office` (to `private`), `private` (to `office`), `discord` | yes | yes, with a stricter same-host check that also rejects `\`-prefixed URLs |
-| `user_id` login and `guild_id` membership check, `hidden` pages | `mine`, `private`, `session` | yes | yes |
-| `/third-party/<name>/static/<path>` route (`GET`/`HEAD`, `asset_path` kwarg) | `static`: every script, stylesheet, font and image the office and editor pages load through their `<base href="/third-party/cctv/static/">` | no | yes |
-| `raw_response` passthrough (status, content type, headers, base64 body) | `static`, and `session`'s JSON `{"ticket": ...}` body with its `403` | no | yes |
-
-On the released Dashboard the pickers work, but the office and editor pages
-render without any of their assets (the static route doesn't exist, so
-every asset is a 404), and `session` comes back as the page's whole result
-dict with status 200 rather than a top-level `ticket`, so a private office
-shows its sign-in-denied screen. The fork's two additions are proposed
-upstream in
-[AAA3A-AAA3A/Red-Web-Dashboard#8](https://github.com/AAA3A-AAA3A/Red-Web-Dashboard/pull/8);
-the Dashboard cog itself needs no change, since it hands a page's result
-dict to the web server as returned (adding only a `notifications` list) and
-already accepts `asset_path` as a required page kwarg.
+| Dashboard feature | Used by |
+|---|---|
+| `web_content` with `standalone: True` | picker, `mine`, office, private and editor pages |
+| `redirect_url` | `office` (to `private`), `private` (to `office`), `discord` |
+| `user_id` login and `guild_id` membership check, `hidden` pages | `mine`, `private`, `session` |
+| `/third-party/<name>/static/<path>` route (`GET`/`HEAD`, `asset_path` kwarg) | `static`: every script, stylesheet, font and image the office and editor pages load through their `<base href="/third-party/cctv/static/">` |
+| `raw_response` (status, content type, headers, base64 body) | `static`, and `session`'s JSON `{"ticket": ...}` body with its `403` |
 
 ### Commands
 

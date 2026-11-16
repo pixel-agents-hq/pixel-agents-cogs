@@ -88,12 +88,6 @@ cog loading; `[p]pixelagents webview rebuild` retries it.
   every browser page under `/third-party/cctv` is a Dashboard third-party
   page, so without it nothing renders in a browser. cctv loads and its
   commands work without it.
-- The office and editor pages also need the Dashboard to serve their
-  webview assets (`/third-party/cctv/static/<path>`) and raw responses,
-  which only the [nntin/Red-Web-Dashboard](https://github.com/nntin/Red-Web-Dashboard)
-  fork does today ([AAA3A-AAA3A/Red-Web-Dashboard#8](https://github.com/AAA3A-AAA3A/Red-Web-Dashboard/pull/8)).
-  On the released Dashboard the server pickers work, but office and editor
-  pages load without their scripts and private offices can't sign anyone in.
 - cctv's aiohttp listener binds `127.0.0.1:3210` by default
   (`[p]cctv host/port`). Route `/cctv/office/<server id>/ws` and
   `/cctv/editor/ws` to it through a reverse proxy, and set

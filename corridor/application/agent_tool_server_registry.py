@@ -51,7 +51,9 @@ class McpTools(Protocol):
     shape `architect`'s own `ToolLoopService.ToolLLM` already uses, so a
     test can stand in a plain fake without needing a real MCP server."""
 
-    async def discover_tools(self, base_url: str) -> McpToolListing: ...
+    async def discover_tools(
+        self, base_url: str, *, headers: Mapping[str, str] | None = None
+    ) -> McpToolListing: ...
 
     async def call_tool(
         self,
@@ -60,6 +62,7 @@ class McpTools(Protocol):
         arguments: Mapping[str, Any],
         *,
         timeout_seconds: float | None = None,
+        headers: Mapping[str, str] | None = None,
     ) -> Mapping[str, Any]: ...
 
 
@@ -106,14 +109,16 @@ class AgentToolServerRegistry:
                 f"cannot re-register it for {owner!r}"
             )
         try:
-            listing = await self._client_pool.discover_tools(server.base_url)
+            listing = await self._client_pool.discover_tools(
+                server.base_url, headers=server.headers
+            )
         except McpRequestError as exc:
             log.warning("corridor: could not register MCP server %r: %s", server.base_url, exc)
             return str(exc)
         if self._servers.get(server.base_url) is not existing:
             return "MCP registration changed during discovery; retry registration"
         registered = tuple(
-            self._wrap_tool(tool, server.base_url, listing.instructions) for tool in listing.tools
+            self._wrap_tool(tool, server, listing.instructions) for tool in listing.tools
         )
         self._servers[server.base_url] = _ServerEntry(
             owner=owner, server=server, tools=registered, fetched_at=self._clock()
@@ -177,7 +182,7 @@ class AgentToolServerRegistry:
         if self._clock() - entry.fetched_at <= FRESH_TTL_SECONDS:
             return entry
         try:
-            listing = await self._client_pool.discover_tools(base_url)
+            listing = await self._client_pool.discover_tools(base_url, headers=entry.server.headers)
         except McpRequestError as exc:
             log.warning(
                 "corridor: could not refresh MCP server %r tool list; serving stale cache: %s",
@@ -189,7 +194,7 @@ class AgentToolServerRegistry:
             owner=entry.owner,
             server=entry.server,
             tools=tuple(
-                self._wrap_tool(tool, base_url, listing.instructions) for tool in listing.tools
+                self._wrap_tool(tool, entry.server, listing.instructions) for tool in listing.tools
             ),
             fetched_at=self._clock(),
         )
@@ -201,8 +206,11 @@ class AgentToolServerRegistry:
             self._servers[base_url] = refreshed
         return refreshed
 
-    def _wrap_tool(self, tool: mcp_types.Tool, base_url: str, instructions: str) -> RegisteredTool:
+    def _wrap_tool(
+        self, tool: mcp_types.Tool, server: RegisteredMcpServer, instructions: str
+    ) -> RegisteredTool:
         name = tool.name
+        base_url = server.base_url
         description = tool.description or name
 
         async def handler(ctx: object, arguments: Mapping[str, object]) -> Mapping[str, object]:
@@ -216,7 +224,11 @@ class AgentToolServerRegistry:
             timeout_seconds = ctx.timeout_seconds if isinstance(ctx, McpCallOptions) else None
             try:
                 return await self._client_pool.call_tool(
-                    base_url, name, arguments, timeout_seconds=timeout_seconds
+                    base_url,
+                    name,
+                    arguments,
+                    timeout_seconds=timeout_seconds,
+                    headers=server.headers,
                 )
             except McpRequestError as exc:
                 return {"status": "error", "error": str(exc)}
@@ -227,6 +239,7 @@ class AgentToolServerRegistry:
             parameters=tool.inputSchema,
             handler=handler,
             server_instructions=instructions,
+            server_url=base_url,
         )
 
 

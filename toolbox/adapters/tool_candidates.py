@@ -9,6 +9,13 @@ testable against small stand-ins the same way corridor's
 llm_tool_registration.py and toolbox's own tool_wrapping.py are -- a real
 `bot.walk_commands()` result satisfies the same shape.
 
+Bot-owner-only commands (Red's `@commands.is_owner()`, which sets
+`requires.privilege_level` to `BOT_OWNER`, on the command or any parent
+group) are never candidates, even for the owner who opens the panel: a
+pico turn reads other members' messages too, and those could steer the
+LLM into calling `[p]eval` or `[p]shutdown` while the owner is talking.
+`tool_wrapping.py` applies the same rule to names already selected.
+
 An optional `search` narrows the result to commands whose qualified name
 contains it (case-insensitive substring match) -- checked before the
 hidden/enabled/can_run filters so a non-matching command never pays for an
@@ -22,6 +29,20 @@ from dataclasses import dataclass
 from typing import Any
 
 from corridor.domain.llm_tools import llm_tool_spec
+
+
+def is_owner_only(command: object) -> bool:
+    """Whether Red restricts `command`, or a group above it, to the bot
+    owner. Duck-typed on `requires.privilege_level.name` so it holds for
+    stand-ins without Red installed."""
+
+    current: object | None = command
+    while current is not None:
+        level = getattr(getattr(current, "requires", None), "privilege_level", None)
+        if getattr(level, "name", None) == "BOT_OWNER":
+            return True
+        current = getattr(current, "parent", None)
+    return False
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,6 +73,8 @@ async def list_candidate_commands(
             continue
         if not getattr(command, "enabled", True):
             continue
+        if is_owner_only(command):
+            continue
         can_run = getattr(command, "can_run", None)
         if callable(can_run):
             try:
@@ -76,4 +99,4 @@ async def list_candidate_commands(
     return candidates
 
 
-__all__ = ["CandidateCommand", "list_candidate_commands"]
+__all__ = ["CandidateCommand", "is_owner_only", "list_candidate_commands"]

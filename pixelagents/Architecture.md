@@ -149,6 +149,11 @@ their writes, but a process crash mid-`_sync_dist` can leave a partial
 failed build never fails `cog_load`: `webview_bundle_status()` reports the
 failure and the owner is notified best-effort, but the cog stays loaded.
 
+`_sync_dist` also copies the checkout's `LICENSE` to
+`webview_dist/LICENSE.txt`, since the bundle CCTV serves is a copy of MIT
+code; it refuses a checkout without one, and a `webview_dist` without it
+counts as stale.
+
 The relative `./` asset base lets CCTV serve one build beneath its own
 static Dashboard route. `webview_bundle_status()` is a read-only surface
 and never triggers a rebuild on its own.

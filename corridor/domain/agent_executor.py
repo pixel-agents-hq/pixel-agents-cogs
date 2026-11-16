@@ -42,7 +42,7 @@ from a2a.types import (
 from a2a.utils import TransportProtocol
 from a2a.utils.errors import UnsupportedOperationError
 
-from .activity_context import activity_guild, guild_from_metadata
+from .activity_context import activity_guild, guild_from_metadata, private_from_metadata
 from .models import LLMSettings
 
 
@@ -219,10 +219,12 @@ class GenericAgentExecutor(AgentExecutor):
         try:
             # The guild the caller asked from (pico's channel, or the
             # calling agent's own turn), so this turn's activity events
-            # reach that guild's office. See activity_context.py.
+            # reach that guild's office -- or none at all when it was
+            # asked from a private channel. See activity_context.py.
             message = getattr(context, "message", None)
+            metadata = message.metadata if message is not None else None
             with activity_guild(
-                guild_from_metadata(message.metadata) if message is not None else None
+                guild_from_metadata(metadata), private=private_from_metadata(metadata)
             ):
                 await self._run_turn(context, updater)
         except Exception:

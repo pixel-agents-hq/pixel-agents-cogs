@@ -66,7 +66,8 @@ one LLM connection, set by the bot owner:
 
 No LLM request is made until a key is set. The A2A agents mount on
 corridor's HTTP listener, which binds `127.0.0.1:8931` by default
-(`[p]corridor a2a host/port`). Permission groups and reply style are set per
+(`[p]corridor a2a host/port`) and answers only the bot's own agent cogs,
+which hold a token minted on each load. Permission groups and reply style are set per
 server in `[p]corridorsettings`.
 
 ### Webview build (pixelagents)
@@ -91,7 +92,10 @@ cog loading; `[p]pixelagents webview rebuild` retries it.
   `[p]cctv publicurl https://<dashboard host>` so `[p]cctv url` gives
   absolute links.
 - `[p]cctv enable` opens a server's office. Offices are public by default;
-  `[p]cctv visibility unlisted|private` restricts them.
+  `[p]cctv visibility unlisted|private` restricts them. An office shows
+  message text only from channels `@everyone` can read.
+- The editor page (the agents' shared office) is open to anyone who can
+  reach it, to watch and to edit.
 - Showing offline members and presences needs the members and presences
   gateway intents.
 
@@ -118,7 +122,8 @@ website (default `https://pixel-index.vercel.app`). Change them with
 ### MCP tools (suggestionbox, telephonepole)
 
 `suggestionbox` runs an MCP server on `127.0.0.1:8934` by default
-(`[p]suggestionbox mcp host/port`); set its channel with
+(`[p]suggestionbox mcp host/port`) and, like corridor's A2A listener,
+answers only the bot's own cogs; set its channel with
 `[p]suggestionbox channel #channel` and grant agents with
 `[p]suggestionbox agents`. `telephonepole` connects to the third-party MCP
 servers you add with `[p]telephonepole add <name> <url>`; grant agents with
@@ -136,7 +141,9 @@ servers you add with `[p]telephonepole add <name> <url>`; grant agents with
 | Pixel Index | floorplan | Catalogue searches and layout downloads |
 
 `corridor`, `cctv` and `suggestionbox` also accept connections on their own
-listeners, bound to `127.0.0.1` by default.
+listeners, bound to `127.0.0.1` by default. No reply from any cog pings a
+user, role or `@everyone`. See [`docs/security-review.md`](docs/security-review.md)
+for what each listener accepts and what the agents can do.
 
 ## Development
 
@@ -147,7 +154,12 @@ local quality gate and where the design docs live, and each cog's own
 ## Credits
 
 - [Pixel Agents](https://github.com/pixel-agents-hq/pixel-agents) by Pablo
-  De Lucca (MIT): the office webview `pixelagents` builds and `cctv` serves.
+  De Lucca (MIT): the office webview `pixelagents` builds and `cctv` serves,
+  including its bundled FS Pixel Sans font. It is not committed here: it is
+  cloned at the pinned commit on the bot host, and every build carries
+  upstream's license as `LICENSE.txt`, served beside the office page.
+- [Metro City](https://jik-a-4.itch.io/metrocity-free-topdown-character-pack)
+  by JIK-A-4: the character art Pixel Agents' wardrobe is based on.
 - [Pixel Index](https://github.com/pixel-agents-hq/index) (MIT): the layout
   catalogue `floorplan` browses and the pixatar character CLI.
 - [pixel-art-mcp](https://github.com/NNTin/pixel-art-mcp): the renderer

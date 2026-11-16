@@ -19,10 +19,12 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, cast
 
 from corridor.domain import RegisteredTool, ToolAvailabilityCheck, infer_parameters
 from corridor.domain.llm_tools import llm_tool_spec
+
+from .tool_candidates import is_owner_only
 
 
 def collect_wrappable_tools(cog: object, selected: frozenset[str]) -> list[RegisteredTool]:
@@ -42,6 +44,10 @@ def collect_wrappable_tools(cog: object, selected: frozenset[str]) -> list[Regis
         if not isinstance(qualified_name, str) or qualified_name not in selected:
             continue
         if id(callback) in seen:
+            continue
+        # Fail closed: a bot-owner-only command is never an LLM tool, and
+        # one without Red's check pipeline has nothing to gate it with.
+        if is_owner_only(attr) or not callable(getattr(attr, "can_run", None)):
             continue
         seen.add(id(callback))
         found.append(_build_wrapped_tool(cog, attr, callback, qualified_name))
@@ -71,14 +77,12 @@ def _build_wrapped_tool(
 
     description = inspect.getdoc(callback) or f"Run the Discord command `{qualified_name}`."
 
-    availability_check: ToolAvailabilityCheck | None = None
-    can_run = getattr(command, "can_run", None)
-    if callable(can_run):
+    can_run = cast(Any, command).can_run
 
-        async def inferred_availability_check(ctx: object) -> bool:
-            return bool(await can_run(ctx, check_all_parents=True))
+    async def inferred_availability_check(ctx: object) -> bool:
+        return bool(await can_run(ctx, check_all_parents=True))
 
-        availability_check = inferred_availability_check
+    availability_check: ToolAvailabilityCheck = inferred_availability_check
 
     return RegisteredTool(
         name="_".join(qualified_name.split()),

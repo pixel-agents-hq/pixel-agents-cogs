@@ -710,4 +710,15 @@ alone, not deleted, and remains manually recoverable if ever needed.
 **Binding to loopback by default.** The editor page is intentionally open
 to any connected client, so keeping the listener's default bind on
 `127.0.0.1` means direct host-network exposure is an explicit operator
-choice (via reverse proxy), not an accidental default.
+choice (via reverse proxy), not an accidental default. Every socket closes
+on a client frame over `MAX_CLIENT_MESSAGE_BYTES` (4 MiB; a `saveLayout` of
+the largest grid is well under 1 MiB).
+
+**Only what everyone in the server can read.** Corridor publishes a
+member's message activity only from a channel `@everyone` can view (not a
+private thread), and drops the activity text of any agent turn asked for
+from another channel (`activity_guild(..., private=True)`, see
+[`corridor-pubsub-design.md`](corridor-pubsub-design.md)). So neither a
+public office nor the open editor page, nor a members-only office (whose
+members may not all see every channel), shows a restricted channel's
+conversation.

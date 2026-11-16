@@ -75,6 +75,9 @@ _BUILT_MANIFEST_VERSION_MARKER = ".built_manifest_version"
 # asset URL instead of fixing them.
 RELATIVE_BASE_PATH = "./"
 
+# Upstream's MIT license, copied beside index.html in every build.
+LICENSE_FILENAME = "LICENSE.txt"
+
 # Vite's `public/` passthrough also copies upstream's raw per-tile PNGs and a
 # handful of unrelated promo images into the build output. Nothing in the
 # served bundle or in WebviewAssetProvider reads them -- the production
@@ -175,9 +178,14 @@ def is_up_to_date(webview_dist: Path, commit: str, base_path: str) -> bool:
     outright (`FurnitureStyleManifest.from_raw` indexing a `str` as a
     `dict`, not a quiet degradation like the missing-file case above) --
     also a real incident, the one that made this check exist.
+
+    A build without `LICENSE_FILENAME` (upstream's license) is stale for the
+    same upgrade reason, so it is rebuilt once to carry it.
     """
 
     if not (webview_dist / "index.html").is_file():
+        return False
+    if not (webview_dist / LICENSE_FILENAME).is_file():
         return False
     if not (webview_dist / "assets" / "furniture-styles.json").is_file():
         return False
@@ -323,7 +331,14 @@ def ensure_webview_built(
         _install_dependencies(vendor_dir, log)
         build_out_dir = _build_bundle(vendor_dir, log)
         _emit_decoded_assets(vendor_dir, build_out_dir, log)
-        _sync_dist(build_out_dir, webview_dist, commit, RELATIVE_BASE_PATH, log)
+        _sync_dist(
+            build_out_dir,
+            webview_dist,
+            commit,
+            RELATIVE_BASE_PATH,
+            log,
+            license_path=vendor_dir / "LICENSE",
+        )
         return BuildResult(rebuilt=True, commit=commit, base_path=RELATIVE_BASE_PATH)
 
 
@@ -492,14 +507,26 @@ def _emit_decoded_assets(vendor_dir: Path, build_out_dir: Path, log: logging.Log
 
 
 def _sync_dist(
-    build_out_dir: Path, webview_dist: Path, commit: str, base_path: str, log: logging.Logger
+    build_out_dir: Path,
+    webview_dist: Path,
+    commit: str,
+    base_path: str,
+    log: logging.Logger,
+    *,
+    license_path: Path,
 ) -> None:
+    # Pixel Agents is MIT: the bundle CCTV serves is a copy of it, so the
+    # upstream license travels with it (`LICENSE.txt`, served beside
+    # index.html). A checkout without one is not built from.
+    if not license_path.is_file():
+        raise WebviewBuildError(f"the Pixel Agents checkout has no LICENSE ({license_path})")
     if webview_dist.exists():
         shutil.rmtree(webview_dist)
     (webview_dist / "assets" / "decoded").mkdir(parents=True)
     (webview_dist / "fonts").mkdir(parents=True)
 
     shutil.copy2(build_out_dir / "index.html", webview_dist / "index.html")
+    shutil.copy2(license_path, webview_dist / LICENSE_FILENAME)
     # index.html links both: the web-app manifest and the icon it and the
     # page's own <link rel="icon"> name.
     shutil.copy2(build_out_dir / "manifest.webmanifest", webview_dist / "manifest.webmanifest")

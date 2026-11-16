@@ -22,7 +22,9 @@ def build_mcp_server(service: FeedbackService, *, host: str, port: int) -> FastM
     """`stateless_http=True`: each request is independent (no MCP session
     resumption needed for two one-shot report/suggest tools), matching
     corridor's `McpClientPool` opening a fresh connection per call rather
-    than holding one open (see that module's own docstring)."""
+    than holding one open (see that module's own docstring). FastMCP's own
+    defaults also apply: a 4 MiB request-body limit and, on a loopback
+    host, DNS-rebinding protection. `McpListener` adds the bearer token."""
 
     mcp = FastMCP("suggestionbox", host=host, port=port, stateless_http=True)
 

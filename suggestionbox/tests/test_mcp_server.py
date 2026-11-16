@@ -17,12 +17,14 @@ from collections.abc import Sequence
 
 import uvicorn
 
-from corridor.infrastructure.mcp_client import McpClientPool
+from corridor.infrastructure.mcp_client import McpClientPool, McpRequestError
 
 from ..application.feedback_service import FeedbackService
+from ..infrastructure.mcp_listener import McpListener
 from ..infrastructure.mcp_server import build_mcp_server
 
 PORT = 8935
+GUARDED_PORT = 8936
 
 
 class FakeRepository:
@@ -141,6 +143,35 @@ class TestMcpServer(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((guild_id, channel_id), (10, 20))
         self.assertEqual(description, "unclear")
         self.assertIn(["Suggestion", "clarify"], [list(f) for f in fields])
+
+
+class TestGuardedListener(unittest.IsolatedAsyncioTestCase):
+    """McpListener only answers corridor, which holds the bearer token."""
+
+    async def asyncSetUp(self) -> None:
+        service = FeedbackService(FakeRepository(), post=FakePoster())
+        self.listener = McpListener()
+        error = await self.listener.start(
+            build_mcp_server(service, host="127.0.0.1", port=GUARDED_PORT),
+            host="127.0.0.1",
+            port=GUARDED_PORT,
+            token="secret",
+        )
+        self.assertIsNone(error)
+        self.addAsyncCleanup(self.listener.stop)
+        self.base_url = f"http://127.0.0.1:{GUARDED_PORT}/mcp"
+
+    async def test_a_request_without_the_token_is_refused(self) -> None:
+        for headers in (None, {"Authorization": "Bearer wrong"}):
+            with self.subTest(headers=headers):
+                with self.assertRaises(McpRequestError):
+                    await McpClientPool().list_tools(self.base_url, headers=headers)
+
+    async def test_corridors_token_gets_through(self) -> None:
+        tools = await McpClientPool().list_tools(
+            self.base_url, headers={"Authorization": "Bearer secret"}
+        )
+        self.assertEqual({tool.name for tool in tools}, {"report_error", "suggest_improvement"})
 
 
 if __name__ == "__main__":

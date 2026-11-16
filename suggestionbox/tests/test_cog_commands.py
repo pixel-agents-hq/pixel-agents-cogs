@@ -95,7 +95,10 @@ class TestMcpCommands(unittest.IsolatedAsyncioTestCase):
             "http://127.0.0.1:8941/mcp",
             [server.base_url for server, _owner in self.bot.corridor.registered_mcp_servers],
         )
-        self.assertIn("http://127.0.0.1:8934/mcp", self.bot.corridor.unregistered_mcp_server_urls)
+        self.assertIn(
+            "http://127.0.0.1:8934/mcp",
+            self.bot.corridor.unregistered_mcp_server_urls,
+        )
 
     async def test_mcp_host_restarts_the_listener_on_the_new_host(self) -> None:
         await self.cog.mcp_host.callback(self.cog, self.ctx, "127.0.0.2")
@@ -133,6 +136,9 @@ class TestMcpRegistration(unittest.IsolatedAsyncioTestCase):
         [(server, owner)] = bot.corridor.registered_mcp_servers
         self.assertEqual(owner, "Suggestionbox")
         self.assertEqual(server.base_url, "http://127.0.0.1:8934/mcp")
+        # Corridor is handed the listener's per-load bearer token.
+        self.assertEqual(server.headers, {"Authorization": f"Bearer {cog._mcp_token}"})
+        self.assertNotEqual(cog._mcp_token, Suggestionbox(bot=FakeBot(FakeCorridor()))._mcp_token)
 
     async def test_cog_unload_unregisters_the_mcp_server(self) -> None:
         bot = FakeBot(FakeCorridor())

@@ -83,6 +83,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any
 
+import httpx
 from mcp import ClientSession
 from mcp import types as mcp_types
 from mcp.client.streamable_http import streamable_http_client
@@ -139,15 +140,28 @@ class McpClientPool:
     def __init__(self, *, logger: logging.Logger | None = None) -> None:
         self._log = logger or log
 
-    async def list_tools(self, base_url: str) -> tuple[mcp_types.Tool, ...]:
-        return (await self.discover_tools(base_url)).tools
+    async def list_tools(
+        self, base_url: str, *, headers: Mapping[str, str] | None = None
+    ) -> tuple[mcp_types.Tool, ...]:
+        return (await self.discover_tools(base_url, headers=headers)).tools
 
-    async def discover_tools(self, base_url: str) -> McpToolListing:
-        """Read current instructions and all tool pages within a bounded handshake."""
+    async def discover_tools(
+        self, base_url: str, *, headers: Mapping[str, str] | None = None
+    ) -> McpToolListing:
+        """Read current instructions and all tool pages within a bounded
+        handshake. `headers` (e.g. a server's bearer token) go on every
+        request."""
 
         try:
             async with asyncio.timeout(30):
-                async with streamable_http_client(base_url) as (read, write, _get_session_id):
+                async with (
+                    _http_client(headers) as http_client,
+                    streamable_http_client(base_url, http_client=http_client) as (
+                        read,
+                        write,
+                        _get_session_id,
+                    ),
+                ):
                     async with ClientSession(read, write) as session:
                         initialized = await session.initialize()
                         tools: list[mcp_types.Tool] = []
@@ -173,6 +187,7 @@ class McpClientPool:
         arguments: Mapping[str, Any],
         *,
         timeout_seconds: float | None = None,
+        headers: Mapping[str, str] | None = None,
     ) -> Mapping[str, Any]:
         """Calls `name` on the server at `base_url` and returns its result
         as a plain JSON-object-shaped mapping -- `RegisteredTool.handler`'s
@@ -202,7 +217,14 @@ class McpClientPool:
 
         read_timeout = timedelta(seconds=timeout_seconds) if timeout_seconds is not None else None
         try:
-            async with streamable_http_client(base_url) as (read, write, _get_session_id):
+            async with (
+                _http_client(headers) as http_client,
+                streamable_http_client(base_url, http_client=http_client) as (
+                    read,
+                    write,
+                    _get_session_id,
+                ),
+            ):
                 async with ClientSession(read, write, read_timeout_seconds=read_timeout) as session:
                     await session.initialize()
                     result = await session.call_tool(name, dict(arguments))
@@ -214,6 +236,14 @@ class McpClientPool:
                 f"tool {name!r} on {base_url} returned an error: {_result_text(result)}"
             )
         return _result_to_mapping(result)
+
+
+def _http_client(headers: Mapping[str, str] | None) -> httpx.AsyncClient:
+    """The client one MCP exchange runs on: the MCP transports' own default
+    timeouts (30 s, 300 s to read a held-open response stream), plus
+    `headers` on every request."""
+
+    return httpx.AsyncClient(timeout=httpx.Timeout(30.0, read=300.0), headers=dict(headers or {}))
 
 
 def _result_text(result: mcp_types.CallToolResult) -> str:

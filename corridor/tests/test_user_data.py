@@ -1,5 +1,7 @@
-"""Red's data deletion API: corridor stores nothing about a user, so every
-requester type is a no-op that touches no state."""
+"""Red's data deletion API: corridor deletes nothing itself. It holds the
+office records (each account's character and seats) as opaque JSON, and
+pixelagents erases them through corridor's office-state API, so every
+requester type here is a no-op that touches no state."""
 
 from __future__ import annotations
 

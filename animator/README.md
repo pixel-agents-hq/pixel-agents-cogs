@@ -144,7 +144,12 @@ Discord user is. Left as plain text, that URL is not a usable answer.
 2. Downloads the bytes of the `pixel-agents.zip` artifact and whichever
    preview artifact is present -- `preview.gif` if the export animated,
    else `preview.png` -- directly (a plain HTTP GET, not an MCP call --
-   fetching a file isn't a tool invocation).
+   fetching a file isn't a tool invocation). Only a `download_url` on the
+   same scheme, host and port as the MCP server `get_job` came from
+   (`RegisteredTool.server_url`) is fetched, redirects are not followed,
+   and a download over 25 MiB is skipped: the bytes are posted to
+   Discord, so any other URL would make the bot a proxy for whatever it
+   can reach.
 3. Returns a small `status`/`message` result to the LLM (so the model
    knows delivery succeeded), while the actual bytes travel out-of-band as
    `Attachment`s -- see below.

@@ -2,7 +2,8 @@
 then the bounded tool-calling loop.
 
 The guard clauses at the top of `on_message` (bot author, no guild, guild
-not enabled, LLM not configured) return before touching the gate or
+not enabled, Red's allowlist/blocklist and ignored channels, LLM not
+configured) return before touching the gate or
 building any context at all -- the vast majority of messages that don't
 concern Pico cost nothing beyond those checks. `GateService.decide(...)`
 itself further short-circuits on reply/mention before ever calling the LLM;
@@ -57,6 +58,12 @@ class ListenerMixin:
             return
         if not await self._repository.guild_enabled(guild.id):
             return
+        # Red's allowlist/blocklist and `[p]ignore` apply to pico like any
+        # command: a blocked member or ignored channel never starts a turn.
+        if not await self.bot.allowed_by_whitelist_blacklist(message.author):
+            return
+        if not await self.bot.ignored_channel_or_guild(message):
+            return
 
         llm_settings = await self._corridor.llm_settings()
         if not llm_settings.ready:
@@ -104,15 +111,22 @@ class ListenerMixin:
                 self._corridor, ctx, guild_id=guild.id, bot_user_id=_bot_user_id(self.bot)
             )
         )
-        result = await self._tool_loop_service.run(
-            base_url=llm_settings.llm_base_url,
-            api_key=llm_settings.llm_api_key or "",
-            model=llm_settings.llm_model or "",
-            system_prompt=settings.system_prompt,
-            context=context,
-            tools=tools,
-            max_tool_calls=settings.max_tool_calls,
-        )
+        from corridor.domain import activity_guild
+
+        # A channel @everyone can't read makes this a private turn: none of
+        # its activity text (pico's or a consulted agent's) reaches an
+        # office page. See corridor/domain/activity_context.py.
+        private = not self._corridor.channel_is_public(message.channel)
+        with activity_guild(guild.id, private=private):
+            result = await self._tool_loop_service.run(
+                base_url=llm_settings.llm_base_url,
+                api_key=llm_settings.llm_api_key or "",
+                model=llm_settings.llm_model or "",
+                system_prompt=settings.system_prompt,
+                context=context,
+                tools=tools,
+                max_tool_calls=settings.max_tool_calls,
+            )
         log.debug(
             "pico: tool loop finished (%s, %d call(s))",
             result.stopped_reason,

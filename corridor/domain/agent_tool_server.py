@@ -12,8 +12,8 @@ that actually talks to a registered server) lives entirely in
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass, field
 
 # agent_key -> may this agent use the registering server's tools. Supplied
 # by the registering cog itself at registration time -- deliberately not a
@@ -38,11 +38,15 @@ class RegisteredMcpServer:
     listener itself (see docs/suggestionbox-design.md §3 on why this
     isn't centralized onto corridor's own shared A2A listener), so it
     already knows its own reachable address.
+
+    `headers` go on every request corridor sends that server (e.g. the
+    bearer token suggestionbox's own listener requires).
     """
 
     owner: str
     base_url: str
     agent_allowed: AgentAllowedCheck
+    headers: Mapping[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)

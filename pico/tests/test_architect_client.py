@@ -77,6 +77,9 @@ async def _llm_settings() -> _FakeArchitectLLMSettings:
 
 
 class TestArchitectClientLiveRoundTrip(unittest.IsolatedAsyncioTestCase):
+    # The started listener's token; empty until `_start_*server` runs.
+    headers: dict[str, str] = {}  # noqa: RUF012
+
     async def _start_server(
         self, result: ToolLoopResult, *, debug_events: list[str] | None = None
     ) -> A2AServer:
@@ -97,13 +100,22 @@ class TestArchitectClientLiveRoundTrip(unittest.IsolatedAsyncioTestCase):
         server = A2AServer()
         await server.start(host="127.0.0.1", port=_PORT, agents=[agent])
         self.addAsyncCleanup(server.stop)
+        self.headers = server.auth_headers
         return server
+
+    async def test_ask_without_the_listeners_token_is_refused(self) -> None:
+        await self._start_server(ToolLoopResult(0, "final_text", "ok", 0, 0))
+
+        with self.assertRaises(ArchitectRequestError):
+            await ArchitectClient().ask(base_url=_BASE_URL, text="hi")
 
     async def test_the_consulted_turn_runs_for_the_askers_guild(self) -> None:
         await self._start_server(ToolLoopResult(0, "final_text", "ok", 0, 0))
 
-        await ArchitectClient().ask(base_url=_BASE_URL, text="hi", guild_id=123456789012345678)
-        await ArchitectClient().ask(base_url=_BASE_URL, text="hi")
+        await ArchitectClient().ask(
+            headers=self.headers, base_url=_BASE_URL, text="hi", guild_id=123456789012345678
+        )
+        await ArchitectClient().ask(headers=self.headers, base_url=_BASE_URL, text="hi")
 
         self.assertEqual(self.tool_loop.guilds, [123456789012345678, None])
 
@@ -118,7 +130,7 @@ class TestArchitectClientLiveRoundTrip(unittest.IsolatedAsyncioTestCase):
             )
         )
 
-        result = await ArchitectClient().ask(base_url=_BASE_URL, text="hi")
+        result = await ArchitectClient().ask(headers=self.headers, base_url=_BASE_URL, text="hi")
 
         self.assertEqual(
             result,
@@ -144,7 +156,7 @@ class TestArchitectClientLiveRoundTrip(unittest.IsolatedAsyncioTestCase):
             )
         )
 
-        result = await ArchitectClient().ask(base_url=_BASE_URL, text="hi")
+        result = await ArchitectClient().ask(headers=self.headers, base_url=_BASE_URL, text="hi")
 
         self.assertEqual(
             result,
@@ -176,7 +188,9 @@ class TestArchitectClientLiveRoundTrip(unittest.IsolatedAsyncioTestCase):
         async def on_activity(text: str) -> None:
             seen.append(text)
 
-        result = await ArchitectClient().ask(base_url=_BASE_URL, text="hi", on_activity=on_activity)
+        result = await ArchitectClient().ask(
+            headers=self.headers, base_url=_BASE_URL, text="hi", on_activity=on_activity
+        )
 
         self.assertEqual(seen, ["thinking: let me check", "calling move_furniture({...})"])
         self.assertEqual(result.answer, "moved the table")
@@ -189,7 +203,7 @@ class TestArchitectClientLiveRoundTrip(unittest.IsolatedAsyncioTestCase):
             debug_events=["thinking: let me check"],
         )
 
-        result = await ArchitectClient().ask(base_url=_BASE_URL, text="hi")
+        result = await ArchitectClient().ask(headers=self.headers, base_url=_BASE_URL, text="hi")
 
         self.assertEqual(result.answer, "moved the table")
 
@@ -207,14 +221,16 @@ class TestArchitectClientLiveRoundTrip(unittest.IsolatedAsyncioTestCase):
         )
 
         with self.assertRaises(ArchitectRequestError) as raised:
-            await ArchitectClient().ask(base_url=_BASE_URL, text="hi")
+            await ArchitectClient().ask(headers=self.headers, base_url=_BASE_URL, text="hi")
 
         self.assertIn("could not produce an answer", str(raised.exception))
         self.assertNotIn("Value not set", str(raised.exception))
 
     async def test_ask_raises_when_architect_is_unreachable(self) -> None:
         with self.assertRaises(ArchitectRequestError):
-            await ArchitectClient().ask(base_url="http://127.0.0.1:1/", text="hi")
+            await ArchitectClient().ask(
+                headers=self.headers, base_url="http://127.0.0.1:1/", text="hi"
+            )
 
     async def test_ask_uses_a_generous_client_timeout_not_httpxs_5s_default(self) -> None:
         """Regression test for a real production incident: httpx's own
@@ -234,15 +250,17 @@ class TestArchitectClientLiveRoundTrip(unittest.IsolatedAsyncioTestCase):
             )
         )
 
-        real_client = httpx.AsyncClient(timeout=architect_client_module._REQUEST_TIMEOUT_SECONDS)
+        real_client = httpx.AsyncClient(
+            timeout=architect_client_module._REQUEST_TIMEOUT_SECONDS, headers=self.headers
+        )
         self.addAsyncCleanup(real_client.aclose)
         with patch.object(
             architect_client_module.httpx, "AsyncClient", return_value=real_client
         ) as mock_client:
-            await ArchitectClient().ask(base_url=_BASE_URL, text="hi")
+            await ArchitectClient().ask(headers=self.headers, base_url=_BASE_URL, text="hi")
 
         mock_client.assert_called_once_with(
-            timeout=architect_client_module._REQUEST_TIMEOUT_SECONDS
+            timeout=architect_client_module._REQUEST_TIMEOUT_SECONDS, headers=self.headers
         )
         self.assertGreater(
             architect_client_module._REQUEST_TIMEOUT_SECONDS,
@@ -277,6 +295,9 @@ async def _animator_llm_settings() -> _FakeAnimatorLLMSettings:
 
 
 class TestArchitectClientCollectsAttachments(unittest.IsolatedAsyncioTestCase):
+    # The started listener's token; empty until `_start_*server` runs.
+    headers: dict[str, str] = {}  # noqa: RUF012
+
     """Real round trip against animator's own executor (the only agent
     that ever sends `raw` `Part`s today, see `corridor.domain.
     agent_executor.GenericAgentExecutor._run_turn`'s `attachments`
@@ -295,6 +316,7 @@ class TestArchitectClientCollectsAttachments(unittest.IsolatedAsyncioTestCase):
         server = A2AServer()
         await server.start(host="127.0.0.1", port=_ANIMATOR_PORT, agents=[agent])
         self.addAsyncCleanup(server.stop)
+        self.headers = server.auth_headers
         return server
 
     async def test_ask_returns_no_attachments_when_none_were_sent(self) -> None:
@@ -304,7 +326,9 @@ class TestArchitectClientCollectsAttachments(unittest.IsolatedAsyncioTestCase):
             )
         )
 
-        result = await ArchitectClient().ask(base_url=_ANIMATOR_BASE_URL, text="hi")
+        result = await ArchitectClient().ask(
+            headers=self.headers, base_url=_ANIMATOR_BASE_URL, text="hi"
+        )
 
         self.assertEqual(result.attachments, ())
 
@@ -327,7 +351,9 @@ class TestArchitectClientCollectsAttachments(unittest.IsolatedAsyncioTestCase):
             )
         )
 
-        result = await ArchitectClient().ask(base_url=_ANIMATOR_BASE_URL, text="render it")
+        result = await ArchitectClient().ask(
+            headers=self.headers, base_url=_ANIMATOR_BASE_URL, text="render it"
+        )
 
         self.assertEqual(result.answer, "attached the files")
         self.assertEqual(

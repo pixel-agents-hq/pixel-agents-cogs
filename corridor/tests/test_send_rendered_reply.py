@@ -11,7 +11,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from ..adapters.api import build_reply_payload, send_rendered_reply
+from ..adapters.api import NO_MENTIONS, build_reply_payload, send_rendered_reply
 from ..domain import REPLY_CATEGORY_COLORS, ReplyCategory, ReplyMode
 from ..domain.models import RenderedReply
 from .conftest import FakeContext, FakeGuild, FakeMember
@@ -48,7 +48,7 @@ class TestBuildReplyPayload(unittest.TestCase):
             _reply(mode=ReplyMode.TEXT, content="hi"), avatar_path=Path("/nonexistent")
         )
 
-        self.assertEqual(kwargs, {"content": "hi"})
+        self.assertEqual(kwargs, {"content": "hi", "allowed_mentions": NO_MENTIONS})
         self.assertEqual(files, [])
 
     def test_no_identity_never_calls_set_author(self) -> None:

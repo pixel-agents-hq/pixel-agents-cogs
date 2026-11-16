@@ -39,6 +39,10 @@ log = logging.getLogger("red.pixel-agents-cogs.suggestionbox")
 STOP_GRACE_SECONDS = 5.0
 
 
+# The largest request body read; FastMCP's own default.
+MAX_REQUEST_BYTES = 4 * 1024 * 1024
+
+
 class McpListener:
     """Started/stopped from this cog's own `cog_load`/`cog_unload`, and
     restarted whenever `[p]suggestionbox mcp host/port` changes -- one
@@ -53,8 +57,13 @@ class McpListener:
     def running(self) -> bool:
         return self._task is not None and not self._task.done()
 
-    async def start(self, mcp: FastMCP, *, host: str, port: int) -> str | None:
-        """Idempotent: stops any previous listener first, so a settings
+    async def start(self, mcp: FastMCP, *, host: str, port: int, token: str) -> str | None:
+        """Every request must carry `Authorization: Bearer <token>`
+        (corridor's `BearerTokenGuard`, the same guard its A2A listener
+        uses); only corridor's MCP client is given it, so nothing else that
+        can reach `host:port` can post feedback.
+
+        Idempotent: stops any previous listener first, so a settings
         change (host/port, or a freshly rebuilt `FastMCP` after the
         feedback channel/agent-access state it closes over changed) can
         call this again to rebind. Never raises -- a bind failure is
@@ -74,9 +83,10 @@ class McpListener:
         probe.close()
         await probe.wait_closed()
 
-        config = uvicorn.Config(
-            mcp.streamable_http_app(), host=host, port=port, log_level="warning"
-        )
+        from corridor.infrastructure.listener_guard import BearerTokenGuard
+
+        app = BearerTokenGuard(mcp.streamable_http_app(), token=token, max_bytes=MAX_REQUEST_BYTES)
+        config = uvicorn.Config(app, host=host, port=port, log_level="warning")
         server = uvicorn.Server(config)
         task = asyncio.create_task(server.serve(), name="suggestionbox-mcp-server")
         while not server.started and not task.done():  # noqa: ASYNC110

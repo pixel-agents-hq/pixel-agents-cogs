@@ -327,6 +327,11 @@ def write_fake_vite_build(build_out_dir: Path) -> None:
     output also carries, rather than happening to copy everything.
     """
 
+    # The checkout root (`<vendor>/dist/webview` -> `<vendor>`) carries
+    # upstream's LICENSE, which _sync_dist ships with the build.
+    vendor_root = build_out_dir.parent.parent
+    vendor_root.mkdir(parents=True, exist_ok=True)
+    (vendor_root / "LICENSE").write_text("MIT License\n", encoding="utf-8")
     assets = build_out_dir / "assets"
     (assets / "decoded").mkdir(parents=True)
     (build_out_dir / "fonts").mkdir(parents=True)

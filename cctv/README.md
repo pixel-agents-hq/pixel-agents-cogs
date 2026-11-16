@@ -25,7 +25,11 @@ picker; the default), `unlisted` (anyone with the link) or `private` (only
 the server's members, signed in to the Dashboard with Discord); a Building
 Manager picks with `[p]cctv visibility`. A private office's socket is sent
 nothing until it presents a single-use ticket proving a member, and leavers
-are disconnected. The offices share static assets and one
+are disconnected. Message text reaches an office only from channels
+`@everyone` can read, never from a restricted channel or private thread,
+and an agent's activity is left out when it was asked for from one. The
+editor page is open to anyone who can reach it, to watch and to edit; it
+shows the agents' activity for requests from those readable channels. The offices share static assets and one
 aiohttp listener, but each keeps its own client hub, projection service,
 current revision, bootstrap lock, and state aggregate, so nothing one
 guild's office shows reaches another guild's page or socket. A Pixel Index

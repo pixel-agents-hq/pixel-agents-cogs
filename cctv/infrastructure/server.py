@@ -34,6 +34,9 @@ OFFICE_UNAVAILABLE_CLOSE_CODE = 4404
 # How long a socket to a gated (private or unavailable) office may take to
 # present its ticket before it is closed.
 AUTHORIZE_TIMEOUT_SECONDS = 10.0
+# The largest client frame accepted. A `saveLayout` of Pixel Agents' largest
+# (64x64) grid is well under 1 MiB; anything bigger closes the socket.
+MAX_CLIENT_MESSAGE_BYTES = 4 * 1024 * 1024
 
 
 class PagePipeline(Protocol):
@@ -165,7 +168,7 @@ class CctvServer:
     async def _handle_ws(
         self, pipeline: PagePipeline, request: web.Request
     ) -> web.WebSocketResponse:
-        socket = web.WebSocketResponse(heartbeat=30.0, max_msg_size=0)
+        socket = web.WebSocketResponse(heartbeat=30.0, max_msg_size=MAX_CLIENT_MESSAGE_BYTES)
         await socket.prepare(request)
         pipeline.clients.add(socket, is_editor=pipeline.open_editor)
         self._log.info(
@@ -187,7 +190,7 @@ class CctvServer:
         ticket minted for this guild by a member; a `webviewReady` sent
         before that is held and replayed. No valid ticket in time: closed."""
 
-        socket = web.WebSocketResponse(heartbeat=30.0, max_msg_size=0)
+        socket = web.WebSocketResponse(heartbeat=30.0, max_msg_size=MAX_CLIENT_MESSAGE_BYTES)
         await socket.prepare(request)
         if pipeline is not None:
             pipeline.clients.add(socket, can_view=False)
@@ -335,6 +338,7 @@ class CctvServer:
 
 __all__ = [
     "AUTHORIZE_TIMEOUT_SECONDS",
+    "MAX_CLIENT_MESSAGE_BYTES",
     "OFFICE_UNAVAILABLE_CLOSE_CODE",
     "CctvServer",
     "HealthSnapshot",

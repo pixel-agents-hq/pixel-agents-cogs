@@ -111,6 +111,27 @@ class TestUserDataService(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(set(self.corridor.characters), {f"user:{OTHER}"})
         self.assertTrue((self.avatars / avatar_filename("px.shared")).exists())
 
+    async def test_an_unparseable_records_avatar_is_deleted_by_its_raw_seed(self) -> None:
+        # An older record this version no longer understands (no profile).
+        self.corridor.characters = {f"user:{USER}": {"seed": "px.old", "source": "legacy"}}
+        (self.avatars / avatar_filename("px.old")).write_bytes(b"png")
+
+        await self.service.forget_user(USER)
+
+        self.assertEqual(self.corridor.characters, {})
+        self.assertFalse((self.avatars / avatar_filename("px.old")).exists())
+
+    async def test_an_avatar_an_unparseable_record_still_wears_is_kept(self) -> None:
+        self.corridor.characters = {
+            f"user:{USER}": _record("px.shared"),
+            f"user:{OTHER}": {"seed": "px.shared"},
+        }
+        (self.avatars / avatar_filename("px.shared")).write_bytes(b"png")
+
+        await self.service.forget_user(USER)
+
+        self.assertTrue((self.avatars / avatar_filename("px.shared")).exists())
+
     async def test_seats_are_deleted_in_every_stored_office(self) -> None:
         guild_a, guild_left, editor = (
             OfficeRef.discord(1),

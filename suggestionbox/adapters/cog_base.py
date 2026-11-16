@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import secrets
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -37,6 +38,12 @@ class CogBase:
         self.config = self._repository.config
         self._service = FeedbackService(self._repository, post=self._post_feedback)
         self._mcp_listener = McpListener(logger=log)
+        # The MCP listener's bearer token, minted on each load and handed only
+        # to corridor's registry (`RegisteredMcpServer.headers`): anything
+        # else that can reach host:port (another local process, or more when
+        # `[p]suggestionbox mcp host` is not loopback) gets a 401 instead of
+        # a way to post into the feedback channel.
+        self._mcp_token = secrets.token_urlsafe(32)
         self._mcp_base_url: str | None = None
         self._corridor: Any = None
         self._reply: Any = None
@@ -80,7 +87,7 @@ class CogBase:
 
         host, port = await self._repository.mcp_listener()
         mcp = build_mcp_server(self._service, host=host, port=port)
-        error = await self._mcp_listener.start(mcp, host=host, port=port)
+        error = await self._mcp_listener.start(mcp, host=host, port=port, token=self._mcp_token)
         if error is not None:
             return error
 
@@ -92,6 +99,7 @@ class CogBase:
                 owner="Suggestionbox",
                 base_url=new_base_url,
                 agent_allowed=self._repository.is_agent_enabled,
+                headers={"Authorization": f"Bearer {self._mcp_token}"},
             ),
             owner="Suggestionbox",
         )

@@ -13,6 +13,15 @@ from "one agent's fixed routes" to "whatever's currently in corridor's
 (1.x) API -- its wire types are protobuf messages (`a2a.types`, generated
 from `a2a_pb2`), not the plain pydantic models an earlier SDK generation
 used.
+
+Every request must carry `Authorization: Bearer <token>`, a random token
+minted per `A2AServer` (so per corridor load) and handed only to
+in-process callers (`CogBase.a2a_auth_headers()`; pico and painter send
+it). Without it the listener answers 401, so neither another local
+process nor anything reaching a non-loopback `[p]corridor a2a host` can
+consult an agent -- in particular not a bootcamp agent past its
+`permission_group`, which only pico and `[p]bootcamp ask` check. Request
+bodies over `MAX_REQUEST_BYTES` are refused.
 """
 
 from __future__ import annotations
@@ -30,11 +39,13 @@ from a2a.server.routes import create_agent_card_routes, create_jsonrpc_routes
 from a2a.server.tasks.inmemory_task_store import InMemoryTaskStore
 from sse_starlette.sse import AppStatus
 from starlette.applications import Starlette
+from starlette.middleware import Middleware
 from starlette.requests import Request
 from starlette.responses import FileResponse, Response
 from starlette.routing import BaseRoute, Mount, Route
 
 from ..domain.agent_directory import RegisteredAgent
+from .listener_guard import BearerTokenGuard, bearer_headers, new_token
 
 log = logging.getLogger("red.pixel-agents-cogs.corridor")
 
@@ -42,6 +53,11 @@ log = logging.getLogger("red.pixel-agents-cogs.corridor")
 # cancels the serve() task outright, so cog_unload never hangs on a
 # client that keeps a connection open.
 STOP_GRACE_SECONDS = 5.0
+
+# The largest request body the listener reads. A2A requests here are one
+# text prompt; answers (which can carry rendered files) are not limited.
+MAX_REQUEST_BYTES = 1024 * 1024
+
 
 # An agent's avatar image by agent key (corridor's `avatar_for`: its office
 # character), or None while it has none.
@@ -125,9 +141,12 @@ def _build_routes(
 
 
 def _build_app(
-    agents: Sequence[RegisteredAgent], avatar: AvatarProvider | None = None
+    agents: Sequence[RegisteredAgent], avatar: AvatarProvider | None = None, *, token: str
 ) -> Starlette:
-    return Starlette(routes=_build_routes(agents, avatar))
+    return Starlette(
+        routes=_build_routes(agents, avatar),
+        middleware=[Middleware(BearerTokenGuard, token=token, max_bytes=MAX_REQUEST_BYTES)],
+    )
 
 
 class A2AServer:
@@ -142,6 +161,7 @@ class A2AServer:
     ) -> None:
         self._log = logger or log
         self._avatar = avatar
+        self._token = new_token()
         self._server: uvicorn.Server | None = None
         self._task: asyncio.Task[None] | None = None
         self._app: Starlette | None = None
@@ -149,6 +169,12 @@ class A2AServer:
     @property
     def running(self) -> bool:
         return self._task is not None and not self._task.done()
+
+    @property
+    def auth_headers(self) -> dict[str, str]:
+        """The header every request to this listener must carry."""
+
+        return bearer_headers(self._token)
 
     async def start(
         self, *, host: str, port: int, agents: Sequence[RegisteredAgent] = ()
@@ -204,7 +230,7 @@ class A2AServer:
         probe.close()
         await probe.wait_closed()
 
-        app = _build_app(agents, self._avatar)
+        app = _build_app(agents, self._avatar, token=self._token)
         config = uvicorn.Config(app, host=host, port=port, log_level="warning")
         server = uvicorn.Server(config)
         # `server.run()` is NOT called here (that installs signal handlers
@@ -284,4 +310,4 @@ class A2AServer:
         self._app.router.routes = _build_routes(agents, self._avatar)
 
 
-__all__ = ["A2AServer", "AvatarProvider"]
+__all__ = ["MAX_REQUEST_BYTES", "A2AServer", "AvatarProvider"]

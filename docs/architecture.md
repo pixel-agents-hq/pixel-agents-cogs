@@ -190,8 +190,12 @@ Every cog implements Red's `red_delete_data_for_user(*, requester, user_id)`
 on its composed Cog class, and its `__red_end_user_data_statement__` is read
 from its `info.json` `end_user_data_statement` (also without Red installed,
 so tests check the one statement Red serves). The only data linked to a
-Discord user that any cog persists is the office data below; everything else
-stored is bot-owner or per-server configuration.
+Discord user that any cog writes is the office data below; everything else
+stored is bot-owner or per-server configuration. The one exception is an
+install upgraded from before the office refactor: the old Floorplan and
+Pixelagents Config identities it left behind can still hold seat records
+keyed by user, which no cog reads, writes or deletes (see
+[Configuration compatibility](#configuration-compatibility)).
 
 | Stored | Where | Deleted by |
 | --- | --- | --- |
@@ -221,7 +225,11 @@ sends where.
 
 The office refactor deliberately uses fresh Config identities for Corridor's
 office state, CCTV, Floorplan, and Architect. There is no migration or fallback
-read. Old data is not deleted, but the new code cannot read it. The old
+read. Old data is not deleted, but the new code cannot read it. On an install
+that ran the cogs before the refactor, that old data includes the previous
+office seat records (keyed by each member's webview agent id), so a data
+deletion request does not reach them; installing fresh, or removing the old
+identities from Red's data folder, leaves none behind. The old
 Floorplan/Architect Dashboard and WebSocket paths have no redirect or alias.
 Guild offices live in Corridor's guild-scoped Config; no global Discord
 aggregate is registered or read, so each guild's office starts from the bundled

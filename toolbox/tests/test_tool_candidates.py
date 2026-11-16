@@ -4,6 +4,7 @@ for command-like objects, same style as test_tool_wrapping.py."""
 from __future__ import annotations
 
 import unittest
+from types import SimpleNamespace
 
 from corridor.domain import llm_tool
 
@@ -21,7 +22,11 @@ class _StubCommand:
         allowed: bool = True,
         short_doc: str = "",
         raises: bool = False,
+        privilege: str = "NONE",
+        parent: object = None,
     ) -> None:
+        self.requires = SimpleNamespace(privilege_level=SimpleNamespace(name=privilege))
+        self.parent = parent
         self.qualified_name = qualified_name
         self.callback = callback
         self.hidden = hidden
@@ -53,6 +58,18 @@ class TestListCandidateCommands(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(candidate.short_doc, "Greet someone.")
         self.assertFalse(candidate.already_decorated)
         self.assertFalse(candidate.selected)
+
+    async def test_owner_only_commands_and_their_subcommands_are_excluded(self) -> None:
+        group = _StubCommand(qualified_name="dev", privilege="BOT_OWNER")
+        commands = [
+            group,
+            _StubCommand(qualified_name="dev eval", parent=group),
+            _StubCommand(qualified_name="toolbox greet"),
+        ]
+
+        candidates = await list_candidate_commands(commands, ctx=object(), selected=frozenset())
+
+        self.assertEqual([c.qualified_name for c in candidates], ["toolbox greet"])
 
     async def test_a_hidden_command_is_excluded(self) -> None:
         command = _StubCommand(qualified_name="toolbox hidden", hidden=True)

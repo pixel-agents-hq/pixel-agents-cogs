@@ -75,8 +75,8 @@ a sync helper and `await asyncio.to_thread(helper, ...)`.
 |------|-----------------------|
 | corridor `on_member_update` / `on_presence_update` | no relevant change; Corridor disabled in the guild |
 | corridor `on_member_join` / `on_member_remove` | Corridor disabled in the guild |
-| corridor `on_message` | DM; this bot's own message; Corridor disabled in the guild. Other bots' messages are published on purpose: offices render bot members, and each subscriber applies its own `include_bots` setting |
-| pico `on_message` | bot author; DM; Pico disabled in the guild; Pico not enabled for the guild (Config); LLM not configured |
+| corridor `on_message` | DM; this bot's own message; Corridor disabled in the guild; a channel `@everyone` can't view, or a private thread (`channel_is_public`). Other bots' messages are published on purpose: offices render bot members, and each subscriber applies its own `include_bots` setting |
+| pico `on_message` | bot author; DM; Pico disabled in the guild; Pico not enabled for the guild (Config); author not allowed by Red's allowlist/blocklist (`bot.allowed_by_whitelist_blacklist`); channel or guild ignored with `[p]ignore` (`bot.ignored_channel_or_guild`); LLM not configured |
 | cctv bus subscribers (`AgentPresenceChanged`, `AgentReplied`, highlights, tool and status events) | skip the office of a guild CCTV is disabled in. Closing a departed member's private-office socket still happens: that is access control, not activity |
 
 "Disabled in the guild" is `await bot.cog_disabled_in_guild(cog, guild)`,

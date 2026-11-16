@@ -528,6 +528,11 @@ class RegisteredTool:
     required_group: str | None = None
     availability_check: ToolAvailabilityCheck | None = None
     server_instructions: str = ""
+    # The Streamable HTTP endpoint of the MCP server this tool was bridged
+    # from (`AgentToolServerRegistry`), or None for an in-process tool. An
+    # agent that downloads a file a tool result names checks it against
+    # this origin rather than fetching wherever that server points.
+    server_url: str | None = None
 
 
 # The closed set of classes a cog actually publish()es/subscribe()s to.

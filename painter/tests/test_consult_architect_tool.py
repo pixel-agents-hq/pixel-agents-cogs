@@ -18,8 +18,10 @@ class FakeArchitectAsker:
         self._fail_with = fail_with
         self.calls: list[dict[str, object]] = []
 
-    async def ask(self, *, base_url: str, text: str, on_activity: object = None) -> AgentAskResult:
-        self.calls.append({"base_url": base_url, "text": text})
+    async def ask(
+        self, *, base_url: str, text: str, on_activity: object = None, headers: object = None
+    ) -> AgentAskResult:
+        self.calls.append({"base_url": base_url, "text": text, "headers": headers})
         if self._fail_with is not None:
             raise self._fail_with
         assert self._answer is not None
@@ -40,6 +42,9 @@ class FakeCorridor:
     def list_agents(self) -> tuple[object, ...]:
         return self._agents
 
+    def a2a_auth_headers(self) -> dict[str, str]:
+        return {"Authorization": "Bearer test-token"}
+
 
 class TestConsultArchitectTool(unittest.IsolatedAsyncioTestCase):
     async def test_asks_architect_at_its_currently_registered_url(self) -> None:
@@ -53,6 +58,7 @@ class TestConsultArchitectTool(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(output.answer, "the office is 10x10")  # type: ignore[attr-defined]
         self.assertEqual(client.calls[0]["base_url"], "http://arch.example/")
         self.assertEqual(client.calls[0]["text"], "how big is the office?")
+        self.assertEqual(client.calls[0]["headers"], {"Authorization": "Bearer test-token"})
 
     async def test_architect_not_registered_reports_an_error_without_calling_the_client(
         self,

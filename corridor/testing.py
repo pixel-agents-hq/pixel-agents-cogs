@@ -15,6 +15,7 @@ This module itself must not import discord/redbot -- it's what stubs them.
 
 from __future__ import annotations
 
+import dataclasses
 import os
 import sys
 import types
@@ -392,6 +393,19 @@ def _install_discord() -> None:
     discord.TextStyle = types.SimpleNamespace(short="short", paragraph="paragraph")
     discord.Color = types.SimpleNamespace(blurple=lambda: None)
     discord.File = MagicMock
+
+    @dataclasses.dataclass(frozen=True)
+    class _AllowedMentions:
+        everyone: bool = True
+        users: bool = True
+        roles: bool = True
+        replied_user: bool = True
+
+        @classmethod
+        def none(cls) -> _AllowedMentions:
+            return cls(everyone=False, users=False, roles=False, replied_user=False)
+
+    discord.AllowedMentions = _AllowedMentions
 
     class _ActivityType:
         playing = 0

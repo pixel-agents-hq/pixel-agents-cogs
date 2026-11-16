@@ -10,7 +10,7 @@ this tool's own module docstring."""
 from __future__ import annotations
 
 import unittest
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -39,6 +39,7 @@ class FakeArchitectAsker:
         self.attachments = attachments
         self.calls: list[dict[str, str]] = []
         self.guild_ids: list[int | None] = []
+        self.headers: list[dict[str, str]] = []
 
     async def ask(
         self,
@@ -47,9 +48,11 @@ class FakeArchitectAsker:
         text: str,
         on_activity: Callable[[str], Awaitable[None]] | None = None,
         guild_id: int | None = None,
+        headers: Mapping[str, str] | None = None,
     ) -> AgentAskResult:
         self.calls.append({"base_url": base_url, "text": text})
         self.guild_ids.append(guild_id)
+        self.headers.append(dict(headers or {}))
         if on_activity is not None:
             for event in self.debug_events:
                 await on_activity(event)
@@ -98,6 +101,9 @@ class FakeCorridor:
     async def publish_event(self, event: object) -> None:
         self.published.append(event)
 
+    def a2a_auth_headers(self) -> dict[str, str]:
+        return {"Authorization": "Bearer test-token"}
+
 
 def _tool(
     client: FakeArchitectAsker,
@@ -124,6 +130,14 @@ def _tool(
 
 
 class TestConsultAgentTool(unittest.IsolatedAsyncioTestCase):
+    async def test_asks_with_corridors_listener_token(self) -> None:
+        client = FakeArchitectAsker(answer="ok")
+        tool = _tool(client, FakeReplySender())
+
+        await tool.handler(ConsultAgentInput(prompt="hi"))
+
+        self.assertEqual(client.headers, [{"Authorization": "Bearer test-token"}])
+
     async def test_handler_returns_the_answer_on_success(self) -> None:
         client = FakeArchitectAsker(answer="the answer")
         tool = _tool(client, FakeReplySender())

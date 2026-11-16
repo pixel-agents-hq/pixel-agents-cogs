@@ -482,6 +482,9 @@ def _install_redbot() -> None:
                 self._guilds[guild_id] = _FakeGuildConfig(self._guild_defaults)
             return self._guilds[guild_id]
 
+        async def all_guilds(self) -> dict[int, dict[str, Any]]:
+            return {guild_id: dict(guild._data) for guild_id, guild in self._guilds.items()}
+
         def register_global(self, **defaults: object) -> None:
             self._global_data.update(defaults)
 

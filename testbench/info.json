@@ -3,7 +3,7 @@
     "name": "testbench",
     "short": "Publish corridor bus events manually, for testing.",
     "description": "Owner-only tool that publishes any Corridor agent event through a generated Discord UI, for exercising CCTV projection without a real gateway event.",
-    "end_user_data_statement": "This cog does not persistently store any data or metadata about users.",
+    "end_user_data_statement": "This cog does not store any data or metadata about users. The test events it publishes exist only while they are dispatched.",
     "install_msg": "Developer tool, hidden from [p]cog list. Install corridor too ([p]cog install pixel-agents-cogs corridor); it loads automatically. Bot owner only: [p]testbench publish sends a hand-built agent event onto corridor's event bus, and cctv shows it to viewers as if it were real. No outside services or stored data.",
     "author": ["pixel-agents-hq"],
     "required_cogs": {"corridor": "https://github.com/pixel-agents-hq/pixel-agents-cogs"},

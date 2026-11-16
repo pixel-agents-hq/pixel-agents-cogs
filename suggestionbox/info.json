@@ -3,7 +3,7 @@
     "name": "suggestionbox",
     "short": "MCP feedback server for reporting errors/improvements, per-agent gated.",
     "description": "Runs an MCP tools server (report_error, suggest_improvement) that posts to a bot-owner-configured Discord channel. Registers into corridor's AgentToolServerRegistry so a registered A2A agent's own tool loop (architect today) can call the same tools, gated per agent by a Components V2 toggle panel.",
-    "end_user_data_statement": "This cog does not persistently store any data or metadata about Discord users. It stores a bot-owner-configured feedback channel, MCP listener host/port, and a per-agent access list.",
+    "end_user_data_statement": "This cog stores no data about Discord users: only a bot-owner-configured feedback channel, its MCP listener host/port, and a per-agent access list. Feedback reports filed by LLM agents (which can quote conversation content) are posted as messages in that channel and not stored by the cog.",
     "install_msg": "Install corridor too ([p]cog install pixel-agents-cogs corridor); it loads automatically. Starts an MCP HTTP server (127.0.0.1:8934 by default) that registered A2A agents call to post error reports and suggestions to a Discord channel. Setup (bot owner): [p]suggestionbox channel #channel, [p]suggestionbox mcp host/port, then grant agents access with [p]suggestionbox agents.",
     "author": ["Pixel Agents HQ Contributors"],
     "required_cogs": {"corridor": "https://github.com/pixel-agents-hq/pixel-agents-cogs"},

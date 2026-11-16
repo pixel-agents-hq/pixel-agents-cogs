@@ -3,7 +3,7 @@
     "name": "architect",
     "short": "A second, independent LLM agent reachable only over A2A",
     "description": "Architect is an A2A-only LLM agent registered on corridor's shared listener. It performs structural editor-layout mutations through pixelagents' validated revisioned state facade. CCTV owns the browser view; Architect has no Dashboard or WebSocket surface.",
-    "end_user_data_statement": "This cog sends A2A task messages it receives to corridor's configured LLM endpoint. It does not persistently store any data or metadata about Discord users.",
+    "end_user_data_statement": "This cog sends the A2A task text it receives (written by pico from Discord conversations) to corridor's configured LLM endpoint, and does not store it. It stores no data about Discord users: only bot-owner prompt, tool-budget and logging settings.",
     "install_msg": "Install corridor and pixelagents too ([p]cog install pixel-agents-cogs corridor pixelagents); both load automatically. Outside services: A2A task text and the office layout go to corridor's LLM endpoint; architect is reached only through corridor's A2A listener (127.0.0.1:8931 by default). Setup: [p]corridor llm endpoint/key/model and [p]corridor a2a host/port. Load cctv to watch the editor office in a browser.",
     "author": ["Pixel Agents HQ Contributors"],
     "required_cogs": {

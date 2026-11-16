@@ -15,12 +15,16 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from redbot.core.bot import Red
 
-_DATA_STATEMENT = "{{ cookiecutter.end_user_data_statement }}"
-
 try:
     from redbot.core.utils import get_end_user_data_statement_or_raise
 except ImportError:
-    __red_end_user_data_statement__ = _DATA_STATEMENT
+    # Without Red (tests, contract tooling): the same info.json key Red reads.
+    import json
+    from pathlib import Path
+
+    __red_end_user_data_statement__ = json.loads(
+        Path(__file__).with_name("info.json").read_text(encoding="utf-8")
+    )["end_user_data_statement"]
 else:
     __red_end_user_data_statement__ = get_end_user_data_statement_or_raise(__file__)
 

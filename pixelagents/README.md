@@ -62,6 +62,12 @@ Discord replies wear its character (see
 wears one of the built default cast, chosen by its key, and nothing is
 stored.
 
+`red_delete_data_for_user` deletes a Discord account's character record,
+the avatar PNG rendered from it (unless another character wears the same
+seed), and its seat in every stored office, for every requester type
+(`application/user_data.py`; see
+[`docs/architecture.md`](../docs/architecture.md#end-user-data)).
+
 On load, Pixelagents builds the pixatar CLI from the Pixel Index commit
 pinned in `infrastructure/pixatar_vendor.commit` (`git`, `node` 22+,
 `npm`), into `cog_data_path`, and loads the Python client that drives it

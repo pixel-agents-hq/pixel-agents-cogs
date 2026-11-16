@@ -65,6 +65,20 @@ class RedOfficeStateRepository:
             }
         )
 
+    async def refs(self) -> tuple[OfficeRef, ...]:
+        """Every aggregate that has been stored: each guild's Discord office
+        (including guilds the bot has since left), then the editor office."""
+
+        guilds = cast("dict[int, dict[str, Any]]", await self._config.all_guilds())
+        refs = [
+            OfficeRef.discord(guild_id)
+            for guild_id, data in sorted(guilds.items())
+            if data.get("discord_state") is not None
+        ]
+        if await self._config.editor_state() is not None:
+            refs.append(OfficeRef.editor())
+        return tuple(refs)
+
     async def characters(self) -> CharacterRecords:
         return deepcopy(cast("CharacterRecords", await self._config.characters()))
 

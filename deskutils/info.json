@@ -3,7 +3,7 @@
     "name": "deskutils",
     "short": "Time, text-counting, and message-quoting utilities.",
     "description": "Stateless utility commands for timezone-aware current time, character and word counts, and safe quotes of accessible Discord messages.",
-    "end_user_data_statement": "This cog does not persistently store any data or metadata about users.",
+    "end_user_data_statement": "This cog does not store any data or metadata about users. When an LLM agent calls its tools (for example quote, which returns a message's content and author), the result goes back to that agent and so to corridor's LLM endpoint.",
     "install_msg": "Install corridor too ([p]cog install pixel-agents-cogs corridor); it loads automatically. No outside services, no stored data and no extra setup: [p]deskutils time, count and quote work right away and also become pico LLM tools when pico is loaded.",
     "author": ["nntin-bot"],
     "required_cogs": {"corridor": "https://github.com/pixel-agents-hq/pixel-agents-cogs"},

@@ -413,7 +413,12 @@ Beside the office aggregates, the same `Config` identity holds the office
 characters (`characters`: the look each Discord account or genuine agent
 wears, shared by every office). `OfficeCharacterService` serializes every
 read-modify-write of them under one lock; pixelagents' `CharacterService`
-is the one caller that interprets them.
+is the one caller that interprets them. `office_state_refs()` lists every
+stored aggregate (each guild's Discord office, including guilds the bot has
+left, then the editor office). Pixelagents uses it to delete a user's seats
+on a Red data deletion request. Corridor's own `red_delete_data_for_user`
+is a no-op, because corridor cannot tell which keys belong to a user (see
+[`docs/architecture.md`](architecture.md#end-user-data)).
 
 Corridor never interprets either JSON schema itself —
 [`pixelagents`](../pixelagents) owns the Semantic IR domain model and is

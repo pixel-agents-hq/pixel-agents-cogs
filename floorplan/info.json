@@ -3,7 +3,7 @@
     "name": "floorplan",
     "short": "Browse and load Pixel Index office layouts",
     "description": "Owns Pixel Index API/Web endpoint configuration, catalogue search and detail browsing, and loading a selected layout through pixelagents into the Discord CCTV aggregate.",
-    "end_user_data_statement": "This cog does not persistently store any data or metadata about users. It stores only bot-wide Pixel Index API and web endpoint URLs.",
+    "end_user_data_statement": "This cog stores no data about Discord users: only the bot-wide Pixel Index API and web URLs. Layout searches are sent to the Pixel Index API. When an LLM agent calls its tools, the results go back to that agent and so to corridor's LLM endpoint.",
     "install_msg": "Install corridor and pixelagents too ([p]cog install pixel-agents-cogs corridor pixelagents); both load automatically. Outside services: searches and downloads layouts from the Pixel Index API (default https://pixel-index-api-staging.nntin.xyz) and links to its website (default https://pixel-index.vercel.app). Change them with [p]floorplan index set <url> and [p]floorplan index setweb <url>; browse with [p]floorplan layout search.",
     "author": ["Pixel Agents HQ Contributors"],
     "required_cogs": {

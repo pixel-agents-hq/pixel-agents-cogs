@@ -184,6 +184,39 @@ subscriber: it routes each event to the office of the guild it belongs to (a
 genuine agent's activity to its `context_guild_id`'s office), applies that
 guild's display policy, and projects it into Pixel Agents messages. Testbench can publish the same event contracts manually.
 
+## End-user data
+
+Every cog implements Red's `red_delete_data_for_user(*, requester, user_id)`
+on its composed Cog class, and its `__red_end_user_data_statement__` is read
+from its `info.json` `end_user_data_statement` (also without Red installed,
+so tests check the one statement Red serves). The only data linked to a
+Discord user that any cog persists is the office data below; everything else
+stored is bot-owner or per-server configuration.
+
+| Stored | Where | Deleted by |
+| --- | --- | --- |
+| An account's office character (`characters["user:<id>"]`: pixatar seed code, source, profile) | Corridor's office-state `Config` | Pixelagents |
+| An account's seat record (keyed by its webview agent id, `to_agent_id(user_id)`) in each guild's Discord office (including guilds the bot has left) and the editor office | Corridor's office-state `Config` | Pixelagents |
+| The avatar PNG rendered from that character's seed code (kept while another character wears the same seed) | Pixelagents' `cog_data_path/avatars/` | Pixelagents |
+| Unspent one-minute Dashboard sign-in tickets | CCTV memory | CCTV |
+
+Corridor holds the office data as opaque JSON and cannot tell which keys
+belong to a user, so its own hook is a documented no-op and pixelagents, the
+schema-aware layer, deletes the records once through corridor's office-state
+API (`office_state_refs`, `mutate_office_characters`, `mutate_office_seats`).
+Nothing in that data is needed to operate or to prevent abuse, so all four
+requester types (`discord_deleted_user`, `owner`, `user`, `user_strict`)
+delete all of it; a member still shown in an office afterwards is dealt a
+fresh character from their user id, as on first appearance. Every other cog's
+hook is a no-op whose docstring says what that cog stores instead.
+
+Not persisted, so not deleted: live presence, activity and message text that
+CCTV and pixelagents hold in memory to draw the office pages, and the Discord
+messages, prompts and tool results the agent cogs send to corridor's LLM
+endpoint, to other agents over A2A, and to registered MCP servers for the
+duration of one turn. Each cog's `end_user_data_statement` names what it
+sends where.
+
 ## Configuration compatibility
 
 The office refactor deliberately uses fresh Config identities for Corridor's

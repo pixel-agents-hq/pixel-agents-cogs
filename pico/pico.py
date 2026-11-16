@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from redbot.core import commands
 
 from .adapters.cog_base import CogBase
@@ -11,3 +13,17 @@ from .adapters.listener import ListenerMixin
 
 class Pico(CommandsMixin, ListenerMixin, CogBase, commands.Cog):
     """Decide whether to react to a message, and if so, act only via tool calls."""
+
+    async def red_delete_data_for_user(
+        self,
+        *,
+        requester: Literal["discord_deleted_user", "owner", "user", "user_strict"],
+        user_id: int,
+    ) -> None:
+        """Nothing to delete, for every requester type: no user ID or user
+        content is stored. Pico stores only per-server enabled state and
+        bot-wide prompt and tool-budget settings. Messages it reads are sent
+        to the LLM endpoint for the one turn they trigger and are never
+        kept."""
+
+        del requester, user_id

@@ -3,7 +3,7 @@
     "name": "animator",
     "short": "A2A pixel-art rendering agent backed by pixel-art-mcp.",
     "description": "An A2A-only agent that models and renders pixel-art sprites and animations via the pixel-art-mcp server, and delivers the resulting Discord-ready assets (pixel-agents.zip, preview.gif or preview.png) as real attachments.",
-    "end_user_data_statement": "This cog does not persistently store any data or metadata about users.",
+    "end_user_data_statement": "This cog sends the A2A task text it receives (written by pico from Discord conversations) to corridor's configured LLM endpoint, and the LLM's tool arguments to the pixel-art-mcp server registered through telephonepole; it does not store either. Finished renders are posted to Discord as attachments. It stores no data about Discord users: only bot-owner prompt, tool-budget, logging and timeout settings.",
     "install_msg": "Install corridor too ([p]cog install pixel-agents-cogs corridor); it loads automatically. Outside services: A2A task text and rendered images go to corridor's LLM endpoint, and its tools call the pixel-art-mcp server, whose output files it downloads and attaches in Discord. Setup: run pixel-art-mcp yourself, load telephonepole, then [p]telephonepole add pixel-art <url> and [p]telephonepole agents pixel-art to grant animator access. Also configure [p]corridor llm endpoint/key/model and [p]corridor a2a host/port.",
     "author": ["NNTin"],
     "required_cogs": {"corridor": "https://github.com/pixel-agents-hq/pixel-agents-cogs"},

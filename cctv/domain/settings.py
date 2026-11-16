@@ -19,6 +19,15 @@ class OfficeAccess(StrEnum):
 
 
 @dataclass(frozen=True, slots=True)
+class EditorGate:
+    """Who besides the bot owner may edit the editor office: members of
+    `guild_id` satisfying corridor's `group_key` permission group there."""
+
+    guild_id: int
+    group_key: str
+
+
+@dataclass(frozen=True, slots=True)
 class GlobalSettings:
     listener_host: str
     listener_port: int
@@ -29,6 +38,9 @@ class GlobalSettings:
     # Where browsers reach the Dashboard (`https://host`), so `[p]cctv url`
     # can hand out an absolute link; None until the bot owner sets it.
     public_base_url: str | None
+    # Who besides the bot owner may edit the editor office; None (the
+    # default) is the bot owner only.
+    editor_gate: EditorGate | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,4 +63,4 @@ class GuildSettings:
     access: OfficeAccess = OfficeAccess.PUBLIC
 
 
-__all__ = ["GlobalSettings", "GuildSettings", "OfficeAccess"]
+__all__ = ["EditorGate", "GlobalSettings", "GuildSettings", "OfficeAccess"]

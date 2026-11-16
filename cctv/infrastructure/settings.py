@@ -8,7 +8,7 @@ from urllib.parse import urlsplit
 
 from redbot.core import Config
 
-from ..domain import GlobalSettings, GuildSettings, OfficeAccess
+from ..domain import EditorGate, GlobalSettings, GuildSettings, OfficeAccess
 
 CONFIG_IDENTIFIER = 0x636374765F73657474696E6773  # "cctv_settings"
 
@@ -19,6 +19,10 @@ GLOBAL_DEFAULTS: dict[str, object] = {
     "editor_clear_delay": 2.0,
     "designer_url": "https://pixel-index-staging.nntin.xyz/assets/design",
     "public_base_url": None,
+    # The editor office's edit gate beyond the bot owner: a guild id and a
+    # corridor permission group key, both set or both None.
+    "editor_gate_guild": None,
+    "editor_gate_group": None,
 }
 GUILD_DEFAULTS: dict[str, object] = {
     "enabled": False,
@@ -73,6 +77,21 @@ def _access(raw: object) -> OfficeAccess:
         return OfficeAccess.PRIVATE
 
 
+def _editor_gate(guild_id: object, group_key: object) -> EditorGate | None:
+    """A stored edit gate; anything incomplete or unreadable is no gate (bot
+    owner only), so a corrupt value can only ever narrow who may edit."""
+
+    if (
+        isinstance(guild_id, int)
+        and not isinstance(guild_id, bool)
+        and guild_id > 0
+        and isinstance(group_key, str)
+        and group_key
+    ):
+        return EditorGate(guild_id, group_key)
+    return None
+
+
 class GuildReference(Protocol):
     id: int
 
@@ -105,6 +124,9 @@ class RedSettingsRepository:
             editor_clear_delay=cast(float, await self._config.editor_clear_delay()),
             designer_url=cast(str, await self._config.designer_url()),
             public_base_url=cast("str | None", await self._config.public_base_url()),
+            editor_gate=_editor_gate(
+                await self._config.editor_gate_guild(), await self._config.editor_gate_group()
+            ),
         )
 
     def _guild(self, guild: int | GuildReference) -> tuple[int, Any]:
@@ -160,6 +182,15 @@ class RedSettingsRepository:
         clean = validate_public_base_url(url)
         await self._config.public_base_url.set(clean)
         return clean
+
+    async def set_editor_gate(self, gate: EditorGate | None) -> None:
+        """Let members of `gate.guild_id` satisfying `gate.group_key` edit the
+        editor office too, or (None) only the bot owner."""
+
+        if gate is not None and (gate.guild_id <= 0 or not gate.group_key):
+            raise ValueError("An editor gate needs a server and a permission group.")
+        await self._config.editor_gate_guild.set(gate.guild_id if gate is not None else None)
+        await self._config.editor_gate_group.set(gate.group_key if gate is not None else None)
 
     async def set_guild_broadcast_rich_presence(self, guild_id: int, value: bool) -> None:
         if not isinstance(value, bool):

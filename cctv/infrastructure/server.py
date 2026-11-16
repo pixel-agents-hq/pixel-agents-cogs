@@ -42,10 +42,10 @@ MAX_CLIENT_MESSAGE_BYTES = 4 * 1024 * 1024
 class PagePipeline(Protocol):
     page: str
     clients: ClientHub
-    open_editor: bool
     # A private guild office: sockets see nothing until they prove membership.
     private: bool
 
+    # The guild whose office this is; None for the editor office.
     @property
     def guild_id(self) -> int | None: ...
 
@@ -155,6 +155,10 @@ class CctvServer:
         return await self._handle_gated(request, guild_id, pipeline)
 
     async def handle_editor(self, request: web.Request) -> web.WebSocketResponse:
+        """Anyone may watch the editor office. A socket may write to it only
+        after presenting an editor ticket for a user who passes the edit
+        gate, re-checked on every write."""
+
         return await self._handle_ws(self._editor, request)
 
     async def _origin_allowed(self, request: web.Request) -> bool:
@@ -170,7 +174,7 @@ class CctvServer:
     ) -> web.WebSocketResponse:
         socket = web.WebSocketResponse(heartbeat=30.0, max_msg_size=MAX_CLIENT_MESSAGE_BYTES)
         await socket.prepare(request)
-        pipeline.clients.add(socket, is_editor=pipeline.open_editor)
+        pipeline.clients.add(socket)
         self._log.info(
             "cctv/%s: client connected (%d total)",
             pipeline.page,
@@ -286,10 +290,9 @@ class CctvServer:
         page = pipeline.page
         state = pipeline.clients.get(socket)
         if isinstance(message, AuthorizeMessage):
-            guild_id = pipeline.guild_id
-            if pipeline.open_editor or guild_id is None:
-                return
-            user_id = self._tickets.consume(message.ticket, guild_id)
+            # A guild office takes only a ticket for its own guild; the
+            # editor office (no guild) only an editor ticket.
+            user_id = self._tickets.consume(message.ticket, pipeline.guild_id)
             if user_id is None:
                 return
             pipeline.clients.identify(
@@ -302,9 +305,11 @@ class CctvServer:
             return
         if isinstance(message, _WRITE_MESSAGES):
             # A ticket proves browser identity, not perpetual authorization.
-            # Re-check office writes so a guild disable, role removal, or
-            # permission change takes effect even on an already-open socket.
-            if not pipeline.open_editor and state is not None and state.user_id is not None:
+            # Re-check every write so a guild disable, role removal, edit
+            # gate change or permission change takes effect even on an
+            # already-open socket. A socket that never proved a user (an
+            # anonymous viewer) never writes.
+            if state is not None and state.user_id is not None:
                 state.is_editor = await self._authorize_safely(pipeline, state.user_id)
             if state is None or not state.is_editor:
                 self._log.info("cctv/%s: unauthorized %s dropped", page, message.type)

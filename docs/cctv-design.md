@@ -17,7 +17,9 @@ Independent, revisioned "office" aggregates exist side by side:
   the target of a Pixel Index layout load made in that guild;
 - the **editor office**, Architect and Painter's shared structural/color
   sandbox, populated from registered A2A agents plus the bot's own Discord
-  identity, with an editor deliberately left open to any connected client.
+  identity. Anyone may watch it; from its page only the bot owner, or
+  members an opt-in edit gate (`[p]cctv editors set`) lets in, may edit it.
+  The agents edit it through Pixelagents' facade, never its socket.
 
 They never merge. Each guild office has its own layout, seats, roster,
 WebSocket route and clients: nothing one guild's office shows reaches
@@ -296,6 +298,28 @@ A private office is reached like this:
 A public or unlisted office's socket is shown everything at once; it
 presents a ticket only to make keyholder writes.
 
+### Who may edit the editor office
+
+Anyone who can reach the editor page and its socket may watch it. Its page
+fetches a ticket from `/third-party/cctv/editorsession`, which the
+Dashboard serves only to a signed-in user; for an anonymous visitor the
+fetch fails and the socket stays read-only. An editor ticket is bound to
+`(user, editor office)` (it opens no guild office, and a guild ticket opens
+no editor), lives 60 seconds and is spent on first use, like a guild one.
+
+The socket may write only while that user passes the edit gate
+(`_can_edit_editor`), re-checked on every write: the bot owner always, and
+nobody else by default. `[p]cctv editors set <group>`, run by the bot owner
+in a server, also lets in that server's members who satisfy that corridor
+permission group there (`owner`, `employee` or one of the server's own
+groups, checked through `capabilities_satisfy`); `[p]cctv editors reset`
+goes back to the bot owner only, and either change re-checks every open
+editor socket at once. The gate fails closed: a zero or synthetic user id,
+a gate on a server the bot left, a member it can't fetch, or a stored gate
+it can't read lets nobody but the bot owner in. Architect, Painter and
+Animator edit the editor office through Pixelagents' facade, not through
+this socket, so the gate never applies to them.
+
 ### Who a guild's office shows
 
 Each enabled guild's roster policy is three settings on top of
@@ -383,7 +407,7 @@ payload for a known type raises a logged, connection-preserving error:
 
 | `type` | Direction | Payload | Effect |
 |---|---|---|---|
-| `authorize` | client to server | `ticket: str` | Guild offices only. Resolves a session ticket to a user id and re-authorizes the socket against that guild. |
+| `authorize` | client to server | `ticket: str` | Resolves a session ticket to a user id and re-authorizes the socket: against that guild for a guild office's ticket, against the edit gate for an editor ticket. |
 | `webviewReady` | client to server | -- | Triggers `bootstrap`: assets, settings, existing agents, and the current layout. |
 | `saveLayout` | client to server | `layout: OfficeLayout` | Editor-authorized only. Validated and written through Pixelagents' `set_office_layout`. |
 | `saveAgentSeats` | client to server | `seats: {agent_id: {palette?, repeat?, seatId?}}` | Editor-authorized only. Merged through Pixelagents' `mutate_office_seats`; only `seatId` is kept, since the character roster decides what each agent wears. |
@@ -419,7 +443,8 @@ sequenceDiagram
         S->>S: spend the ticket: same guild, a member? else close 4404
         S->>Pi: mark the socket a viewer, replay the held webviewReady
     else editor page
-        S->>Pi: mark client is_editor=true (open by design)
+        B->>S: {"type": "authorize", editor ticket} (signed in only)
+        S->>Pi: authorize(user_id) against the edit gate
     end
     B->>S: {"type": "webviewReady"}
     S->>Pi: handle_message
@@ -512,7 +537,7 @@ presence change occurring during startup can be missed.
 | Route | Method | Purpose |
 |---|---|---|
 | `/cctv/office/<guild id>/ws` | WebSocket | One guild office's live connection. A private office's socket, and one to an id with no open office (unknown, not a guild, CCTV disabled there), is sent nothing until it presents a valid ticket, and is closed with `4404` -- the same for every such case |
-| `/cctv/editor/ws` | WebSocket | Editor office live connection |
+| `/cctv/editor/ws` | WebSocket | Editor office live connection: anyone may watch; writes need an editor ticket for a user who passes the edit gate |
 | `/cctv/health` | GET | JSON status snapshot (`status`, `listener`, `assets`, `offices` totals -- open offices, clients, agents, errors -- and `editor` health) for a reverse proxy or uptime monitor; it names no guild |
 | `/third-party/cctv` | Dashboard GET | Server picker: every `public` guild office with its name, icon and live headcount, linking to its office page, and a link to the signed-in picker |
 | `/third-party/cctv/mine` | Dashboard GET (login) | A signed-in user's picker: public offices plus the unlisted and private offices of their own servers (every office, for the bot owner) |
@@ -520,6 +545,7 @@ presence change occurring during startup can be missed.
 | `/dashboard/<guild id>/third-party/cctv/private` | Dashboard GET (login + membership) | A `private` office's page; the Dashboard checks the login and membership |
 | `/third-party/cctv/discord` | Dashboard GET (hidden) | Redirects to the server picker |
 | `/third-party/cctv/editor` | Dashboard GET | Editor office page |
+| `/third-party/cctv/editorsession` | Dashboard GET (hidden, login) | Mints a single-use, 60-second ticket bound to the signed-in user and the editor office; the editor socket checks the edit gate |
 | `/third-party/cctv/session?guild=<guild id>` | Dashboard GET (hidden, login) | Mints a single-use, 60-second ticket bound to the signed-in user and that guild, for an open office they may watch; otherwise answers 403 with no ticket |
 | `/third-party/cctv/static/<path>` | Dashboard GET/HEAD | Shared webview asset |
 
@@ -575,6 +601,9 @@ each page uses:
 | `[p]cctv cleardelay <discord\|editor> <seconds>` | Bot owner | Set the activity-clear delay of every guild office (`discord`) or the editor (>= 0) |
 | `[p]cctv designer <url>` | Bot owner | Set the character designer `[p]cctv character` links to |
 | `[p]cctv publicurl [url]` | Bot owner | Show or set the origin browsers reach the Dashboard at (`https://…`, no path), which `[p]cctv url` builds links from |
+| `[p]cctv editors` | Bot owner | Show who may edit the editor office from its page |
+| `[p]cctv editors set <group>` | Bot owner | Also let this server's members in a corridor permission group edit the editor office |
+| `[p]cctv editors reset` | Bot owner | Let only the bot owner edit the editor office again |
 | `[p]cctv character` | Any member | Show your office character: its seed code, avatar, and a designer link that opens it |
 | `[p]cctv character set <px.…>` | Any member | Wear the character a seed code stands for; the pages re-dress you live |
 | `[p]cctv character reset` | Any member | Go back to the character dealt from your Discord user id |
@@ -587,17 +616,16 @@ each page uses:
 
 ## Validation & error handling
 
-### Guild-office write authorization
+### Write authorization
 
 ```mermaid
 flowchart TD
-    Start(["saveLayout / saveAgentSeats / importLayout received"]) --> IsOffice{"guild office?"}
-    IsOffice -- editor page --> AllowEditor["editor page is open by design -- allow"]
-    IsOffice -- guild office --> Recheck["re-run authorize(user_id) for that guild\n(guild-disable, role removal,\nor permission change since connect)"]
+    Start(["saveLayout / saveAgentSeats / importLayout received"]) --> Proven{"socket presented a ticket for this office?"}
+    Proven -- "no (anonymous)" --> Drop["drop message, log 'unauthorized ... dropped'"]
+    Proven -- yes --> Recheck["re-run authorize(user_id): that guild's keyholder check,\nor the editor's edit gate\n(guild-disable, role removal, gate\nor permission change since connect)"]
     Recheck --> IsEditorNow{"socket now marked is_editor?"}
-    IsEditorNow -- no --> Drop["drop message, log 'unauthorized ... dropped'"]
+    IsEditorNow -- no --> Drop
     IsEditorNow -- yes --> Handle["pipeline.handle_message"]
-    AllowEditor --> Handle
 ```
 
 Guild-office authorization itself (`_can_edit_guild(guild_id, user_id)`)
@@ -727,10 +755,10 @@ each cog's schema simple and avoids coupling one cog's Config layout to
 another's history; any old data under a different identifier is left
 alone, not deleted, and remains manually recoverable if ever needed.
 
-**Binding to loopback by default.** The editor page is intentionally open
-to any connected client, so keeping the listener's default bind on
-`127.0.0.1` means direct host-network exposure is an explicit operator
-choice (via reverse proxy), not an accidental default. Every socket closes
+**Binding to loopback by default.** Every office page can be watched by
+anyone who reaches a public one or the editor, so keeping the listener's
+default bind on `127.0.0.1` means direct host-network exposure is an
+explicit operator choice (via reverse proxy), not an accidental default. Every socket closes
 on a client frame over `MAX_CLIENT_MESSAGE_BYTES` (4 MiB; a `saveLayout` of
 the largest grid is well under 1 MiB).
 
@@ -739,6 +767,6 @@ member's message activity only from a channel `@everyone` can view (not a
 private thread), and drops the activity text of any agent turn asked for
 from another channel (`activity_guild(..., private=True)`, see
 [`corridor-pubsub-design.md`](corridor-pubsub-design.md)). So neither a
-public office nor the open editor page, nor a members-only office (whose
+public office nor the editor page, nor a members-only office (whose
 members may not all see every channel), shows a restricted channel's
 conversation.

@@ -27,7 +27,14 @@ cooperates end to end.
   bundled webview's own UI (real toolbar clicks, real Save button) and the
   write reaches the server (browser -> server, the direction none of the
   above cover): a real `SaveLayoutMessage` over the real WebSocket, then a
-  real broadcast back confirming it landed.
+  real broadcast back confirming it landed. The browser is signed in as the
+  bot owner through the harness's stand-in for the Dashboard's editor
+  session route (`fixtures.sign_in`).
+- `test_editor_anonymous_edit.py` — the same real UI save from a browser
+  that never signed in is refused by cctv's server: the editor layout is
+  unchanged and nothing is broadcast, while the anonymous page still shows
+  the office and still receives an agent edit made through pixelagents'
+  facade.
 - `test_floorplan_discord_layout.py` — a real `Floorplan` cog loads a real
   layout from Pixel Index's real staging environment onto the `DISCORD`
   office-state kind (every other scenario here only ever writes `EDITOR`),

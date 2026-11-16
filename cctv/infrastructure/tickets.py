@@ -1,12 +1,13 @@
-"""Short-lived, single-use Dashboard identity tickets for guild offices.
+"""Short-lived, single-use Dashboard identity tickets for CCTV's offices.
 
-A ticket proves which Dashboard user opened a guild's office page: the
-Dashboard session (a login cookie the browser never hands to the
-WebSocket) mints one through `/third-party/cctv/session?guild=<id>`, and
-the page's socket presents it in-band (`{"type": "authorize"}`), never in a
-URL. It is bound to the one guild it was minted for, lives a minute, and is
-consumed the first time it is presented, so a leaked ticket is worth at
-most one connection to one office for its owner.
+A ticket proves which Dashboard user opened an office page: the Dashboard
+session (a login cookie the browser never hands to the WebSocket) mints one
+through `/third-party/cctv/session?guild=<id>` for a guild's office, or
+`/third-party/cctv/editorsession` for the editor office, and the page's
+socket presents it in-band (`{"type": "authorize"}`), never in a URL. It is
+bound to the one office it was minted for (a guild id, or None for the
+editor), lives a minute, and is consumed the first time it is presented, so
+a leaked ticket is worth at most one connection to one office for its owner.
 """
 
 from __future__ import annotations
@@ -22,7 +23,8 @@ TICKET_TTL_SECONDS = 60.0
 @dataclass(frozen=True, slots=True)
 class Ticket:
     user_id: int
-    guild_id: int
+    # The guild whose office the ticket is for; None for the editor office.
+    guild_id: int | None
     expires_at: float
 
 
@@ -41,7 +43,7 @@ class TicketStore:
         self._token_factory = token_factory or (lambda: secrets.token_urlsafe(32))
         self._tickets: dict[str, Ticket] = {}
 
-    def mint(self, user_id: int, guild_id: int) -> str:
+    def mint(self, user_id: int, guild_id: int | None) -> str:
         now = self._clock()
         self.cleanup(now)
         token = self._token_factory()
@@ -50,9 +52,10 @@ class TicketStore:
         self._tickets[token] = Ticket(user_id, guild_id, now + self._ttl)
         return token
 
-    def consume(self, token: str, guild_id: int) -> int | None:
-        """The user a ticket was minted for, if it is valid for `guild_id`.
-        Any presented ticket is spent, whether or not it was valid here."""
+    def consume(self, token: str, guild_id: int | None) -> int | None:
+        """The user a ticket was minted for, if it is valid for `guild_id`'s
+        office (None: the editor office). Any presented ticket is spent,
+        whether or not it was valid here."""
 
         ticket = self._tickets.pop(token, None) if token else None
         if ticket is None or ticket.expires_at <= self._clock():

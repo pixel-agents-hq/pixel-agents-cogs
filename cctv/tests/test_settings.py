@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 
+from ..domain import EditorGate
 from ..infrastructure.settings import RedSettingsRepository, validate_public_base_url
 
 
@@ -18,6 +19,8 @@ class TestCctvSettings(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(global_settings.discord_clear_delay, 2.0)
         self.assertEqual(global_settings.editor_clear_delay, 2.0)
         self.assertIsNone(global_settings.public_base_url)
+        # Only the bot owner may edit the editor office until they opt in.
+        self.assertIsNone(global_settings.editor_gate)
         self.assertFalse(guild.enabled)
         self.assertTrue(guild.broadcast_rich_presence)
         self.assertTrue(guild.broadcast_messages)
@@ -55,6 +58,26 @@ class TestCctvSettings(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(guild.show_offline)
         self.assertFalse(guild.ghost_offline)
         self.assertFalse(guild.ghost_bots)
+
+    async def test_the_editor_gate_is_stored_and_cleared(self) -> None:
+        await self.repository.set_editor_gate(EditorGate(42, "keyholder"))
+        self.assertEqual(
+            (await self.repository.global_settings()).editor_gate, EditorGate(42, "keyholder")
+        )
+
+        await self.repository.set_editor_gate(None)
+        self.assertIsNone((await self.repository.global_settings()).editor_gate)
+
+        with self.assertRaises(ValueError):
+            await self.repository.set_editor_gate(EditorGate(0, "keyholder"))
+
+    async def test_an_incomplete_stored_editor_gate_lets_only_the_owner_in(self) -> None:
+        await self.repository.config.editor_gate_guild.set(42)
+        self.assertIsNone((await self.repository.global_settings()).editor_gate)
+
+        await self.repository.config.editor_gate_guild.set(True)
+        await self.repository.config.editor_gate_group.set("keyholder")
+        self.assertIsNone((await self.repository.global_settings()).editor_gate)
 
     async def test_invalid_listener_and_delay_values_are_rejected(self) -> None:
         with self.assertRaises(ValueError):

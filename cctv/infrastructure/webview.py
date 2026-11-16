@@ -69,6 +69,9 @@ def office_ws_path(guild_id: int) -> str:
 
 
 EDITOR_WS_PATH = "/cctv/editor/ws"
+# Where the editor page fetches its socket's identity ticket. Only a socket
+# that presents one, for a user who passes the edit gate, may edit.
+EDITOR_SESSION_PATH = "/third-party/cctv/editorsession"
 PICKER_PATH = "/third-party/cctv"
 
 
@@ -447,6 +450,7 @@ def degraded_asset_notification(degraded: tuple[str, ...]) -> str:
 
 
 __all__ = [
+    "EDITOR_SESSION_PATH",
     "EDITOR_WS_PATH",
     "PICKER_PATH",
     "PICKER_TEMPLATE",

@@ -96,8 +96,9 @@ cog loading; `[p]pixelagents webview rebuild` retries it.
 - `[p]cctv enable` opens a server's office. Offices are public by default;
   `[p]cctv visibility unlisted|private` restricts them. An office shows
   message text only from channels `@everyone` can read.
-- The editor page (the agents' shared office) is open to anyone who can
-  reach it, to watch and to edit.
+- Anyone who can reach the editor page (the agents' shared office) can
+  watch it; only the bot owner, signed in to the Dashboard, can edit it
+  (`[p]cctv editors set` opts in a corridor permission group).
 - Showing offline members and presences needs the members and presences
   gateway intents.
 

@@ -422,11 +422,20 @@ class CogBase:
             footer_override=footer_override,
             category=category,
         )
-        if rendered.mode is ReplyMode.EMBED and rendered.category is None:
-            # No ctx here: Red resolves the same colour from the channel.
-            colour = await self.bot.get_embed_colour(channel)
-            rendered = dataclasses.replace(rendered, embed_color=colour.value)
+        rendered = await self.with_channel_embed_color(rendered, channel)
         return await send_rendered_reply_to_channel(channel, rendered)
+
+    async def with_channel_embed_color(
+        self, rendered: RenderedReply, channel: discord.abc.Messageable
+    ) -> RenderedReply:
+        """`render_channel_reply` has no ctx, so an uncategorized embed gets
+        Red's embed colour for `channel` (`bot.get_embed_colour`) here, at
+        send time -- the same colour `ctx.embed_color()` would give."""
+
+        if rendered.mode is not ReplyMode.EMBED or rendered.category is not None:
+            return rendered
+        colour = await self.bot.get_embed_colour(channel)
+        return dataclasses.replace(rendered, embed_color=colour.value)
 
     def reply_sender(
         self,

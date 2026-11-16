@@ -17,6 +17,11 @@ Pixelagents has three responsibilities:
 It owns no Dashboard route, WebSocket listener, Discord guild projection,
 or Pixel Index catalogue integration -- [`cctv`](../cctv) serves the built bundle and
 [`floorplan`](../floorplan) consumes Pixel Index.
+The bundle is built with relative asset paths for the
+[Red Web Dashboard](https://github.com/AAA3A-AAA3A/Red-Web-Dashboard) (by
+AAA3A) third-party static route cctv serves it from, so viewing it in a
+browser needs that Dashboard installed and set up; see cctv's
+[README](../cctv/README.md#red-web-dashboard).
 
 ### Office-state facade
 

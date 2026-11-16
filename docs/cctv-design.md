@@ -533,6 +533,26 @@ over that guild's WebSocket; `/third-party/cctv/static/` serves the same
 guild-agnostic build to everyone, and must stay that way -- any future
 per-guild asset belongs behind a guild-scoped route.
 
+### Red Web Dashboard requirements
+
+Every `/third-party/cctv` route above is a third-party page of AAA3A's
+[Red Web Dashboard](https://github.com/AAA3A-AAA3A/Red-Web-Dashboard)
+([docs](https://red-web-dashboard.readthedocs.io/en/latest/)). CCTV
+registers through the Dashboard cog's `rpc.third_parties_handler`
+(`on_dashboard_cog_add`, `cctv/adapters/dashboard.py`) and
+`[p]cctv dashboard` reports whether it is loaded. The Dashboard features
+each page uses:
+
+| Dashboard feature | Used by |
+|---|---|
+| `web_content` with `standalone: True` | picker, `mine`, office, private and editor pages |
+| `redirect_url` | `office` (to `private`), `private` (to `office`), `discord` |
+| `user_id` kwarg (Discord login required) | `mine`, `private`, `session` |
+| `guild_id` kwarg (`/dashboard/<guild id>/...` route, the Dashboard's membership check) | `private` |
+| `hidden=True` (not listed on the Dashboard) | `private`, `session`, `discord` |
+| `/third-party/<name>/static/<path>` route (`GET`/`HEAD`, `asset_path` kwarg) | `static`: every script, stylesheet, font and image the office and editor pages load through their `<base href="/third-party/cctv/static/">` |
+| `raw_response` (status, content type, headers, base64 body) | `static`, and `session`'s JSON `{"ticket": ...}` body with its `403` |
+
 ### Commands
 
 | Command | Scope | Description |

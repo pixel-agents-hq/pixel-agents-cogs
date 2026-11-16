@@ -18,20 +18,15 @@ from ..domain import ErrorReport, ImprovementSuggestion, Severity
 _SEVERITIES = tuple(severity.value for severity in Severity)
 
 
-def build_mcp_server(
-    service: FeedbackService, *, host: str, port: int, path: str = "/mcp"
-) -> FastMCP:
+def build_mcp_server(service: FeedbackService, *, host: str, port: int) -> FastMCP:
     """`stateless_http=True`: each request is independent (no MCP session
     resumption needed for two one-shot report/suggest tools), matching
     corridor's `McpClientPool` opening a fresh connection per call rather
-    than holding one open (see that module's own docstring). `path` is the
-    Streamable HTTP endpoint; the cog passes a random one (see
-    `adapters/cog_base.py`). FastMCP's own defaults also apply: a 4 MiB
-    request-body limit and, on a loopback host, DNS-rebinding protection."""
+    than holding one open (see that module's own docstring). FastMCP's own
+    defaults also apply: a 4 MiB request-body limit and, on a loopback
+    host, DNS-rebinding protection. `McpListener` adds the bearer token."""
 
-    mcp = FastMCP(
-        "suggestionbox", host=host, port=port, stateless_http=True, streamable_http_path=path
-    )
+    mcp = FastMCP("suggestionbox", host=host, port=port, stateless_http=True)
 
     @mcp.tool()
     async def report_error(

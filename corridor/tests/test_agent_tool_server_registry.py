@@ -41,10 +41,14 @@ class _FakeClientPool:
         self._tools_by_url = tools_by_url
         self.calls: list[tuple[str, str, Mapping[str, Any], float | None]] = []
         self.list_tools_calls: list[str] = []
+        self.headers_seen: list[dict[str, str]] = []
         self.instructions = "Live server instructions"
 
-    async def discover_tools(self, base_url: str) -> McpToolListing:
+    async def discover_tools(
+        self, base_url: str, *, headers: Mapping[str, str] | None = None
+    ) -> McpToolListing:
         self.list_tools_calls.append(base_url)
+        self.headers_seen.append(dict(headers or {}))
         if base_url not in self._tools_by_url:
             raise McpRequestError(f"no such server: {base_url}")
         result = self._tools_by_url[base_url]
@@ -59,8 +63,10 @@ class _FakeClientPool:
         arguments: Mapping[str, Any],
         *,
         timeout_seconds: float | None = None,
+        headers: Mapping[str, str] | None = None,
     ) -> Mapping[str, Any]:
         self.calls.append((base_url, name, arguments, timeout_seconds))
+        self.headers_seen.append(dict(headers or {}))
         return {"status": "ok"}
 
 
@@ -117,9 +123,9 @@ class TestAgentToolServerRegistry(unittest.IsolatedAsyncioTestCase):
         )
         original = pool.discover_tools
 
-        async def removing(url):
+        async def removing(url, *, headers=None):
             registry.unregister(url)
-            return await original(url)
+            return await original(url, headers=headers)
 
         pool.discover_tools = removing
         clock.advance(FRESH_TTL_SECONDS + 1)
@@ -300,6 +306,22 @@ class TestAgentToolServerRegistry(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result, {"status": "ok"})
         self.assertEqual(pool.calls, [("http://s/mcp", "get_job", {"job_id": "j1"}, 90.0)])
 
+    async def test_a_servers_headers_go_on_discovery_and_every_call(self) -> None:
+        pool = _FakeClientPool({"http://s/mcp": (_tool("report_error"),)})
+        registry = AgentToolServerRegistry(pool)
+        token = {"Authorization": "Bearer t"}
+        await registry.register(
+            RegisteredMcpServer(
+                owner="A", base_url="http://s/mcp", agent_allowed=_allow_all, headers=token
+            ),
+            owner="A",
+        )
+
+        (tool,) = await registry.list_tools_for("architect")
+        await tool.handler(None, {})
+
+        self.assertEqual(pool.headers_seen, [token, token])
+
     async def test_wrapped_tool_handler_ignores_a_non_mcp_call_options_ctx(self) -> None:
         pool = _FakeClientPool({"http://s/mcp": (_tool("report_error"),)})
         registry = AgentToolServerRegistry(pool)
@@ -324,6 +346,7 @@ class TestAgentToolServerRegistry(unittest.IsolatedAsyncioTestCase):
                 arguments: Mapping[str, Any],
                 *,
                 timeout_seconds: float | None = None,
+                headers: Mapping[str, str] | None = None,
             ) -> Mapping[str, Any]:
                 raise McpRequestError("unreachable")
 

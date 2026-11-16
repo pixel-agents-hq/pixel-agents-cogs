@@ -28,9 +28,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import hmac
 import logging
-import secrets
 from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
 from typing import cast
@@ -43,11 +41,11 @@ from sse_starlette.sse import AppStatus
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.requests import Request
-from starlette.responses import FileResponse, PlainTextResponse, Response
+from starlette.responses import FileResponse, Response
 from starlette.routing import BaseRoute, Mount, Route
-from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from ..domain.agent_directory import RegisteredAgent
+from .listener_guard import BearerTokenGuard, bearer_headers, new_token
 
 log = logging.getLogger("red.pixel-agents-cogs.corridor")
 
@@ -59,44 +57,6 @@ STOP_GRACE_SECONDS = 5.0
 # The largest request body the listener reads. A2A requests here are one
 # text prompt; answers (which can carry rendered files) are not limited.
 MAX_REQUEST_BYTES = 1024 * 1024
-
-
-class _RequestTooLarge(Exception):
-    pass
-
-
-class _ListenerGuard:
-    """ASGI middleware: refuse any HTTP request without the listener's
-    bearer token (401) or with a body over `MAX_REQUEST_BYTES` (413)."""
-
-    def __init__(self, app: ASGIApp, *, token: str) -> None:
-        self._app = app
-        self._expected = f"Bearer {token}".encode()
-
-    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] != "http":
-            await self._app(scope, receive, send)
-            return
-        headers = dict(scope.get("headers") or ())
-        if not hmac.compare_digest(headers.get(b"authorization", b""), self._expected):
-            await PlainTextResponse("unauthorized", status_code=401)(scope, receive, send)
-            return
-        length = headers.get(b"content-length", b"")
-        if length.isdigit() and int(length) > MAX_REQUEST_BYTES:
-            await PlainTextResponse("request too large", status_code=413)(scope, receive, send)
-            return
-        received = 0
-
-        async def bounded_receive() -> Message:
-            nonlocal received
-            message = await receive()
-            if message["type"] == "http.request":
-                received += len(message.get("body", b""))
-                if received > MAX_REQUEST_BYTES:
-                    raise _RequestTooLarge
-            return message
-
-        await self._app(scope, bounded_receive, send)
 
 
 # An agent's avatar image by agent key (corridor's `avatar_for`: its office
@@ -185,7 +145,7 @@ def _build_app(
 ) -> Starlette:
     return Starlette(
         routes=_build_routes(agents, avatar),
-        middleware=[Middleware(_ListenerGuard, token=token)],
+        middleware=[Middleware(BearerTokenGuard, token=token, max_bytes=MAX_REQUEST_BYTES)],
     )
 
 
@@ -201,7 +161,7 @@ class A2AServer:
     ) -> None:
         self._log = logger or log
         self._avatar = avatar
-        self._token = secrets.token_urlsafe(32)
+        self._token = new_token()
         self._server: uvicorn.Server | None = None
         self._task: asyncio.Task[None] | None = None
         self._app: Starlette | None = None
@@ -214,7 +174,7 @@ class A2AServer:
     def auth_headers(self) -> dict[str, str]:
         """The header every request to this listener must carry."""
 
-        return {"Authorization": f"Bearer {self._token}"}
+        return bearer_headers(self._token)
 
     async def start(
         self, *, host: str, port: int, agents: Sequence[RegisteredAgent] = ()

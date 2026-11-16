@@ -296,8 +296,9 @@ server** into a registered A2A agent's own tool-calling loop, so e.g.
 `suggestionbox`'s `report_error`/`suggest_improvement` tools reach
 architect's and painter's tool loops without either cog importing the
 other. A providing cog calls `corridor.register_mcp_server(RegisteredMcpServer(
-owner=..., base_url=..., agent_allowed=...), owner=...)` from its own
-`cog_load`; corridor connects to that server's Streamable HTTP endpoint
+owner=..., base_url=..., agent_allowed=..., headers=...), owner=...)` from
+its own `cog_load` (`headers` go on every request to that server, e.g.
+suggestionbox's bearer token); corridor connects to that server's Streamable HTTP endpoint
 via `McpClientPool.discover_tools` (a bounded, 30-second handshake that
 pages through the server's full `tools/list` and reads its MCP
 `initialize` instructions) and caches the result, refreshed with a short

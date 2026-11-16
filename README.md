@@ -122,7 +122,8 @@ website (default `https://pixel-index.vercel.app`). Change them with
 ### MCP tools (suggestionbox, telephonepole)
 
 `suggestionbox` runs an MCP server on `127.0.0.1:8934` by default
-(`[p]suggestionbox mcp host/port`), at a random path only corridor knows; set its channel with
+(`[p]suggestionbox mcp host/port`) and, like corridor's A2A listener,
+answers only the bot's own cogs; set its channel with
 `[p]suggestionbox channel #channel` and grant agents with
 `[p]suggestionbox agents`. `telephonepole` connects to the third-party MCP
 servers you add with `[p]telephonepole add <name> <url>`; grant agents with

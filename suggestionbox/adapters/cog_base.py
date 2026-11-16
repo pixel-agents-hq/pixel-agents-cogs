@@ -38,12 +38,12 @@ class CogBase:
         self.config = self._repository.config
         self._service = FeedbackService(self._repository, post=self._post_feedback)
         self._mcp_listener = McpListener(logger=log)
-        # The MCP endpoint lives at a random path, fixed for this load and
-        # known only to corridor's registry: the listener has no other
-        # authentication, so anything else that can reach host:port (another
-        # local process, or more when `[p]suggestionbox mcp host` is not
-        # loopback) only ever gets a 404 instead of posting to the channel.
-        self._mcp_path = f"/{secrets.token_urlsafe(24)}/mcp"
+        # The MCP listener's bearer token, minted on each load and handed only
+        # to corridor's registry (`RegisteredMcpServer.headers`): anything
+        # else that can reach host:port (another local process, or more when
+        # `[p]suggestionbox mcp host` is not loopback) gets a 401 instead of
+        # a way to post into the feedback channel.
+        self._mcp_token = secrets.token_urlsafe(32)
         self._mcp_base_url: str | None = None
         self._corridor: Any = None
         self._reply: Any = None
@@ -86,12 +86,12 @@ class CogBase:
         """
 
         host, port = await self._repository.mcp_listener()
-        mcp = build_mcp_server(self._service, host=host, port=port, path=self._mcp_path)
-        error = await self._mcp_listener.start(mcp, host=host, port=port)
+        mcp = build_mcp_server(self._service, host=host, port=port)
+        error = await self._mcp_listener.start(mcp, host=host, port=port, token=self._mcp_token)
         if error is not None:
             return error
 
-        new_base_url = f"http://{host}:{port}{self._mcp_path}"
+        new_base_url = f"http://{host}:{port}/mcp"
         if self._mcp_base_url is not None and self._mcp_base_url != new_base_url:
             self._corridor.unregister_mcp_server(self._mcp_base_url)
         registration_error: str | None = await self._corridor.register_mcp_server(
@@ -99,6 +99,7 @@ class CogBase:
                 owner="Suggestionbox",
                 base_url=new_base_url,
                 agent_allowed=self._repository.is_agent_enabled,
+                headers={"Authorization": f"Bearer {self._mcp_token}"},
             ),
             owner="Suggestionbox",
         )

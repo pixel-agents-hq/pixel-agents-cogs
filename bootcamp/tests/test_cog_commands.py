@@ -122,6 +122,12 @@ class TestAskCommand(unittest.IsolatedAsyncioTestCase):
         self.ctx = FakeContext()
         await create_agent(self.cog, "recruiter", "Screen applicants.")
 
+    async def test_ask_is_a_server_command(self) -> None:
+        # Its permission group is a per-server setting; a DM has none.
+        dm = FakeContext()
+        dm.guild = None
+        self.assertFalse(await self.cog.ask.can_run(dm))
+
     async def test_unknown_agent_replies_without_checking_permission(self) -> None:
         answer = await self.cog.run_agent(self.ctx, "ghost", "hello")
 

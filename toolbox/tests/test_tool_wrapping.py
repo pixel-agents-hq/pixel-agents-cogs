@@ -4,6 +4,7 @@ corridor's own test_llm_tool_registration.py, which this mirrors."""
 from __future__ import annotations
 
 import unittest
+from types import SimpleNamespace
 from typing import Any
 
 from corridor.domain import llm_tool
@@ -18,7 +19,10 @@ class _StubCommand:
         *,
         qualified_name: str = "stub command",
         allowed: bool = True,
+        privilege: str = "NONE",
     ) -> None:
+        self.requires = SimpleNamespace(privilege_level=SimpleNamespace(name=privilege))
+        self.parent = None
         self.callback = callback
         self.qualified_name = qualified_name
         self.allowed = allowed
@@ -121,6 +125,18 @@ class TestCollectWrappableTools(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(len(tools), 1)
         self.assertEqual(tools[0].description, "Run the Discord command `toolbox ping`.")
+
+    def test_a_selected_owner_only_command_is_never_wrapped(self) -> None:
+        cog = _CogWithOnePlainCommand()
+        cog.some_command.requires.privilege_level.name = "BOT_OWNER"
+
+        self.assertEqual(collect_wrappable_tools(cog, frozenset({"toolbox greet"})), [])
+
+    def test_a_command_without_can_run_is_never_wrapped(self) -> None:
+        cog = _CogWithOnePlainCommand()
+        cog.some_command = SimpleNamespace(callback=_plain_command, qualified_name="toolbox greet")
+
+        self.assertEqual(collect_wrappable_tools(cog, frozenset({"toolbox greet"})), [])
 
     async def test_availability_check_delegates_to_can_run(self) -> None:
         cog = _CogWithOnePlainCommand()

@@ -2,7 +2,8 @@
 then the bounded tool-calling loop.
 
 The guard clauses at the top of `on_message` (bot author, no guild, guild
-not enabled, LLM not configured) return before touching the gate or
+not enabled, Red's allowlist/blocklist and ignored channels, LLM not
+configured) return before touching the gate or
 building any context at all -- the vast majority of messages that don't
 concern Pico cost nothing beyond those checks. `GateService.decide(...)`
 itself further short-circuits on reply/mention before ever calling the LLM;
@@ -56,6 +57,12 @@ class ListenerMixin:
         if await self.bot.cog_disabled_in_guild(self, guild):
             return
         if not await self._repository.guild_enabled(guild.id):
+            return
+        # Red's allowlist/blocklist and `[p]ignore` apply to pico like any
+        # command: a blocked member or ignored channel never starts a turn.
+        if not await self.bot.allowed_by_whitelist_blacklist(message.author):
+            return
+        if not await self.bot.ignored_channel_or_guild(message):
             return
 
         llm_settings = await self._corridor.llm_settings()

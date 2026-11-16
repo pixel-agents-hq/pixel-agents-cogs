@@ -301,10 +301,25 @@ class TestCrossCogTools(unittest.IsolatedAsyncioTestCase):
 class _Listener(ListenerMixin):
     """Just enough of the Pico cog to reach on_message's early exits."""
 
-    def __init__(self, *, disabled: bool = False) -> None:
-        self.bot = SimpleNamespace(cog_disabled_in_guild=AsyncMock(return_value=disabled))
-        # Pico switched off in the guild: on_message stops right after.
-        self._repository = SimpleNamespace(guild_enabled=AsyncMock(return_value=False))
+    def __init__(
+        self,
+        *,
+        disabled: bool = False,
+        enabled: bool = False,
+        allowed: bool = True,
+        not_ignored: bool = True,
+    ) -> None:
+        self.bot = SimpleNamespace(
+            cog_disabled_in_guild=AsyncMock(return_value=disabled),
+            allowed_by_whitelist_blacklist=AsyncMock(return_value=allowed),
+            ignored_channel_or_guild=AsyncMock(return_value=not_ignored),
+        )
+        # Pico switched off in the guild (the default): on_message stops
+        # right after. Switched on, the LLM settings read is the next step.
+        self._repository = SimpleNamespace(guild_enabled=AsyncMock(return_value=enabled))
+        self._corridor = SimpleNamespace(
+            llm_settings=AsyncMock(return_value=SimpleNamespace(ready=False))
+        )
 
 
 def _guild_message(*, bot: bool = False, guild: bool = True) -> SimpleNamespace:
@@ -332,3 +347,17 @@ class TestOnMessageEarlyExits(unittest.IsolatedAsyncioTestCase):
         listener = _Listener()
         await listener.on_message(_guild_message())  # type: ignore[arg-type]
         listener._repository.guild_enabled.assert_awaited_once_with(10)
+
+    async def test_blocklisted_members_and_ignored_channels_never_start_a_turn(self) -> None:
+        for listener in (_Listener(enabled=True, allowed=False), _Listener(enabled=True, not_ignored=False)):
+            message = _guild_message()
+            await listener.on_message(message)  # type: ignore[arg-type]
+            listener._corridor.llm_settings.assert_not_awaited()
+
+    async def test_an_allowed_member_goes_on_to_the_llm_settings(self) -> None:
+        listener = _Listener(enabled=True)
+        message = _guild_message()
+        await listener.on_message(message)  # type: ignore[arg-type]
+        listener.bot.allowed_by_whitelist_blacklist.assert_awaited_once_with(message.author)
+        listener.bot.ignored_channel_or_guild.assert_awaited_once_with(message)
+        listener._corridor.llm_settings.assert_awaited_once_with()

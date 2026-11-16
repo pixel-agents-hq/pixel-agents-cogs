@@ -176,6 +176,21 @@ class TestReplySender(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(ctx.sent[0]["content"], "**Pico:** hello")
 
+    async def test_send_reply_never_pings_in_either_mode(self) -> None:
+        """LLM-written reply text can carry `@everyone` or role mentions;
+        corridor sends every reply with mentions disabled."""
+
+        member = FakeMember(2, self.guild)
+        sender = self.corridor.reply_sender(owner="Pico")
+        embed_ctx = FakeContext(author=member, guild=self.guild)
+        await sender.send_reply(embed_ctx, description="@everyone hi")
+        await self.corridor.set_reply_mode(self.guild.id, ReplyMode.TEXT)
+        text_ctx = FakeContext(author=member, guild=self.guild)
+        await sender.send_reply(text_ctx, description="@everyone hi")
+
+        for sent in (embed_ctx.sent[0], text_ctx.sent[0]):
+            self.assertEqual(sent["allowed_mentions"], discord.AllowedMentions.none())
+
     async def test_publish_event_is_forwarded_to_corridor(self) -> None:
         published: list[object] = []
 

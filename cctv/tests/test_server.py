@@ -8,6 +8,7 @@ from typing import Any
 from aiohttp import ClientSession, WSMsgType
 
 from ..infrastructure import OFFICE_UNAVAILABLE_CLOSE_CODE, CctvServer, ClientHub, TicketStore
+from ..infrastructure.server import MAX_CLIENT_MESSAGE_BYTES
 
 GUILD = 10
 OTHER_GUILD = 20
@@ -247,6 +248,20 @@ class TestOfficeRouting(_LiveServer):
             await asyncio.wait_for(self.editor.message_received.wait(), timeout=1)
             self.assertEqual(len(self.editor.messages), 1)
             await editor.close()
+
+    async def test_an_oversized_frame_closes_the_socket_unread(self) -> None:
+        async with ClientSession() as session:
+            editor = await session.ws_connect(f"{self.base}/cctv/editor/ws")
+            try:
+                await editor.send_str("x" * (MAX_CLIENT_MESSAGE_BYTES + 1))
+                message = await asyncio.wait_for(editor.receive(), timeout=2)
+                self.assertIn(
+                    message.type, {WSMsgType.CLOSE, WSMsgType.CLOSED, WSMsgType.ERROR}
+                )
+            except ConnectionError:
+                pass  # the server dropped the connection mid-send
+            await _wait_for(lambda: self.editor.clients.client_count == 0)
+            self.assertEqual(self.editor.messages, [])
 
 
 class TestPrivateOffice(_LiveServer):

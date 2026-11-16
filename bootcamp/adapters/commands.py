@@ -174,6 +174,7 @@ class CommandsMixin:
         )
 
     @bootcamp_group.command(name="ask")
+    @commands.guild_only()
     async def ask(self, ctx: commands.Context, agent_key: str, *, prompt: str) -> None:
         """Directly consult a custom agent -- gated by that agent's own
         `permission_group`, not by who may create/remove/edit agents."""

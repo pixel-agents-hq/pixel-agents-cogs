@@ -248,7 +248,9 @@ class A2AServer:
                     STOP_GRACE_SECONDS,
                 )
                 task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
+                # Best-effort: an exception here was already logged by
+                # _log_unexpected_exit, and must not fail cog_unload.
+                with contextlib.suppress(asyncio.CancelledError, Exception):
                     await task
         self._server = None
         self._app = None

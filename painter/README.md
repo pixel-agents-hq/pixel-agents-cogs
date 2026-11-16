@@ -48,7 +48,7 @@ Painter requires Corridor and Pixelagents; both are declared as
 `required_cogs` and loaded on demand at `cog_load`.
 
 ```text
-[p]cog install pixel-agents-cogs painter
+[p]cog install pixel-agents-cogs corridor pixelagents painter
 [p]load painter
 ```
 

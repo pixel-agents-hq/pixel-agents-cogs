@@ -28,7 +28,7 @@ Downloader install hint):
 
 ```
 [p]repo add pixel-agents-cogs https://github.com/pixel-agents-hq/pixel-agents-cogs
-[p]cog install pixel-agents-cogs animator
+[p]cog install pixel-agents-cogs corridor animator
 [p]load animator
 ```
 

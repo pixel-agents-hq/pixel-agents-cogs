@@ -96,6 +96,7 @@ python -m mypy corridor floorplan pixelagents cctv toolbox pico architect painte
 # CI-only contract/lint checks:
 python -m unittest discover -s contracts/tests
 python -m contracts.discord_replies.lint_reply_channel
+python -m contracts.info_json.lint_info_json  # info.json keys/install_msg + root README
 ```
 
 A single test: `python -m pytest -q corridor/tests/test_reply_sender.py::TestReplySender::test_foo`.
@@ -193,6 +194,12 @@ each package's own `Architecture.md` (where present) covers its specifics.
   [`docs/red-downloader-submodules.md`](../docs/red-downloader-submodules.md).
 - **`info.json` keys are case-sensitive** and matched exactly against
   Red's schema — an uppercase key silently no-ops rather than erroring.
+  Every cog's `info.json` also needs an `install_msg` disclosing its
+  outside services, data stored outside Config, heavy IO and extra setup
+  (Red's Approved Cog Creator guide), naming every `required_cogs` entry
+  (Downloader never installs them), and every cog must be named in the
+  root `README.md`; `contracts/info_json/lint_info_json.py` enforces both
+  in CI (`.github/workflows/info-json.yml`).
 - **`corridor/ui_limits.py` has no discord/redbot import and must stay
   that way** — it's a pure Discord-component-limit checker imported by
   UI test suites across multiple cogs (corridor, floorplan, toolbox,

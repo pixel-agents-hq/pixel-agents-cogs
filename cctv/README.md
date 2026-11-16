@@ -99,7 +99,7 @@ character dealt from their key; the bot owner changes one with
 ## Configuration
 
 ```text
-[p]cog install pixel-agents-cogs cctv
+[p]cog install pixel-agents-cogs corridor pixelagents cctv
 [p]load cctv
 ```
 

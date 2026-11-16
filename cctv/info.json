@@ -4,7 +4,7 @@
     "short": "Two live Pixel Agents office pages on one listener.",
     "description": "Owns the Discord guild projection, registered-agent editor projection, WebSocket listener, Dashboard pages, display policy, and activity clear timing for both CCTV views.",
     "end_user_data_statement": "This cog stores per-guild display settings. Through corridor's office-state store, it also persists Discord user IDs and registered agent IDs that have avatar appearance or seat assignments.",
-    "install_msg": "Requires corridor and pixelagents (auto-loaded). Configure the reverse proxy for /cctv/discord/ws and /cctv/editor/ws; Dashboard pages are /third-party/cctv/discord and /third-party/cctv/editor.",
+    "install_msg": "Install corridor and pixelagents too ([p]cog install pixel-agents-cogs corridor pixelagents); both load automatically. Starts an aiohttp HTTP/WebSocket listener (127.0.0.1:3210 by default; [p]cctv host/port) that serves the office webview to browsers. Setup: install Red Web Dashboard for the pages (/third-party/cctv), route /cctv/office/<server id>/ws and /cctv/editor/ws to the listener through a reverse proxy, set [p]cctv publicurl, then [p]cctv enable in a server. Offices are public by default ([p]cctv visibility). Showing offline members and presences needs the members and presences gateway intents. Character links point at Pixel Index's designer ([p]cctv designer).",
     "author": [
         "Tin Nguyen"
     ],

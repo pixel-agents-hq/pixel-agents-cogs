@@ -11,6 +11,11 @@ through a Discord UI, without waiting for a real Discord presence change
 or message -- useful for exercising CCTV's webview canvas rendering, or
 corridor's own dispatch/error-isolation, in isolation.
 
+Testbench is a developer tool, so its `info.json` sets `"hidden": true`:
+it does not appear in `[p]cog list`, but `[p]cog install` still installs it
+by name. A published event is indistinguishable from a real one, so every
+viewer of the affected cctv office sees it.
+
 The event picker, its per-field inputs, and the modal that collects
 whatever's left are all built generically from corridor's own event
 catalog (`corridor/event_catalog.py`, the same introspection
@@ -47,7 +52,7 @@ Downloader install hint):
 
 ```text
 [p]repo add pixel-agents-cogs https://github.com/pixel-agents-hq/pixel-agents-cogs
-[p]cog install pixel-agents-cogs testbench
+[p]cog install pixel-agents-cogs corridor testbench
 [p]load testbench
 ```
 

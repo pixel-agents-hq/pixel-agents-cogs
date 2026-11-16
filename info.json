@@ -3,7 +3,7 @@
     "author": [
         "Pixel Agents HQ Contributors"
     ],
-    "install_msg": "**Thank you for using office-cogs.** Be aware you are installing a security nightmare. The cogs in this package are in early development and are not (yet) secure.",
+    "install_msg": "Thanks for adding pixel-agents-cogs. Before installing, note what these cogs do: the LLM agents (pico, architect, painter, animator, bootcamp) send Discord message text, prompts and office layouts to an LLM endpoint (default https://litellm.nntin.xyz/, change it with [p]corridor llm endpoint); corridor, cctv and suggestionbox open local HTTP listeners (127.0.0.1 by default); pixelagents clones GitHub repos and runs npm builds, and toolbox downloads Node.js, into each cog's data folder; telephonepole and animator call MCP servers you register; switchboard runs pip. Every cog's own install message lists its outside services and setup. See the README: https://github.com/pixel-agents-hq/pixel-agents-cogs#readme",
     "short": "Cogs for Pixel Agents",
     "description": "Brings Pixel Agents to Redbot. This is a collection of cogs that are used to manage Pixel Agents."
 }

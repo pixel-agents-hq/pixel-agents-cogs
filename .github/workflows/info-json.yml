@@ -1,0 +1,46 @@
+name: "info.json and README"
+
+# Red's Approved Cog Creator guide requires a root README and, in every
+# info.json, author/short/description plus an install_msg disclosure. This
+# keeps them from silently going missing. Stdlib only: no dependencies.
+on:
+  push:
+    paths:
+      - "info.json"
+      - "*/info.json"
+      - "README.md"
+      - "contracts/info_json/**"
+      - ".github/workflows/info-json.yml"
+  pull_request:
+    paths:
+      - "info.json"
+      - "*/info.json"
+      - "README.md"
+      - "contracts/info_json/**"
+      - ".github/workflows/info-json.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: info-json-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: info.json and README completeness
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Check info.json files and README.md
+        run: python -m contracts.info_json.lint_info_json
+
+      - name: Test the info.json lint
+        run: python -m unittest discover -s contracts/info_json/tests

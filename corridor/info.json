@@ -1,9 +1,10 @@
 {
     "$schema": "https://raw.githubusercontent.com/Cog-Creators/Red-DiscordBot/V3/develop/schema/red_cog.schema.json",
     "name": "corridor",
-    "short": "Shared services and office state for office-cogs.",
+    "short": "Shared services and office state for pixel-agents-cogs.",
     "description": "Owns shared reply and permission settings, LLM and A2A infrastructure, registered agent tools, and the two opaque revisioned office-state aggregates used by the cctv pages. Other cogs consume these services through required_cogs.",
     "end_user_data_statement": "This cog stores bot-owner configuration for shared LLM/A2A services. It also stores Discord user IDs and registered agent IDs when those identities have avatar appearance or seat assignments in either cctv office-state aggregate.",
+    "install_msg": "Shared infrastructure every other cog except switchboard needs. Hidden from [p]cog list: install it by name next to them, and they load it automatically. Outside services: LLM requests from the agent cogs go to a LiteLLM endpoint (default https://litellm.nntin.xyz/) once a key is set; it runs the A2A HTTP listener (127.0.0.1:8931 by default) and connects to MCP servers other cogs register. Setup (bot owner): [p]corridor llm endpoint/key/model and [p]corridor a2a host/port; permission groups and reply style: [p]corridorsettings.",
     "author": ["Tin Nguyen"],
     "required_cogs": {},
     "requirements": [

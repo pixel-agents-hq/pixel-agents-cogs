@@ -18,6 +18,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
 
 import redbot.core.data_manager as data_manager
@@ -97,6 +98,15 @@ class FakeBot:
 
     async def get_valid_prefixes(self) -> list[str]:
         return [";"]
+
+    async def cog_disabled_in_guild(self, cog: Any, guild: Any) -> bool:
+        # No `[p]command disablecog` in this harness: every cog is enabled
+        # everywhere.
+        return False
+
+    async def get_embed_colour(self, location: Any) -> Any:
+        # Red's default embed colour.
+        return SimpleNamespace(value=0xE74C3C)
 
     async def is_owner(self, user: Any) -> bool:
         return getattr(user, "id", None) in self.owner_ids

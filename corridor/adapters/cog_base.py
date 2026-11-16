@@ -152,6 +152,12 @@ class CogBase:
             except Exception:
                 log.exception("Failed to cascade-unload dependent cog %r", extension_name)
 
+    def a2a_auth_headers(self) -> dict[str, str]:
+        """The header an in-process caller sends with every request to
+        corridor's A2A listener; any request without it gets a 401."""
+
+        return self._a2a_server.auth_headers
+
     async def _start_a2a_server(self) -> str | None:
         """Returns None on success, or an error message on failure --
         never raises (see A2AServer.start's own docstring). Passes the

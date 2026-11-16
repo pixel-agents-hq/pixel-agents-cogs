@@ -13,7 +13,7 @@ a crash) if architect is ever unloaded/unregistered -- consistent with
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from typing import Protocol
 
 from pydantic import BaseModel, Field
@@ -31,6 +31,7 @@ class ArchitectAsker(Protocol):
         base_url: str,
         text: str,
         on_activity: Callable[[str], Awaitable[None]] | None = None,
+        headers: Mapping[str, str] | None = None,
     ) -> AgentAskResult: ...
 
 
@@ -94,7 +95,9 @@ class ConsultArchitectTool:
             )
         try:
             result = await self._client.ask(
-                base_url=agent.card.supported_interfaces[0].url, text=raw_input.prompt
+                base_url=agent.card.supported_interfaces[0].url,
+                text=raw_input.prompt,
+                headers=self._corridor.a2a_auth_headers(),  # type: ignore[attr-defined]
             )
         except ArchitectRequestError as exc:
             return ConsultArchitectOutput(status="error", error=str(exc))

@@ -92,10 +92,13 @@ class TestMcpCommands(unittest.IsolatedAsyncioTestCase):
         self.assertIn("8941", str(self.bot.corridor.replies[-1]["description"]))
         # Re-registered under the new base_url, and the old one dropped.
         self.assertIn(
-            "http://127.0.0.1:8941/mcp",
+            f"http://127.0.0.1:8941{self.cog._mcp_path}",
             [server.base_url for server, _owner in self.bot.corridor.registered_mcp_servers],
         )
-        self.assertIn("http://127.0.0.1:8934/mcp", self.bot.corridor.unregistered_mcp_server_urls)
+        self.assertIn(
+            f"http://127.0.0.1:8934{self.cog._mcp_path}",
+            self.bot.corridor.unregistered_mcp_server_urls,
+        )
 
     async def test_mcp_host_restarts_the_listener_on_the_new_host(self) -> None:
         await self.cog.mcp_host.callback(self.cog, self.ctx, "127.0.0.2")
@@ -132,7 +135,10 @@ class TestMcpRegistration(unittest.IsolatedAsyncioTestCase):
 
         [(server, owner)] = bot.corridor.registered_mcp_servers
         self.assertEqual(owner, "Suggestionbox")
-        self.assertEqual(server.base_url, "http://127.0.0.1:8934/mcp")
+        self.assertEqual(server.base_url, f"http://127.0.0.1:8934{cog._mcp_path}")
+        # A random, unguessable path per load, never the well-known /mcp.
+        self.assertNotEqual(cog._mcp_path, "/mcp")
+        self.assertNotEqual(cog._mcp_path, Suggestionbox(bot=FakeBot(FakeCorridor()))._mcp_path)
 
     async def test_cog_unload_unregisters_the_mcp_server(self) -> None:
         bot = FakeBot(FakeCorridor())
@@ -141,7 +147,9 @@ class TestMcpRegistration(unittest.IsolatedAsyncioTestCase):
 
         await cog.cog_unload()
 
-        self.assertIn("http://127.0.0.1:8934/mcp", bot.corridor.unregistered_mcp_server_urls)
+        self.assertIn(
+            f"http://127.0.0.1:8934{cog._mcp_path}", bot.corridor.unregistered_mcp_server_urls
+        )
 
     async def test_bind_failure_notifies_owners_and_does_not_raise(self) -> None:
         bot = FakeBot(FakeCorridor())

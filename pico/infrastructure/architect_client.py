@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from collections.abc import Awaitable, Callable, Iterable
+from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass
 
 import httpx
@@ -102,14 +102,17 @@ class ArchitectClient:
         text: str,
         on_activity: Callable[[str], Awaitable[None]] | None = None,
         guild_id: int | None = None,
+        headers: Mapping[str, str] | None = None,
     ) -> AgentAskResult:
         """`on_activity`, if given, is awaited once per intermediate debug
         event the consulted agent chooses to emit mid-task (see this
         module's own docstring) -- optional and never invoked at all for an
         agent (or an agent with its own debug setting off) that only ever
-        sends the one final response, so existing callers are unaffected."""
+        sends the one final response, so existing callers are unaffected.
+        `headers` go on every request: corridor's listener needs its
+        `corridor.a2a_auth_headers()`."""
 
-        httpx_client = httpx.AsyncClient(timeout=_REQUEST_TIMEOUT_SECONDS)
+        httpx_client = httpx.AsyncClient(timeout=_REQUEST_TIMEOUT_SECONDS, headers=headers)
         try:
             client = await create_client(
                 base_url,

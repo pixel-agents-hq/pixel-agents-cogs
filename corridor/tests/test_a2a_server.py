@@ -26,7 +26,7 @@ from a2a.utils import TransportProtocol
 
 from ..domain import RegisteredAgent
 from ..infrastructure import a2a_server
-from ..infrastructure.a2a_server import A2AServer
+from ..infrastructure.a2a_server import MAX_REQUEST_BYTES, A2AServer
 
 
 class DummyExecutor(AgentExecutor):
@@ -125,7 +125,7 @@ class TestA2AServerRouting(unittest.IsolatedAsyncioTestCase):
         await server.start(host="127.0.0.1", port=8952)
         self.addAsyncCleanup(server.stop)
 
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(headers=server.auth_headers) as session:
             async with session.get(
                 "http://127.0.0.1:8952/architect/.well-known/agent-card.json"
             ) as response:
@@ -136,7 +136,7 @@ class TestA2AServerRouting(unittest.IsolatedAsyncioTestCase):
         await server.start(host="127.0.0.1", port=8953, agents=[_agent("architect")])
         self.addAsyncCleanup(server.stop)
 
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(headers=server.auth_headers) as session:
             async with session.get(
                 "http://127.0.0.1:8953/architect/.well-known/agent-card.json"
             ) as response:
@@ -151,7 +151,7 @@ class TestA2AServerRouting(unittest.IsolatedAsyncioTestCase):
 
         server.rebuild_routes([_agent("architect")])
 
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(headers=server.auth_headers) as session:
             async with session.get(
                 "http://127.0.0.1:8954/architect/.well-known/agent-card.json"
             ) as response:
@@ -164,7 +164,7 @@ class TestA2AServerRouting(unittest.IsolatedAsyncioTestCase):
 
         server.rebuild_routes([])
 
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(headers=server.auth_headers) as session:
             async with session.get(
                 "http://127.0.0.1:8955/architect/.well-known/agent-card.json"
             ) as response:
@@ -195,7 +195,7 @@ class TestA2AServerAvatarRoute(unittest.IsolatedAsyncioTestCase):
             await server.start(host="127.0.0.1", port=8956, agents=[_agent("architect")])
             self.addAsyncCleanup(server.stop)
 
-            async with aiohttp.ClientSession() as session:
+            async with aiohttp.ClientSession(headers=server.auth_headers) as session:
                 async with session.get("http://127.0.0.1:8956/architect/avatar.png") as response:
                     self.assertEqual(response.status, 200)
                     self.assertEqual(await response.read(), b"fake-png-bytes")
@@ -209,7 +209,7 @@ class TestA2AServerAvatarRoute(unittest.IsolatedAsyncioTestCase):
         await server.start(host="127.0.0.1", port=8957, agents=[_agent("architect")])
         self.addAsyncCleanup(server.stop)
 
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(headers=server.auth_headers) as session:
             async with session.get("http://127.0.0.1:8957/architect/avatar.png") as response:
                 self.assertEqual(response.status, 404)
 
@@ -218,9 +218,40 @@ class TestA2AServerAvatarRoute(unittest.IsolatedAsyncioTestCase):
         await server.start(host="127.0.0.1", port=8958, agents=[_agent("architect")])
         self.addAsyncCleanup(server.stop)
 
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(headers=server.auth_headers) as session:
             async with session.get("http://127.0.0.1:8958/architect/avatar.png") as response:
                 self.assertEqual(response.status, 404)
+
+
+class TestA2AServerGuard(unittest.IsolatedAsyncioTestCase):
+    """Only callers holding the listener's token get through."""
+
+    async def asyncSetUp(self) -> None:
+        self.server = A2AServer()
+        await self.server.start(host="127.0.0.1", port=8959, agents=[_agent("architect")])
+        self.addAsyncCleanup(self.server.stop)
+        self.card = "http://127.0.0.1:8959/architect/.well-known/agent-card.json"
+
+    async def test_a_request_without_the_token_is_refused(self) -> None:
+        for headers in ({}, {"Authorization": "Bearer wrong"}):
+            with self.subTest(headers=headers):
+                async with aiohttp.ClientSession(headers=headers) as session:
+                    async with session.get(self.card) as response:
+                        self.assertEqual(response.status, 401)
+                    async with session.post(
+                        "http://127.0.0.1:8959/architect/", json={"jsonrpc": "2.0"}
+                    ) as response:
+                        self.assertEqual(response.status, 401)
+
+    async def test_each_listener_has_its_own_token(self) -> None:
+        self.assertNotEqual(A2AServer().auth_headers, self.server.auth_headers)
+
+    async def test_an_oversized_body_is_refused(self) -> None:
+        async with aiohttp.ClientSession(headers=self.server.auth_headers) as session:
+            async with session.post(
+                "http://127.0.0.1:8959/architect/", data=b"x" * (MAX_REQUEST_BYTES + 1)
+            ) as response:
+                self.assertEqual(response.status, 413)
 
 
 if __name__ == "__main__":

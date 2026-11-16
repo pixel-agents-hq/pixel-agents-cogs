@@ -67,7 +67,7 @@ from __future__ import annotations
 
 import io
 import logging
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Protocol
 
@@ -104,6 +104,7 @@ class ArchitectAsker(Protocol):
         text: str,
         on_activity: Callable[[str], Awaitable[None]] | None = None,
         guild_id: int | None = None,
+        headers: Mapping[str, str] | None = None,
     ) -> AgentAskResult: ...
 
 
@@ -139,6 +140,8 @@ class CorridorEvents(Protocol):
     `corridor` reference as two separate constructor arguments)."""
 
     async def publish_event(self, event: object) -> None: ...
+
+    def a2a_auth_headers(self) -> dict[str, str]: ...
 
 
 class ConsultAgentTool:
@@ -211,6 +214,7 @@ class ConsultAgentTool:
                 text=raw_input.prompt,
                 on_activity=self._announce_debug_event,
                 guild_id=self._guild_id,
+                headers=self._corridor.a2a_auth_headers(),
             )
         except ArchitectRequestError as exc:
             log.warning("pico: %s failed: %s", self.name, exc)

@@ -105,6 +105,9 @@ class FakeCorridor:
     def channel_is_public(self, channel: object) -> bool:
         return True
 
+    def a2a_auth_headers(self) -> dict[str, str]:
+        return {"Authorization": "Bearer test-token"}
+
     async def avatar_for(self, agent: Any) -> Any:
         """Stands in for corridor.avatar_for (an agent's office character)."""
 

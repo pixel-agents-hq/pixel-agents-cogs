@@ -83,9 +83,17 @@ cog loading; `[p]pixelagents webview rebuild` retries it.
 
 ### Office pages (cctv)
 
-- Install [Red Web Dashboard](https://github.com/Cog-Creators/Red-Dashboard)
-  for the pages under `/third-party/cctv`; cctv loads and its commands work
-  without it.
+- Install and set up AAA3A's [Red Web Dashboard](https://github.com/AAA3A-AAA3A/Red-Web-Dashboard)
+  ([installation docs](https://red-web-dashboard.readthedocs.io/en/latest/)):
+  every browser page under `/third-party/cctv` is a Dashboard third-party
+  page, so without it nothing renders in a browser. cctv loads and its
+  commands work without it.
+- The office and editor pages also need the Dashboard to serve their
+  webview assets (`/third-party/cctv/static/<path>`) and raw responses,
+  which only the [nntin/Red-Web-Dashboard](https://github.com/nntin/Red-Web-Dashboard)
+  fork does today ([AAA3A-AAA3A/Red-Web-Dashboard#8](https://github.com/AAA3A-AAA3A/Red-Web-Dashboard/pull/8)).
+  On the released Dashboard the server pickers work, but office and editor
+  pages load without their scripts and private offices can't sign anyone in.
 - cctv's aiohttp listener binds `127.0.0.1:3210` by default
   (`[p]cctv host/port`). Route `/cctv/office/<server id>/ws` and
   `/cctv/editor/ws` to it through a reverse proxy, and set
@@ -164,6 +172,11 @@ local quality gate and where the design docs live, and each cog's own
   catalogue `floorplan` browses and the pixatar character CLI.
 - [pixel-art-mcp](https://github.com/NNTin/pixel-art-mcp): the renderer
   `animator` drives.
+- [Red Web Dashboard](https://github.com/AAA3A-AAA3A/Red-Web-Dashboard) by
+  AAA3A ([docs](https://red-web-dashboard.readthedocs.io/en/latest/)): the
+  web dashboard every `cctv` page runs on. It serves the office webview,
+  signs users in with Discord and checks server membership for private
+  offices; the browser views depend on it.
 - [Red-DiscordBot](https://github.com/Cog-Creators/Red-DiscordBot) by Cog
   Creators.
 

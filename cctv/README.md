@@ -141,6 +141,26 @@ reports the problem, the affected Dashboard page returns an unavailable
 response instead of crashing, and the bot owner is notified best-effort.
 Persisted state is never silently reset to recover from an error.
 
+## Red Web Dashboard
+
+Every browser page cctv serves is a third-party page of AAA3A's
+[Red Web Dashboard](https://github.com/AAA3A-AAA3A/Red-Web-Dashboard),
+which renders the pages, serves the office webview's assets, signs users in
+with Discord and checks server membership for private offices. Install and
+set it up following its
+[installation docs](https://red-web-dashboard.readthedocs.io/en/latest/);
+without it cctv loads and its commands work, but nothing renders in a
+browser (`[p]cctv dashboard` shows whether it is loaded).
+
+The office and editor pages also need two Dashboard features that only the
+[nntin/Red-Web-Dashboard](https://github.com/nntin/Red-Web-Dashboard) fork
+has today, proposed upstream in
+[AAA3A-AAA3A/Red-Web-Dashboard#8](https://github.com/AAA3A-AAA3A/Red-Web-Dashboard/pull/8):
+the `/third-party/cctv/static/<path>` asset route and passing a page's
+`raw_response` through as-is. See
+[`docs/cctv-design.md`](../docs/cctv-design.md#red-web-dashboard-requirements)
+for exactly which route needs what.
+
 ## Related docs
 
 - [Architecture.md](Architecture.md) -- component layout and runtime flows.

@@ -216,9 +216,15 @@ outside it. `contracts/info_json/lint_info_json.py` fails CI if any cog
 drops either key or falls out of step. `python -m
 contracts.info_json.lint_info_json --red-versions` prints the range's two
 ends, and `.github/workflows/switchboard.yml` and `check-cogs.yml` install
-exactly those Red versions. On each, switchboard's
-`tests/test_red_private_api.py` checks every internal in the table against
-the installed Red and fails if Red is outside the pinned range.
+exactly those Red versions. `switchboard.yml` runs switchboard's suite on
+each, whose `tests/test_red_private_api.py` checks every internal in the
+table against the installed Red and fails if Red is outside the pinned
+range. `check-cogs.yml` runs only the Downloader install/load smoke test
+described below. Some of those pins match strings in Red's source (for
+example `test_red_keeps_the_last_exception` and
+`test_red_creates_its_cog_manager_as_cog_mgr`), so a refactor in Red that
+changes nothing switchboard relies on can still fail them; expect to
+update them whenever `max_bot_version` is raised.
 
 To support a newer Red: install it, run
 `python -m pytest -q switchboard/`, fix anything

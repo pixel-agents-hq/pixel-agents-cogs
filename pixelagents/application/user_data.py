@@ -18,13 +18,13 @@ the account's seat removed.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, TypeVar
 
 from ..domain import AgentKey
 from ..domain.characters import character_key
-from .characters import CharacterRecords, avatar_filename, parse_character_record
+from .characters import CharacterRecords, avatar_filename
 from .office import to_agent_id
 
 if TYPE_CHECKING:
@@ -73,19 +73,25 @@ class UserDataService:
 
         def remove(records: CharacterRecords) -> tuple[Any, set[str]]:
             removed = records.pop(key, None)
-            worn = {
-                record.seed
-                for raw in records.values()
-                if (record := parse_character_record(raw)) is not None
-            }
+            worn = {seed for raw in records.values() if (seed := _raw_seed(raw)) is not None}
             return removed, worn
 
         _, (removed, still_worn) = await self._corridor.mutate_office_characters(remove)
-        record = parse_character_record(removed)
+        # The raw `seed` field, not a parsed record: an older record this
+        # version no longer parses still had its avatar rendered from it.
+        seed = _raw_seed(removed)
         # Another account or agent wearing the same seed code keeps its avatar.
-        if record is None or record.seed in still_worn:
+        if seed is None or seed in still_worn:
             return
-        await asyncio.to_thread((self._avatars / avatar_filename(record.seed)).unlink, True)
+        await asyncio.to_thread((self._avatars / avatar_filename(seed)).unlink, True)
+
+
+def _raw_seed(raw: object) -> str | None:
+    """A stored record's `seed` string, whether or not the record parses.
+    Safe as a path: `avatar_filename` hashes it."""
+
+    seed = raw.get("seed") if isinstance(raw, Mapping) else None
+    return seed if isinstance(seed, str) and seed else None
 
 
 __all__ = ["CorridorUserDataGateway", "UserDataService"]

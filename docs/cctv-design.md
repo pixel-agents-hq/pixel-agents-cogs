@@ -547,7 +547,9 @@ each page uses:
 |---|---|
 | `web_content` with `standalone: True` | picker, `mine`, office, private and editor pages |
 | `redirect_url` | `office` (to `private`), `private` (to `office`), `discord` |
-| `user_id` login and `guild_id` membership check, `hidden` pages | `mine`, `private`, `session` |
+| `user_id` kwarg (Discord login required) | `mine`, `private`, `session` |
+| `guild_id` kwarg (`/dashboard/<guild id>/...` route, the Dashboard's membership check) | `private` |
+| `hidden=True` (not listed on the Dashboard) | `private`, `session`, `discord` |
 | `/third-party/<name>/static/<path>` route (`GET`/`HEAD`, `asset_path` kwarg) | `static`: every script, stylesheet, font and image the office and editor pages load through their `<base href="/third-party/cctv/static/">` |
 | `raw_response` (status, content type, headers, base64 body) | `static`, and `session`'s JSON `{"ticket": ...}` body with its `403` |
 

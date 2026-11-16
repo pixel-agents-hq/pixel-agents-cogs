@@ -554,6 +554,13 @@ class CogBase:
     async def office_state(self, ref: OfficeRef) -> OfficeState | None:
         return await self._office_states.state(ref)
 
+    async def office_state_refs(self) -> tuple[OfficeRef, ...]:
+        """Every stored office aggregate, so a caller can reach each one
+        without knowing which guilds the bot is in now (pixelagents' user
+        data deletion visits them all)."""
+
+        return await self._office_state_repository.refs()
+
     async def initialize_office_state(self, ref: OfficeRef, layout: dict[str, Any]) -> OfficeState:
         return await self._office_states.initialize(ref, layout)
 

@@ -59,6 +59,14 @@ class TicketStore:
             return None
         return ticket.user_id if ticket.guild_id == guild_id else None
 
+    def forget_user(self, user_id: int) -> int:
+        """Revoke every unspent ticket minted for `user_id`."""
+
+        revoked = [token for token, value in self._tickets.items() if value.user_id == user_id]
+        for token in revoked:
+            del self._tickets[token]
+        return len(revoked)
+
     def cleanup(self, now: float | None = None) -> int:
         deadline = self._clock() if now is None else now
         expired = [token for token, value in self._tickets.items() if value.expires_at <= deadline]

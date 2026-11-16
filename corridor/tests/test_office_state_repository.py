@@ -62,6 +62,21 @@ class TestRedOfficeStateRepository(unittest.IsolatedAsyncioTestCase):
         assert reloaded is not None
         self.assertEqual(reloaded.layout["objects"][0]["id"], "desk-a")
 
+    async def test_refs_lists_every_stored_aggregate(self) -> None:
+        self.assertEqual(await self.repository.refs(), ())
+        # A guild with other guild-scoped data but no office is not listed.
+        self.repository._config.guild_from_id(333)  # noqa: SLF001
+        await self.repository.save(_discord(GUILD_B))
+        await self.repository.save(_discord(GUILD_A))
+        await self.repository.save(
+            OfficeState(kind=OfficeStateKind.EDITOR, layout={}, seats={}, revision=1)
+        )
+
+        self.assertEqual(
+            await self.repository.refs(),
+            (OfficeRef.discord(GUILD_A), OfficeRef.discord(GUILD_B), OfficeRef.editor()),
+        )
+
     async def test_characters_start_empty_and_round_trip(self) -> None:
         self.assertEqual(await self.repository.characters(), {})
         record = {"seed": "px.a", "source": "derived", "profile": {"body": "flat"}}

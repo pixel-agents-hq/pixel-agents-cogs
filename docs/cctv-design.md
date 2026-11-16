@@ -165,7 +165,11 @@ chosen by its key so it stays the same one, and nothing is stored.
 
 Pixelagents is the schema boundary here too: it deals, reads and writes the
 records (`application/characters.py`), and Corridor persists them under one
-lock.
+lock. A Red data deletion request for a user is handled there as well
+(`application/user_data.py`): it removes their `user:<id>` record, its
+avatar PNG, and their seat in every stored office; CCTV only revokes the
+user's unspent Dashboard tickets. See
+[`docs/architecture.md`](architecture.md#end-user-data).
 
 ### `OfficeStateChanged`
 

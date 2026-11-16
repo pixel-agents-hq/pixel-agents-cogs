@@ -24,6 +24,7 @@ from corridor.domain import (
 
 from ..application.characters import CharacterService
 from ..application.office_state import OfficeStateFacade, OfficeStateSeatRepository
+from ..application.user_data import UserDataService
 from ..dependency_loader import ensure_corridor_loaded
 from ..domain import AgentKey, GenuineAgentKey, OfficeIdentity
 from ..domain.characters import CharacterRecord
@@ -86,6 +87,7 @@ class PixelAgentsBase:
         self._pixatar_build_outcome: PixatarBuildOutcome | None = None
         self._pixatar: PixatarClient | None = None
         self._characters: CharacterService | None = None
+        self._user_data: UserDataService | None = None
 
     def _webview_dist_path(self) -> Path:
         return self._cog_data_dir / "webview_dist"
@@ -164,7 +166,18 @@ class PixelAgentsBase:
         """Public cross-cog surface: this character's avatar as a PNG file,
         for a Discord reply icon, or None while pixatar can't draw it."""
 
-        return await self._character_service().avatar_file(identity, self._cog_data_dir / "avatars")
+        return await self._character_service().avatar_file(identity, self._avatar_dir())
+
+    def _avatar_dir(self) -> Path:
+        return self._cog_data_dir / "avatars"
+
+    async def forget_user_data(self, user_id: int) -> None:
+        """Delete a Discord account's office character, its avatar, and its
+        seat in every stored office (`application/user_data.py`)."""
+
+        if self._user_data is None:
+            raise RuntimeError("pixelagents user data is not loaded")
+        await self._user_data.forget_user(user_id)
 
     async def _reply_avatar(self, agent: AgentRef) -> Path | None:
         """Corridor's avatar resolver: who replies, as their office character."""
@@ -305,6 +318,7 @@ class PixelAgentsBase:
             self._default_character_profiles,
             logger=log,
         )
+        self._user_data = UserDataService(self._corridor, self._avatar_dir())
         # Every agent's Discord replies wear its office character too.
         self._corridor.register_avatar_resolver(self._reply_avatar, owner="pixelagents")
         await self._refresh_dependents()
@@ -314,6 +328,7 @@ class PixelAgentsBase:
     async def cog_unload(self) -> None:
         self._office_state = None
         self._characters = None
+        self._user_data = None
         if self._pixatar is not None:
             await asyncio.to_thread(self._pixatar.close)
             self._pixatar = None

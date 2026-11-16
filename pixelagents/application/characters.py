@@ -52,6 +52,12 @@ PixatarProvider = Callable[[], Pixatar | None]
 DefaultProfiles = Callable[[], Sequence[Mapping[str, Any]]]
 
 
+def avatar_filename(seed: str) -> str:
+    """The avatar PNG a seed code is rendered to, under the avatar directory."""
+
+    return f"{hashlib.sha256(seed.encode()).hexdigest()[:16]}.png"
+
+
 def parse_character_record(raw: object) -> CharacterRecord | None:
     """A stored record, or None when it isn't one this version understands
     (such a record is dealt afresh and replaced)."""
@@ -164,7 +170,7 @@ class CharacterService:
         record = await self.character(identity)
         if record is None:
             return None
-        path = directory / f"{hashlib.sha256(record.seed.encode()).hexdigest()[:16]}.png"
+        path = directory / avatar_filename(record.seed)
         if path.is_file():
             return path
         try:
@@ -191,5 +197,6 @@ __all__ = [
     "DefaultProfiles",
     "Pixatar",
     "PixatarProvider",
+    "avatar_filename",
     "parse_character_record",
 ]

@@ -83,7 +83,7 @@ class CctvServer:
         self._editor = editor
         self._tickets = tickets
         self._health = health
-        self._log = logger or logging.getLogger(__name__)
+        self._log = logger or logging.getLogger(f"red.pixel-agents-cogs.{__name__}")
         self.runner: web.AppRunner | None = None
         self.site: web.TCPSite | None = None
         self.app: web.Application | None = None

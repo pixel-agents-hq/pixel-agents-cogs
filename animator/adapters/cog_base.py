@@ -33,7 +33,7 @@ from ..tools.agent_tool_server import AgentToolServerTool
 from ..tools.base import ToolSpec
 from ..tools.deliver_assets_tool import DeliverPixelAgentsAssetsTool
 
-log = logging.getLogger("red.animator")
+log = logging.getLogger("red.pixel-agents-cogs.animator")
 
 ANIMATOR_AGENT_KEY = "animator"
 

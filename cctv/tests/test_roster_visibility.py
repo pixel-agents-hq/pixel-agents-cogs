@@ -5,6 +5,7 @@ from __future__ import annotations
 import unittest
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock
 
 from corridor.domain import AgentPresenceChanged, AgentRef
 from pixelagents.domain import AgentSnapshot, OfficeVisibility
@@ -113,7 +114,9 @@ class _Harness(CommandsMixin):
             self._offices.add(1, _Pipeline())  # type: ignore[arg-type]
         self._editor = _Pipeline()  # type: ignore[assignment]
         self.bot = SimpleNamespace(  # type: ignore[assignment]
-            user=SimpleNamespace(id=99), intents=intents or _intents()
+            user=SimpleNamespace(id=99),
+            intents=intents or _intents(),
+            cog_disabled_in_guild=AsyncMock(return_value=False),
         )
         self.replies: list[str] = []
 

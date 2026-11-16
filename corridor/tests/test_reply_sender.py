@@ -13,7 +13,7 @@ import discord
 
 from ..corridor import Corridor
 from ..domain import REPLY_CATEGORY_COLORS, FooterOverride, ReplyCategory, ReplyMode
-from .conftest import FakeBot, FakeContext, FakeGuild, FakeMember
+from .conftest import RED_EMBED_COLOUR, FakeBot, FakeContext, FakeGuild, FakeMember
 
 
 class TestReplySender(unittest.IsolatedAsyncioTestCase):
@@ -156,7 +156,7 @@ class TestReplySender(unittest.IsolatedAsyncioTestCase):
         embed = ctx.sent[0]["embed"]
         self.assertEqual(embed.color, REPLY_CATEGORY_COLORS[ReplyCategory.AGENT])
 
-    async def test_send_reply_with_no_bound_category_leaves_the_embed_uncolored(self) -> None:
+    async def test_send_reply_with_no_bound_category_uses_reds_embed_colour(self) -> None:
         member = FakeMember(2, self.guild)
         ctx = FakeContext(author=member, guild=self.guild)
         sender = self.corridor.reply_sender(owner="Architect")
@@ -164,7 +164,7 @@ class TestReplySender(unittest.IsolatedAsyncioTestCase):
         await sender.send_reply(ctx, title="Hi")
 
         embed = ctx.sent[0]["embed"]
-        self.assertIsNone(embed.color)
+        self.assertEqual(embed.color, RED_EMBED_COLOUR)
 
     async def test_send_reply_text_mode_prefixes_the_owner_name(self) -> None:
         await self.corridor.set_reply_mode(self.guild.id, ReplyMode.TEXT)

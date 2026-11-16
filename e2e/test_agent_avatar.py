@@ -33,6 +33,10 @@ class _Context:
         self.interaction = None
         self.sent: list[dict[str, Any]] = []
 
+    async def embed_color(self) -> Any:
+        # Red's default embed colour.
+        return SimpleNamespace(value=0xE74C3C)
+
     async def send(self, **kwargs: Any) -> Any:
         self.sent.append(kwargs)
         return SimpleNamespace(id=1)

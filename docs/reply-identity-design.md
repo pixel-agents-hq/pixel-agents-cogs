@@ -213,6 +213,7 @@ class RenderedReply:
     footer_icon_member: bool = False     # footer icon is the addressed member's character
     member_icon_attachment: str | None = None
     member_icon_path: Path | None = None  # set by CogBase.render_reply, never ReplyService
+    embed_color: int | None = None       # Red's embed colour, set by the adapter when category is None
 ```
 
 `author_name`/`author_icon_attachment` and `footer_text`/`footer_icon_url`
@@ -224,7 +225,8 @@ show" — mirroring how `ReplyField`'s own four fields (`name`/`value`/
 `ReplyCategory` (`AGENT`/`ROOM`/`FURNITURE`) selects an embed's accent
 color via `REPLY_CATEGORY_COLORS` (`corridor/domain/reply_colors.py`);
 `None` — the default, and what deskutils and pixelagents deliberately keep
-— means "no opinion," Discord's own gray, not a fourth category.
+— means "no opinion," Red's configured embed colour (`ctx.embed_color()`),
+not a fourth category.
 
 **`corridor/domain/agent_directory.py`'s `RegisteredAgent`** carries no
 avatar: a registered agent's avatar is `avatar_for` its `agent_key`, which

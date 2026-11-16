@@ -12,7 +12,7 @@ import logging
 from collections.abc import Mapping
 from typing import Any
 
-log = logging.getLogger("red.office-cogs.switchboard.downloader")
+log = logging.getLogger("red.pixel-agents-cogs.switchboard.downloader")
 
 # redbot/cogs/downloader/downloader.py: Config.get_conf(self, identifier=998240343)
 DOWNLOADER_CONFIG_IDENTIFIER = 998240343

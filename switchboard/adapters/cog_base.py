@@ -27,7 +27,7 @@ from ..infrastructure import (
 from . import rendering
 from .extensions import RedExtensions
 
-log = logging.getLogger("red.office-cogs.switchboard")
+log = logging.getLogger("red.pixel-agents-cogs.switchboard")
 
 
 class CogBase:

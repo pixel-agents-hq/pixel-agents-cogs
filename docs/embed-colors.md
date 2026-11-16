@@ -7,8 +7,9 @@ Every cog's `discord.Embed` replies are built at one shared place —
 there applies consistently across the whole repo instead of being a
 per-cog, one-off choice. Cogs are grouped into three visual categories,
 each mapped to one Discord accent color. A cog with no clear category gets
-no color at all — Discord's own default gray — rather than being forced
-into a bucket that doesn't fit. Uncategorized is a valid, deliberate choice
+Red's own configured embed colour (`ctx.embed_color()`, set with
+`[p]set colour` and `[p]embedset`) rather than being forced into a bucket
+that doesn't fit. Uncategorized is a valid, deliberate choice
 for a cog, not a gap to close.
 
 ```mermaid
@@ -16,7 +17,7 @@ flowchart LR
     Cog["A cog binds category=... once,<br/>at its own reply_sender()/render_reply() call"]
     Cog --> Lookup["build_reply_payload() looks up<br/>REPLY_CATEGORY_COLORS.get(reply.category)"]
     Lookup -->|category is AGENT/ROOM/FURNITURE| Colored["Embed gets that category's hex color"]
-    Lookup -->|category is None| Gray["Embed gets no color --<br/>Discord's own default gray"]
+    Lookup -->|category is None| Gray["Embed gets RenderedReply.embed_color --<br/>Red's configured embed colour"]
 ```
 
 ## Domain model
@@ -41,7 +42,7 @@ REPLY_CATEGORY_COLORS: dict[ReplyCategory, int] = {
 | Agent     | Discord blurple | `#5865F2` |
 | Room      | Discord teal    | `#1ABC9C` |
 | Furniture | Discord gold    | `#F1C40F` |
-| *(none)*  | Discord default gray | —   |
+| *(none)*  | Red's embed colour (`ctx.embed_color()`) | bot setting |
 
 Both the enum and the mapping live in `corridor/domain`, which has zero
 framework imports by design (see `agent_directory.py`'s docstring for the
@@ -108,8 +109,14 @@ call site repeats it:
   still bind `category=ReplyCategory.ROOM` at the one `render_reply(...)`
   call every one of their commands funnels through.
 - **`pixelagents/adapters/replies.py`** passes no `category`, so its
-  replies stay the default gray — the same neutral default any omitted
-  `category` argument produces, not a special case.
+  replies take Red's configured embed colour — the same neutral default any
+  omitted `category` argument produces, not a special case.
+
+An uncategorized embed's colour is resolved by corridor, never by the
+calling cog: `CogBase.render_reply` stores `await ctx.embed_color()` on
+`RenderedReply.embed_color`, and `send_channel_reply` (no `ctx`) stores
+`await bot.get_embed_colour(channel)`. `build_reply_payload` uses it only
+when `category` is `None`.
 
 `category` is `None` in `ReplyMode.TEXT`, the same as
 `author_name`/`author_icon_attachment` — there's no embed to color in that

@@ -44,7 +44,7 @@ from corridor.infrastructure.mcp_client import MAX_MEDIA_BYTES, McpImage
 from ..tools.attachment import Attachment
 from ..tools.base import ToolSpec
 
-log = logging.getLogger("red.animator")
+log = logging.getLogger("red.pixel-agents-cogs.animator")
 
 # Shown in place of a superseded get_job poll's own result -- see
 # `run()`'s own handling of `_last_get_job_message_index` below. Kept short

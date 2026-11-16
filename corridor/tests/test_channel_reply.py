@@ -8,7 +8,7 @@ import unittest
 
 from ..corridor import Corridor
 from ..domain import ReplyMode
-from .conftest import FakeBot, FakeChannel, FakeGuild
+from .conftest import RED_EMBED_COLOUR, FakeBot, FakeChannel, FakeGuild
 
 
 class TestChannelReply(unittest.IsolatedAsyncioTestCase):
@@ -34,6 +34,14 @@ class TestChannelReply(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(channel.sent), 1)
         embed = channel.sent[0]["embed"]
         embed.set_author.assert_called_once_with(name="SuggestionBox", icon_url=None)
+
+    async def test_send_channel_reply_uses_reds_embed_colour_for_the_channel(self) -> None:
+        channel = FakeChannel()
+        sender = self.corridor.reply_sender(owner="SuggestionBox")
+
+        await sender.send_channel_reply(channel, self.guild.id, title="An error")
+
+        self.assertEqual(channel.sent[0]["embed"].color, RED_EMBED_COLOUR)
 
     async def test_send_channel_reply_respects_the_guilds_reply_mode(self) -> None:
         await self.corridor.set_reply_mode(self.guild.id, ReplyMode.TEXT)

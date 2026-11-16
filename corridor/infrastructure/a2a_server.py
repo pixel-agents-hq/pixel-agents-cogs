@@ -18,6 +18,7 @@ used.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
@@ -35,7 +36,12 @@ from starlette.routing import BaseRoute, Mount, Route
 
 from ..domain.agent_directory import RegisteredAgent
 
-log = logging.getLogger("red.corridor")
+log = logging.getLogger("red.pixel-agents-cogs.corridor")
+
+# How long stop() lets the listener drain open connections before it
+# cancels the serve() task outright, so cog_unload never hangs on a
+# client that keeps a connection open.
+STOP_GRACE_SECONDS = 5.0
 
 # An agent's avatar image by agent key (corridor's `avatar_for`: its office
 # character), or None while it has none.
@@ -225,6 +231,7 @@ class A2AServer:
                 return message
         self._server = server
         self._task = task
+        task.add_done_callback(self._log_unexpected_exit)
         self._app = app
         self._log.info("corridor: A2A listener starting on %s:%d", host, port)
         return None
@@ -232,14 +239,29 @@ class A2AServer:
     async def stop(self) -> None:
         if self._server is not None:
             self._server.should_exit = True
-        if self._task is not None:
-            try:
-                await self._task
-            except Exception:
-                self._log.exception("corridor: A2A listener did not shut down cleanly")
-            self._task = None
+        task, self._task = self._task, None
+        if task is not None:
+            _, pending = await asyncio.wait({task}, timeout=STOP_GRACE_SECONDS)
+            if pending:
+                self._log.warning(
+                    "corridor: A2A listener did not drain within %ss; cancelling it",
+                    STOP_GRACE_SECONDS,
+                )
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
         self._server = None
         self._app = None
+
+    def _log_unexpected_exit(self, task: asyncio.Task[None]) -> None:
+        """Log a serve() task that ended with an exception, whether it
+        crashed mid-run or while stop() drained it, the moment it ends."""
+
+        if not task.cancelled() and (error := task.exception()) is not None:
+            self._log.error(
+                "corridor: A2A listener stopped with an error",
+                exc_info=(type(error), error, error.__traceback__),
+            )
 
     def rebuild_routes(self, agents: Sequence[RegisteredAgent]) -> None:
         """Replace the live app's route list with a freshly built one, in

@@ -31,7 +31,7 @@ from corridor.domain.agent_executor import build_agent_card as _build_agent_card
 
 from ..tools.base import ToolSpec
 
-log = logging.getLogger("red.animator")
+log = logging.getLogger("red.pixel-agents-cogs.animator")
 
 AGENT_NAME = "animator"
 AGENT_VERSION = "0.1.0"

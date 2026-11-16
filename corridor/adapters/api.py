@@ -91,7 +91,11 @@ def build_reply_payload(
         # TEXT-mode equivalent at all.
         return {"content": reply.content}, list(extra_files)
 
-    color = REPLY_CATEGORY_COLORS.get(reply.category) if reply.category is not None else None
+    color = (
+        REPLY_CATEGORY_COLORS.get(reply.category)
+        if reply.category is not None
+        else reply.embed_color
+    )
     embed = discord.Embed(title=reply.embed_title, description=reply.embed_description, color=color)
     for field in reply.fields:
         embed.add_field(name=field.name, value=field.value, inline=field.inline)

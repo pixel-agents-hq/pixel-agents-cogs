@@ -74,7 +74,7 @@ from .api import (
 from .llm_tool_registration import collect_registered_tools
 from .reply_sender import ReplyAgent, ReplySender
 
-log = logging.getLogger("red.corridor")
+log = logging.getLogger("red.pixel-agents-cogs.corridor")
 
 _EventT = TypeVar("_EventT")
 _MutationT = TypeVar("_MutationT")
@@ -275,9 +275,9 @@ class CogBase:
         not the caller's own) -- see docs/reply-identity-design.md.
         `category` picks this embed's accent color from the shared
         Agent/Room/Furniture scheme (docs/embed-colors.md); `None` (the
-        default) leaves Discord's own gray, deliberately independent of
-        `identity` -- a cog can have an author name with no category color,
-        or vice versa."""
+        default) uses Red's own configured embed colour (`ctx.embed_color()`),
+        deliberately independent of `identity` -- a cog can have an author
+        name with no category color, or vice versa."""
 
         assert ctx.guild is not None, "render_reply needs a guild context"
         settings = await self._repository.guild_settings(ctx.guild.id)
@@ -299,6 +299,8 @@ class CogBase:
             member_icon=member_icon.name if member_icon is not None else None,
             member_name=getattr(ctx.author, "display_name", None),
         )
+        if rendered.mode is ReplyMode.EMBED and rendered.category is None:
+            rendered = dataclasses.replace(rendered, embed_color=(await ctx.embed_color()).value)
         if rendered.member_icon_attachment is None:
             return rendered
         return dataclasses.replace(rendered, member_icon_path=member_icon)
@@ -420,6 +422,10 @@ class CogBase:
             footer_override=footer_override,
             category=category,
         )
+        if rendered.mode is ReplyMode.EMBED and rendered.category is None:
+            # No ctx here: Red resolves the same colour from the channel.
+            colour = await self.bot.get_embed_colour(channel)
+            rendered = dataclasses.replace(rendered, embed_color=colour.value)
         return await send_rendered_reply_to_channel(channel, rendered)
 
     def reply_sender(

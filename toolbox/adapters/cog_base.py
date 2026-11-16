@@ -21,7 +21,7 @@ from ..infrastructure import (
 )
 from .tool_wrapping import collect_wrappable_tools
 
-log = logging.getLogger("red.toolbox")
+log = logging.getLogger("red.pixel-agents-cogs.toolbox")
 
 # Conventional path for toolbox's own bundled avatar image -- passed to
 # corridor.reply_sender() regardless of whether a real file exists here

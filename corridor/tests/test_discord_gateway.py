@@ -206,3 +206,31 @@ class TestOnMessage(unittest.IsolatedAsyncioTestCase):
         msg.clean_content = "hello world"
         await self.cog.on_message(msg)
         self.assertEqual(len(self.published), 1)
+
+
+class TestDisabledInGuild(unittest.IsolatedAsyncioTestCase):
+    """`[p]command disablecog Corridor` in a guild stops every gateway
+    listener publishing for that guild; other guilds are unaffected."""
+
+    async def asyncSetUp(self) -> None:
+        self.cog = _make_cog()
+        self.cog.bot.disabled_cogs.add(("Corridor", 100))
+        self.published: list[object] = []
+        for event_type in (AgentPresenceChanged, AgentReplied):
+            self.cog.subscribe_event(event_type, _recorder(self.published), owner="test")
+
+    async def test_every_listener_skips_a_disabled_guild(self) -> None:
+        await self.cog.on_member_update(_member(display_name="Old"), _member(display_name="New"))
+        await self.cog.on_presence_update(_member(status="offline"), _member(status="online"))
+        await self.cog.on_member_join(_member())
+        await self.cog.on_member_remove(_member())
+        msg = MagicMock()
+        msg.guild.id = 100
+        msg.author.id = 1
+        msg.clean_content = "hello"
+        await self.cog.on_message(msg)
+        self.assertEqual(self.published, [])
+
+    async def test_other_guilds_still_publish(self) -> None:
+        await self.cog.on_member_join(_member(guild_id=200))
+        self.assertEqual(len(self.published), 1)

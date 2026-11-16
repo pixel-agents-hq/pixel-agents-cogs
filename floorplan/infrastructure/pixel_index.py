@@ -43,7 +43,7 @@ class PixelIndexClient:
         logger: logging.Logger | None = None,
     ) -> None:
         self._session_factory = session_factory
-        self._log = logger or logging.getLogger(__name__)
+        self._log = logger or logging.getLogger(f"red.pixel-agents-cogs.{__name__}")
         self._session: aiohttp.ClientSession | None = None
         # Requests may lazily start a freshly constructed client for backwards
         # compatibility.  Once ``close`` runs, only an explicit lifecycle

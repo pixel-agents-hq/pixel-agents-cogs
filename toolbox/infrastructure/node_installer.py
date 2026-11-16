@@ -229,7 +229,7 @@ class NodeInstaller:
         opener: _Opener = urllib.request.urlopen,
     ) -> None:
         self._install_root = install_root
-        self._logger = logger or logging.getLogger("red.toolbox")
+        self._logger = logger or logging.getLogger("red.pixel-agents-cogs.toolbox")
         self._opener = opener
 
     def resolve_version(self, requested: str | None) -> str:

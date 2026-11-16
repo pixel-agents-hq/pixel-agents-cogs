@@ -1,7 +1,7 @@
 """cctv's owner-notification path for a degraded (but still serving)
 Pixel Agents webview.
 
-Before this, `WebviewAssets._load_assets()` logged a missing/corrupt
+Before this, `WebviewAssets._read_assets()` logged a missing/corrupt
 sprite family or furniture catalog with `self._log.error(...)` and moved
 on -- only missing character profiles flipped `ready`/`error`, so every
 other family silently rendered missing/blank sprites with no owner-visible

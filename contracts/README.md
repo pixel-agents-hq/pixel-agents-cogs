@@ -101,6 +101,7 @@ doc's "Verifying this design: two committed contracts" section.
 | `corridor/lint_office_state_contract.py` | CI lint: fails if a name declared in `office_state.yaml` isn't mentioned in `docs/cctv-design.md`'s text (same doc-cross-reference role as `lint_corridor_contract.py`, but against `docs/cctv-design.md` instead of the Pub/Sub design doc) |
 | `discord_replies/lint_reply_channel.py` | CI lint: fails on a raw Discord send reachable from a command handler without going through corridor's `send_reply`/`render_reply` |
 | `info_json/lint_info_json.py` | CI lint (`.github/workflows/info-json.yml`): fails if the repo or a cog `info.json` lacks a key Red's Approved Cog Creator guide requires (`author`/`short`/`description`, an `install_msg` disclosure, version keys), uses a key outside Red's schema or a `type` other than `COG`/`SHARED_LIBRARY`, lacks `max_bot_version` or pins a `min_bot_version`/`max_bot_version` range different from the other cogs or the cookiecutter defaults (`--red-versions` prints that range for the CI jobs that test against real Red), has an `install_msg` that doesn't name each of its `required_cogs`, carries stale wording, or if the root `README.md` misses its install instructions, credits or any cog |
+| `runtime_hygiene/lint_runtime_hygiene.py` | CI lint (`.github/workflows/runtime-hygiene.yml`): fails if a cog or the cookiecutter template calls `getLogger` with a name outside `red.pixel-agents-cogs.<cog>[.<sub>]` (or `f"red.pixel-agents-cogs.{__name__}"`), or makes a known blocking call (subprocess, `time.sleep`, `urlopen`, `requests`, bulk `shutil`, whole-file `Path` IO) directly inside an `async def`. See `docs/runtime-hygiene.md` |
 | `ast_call_graph.py` | Shared AST call-graph crawling helpers (`index_functions`/`crawl_call_graph`) used by `discord_replies/lint_reply_channel.py` to follow `self.<name>(...)` calls across a package rather than just one function's own body |
 
 ## Running checks locally
@@ -124,6 +125,9 @@ python -m unittest discover -s contracts/corridor/tests -v
 
 python -m contracts.info_json.lint_info_json
 python -m unittest discover -s contracts/info_json/tests -v
+
+python -m contracts.runtime_hygiene.lint_runtime_hygiene
+python -m unittest discover -s contracts/runtime_hygiene/tests -t . -v
 ```
 
 ## Related docs

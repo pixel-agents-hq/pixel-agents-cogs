@@ -10,7 +10,7 @@ from typing import Any
 
 class TaskSupervisor:
     def __init__(self, *, logger: logging.Logger | None = None) -> None:
-        self._log = logger or logging.getLogger(__name__)
+        self._log = logger or logging.getLogger(f"red.pixel-agents-cogs.{__name__}")
         self._tasks: set[asyncio.Task[object]] = set()
         self._closing = False
 

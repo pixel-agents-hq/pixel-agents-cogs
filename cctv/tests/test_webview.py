@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import tempfile
+import threading
 import unittest
 from dataclasses import dataclass
 from pathlib import Path
@@ -193,6 +194,56 @@ class TestWebviewAssetsDegraded(unittest.TestCase):
         provider.sync(_Status(self.root))
 
         self.assertEqual(provider.degraded, ("furniture-catalog",))
+
+
+class TestWebviewAssetsRefresh(unittest.IsolatedAsyncioTestCase):
+    """`refresh()` is `sync()` with the bundle status and JSON decoding on a
+    worker thread, so a dashboard page load never blocks the event loop."""
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name)
+        decoded = self.root / "assets" / "decoded"
+        decoded.mkdir(parents=True)
+        (self.root / "index.html").write_text("<html><head></head></html>", encoding="utf-8")
+        profiles = [{"id": "char-0", "body": "flat", "v": 1}]
+        (decoded / "character-profiles.json").write_text(json.dumps(profiles), encoding="utf-8")
+        self.status_threads: list[threading.Thread] = []
+        self.commit = "a"
+
+    def _status(self) -> _Status:
+        self.status_threads.append(threading.current_thread())
+        return _Status(self.root, built_commit=self.commit)
+
+    async def test_reads_off_the_loop_and_keeps_the_shared_dict(self) -> None:
+        provider = WebviewAssets()
+        shared = provider.assets
+
+        await provider.refresh(self._status)
+
+        self.assertTrue(provider.ready)
+        self.assertIs(provider.assets, shared)
+        self.assertEqual(shared["characterProfiles"], [{"id": "char-0", "body": "flat", "v": 1}])
+        self.assertIsNot(self.status_threads[0], threading.main_thread())
+
+    async def test_reloads_only_when_the_built_commit_changes(self) -> None:
+        provider = WebviewAssets()
+        await provider.refresh(self._status)
+        reads: list[int] = []
+        original = provider._read_assets
+
+        def counting() -> tuple[dict[str, object], tuple[str, ...]]:
+            reads.append(1)
+            return original()
+
+        provider._read_assets = counting  # type: ignore[method-assign]
+        await provider.refresh(self._status)
+        self.assertEqual(reads, [])
+        self.commit = "b"
+        await provider.refresh(self._status)
+        self.assertEqual(reads, [1])
+        self.assertEqual(provider.built_commit, "b")
 
 
 class TestDegradedAssetNotification(unittest.TestCase):

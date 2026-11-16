@@ -165,7 +165,7 @@ class GenericAgentExecutor(AgentExecutor):
     tool loop, using the corridor-shared LLM connection. `agent_name` (e.g.
     `"Architect"`) drives every user-facing/log string that used to be
     hand-copied per cog; `logger` stays each cog's own
-    `logging.getLogger("red.<cog>")` rather than this module inventing a
+    `logging.getLogger("red.pixel-agents-cogs.<cog>")` rather than this module inventing a
     name. `context.get_user_input()` (the inbound message's text parts,
     joined) becomes the tool loop's one user turn -- there is no persisted
     multi-turn conversation."""

@@ -26,7 +26,7 @@ from ..tools.consult_agent_tool import ConsultAgentTool
 from ..tools.cross_cog import CrossCogTool
 from ..tools.reply_tool import ReplyTool
 
-log = logging.getLogger("red.pico")
+log = logging.getLogger("red.pixel-agents-cogs.pico")
 
 HISTORY_LIMIT = 10
 
@@ -50,6 +50,10 @@ class ListenerMixin:
             return
         guild = message.guild
         if guild is None:
+            return
+        # Cheapest exits first; then Red's per-guild `[p]command disablecog`,
+        # before any Config read or LLM call.
+        if await self.bot.cog_disabled_in_guild(self, guild):
             return
         if not await self._repository.guild_enabled(guild.id):
             return

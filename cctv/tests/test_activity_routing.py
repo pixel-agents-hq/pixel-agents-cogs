@@ -37,21 +37,30 @@ class _Office:
 
 
 class _Pipeline:
-    def __init__(self, page: str) -> None:
+    def __init__(self, page: str, guild_id: int | None = None) -> None:
         self.page = page
+        self.ref = SimpleNamespace(guild_id=guild_id)
         self.office = _Office()
 
 
 class _Harness(CctvBase):
     def __init__(self) -> None:
         # Only an enabled guild has an open office.
-        self.mine = _Pipeline(f"office/{ENABLED_GUILD}")
-        self.theirs = _Pipeline("office/30")
+        self.mine = _Pipeline(f"office/{ENABLED_GUILD}", ENABLED_GUILD)
+        self.theirs = _Pipeline("office/30", 30)
         self._offices = GuildOffices()
         self._offices.add(ENABLED_GUILD, self.mine)  # type: ignore[arg-type]
         self._offices.add(30, self.theirs)  # type: ignore[arg-type]
         self._editor = _Pipeline("editor")  # type: ignore[assignment]
-        self.bot = SimpleNamespace(user=SimpleNamespace(id=99))  # type: ignore[assignment]
+        # Guild ids `[p]command disablecog CCTV` turned off.
+        self.cog_disabled_guilds: set[int] = set()
+
+        async def cog_disabled_in_guild(cog: object, guild: Any) -> bool:
+            return cog is self and guild.id in self.cog_disabled_guilds
+
+        self.bot = SimpleNamespace(  # type: ignore[assignment]
+            user=SimpleNamespace(id=99), cog_disabled_in_guild=cog_disabled_in_guild
+        )
 
     def calls(self) -> tuple[list[str], list[str]]:
         assert self.theirs.office.calls == []
@@ -81,3 +90,14 @@ class TestGenuineActivityRouting(unittest.IsolatedAsyncioTestCase):
             AgentToolStarted(AGENT, "t1", "painting", context_guild_id=DISABLED_GUILD)
         )
         self.assertEqual(cctv.calls(), ([], ["tool"]))
+
+    async def test_activity_for_a_guild_cctv_is_disabled_in_reaches_only_the_editor(
+        self,
+    ) -> None:
+        cctv = _Harness()
+        cctv.cog_disabled_guilds.add(ENABLED_GUILD)
+        await cctv._on_agent_tool_started(
+            AgentToolStarted(AGENT, "t1", "painting", context_guild_id=ENABLED_GUILD)
+        )
+        await cctv._on_agent_highlighted(AgentHighlighted(AGENT, context_guild_id=ENABLED_GUILD))
+        self.assertEqual(cctv.calls(), ([], ["tool", "highlight"]))

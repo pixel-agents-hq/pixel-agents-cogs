@@ -11,7 +11,7 @@ from pathlib import Path
 
 from ..domain import InstallResult
 
-log = logging.getLogger("red.office-cogs.switchboard.pip")
+log = logging.getLogger("red.pixel-agents-cogs.switchboard.pip")
 
 # Keep a chat-sized tail of pip's output for the reply; the full output goes
 # to the log.

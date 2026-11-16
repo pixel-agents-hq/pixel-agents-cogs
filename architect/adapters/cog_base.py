@@ -32,7 +32,7 @@ from ..tools.base import ToolSpec
 from ..tools.office_tools import build_office_tools
 from ..tools.placeholder_tools import BreakDownTaskTool, ReviewDesignTool
 
-log = logging.getLogger("red.architect")
+log = logging.getLogger("red.pixel-agents-cogs.architect")
 
 ARCHITECT_AGENT_KEY = "architect"
 ARCHITECT_AGENT_REF = AgentRef(

@@ -61,7 +61,7 @@ class TestReplyAvatars(unittest.IsolatedAsyncioTestCase):
         sender = self.corridor.reply_sender(owner="Architect", agent=ARCHITECT)
         ctx = self._ctx()
 
-        with self.assertLogs("red.corridor", level="ERROR"):
+        with self.assertLogs("red.pixel-agents-cogs.corridor", level="ERROR"):
             await sender.send_reply(ctx, title="Hi")
 
         ctx.sent[0]["embed"].set_author.assert_called_once_with(name="Architect", icon_url=None)

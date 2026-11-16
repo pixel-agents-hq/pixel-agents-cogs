@@ -38,8 +38,9 @@ into corridor's event bus:
   normalizes raw Discord gateway callbacks (`on_member_update`,
   `on_presence_update`, `on_member_join`, `on_member_remove`) into
   `AgentPresenceChanged`, for every guild member — humans, other bots,
-  and the bot's own account alike. It publishes unconditionally: no
-  guild-enabled or include-bots filtering happens here, since corridor is
+  and the bot's own account alike. It publishes for every guild Corridor
+  is not disabled in (`bot.cog_disabled_in_guild`): no guild-enabled or
+  include-bots filtering happens here, since corridor is
   a leaf package with no knowledge of any subscriber's display policy.
   The bot's own account gets no special identity — it's a real Discord
   member with a real snowflake, `_presence_event` only forces its status

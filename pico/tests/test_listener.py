@@ -14,10 +14,11 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 from corridor.domain import RegisteredTool
 
-from ..adapters.listener import _agent_tools, _cross_cog_tools, _message_text
+from ..adapters.listener import ListenerMixin, _agent_tools, _cross_cog_tools, _message_text
 from ..infrastructure.architect_client import ArchitectClient
 from ..tools.consult_agent_tool import ConsultAgentTool
 from ..tools.cross_cog import CrossCogTool
@@ -295,3 +296,39 @@ class TestCrossCogTools(unittest.IsolatedAsyncioTestCase):
         tools = await _cross_cog_tools(corridor, _ctx(), guild_id=1, bot_user_id=999)
 
         self.assertEqual([tool.name for tool in tools], ["healthy"])
+
+
+class _Listener(ListenerMixin):
+    """Just enough of the Pico cog to reach on_message's early exits."""
+
+    def __init__(self, *, disabled: bool = False) -> None:
+        self.bot = SimpleNamespace(cog_disabled_in_guild=AsyncMock(return_value=disabled))
+        # Pico switched off in the guild: on_message stops right after.
+        self._repository = SimpleNamespace(guild_enabled=AsyncMock(return_value=False))
+
+
+def _guild_message(*, bot: bool = False, guild: bool = True) -> SimpleNamespace:
+    return SimpleNamespace(
+        author=SimpleNamespace(bot=bot), guild=SimpleNamespace(id=10) if guild else None
+    )
+
+
+class TestOnMessageEarlyExits(unittest.IsolatedAsyncioTestCase):
+    async def test_bot_authors_and_dms_stop_before_any_lookup(self) -> None:
+        for message in (_guild_message(bot=True), _guild_message(guild=False)):
+            listener = _Listener()
+            await listener.on_message(message)  # type: ignore[arg-type]
+            listener.bot.cog_disabled_in_guild.assert_not_awaited()
+            listener._repository.guild_enabled.assert_not_awaited()
+
+    async def test_disabled_in_guild_stops_before_config(self) -> None:
+        listener = _Listener(disabled=True)
+        message = _guild_message()
+        await listener.on_message(message)  # type: ignore[arg-type]
+        listener.bot.cog_disabled_in_guild.assert_awaited_once_with(listener, message.guild)
+        listener._repository.guild_enabled.assert_not_awaited()
+
+    async def test_enabled_cog_goes_on_to_the_guild_setting(self) -> None:
+        listener = _Listener()
+        await listener.on_message(_guild_message())  # type: ignore[arg-type]
+        listener._repository.guild_enabled.assert_awaited_once_with(10)

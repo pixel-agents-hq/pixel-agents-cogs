@@ -123,6 +123,8 @@ python -m unittest discover -s contracts/tests
 python -m contracts.discord_replies.lint_reply_channel
 python -m contracts.info_json.lint_info_json
 python -m unittest discover -s contracts/info_json/tests
+python -m contracts.runtime_hygiene.lint_runtime_hygiene
+python -m unittest discover -s contracts/runtime_hygiene/tests -t .
 ```
 
 `corridor`'s suite binds a real loopback A2A listener during its own

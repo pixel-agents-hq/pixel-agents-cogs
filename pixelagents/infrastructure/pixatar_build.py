@@ -102,7 +102,7 @@ def ensure_pixatar_built(
     """Build the pinned CLI if it is missing or stale; return whether it was
     rebuilt and the argv that runs it. Raises `PixatarBuildError`."""
 
-    log = logger or logging.getLogger(__name__)
+    log = logger or logging.getLogger(f"red.pixel-agents-cogs.{__name__}")
     commit = pinned_commit()
     node = shutil.which("node") or "node"
     command = (node, str(cli_path(cog_data_dir)))

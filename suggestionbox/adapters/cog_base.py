@@ -15,7 +15,7 @@ from ..application import FeedbackService
 from ..dependency_loader import ensure_corridor_loaded
 from ..infrastructure import McpListener, RedSuggestionboxRepository, build_mcp_server
 
-log = logging.getLogger("red.suggestionbox")
+log = logging.getLogger("red.pixel-agents-cogs.suggestionbox")
 
 # Conventional path for this cog's own bundled avatar image -- passed to
 # corridor.reply_sender() regardless of whether a real file exists here

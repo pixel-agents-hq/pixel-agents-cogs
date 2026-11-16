@@ -14,7 +14,7 @@ from ..application import AgentAllowedCheck, TelephonepoleService
 from ..dependency_loader import ensure_corridor_loaded
 from ..infrastructure import RedTelephonepoleRepository
 
-log = logging.getLogger("red.telephonepole")
+log = logging.getLogger("red.pixel-agents-cogs.telephonepole")
 
 # Conventional path for this cog's own bundled avatar image -- passed to
 # corridor.reply_sender() regardless of whether a real file exists here

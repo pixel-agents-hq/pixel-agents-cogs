@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import logging
 import mimetypes
 import re
-from collections.abc import Mapping, Sequence, Sized
+from collections.abc import Callable, Mapping, Sequence, Sized
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, cast
@@ -173,24 +174,39 @@ class WebviewAssets:
         self.error: str | None = "Pixel Agents bundle has not been synchronized."
         self.built_commit: str | None = None
         # Names of sprite families/catalogs that failed to decode on the
-        # most recent `_load_assets()` run -- populated even when `ready`
+        # most recent `_read_assets()` run -- populated even when `ready`
         # stays True, since only a missing `characters` family currently
         # flips that. Lets a caller (CctvBase) notify the bot owner about a
         # degraded-but-serving webview instead of leaving it to a log line
         # nobody watches. See `degraded_asset_notification()`.
         self.degraded: tuple[str, ...] = ()
-        self._log = logger or logging.getLogger(__name__)
+        self._log = logger or logging.getLogger(f"red.pixel-agents-cogs.{__name__}")
+        self._refresh_lock = asyncio.Lock()
 
     def sync(self, status: WebviewStatus) -> None:
-        root = status.dist_path.resolve()
-        ready = status.ready
-        commit = status.built_commit
-        self.root = root
-        self.ready = ready
-        self.error = None if ready else status.detail
-        if ready and (commit != self.built_commit or not self.assets):
-            self._load_assets()
-            self.built_commit = commit
+        if self._accept(status):
+            self._apply_assets(*self._read_assets())
+            self.built_commit = status.built_commit
+
+    async def refresh(self, status_source: Callable[[], WebviewStatus]) -> None:
+        """`sync()` without blocking the event loop: reading the bundle
+        status and decoding the sprite JSON run on a worker thread, while
+        `assets` -- the dict every pipeline shares -- is only mutated back
+        on the loop. Serialized, so concurrent page loads decode once."""
+
+        async with self._refresh_lock:
+            status = await asyncio.to_thread(status_source)
+            if self._accept(status):
+                self._apply_assets(*await asyncio.to_thread(self._read_assets))
+                self.built_commit = status.built_commit
+
+    def _accept(self, status: WebviewStatus) -> bool:
+        """Record `status`; whether the decoded assets need (re)loading."""
+
+        self.root = status.dist_path.resolve()
+        self.ready = status.ready
+        self.error = None if status.ready else status.detail
+        return status.ready and (status.built_commit != self.built_commit or not self.assets)
 
     def resolve(self, asset_path: str) -> Path | None:
         if (
@@ -271,7 +287,9 @@ class WebviewAssets:
             },
         }
 
-    def _load_assets(self) -> None:
+    def _read_assets(self) -> tuple[dict[str, object], tuple[str, ...]]:
+        """Read and decode the bundle's JSON assets; touches no state."""
+
         loaded: dict[str, object] = {}
         degraded: list[str] = []
         for name, filename in DECODED_ASSETS.items():
@@ -301,9 +319,12 @@ class WebviewAssets:
                 degraded.append("furniture-catalog")
         else:
             degraded.append("furniture-catalog")
+        return loaded, tuple(degraded)
+
+    def _apply_assets(self, loaded: dict[str, object], degraded: tuple[str, ...]) -> None:
         self.assets.clear()
         self.assets.update(loaded)
-        self.degraded = tuple(degraded)
+        self.degraded = degraded
         if not self.assets.get("characterProfiles"):
             self.error = "The Pixel Agents character profiles are missing."
             self.ready = False

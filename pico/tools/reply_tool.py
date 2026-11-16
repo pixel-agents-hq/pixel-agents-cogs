@@ -22,7 +22,7 @@ from corridor.domain import AgentRef, ReplyField
 
 from .activity import publish_agent_replied
 
-log = logging.getLogger("red.pico")
+log = logging.getLogger("red.pixel-agents-cogs.pico")
 
 
 class ReplyFieldInput(BaseModel):

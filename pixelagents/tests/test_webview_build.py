@@ -26,6 +26,7 @@ _LOG = logging.getLogger("test.webview_build")
 
 
 def _write_up_to_date_markers(dist: Path, commit: str) -> None:
+    (dist / webview_build.LICENSE_FILENAME).write_text("MIT License\n")
     (dist / ".built_commit").write_text(commit + "\n")
     (dist / ".built_base_path").write_text(webview_build.RELATIVE_BASE_PATH + "\n")
     (dist / ".built_manifest_version").write_text(f"{webview_build.MANIFEST_SCHEMA_VERSION}\n")
@@ -117,6 +118,18 @@ class TestIsUpToDate(unittest.TestCase):
             (dist / "assets").mkdir()
             (dist / "assets" / "furniture-styles.json").write_text("{}")
             self.assertTrue(
+                webview_build.is_up_to_date(dist, "abc", webview_build.RELATIVE_BASE_PATH)
+            )
+
+    def test_false_when_the_upstream_license_is_missing(self) -> None:
+        with TemporaryDirectory() as tmp:
+            dist = Path(tmp)
+            (dist / "index.html").write_text("x")
+            _write_up_to_date_markers(dist, "abc")
+            (dist / "assets").mkdir()
+            (dist / "assets" / "furniture-styles.json").write_text("{}")
+            (dist / webview_build.LICENSE_FILENAME).unlink()
+            self.assertFalse(
                 webview_build.is_up_to_date(dist, "abc", webview_build.RELATIVE_BASE_PATH)
             )
 
@@ -305,6 +318,10 @@ class TestEnsureWebviewBuilt(unittest.TestCase):
             self.assertTrue((dist / "manifest.webmanifest").is_file())
             self.assertTrue((dist / "icons" / "icon-256.png").is_file())
             self.assertFalse((dist / "assets" / "floors").exists())
+            self.assertEqual(
+                (dist / webview_build.LICENSE_FILENAME).read_text(encoding="utf-8"),
+                "MIT License\n",
+            )
             self.assertEqual(
                 (dist / ".built_commit").read_text(encoding="utf-8").strip(), result.commit
             )

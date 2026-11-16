@@ -147,7 +147,12 @@ local quality gate and where the design docs live, and each cog's own
 ## Credits
 
 - [Pixel Agents](https://github.com/pixel-agents-hq/pixel-agents) by Pablo
-  De Lucca (MIT): the office webview `pixelagents` builds and `cctv` serves.
+  De Lucca (MIT): the office webview `pixelagents` builds and `cctv` serves,
+  including its bundled FS Pixel Sans font. It is not committed here: it is
+  cloned at the pinned commit on the bot host, and every build carries
+  upstream's license as `LICENSE.txt`, served beside the office page.
+- [Metro City](https://jik-a-4.itch.io/metrocity-free-topdown-character-pack)
+  by JIK-A-4: the character art Pixel Agents' wardrobe is based on.
 - [Pixel Index](https://github.com/pixel-agents-hq/index) (MIT): the layout
   catalogue `floorplan` browses and the pixatar character CLI.
 - [pixel-art-mcp](https://github.com/NNTin/pixel-art-mcp): the renderer

@@ -196,7 +196,8 @@ each package's own `Architecture.md` (where present) covers its specifics.
   Red's schema — an uppercase key silently no-ops rather than erroring.
   Every cog's `info.json` also needs an `install_msg` disclosing its
   outside services, data stored outside Config, heavy IO and extra setup
-  (Red's Approved Cog Creator guide), and every cog must be named in the
+  (Red's Approved Cog Creator guide), naming every `required_cogs` entry
+  (Downloader never installs them), and every cog must be named in the
   root `README.md`; `contracts/info_json/lint_info_json.py` enforces both
   in CI (`.github/workflows/info-json.yml`).
 - **`corridor/ui_limits.py` has no discord/redbot import and must stay

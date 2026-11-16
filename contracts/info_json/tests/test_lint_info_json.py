@@ -127,6 +127,28 @@ class TestCogInfo(unittest.TestCase):
         self.assertEqual(len(problems), 1)
         self.assertIn("'install_msg' is", problems[0])
 
+    def test_misspelt_type_fails(self) -> None:
+        self.assertEqual(
+            check_cog_info("newcog", _cog(type="cog")),
+            ["newcog/info.json: 'type' must be 'COG' or 'SHARED_LIBRARY', not 'cog'"],
+        )
+
+    def test_required_cog_must_be_named_in_install_msg(self) -> None:
+        data = _cog(required_cogs={"corridor": "url", "pixelagents": "url"})
+
+        self.assertEqual(
+            check_cog_info("newcog", data),
+            ["newcog/info.json: 'install_msg' does not name required cog 'pixelagents'"],
+        )
+
+    def test_required_cog_needs_a_whole_word_match(self) -> None:
+        data = _cog(install_msg="Install corridors.", required_cogs={"corridor": "url"})
+
+        self.assertEqual(
+            check_cog_info("newcog", data),
+            ["newcog/info.json: 'install_msg' does not name required cog 'corridor'"],
+        )
+
 
 class TestReadme(unittest.TestCase):
     def test_missing_readme_fails(self) -> None:
@@ -164,6 +186,19 @@ class TestLintTree(unittest.TestCase):
 
             self.assertEqual(
                 lint(root), ["newcog/info.json: 'install_msg' must be a non-empty string"]
+            )
+
+    def test_a_misspelt_type_is_reported_not_skipped(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "info.json").write_text(json.dumps(_repo()))
+            (root / "README.md").write_text(_readme("newcog"))
+            (root / "newcog").mkdir()
+            (root / "newcog" / "info.json").write_text(json.dumps(_cog(type="cog")))
+
+            self.assertEqual(
+                lint(root),
+                ["newcog/info.json: 'type' must be 'COG' or 'SHARED_LIBRARY', not 'cog'"],
             )
 
 

@@ -9,12 +9,15 @@ Checks, all static (stdlib `json` only -- no cog, redbot or discord import):
   `install_msg` (the guide's disclosure for the repo as a whole).
 - **Every cog `info.json`** (any top-level package with an `info.json`
   whose `type` is not `SHARED_LIBRARY` -- derived from the tree, not a
-  hardcoded list): `name` matching its folder, non-empty `author`,
-  `short`, `description`, `install_msg` and `end_user_data_statement`,
-  plus `requirements`, `min_bot_version`, `min_python_version`, `hidden`
-  and `type`. Every cog here talks to an outside service, stores data
-  outside Config, or needs another cog installed first, so every one
-  carries an `install_msg`.
+  hardcoded list): `type` exactly `COG` (Red skips any other value, such
+  as a lowercase `cog`, as an unknown installable), `name` matching its
+  folder, non-empty `author`, `short`, `description`, `install_msg` and
+  `end_user_data_statement`, plus `requirements`, `min_bot_version`,
+  `min_python_version`, `hidden` and `type`. Every cog here talks to an
+  outside service, stores data outside Config, or needs another cog
+  installed first, so every one carries an `install_msg`.
+- **`required_cogs` disclosed**: Downloader never installs `required_cogs`,
+  so each one must be named in the cog's `install_msg`.
 - **Known keys only**: Red matches `info.json` keys case-sensitively and
   silently ignores unknown ones, so a typo such as `Install_msg` would drop
   a disclosure without any error. Allowed keys are Red's `REPO_SCHEMA` /
@@ -35,6 +38,7 @@ Run: python -m contracts.info_json.lint_info_json
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -87,12 +91,14 @@ def _load(path: Path) -> dict[str, Any]:
 
 
 def discover_cogs(root: Path = REPO_ROOT) -> dict[str, dict[str, Any]]:
-    """Every top-level package with an `info.json` that Red treats as a cog."""
+    """Every top-level package with an `info.json` that is not a shared
+    library -- including one whose `type` is misspelt, which
+    `check_cog_info` then reports instead of silently skipping."""
 
     cogs: dict[str, dict[str, Any]] = {}
     for info in sorted(root.glob("*/info.json")):
         data = _load(info)
-        if data.get("type", "COG") == "COG":
+        if data.get("type", "COG") != "SHARED_LIBRARY":
             cogs[info.parent.name] = data
     return cogs
 
@@ -143,6 +149,15 @@ def check_cog_info(name: str, data: dict[str, Any]) -> list[str]:
         if not _is_text(data.get(key))
     ]
     problems += [f"{label}: missing {key!r}" for key in COG_REQUIRED_PRESENT if key not in data]
+    if "type" in data and data["type"] != "COG":
+        problems.append(f"{label}: 'type' must be 'COG' or 'SHARED_LIBRARY', not {data['type']!r}")
+    install_msg = data.get("install_msg")
+    if isinstance(install_msg, str):
+        problems += [
+            f"{label}: 'install_msg' does not name required cog {dep!r}"
+            for dep in data.get("required_cogs") or {}
+            if not re.search(rf"\b{re.escape(dep)}\b", install_msg)
+        ]
     return problems
 
 

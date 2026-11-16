@@ -101,6 +101,15 @@ For a loaded cog, the copy reported is the one its module was loaded from,
 which can differ from the copy Red would pick now. Every other copy of the
 name is listed as shadowed.
 
+## Private Red APIs
+
+`bot._cog_mgr`, `CoreLogic._load` / `_unload`, `bot._last_exception` and
+Downloader's Config identifier are private Red internals with no public
+equivalent. `tests/test_red_private_api.py` checks each of them against the
+installed Red, and `info.json` pins `min_bot_version` / `max_bot_version`
+to the range CI runs that suite on. See
+[`docs/dependency-loading.md`](../docs/dependency-loading.md#private-red-apis).
+
 ## Ownership
 
 - The only files switchboard writes are pip's output in Downloader's lib

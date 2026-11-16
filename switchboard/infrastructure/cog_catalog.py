@@ -15,7 +15,10 @@ log = logging.getLogger("red.office-cogs.switchboard.catalog")
 
 
 class CogManager(Protocol):
-    """The subset of `redbot.core._cog_manager.CogManager` used here."""
+    """The subset of `redbot.core._cog_manager.CogManager` used here.
+
+    Private Red API (`bot._cog_mgr`); see adapters/cog_base.py.
+    """
 
     CORE_PATH: Path
 

@@ -6,11 +6,34 @@ on:
 
 
 jobs:
-  test-cogs:
+  red-versions:
+    name: Tested Red versions
     runs-on: ubuntu-latest
+    outputs:
+      versions: ${{ steps.range.outputs.versions }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # Every info.json pins one min/max_bot_version range (the cogs use
+      # Red's private cog manager); test against both ends of it.
+      - name: Read min/max_bot_version
+        id: range
+        run: echo "versions=$(python -m contracts.info_json.lint_info_json --red-versions)" >> "$GITHUB_OUTPUT"
+
+  test-cogs:
+    name: test-cogs (${{ matrix.unload_scope }}, Red ${{ matrix.red }})
+    runs-on: ubuntu-latest
+    needs: [red-versions]
     strategy:
       fail-fast: false
       matrix:
+        red: ${{ fromJSON(needs.red-versions.outputs.versions) }}
         # cog: a cog's dependencies may already be loaded (e.g. an earlier
         # cog's turn pulled them in as a real side effect -- the common
         # warm-start case). cog-and-dependencies: forces a genuine
@@ -29,7 +52,7 @@ jobs:
           python-version: "3.11"
 
       - name: Install Red-DiscordBot
-        run: pip install red-discordbot
+        run: pip install "red-discordbot==${{ matrix.red }}"
 
       # Loading pixelagents (directly, or as architect's/cctv's dependency)
       # clones and `npm ci`s the vendored webview and the pixatar CLI inside

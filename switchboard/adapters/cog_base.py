@@ -40,8 +40,12 @@ class CogBase:
         self.bot = bot
         self._settings = RedSwitchboardSettings.create(self)
         self.config = self._settings.config
+        # `_cog_mgr`, like the CoreLogic internals RedExtensions uses and the
+        # Downloader Config fallback in read_downloader_index, is private Red
+        # API with no public equivalent: info.json pins min/max_bot_version to
+        # the range tests/test_red_private_api.py checks.
         self._service = SwitchboardService(
-            catalog=CogCatalog(bot._cog_mgr, downloader_index=read_downloader_index),
+            catalog=CogCatalog(bot._cog_mgr, downloader_index=lambda: read_downloader_index(bot)),
             installer=PipInstaller(downloader_lib_path),
             lookup_factory=lambda: build_lookup(sys.path),
             extensions=RedExtensions(bot),

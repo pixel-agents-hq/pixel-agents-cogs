@@ -21,6 +21,7 @@
         "build"
     ],
     "min_bot_version": "3.5.24",
+    "max_bot_version": "3.5.24",
     "min_python_version": [
         3,
         11,

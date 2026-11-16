@@ -4,6 +4,10 @@ Loading goes through Red's `CoreLogic._load` / `_unload` (the same code
 behind `[p]load` / `[p]unload` and the `CORE__LOAD` RPC method), so a cog
 loaded by switchboard gets Red's module refresh and lands in Red's autoload
 list exactly as if an owner had typed `[p]load`.
+
+`_load`, `_unload` and `bot._last_exception` are private: Red exposes no
+public way to load a cog by name and get a per-package result. They are
+pinned by tests/test_red_private_api.py and info.json's min/max_bot_version.
 """
 
 from __future__ import annotations

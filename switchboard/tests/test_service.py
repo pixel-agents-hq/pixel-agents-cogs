@@ -284,6 +284,46 @@ class TestRepair(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(extensions.load_calls, [])
 
 
+class TestCoreCogs(unittest.IsolatedAsyncioTestCase):
+    """Switchboard never touches one of Red's bundled cogs unless an owner
+    names it, so it cannot make a core cog fail to load or unload one."""
+
+    ADMIN = package("admin", source=CogSource.CORE, root=Path("/redbot/cogs"))
+    AUDIO = package("audio", source=CogSource.CORE, root=Path("/redbot/cogs"))
+
+    async def test_all_never_loads_a_core_cog(self) -> None:
+        service, installer, extensions, settings = build(
+            CORRIDOR, DESKUTILS, SWITCHBOARD, self.ADMIN, self.AUDIO
+        )
+
+        await service.load(["all"])
+
+        self.assertEqual(extensions.load_calls, ["corridor", "deskutils"])
+        self.assertEqual(installer.calls, [("a2a-sdk", "uvicorn")])
+        self.assertEqual(await settings.managed(), ["corridor", "deskutils"])
+
+    async def test_unload_cascade_leaves_loaded_core_cogs_alone(self) -> None:
+        extensions = FakeExtensions(loaded=["switchboard", "admin", "corridor", "deskutils"])
+        service, _, extensions, _ = build(
+            CORRIDOR, DESKUTILS, SWITCHBOARD, self.ADMIN, extensions=extensions
+        )
+
+        await service.unload(["corridor"])
+
+        self.assertEqual(extensions.unload_calls, ["deskutils", "corridor"])
+        self.assertIn("admin", extensions.loaded())
+
+    async def test_repair_loads_only_managed_cogs(self) -> None:
+        settings = FakeSettings(managed=["corridor"])
+        service, _, extensions, _ = build(
+            CORRIDOR, SWITCHBOARD, self.ADMIN, self.AUDIO, settings=settings
+        )
+
+        await service.repair()
+
+        self.assertEqual(extensions.load_calls, ["corridor"])
+
+
 class TestStatus(unittest.IsolatedAsyncioTestCase):
     async def test_default_lists_non_core_cogs_and_managed_names(self) -> None:
         core = package("admin", source=CogSource.CORE, root=Path("/redbot/cogs"))

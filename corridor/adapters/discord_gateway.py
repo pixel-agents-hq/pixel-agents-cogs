@@ -144,6 +144,10 @@ class DiscordGatewayMixin(CogBase):
             return
         if await self._disabled_in(guild):
             return
+        if not self.channel_is_public(message.channel):
+            # Office pages can be public; a channel @everyone can't read
+            # keeps its messages off them.
+            return
         try:
             await self.publish_event(
                 AgentReplied(

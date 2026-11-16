@@ -111,15 +111,22 @@ class ListenerMixin:
                 self._corridor, ctx, guild_id=guild.id, bot_user_id=_bot_user_id(self.bot)
             )
         )
-        result = await self._tool_loop_service.run(
-            base_url=llm_settings.llm_base_url,
-            api_key=llm_settings.llm_api_key or "",
-            model=llm_settings.llm_model or "",
-            system_prompt=settings.system_prompt,
-            context=context,
-            tools=tools,
-            max_tool_calls=settings.max_tool_calls,
-        )
+        from corridor.domain import activity_guild
+
+        # A channel @everyone can't read makes this a private turn: none of
+        # its activity text (pico's or a consulted agent's) reaches an
+        # office page. See corridor/domain/activity_context.py.
+        private = not self._corridor.channel_is_public(message.channel)
+        with activity_guild(guild.id, private=private):
+            result = await self._tool_loop_service.run(
+                base_url=llm_settings.llm_base_url,
+                api_key=llm_settings.llm_api_key or "",
+                model=llm_settings.llm_model or "",
+                system_prompt=settings.system_prompt,
+                context=context,
+                tools=tools,
+                max_tool_calls=settings.max_tool_calls,
+            )
         log.debug(
             "pico: tool loop finished (%s, %d call(s))",
             result.stopped_reason,

@@ -57,6 +57,7 @@ class FakeCorridor:
         self._llm_settings = FakeLLMSettings(ready=llm_ready)
         self.agent_tools: dict[str, tuple[Any, ...]] = {}
         self.published_events: list[object] = []
+        self.public_channel = True
         self.permission_groups: tuple[Any, ...] = ()
 
     def register_dependent(self, extension_name: str) -> None:
@@ -96,6 +97,9 @@ class FakeCorridor:
 
     async def publish_event(self, event: object) -> None:
         self.published_events.append(event)
+
+    def channel_is_public(self, channel: object) -> bool:
+        return self.public_channel
 
     async def send_reply(
         self,

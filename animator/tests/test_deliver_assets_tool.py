@@ -14,13 +14,20 @@ import httpx
 
 from corridor.domain import RegisteredTool
 
-from ..tools.deliver_assets_tool import DeliverPixelAgentsAssetsInput, DeliverPixelAgentsAssetsTool
+from ..tools.deliver_assets_tool import (
+    MAX_ARTIFACT_BYTES,
+    DeliverPixelAgentsAssetsInput,
+    DeliverPixelAgentsAssetsTool,
+)
 
 _JOB_ID = uuid4()
 
 
 def _get_job_tool(
-    job_response: Mapping[str, object], *, calls: list[Mapping[str, object]] | None = None
+    job_response: Mapping[str, object],
+    *,
+    calls: list[Mapping[str, object]] | None = None,
+    server_url: str | None = "http://x/mcp",
 ) -> RegisteredTool:
     async def handler(_ctx: object, arguments: Mapping[str, object]) -> Mapping[str, object]:
         if calls is not None:
@@ -28,7 +35,11 @@ def _get_job_tool(
         return job_response
 
     return RegisteredTool(
-        name="get_job", description="Poll a job.", parameters={"type": "object"}, handler=handler
+        name="get_job",
+        description="Poll a job.",
+        parameters={"type": "object"},
+        handler=handler,
+        server_url=server_url,
     )
 
 
@@ -59,6 +70,61 @@ def _tool(
 
 
 class TestDeliverPixelAgentsAssetsTool(unittest.IsolatedAsyncioTestCase):
+    async def test_only_downloads_from_the_mcp_servers_own_origin(self) -> None:
+        job = _succeeded_job(
+            artifacts=[
+                _artifact("pixel-agents.zip", "application/zip", "http://169.254.169.254/x"),
+                _artifact("preview.gif", "image/gif", "http://x:8080/artifacts/2"),
+            ]
+        )
+        requested: list[str] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            requested.append(str(request.url))
+            return httpx.Response(200, content=b"SECRET")
+
+        http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        tool = _tool(registered_tools=(_get_job_tool(job),), http_client=http_client)
+
+        output = await tool.handler(DeliverPixelAgentsAssetsInput(job_id=_JOB_ID))
+
+        self.assertEqual(output.status, "error")
+        self.assertEqual(requested, [])
+
+    async def test_downloads_nothing_when_get_job_has_no_mcp_origin(self) -> None:
+        job = _succeeded_job(
+            artifacts=[_artifact("pixel-agents.zip", "application/zip", "http://x/artifacts/1")]
+        )
+        http_client = _http_client({"http://x/artifacts/1": httpx.Response(200, content=b"Z")})
+        tool = _tool(
+            registered_tools=(_get_job_tool(job, server_url=None),), http_client=http_client
+        )
+
+        output = await tool.handler(DeliverPixelAgentsAssetsInput(job_id=_JOB_ID))
+
+        self.assertEqual(output.status, "error")
+
+    async def test_skips_an_artifact_larger_than_the_cap(self) -> None:
+        job = _succeeded_job(
+            artifacts=[
+                _artifact("pixel-agents.zip", "application/zip", "http://x/artifacts/1"),
+                _artifact("preview.gif", "image/gif", "http://x/artifacts/2"),
+            ]
+        )
+        http_client = _http_client(
+            {
+                "http://x/artifacts/1": httpx.Response(
+                    200, content=b"z" * (MAX_ARTIFACT_BYTES + 1)
+                ),
+                "http://x/artifacts/2": httpx.Response(200, content=b"GIF"),
+            }
+        )
+        tool = _tool(registered_tools=(_get_job_tool(job),), http_client=http_client)
+
+        output = await tool.handler(DeliverPixelAgentsAssetsInput(job_id=_JOB_ID))
+
+        self.assertEqual([a.filename for a in output.attachments], ["preview.gif"])
+
     async def test_downloads_both_expected_artifacts(self) -> None:
         job = _succeeded_job(
             artifacts=[

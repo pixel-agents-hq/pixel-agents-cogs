@@ -98,6 +98,7 @@ class TestAgentToolServerRegistry(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(tool.name, "drawing")
         self.assertIn("commands", tool.parameters["properties"])
         self.assertEqual(tool.server_instructions, "Use numeric commands")
+        self.assertEqual(tool.server_url, "http://s/mcp")
         pool._tools_by_url.clear()
         clock.advance(FRESH_TTL_SECONDS + 1)
         # A failed refresh past the TTL keeps serving the last-known

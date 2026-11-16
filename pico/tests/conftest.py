@@ -102,6 +102,9 @@ class FakeCorridor:
         self.list_tools_for_calls.append(ctx)
         return self.tools_for_member
 
+    def channel_is_public(self, channel: object) -> bool:
+        return True
+
     async def avatar_for(self, agent: Any) -> Any:
         """Stands in for corridor.avatar_for (an agent's office character)."""
 

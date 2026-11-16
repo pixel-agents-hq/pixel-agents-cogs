@@ -7,13 +7,30 @@ broadcast-toggle gating, unlike floorplan's old version of this module.
 from __future__ import annotations
 
 import unittest
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import discord  # stubbed by ../conftest.py
 
 from ..corridor import Corridor
-from ..domain import AgentPresenceChanged, AgentReplied
+from ..domain import AgentPresenceChanged, AgentReplied, AgentToolStarted, AgentRef, activity_guild
 from .conftest import FakeBot
+
+
+def _channel(*, everyone_can_view: bool = True, private_thread: bool | None = None) -> object:
+    """A channel `@everyone` can (or can't) view; `private_thread` set
+    makes it a thread that is (or isn't) private."""
+
+    everyone = object()
+    channel = SimpleNamespace(
+        guild=SimpleNamespace(default_role=everyone),
+        permissions_for=lambda role: SimpleNamespace(
+            view_channel=everyone_can_view and role is everyone
+        ),
+    )
+    if private_thread is not None:
+        channel.is_private = lambda: private_thread
+    return channel
 
 
 def _activity(activity_type: object, name: str = "Some Game") -> MagicMock:
@@ -166,6 +183,7 @@ class TestOnMessage(unittest.IsolatedAsyncioTestCase):
         msg.content = "Hello world"
         msg.clean_content = "Hello world"
         msg.id = 999
+        msg.channel = _channel()
         await self.cog.on_message(msg)
         self.assertEqual(len(self.published), 1)
         event = self.published[0]
@@ -204,7 +222,56 @@ class TestOnMessage(unittest.IsolatedAsyncioTestCase):
         msg.author.bot = True
         msg.content = "hello world"
         msg.clean_content = "hello world"
+        msg.channel = _channel()
         await self.cog.on_message(msg)
+        self.assertEqual(len(self.published), 1)
+
+    async def test_messages_in_channels_everyone_cannot_read_are_not_published(self) -> None:
+        for channel in (
+            _channel(everyone_can_view=False),
+            _channel(private_thread=True),
+            SimpleNamespace(guild=None),
+        ):
+            msg = MagicMock()
+            msg.guild.id = 100
+            msg.author.id = 2
+            msg.clean_content = "staff only"
+            msg.channel = channel
+            await self.cog.on_message(msg)
+        self.assertEqual(self.published, [])
+
+    async def test_a_public_thread_still_publishes(self) -> None:
+        msg = MagicMock()
+        msg.guild.id = 100
+        msg.author.id = 2
+        msg.clean_content = "hi"
+        msg.channel = _channel(private_thread=False)
+        await self.cog.on_message(msg)
+        self.assertEqual(len(self.published), 1)
+
+
+class TestPrivateTurnActivity(unittest.IsolatedAsyncioTestCase):
+    """A turn asked for from a private channel publishes no activity text."""
+
+    async def asyncSetUp(self) -> None:
+        self.cog = _make_cog()
+        self.published: list[object] = []
+        for event_type in (AgentReplied, AgentToolStarted):
+            self.cog.subscribe_event(event_type, _recorder(self.published), owner="test")
+        self.agent = AgentRef(discord_user_id=None, guild_id=None, is_bot=True, agent_key="a")
+
+    async def test_activity_inside_a_private_turn_is_dropped(self) -> None:
+        with activity_guild(100, private=True):
+            await self.cog.publish_event(AgentReplied(agent=self.agent, summary="secret"))
+            await self.cog.publish_event(AgentToolStarted(agent=self.agent, tool_id="1", status="working"))
+            # A nested turn can't make it public again.
+            with activity_guild(100):
+                await self.cog.publish_event(AgentReplied(agent=self.agent, summary="nested"))
+        self.assertEqual(self.published, [])
+
+    async def test_activity_outside_a_private_turn_is_published(self) -> None:
+        with activity_guild(100):
+            await self.cog.publish_event(AgentReplied(agent=self.agent, summary="hi"))
         self.assertEqual(len(self.published), 1)
 
 

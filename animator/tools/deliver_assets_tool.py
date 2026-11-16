@@ -22,6 +22,13 @@ tool call, and `pixel-art-mcp`'s `download_url` is reachable unauthenticated
 from any container on `redstack-network` (see
 `projects/nntin-labs/services/pixel-art-mcp-deploy/README.md`'s "Auth
 model" section).
+
+A `download_url` is fetched only when it shares the scheme, host and port
+of the MCP server `get_job` was bridged from (`RegisteredTool.server_url`),
+redirects are not followed, and each download stops at
+`MAX_ARTIFACT_BYTES`: the bytes are posted to Discord, so a server that
+named any other URL would turn the bot into a proxy for whatever it can
+reach.
 """
 
 from __future__ import annotations
@@ -29,6 +36,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import Any, Literal
+from urllib.parse import urlsplit
 from uuid import UUID
 
 import httpx
@@ -43,6 +51,29 @@ log = logging.getLogger("red.pixel-agents-cogs.animator")
 _ZIP_FILENAME = "pixel-agents.zip"
 # Prefer an animated preview when available, otherwise the render_asset contact sheet.
 _PREVIEW_FILENAMES = ("preview.gif", "preview.png")
+# The most one artifact download may read; larger ones are skipped.
+MAX_ARTIFACT_BYTES = 25 * 1024 * 1024
+_DEFAULT_PORTS = {"http": 80, "https": 443}
+
+
+def _origin(url: object) -> tuple[str, str, int] | None:
+    """`url`'s (scheme, host, port), or None unless it is http(s)."""
+
+    if not isinstance(url, str):
+        return None
+    try:
+        parts = urlsplit(url)
+        port = parts.port
+    except ValueError:
+        return None
+    scheme = parts.scheme.lower()
+    if scheme not in _DEFAULT_PORTS or not parts.hostname:
+        return None
+    return scheme, parts.hostname.lower(), port or _DEFAULT_PORTS[scheme]
+
+
+class _ArtifactTooLarge(Exception):
+    pass
 
 
 class DeliverPixelAgentsAssetsInput(BaseModel):
@@ -130,7 +161,7 @@ class DeliverPixelAgentsAssetsTool:
         artifacts: Sequence[Mapping[str, Any]] = (
             raw_artifacts if isinstance(raw_artifacts, Sequence) else []
         )
-        attachments = await self._fetch_wanted_artifacts(artifacts)
+        attachments = await self._fetch_wanted_artifacts(artifacts, _origin(get_job.server_url))
         if not attachments:
             found = ", ".join(sorted({str(a.get("filename", "?")) for a in artifacts})) or "none"
             return DeliverPixelAgentsAssetsOutput(
@@ -154,7 +185,7 @@ class DeliverPixelAgentsAssetsTool:
         return None
 
     async def _fetch_wanted_artifacts(
-        self, artifacts: Sequence[Mapping[str, Any]]
+        self, artifacts: Sequence[Mapping[str, Any]], origin: tuple[str, str, int] | None
     ) -> list[Attachment]:
         by_filename = {str(a.get("filename")): a for a in artifacts}
         preview_name = next((name for name in _PREVIEW_FILENAMES if name in by_filename), None)
@@ -168,20 +199,37 @@ class DeliverPixelAgentsAssetsTool:
             download_url = artifact.get("download_url")
             if not download_url:
                 continue
+            if origin is None or _origin(download_url) != origin:
+                log.warning(
+                    "animator: refusing artifact %s: %r is not on the MCP server's origin",
+                    filename,
+                    download_url,
+                )
+                continue
             try:
-                response = await self._http_client.get(download_url)
-                response.raise_for_status()
-            except httpx.HTTPError as exc:
+                data = await self._download(str(download_url))
+            except (httpx.HTTPError, _ArtifactTooLarge) as exc:
                 log.warning("animator: could not download artifact %s: %s", filename, exc)
                 continue
             media_type = artifact.get("media_type") or "application/octet-stream"
-            attachments.append(
-                Attachment(filename=filename, media_type=media_type, data=response.content)
-            )
+            attachments.append(Attachment(filename=filename, media_type=media_type, data=data))
         return attachments
+
+    async def _download(self, url: str) -> bytes:
+        chunks: list[bytes] = []
+        received = 0
+        async with self._http_client.stream("GET", url, follow_redirects=False) as response:
+            response.raise_for_status()
+            async for chunk in response.aiter_bytes():
+                received += len(chunk)
+                if received > MAX_ARTIFACT_BYTES:
+                    raise _ArtifactTooLarge(f"larger than {MAX_ARTIFACT_BYTES} bytes")
+                chunks.append(chunk)
+        return b"".join(chunks)
 
 
 __all__ = [
+    "MAX_ARTIFACT_BYTES",
     "DeliverPixelAgentsAssetsInput",
     "DeliverPixelAgentsAssetsOutput",
     "DeliverPixelAgentsAssetsTool",

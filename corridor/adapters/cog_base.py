@@ -34,6 +34,8 @@ from ..domain import (
     A2ASettings,
     AgentPresenceChanged,
     AgentRef,
+    AgentReplied,
+    AgentToolStarted,
     AuthorIconSource,
     FooterOverride,
     GuildSettings,
@@ -55,6 +57,7 @@ from ..domain import (
     ReplyMode,
     ReplyPreferences,
     ToolVisibilityFilter,
+    activity_private,
     card_with_url,
 )
 from ..infrastructure import (
@@ -68,6 +71,7 @@ from .api import (
     BotIconResolver,
     BotOwnerRegistry,
     DiscordMemberRef,
+    channel_is_public,
     send_rendered_reply,
     send_rendered_reply_to_channel,
 )
@@ -538,9 +542,22 @@ class CogBase:
         `DEFAULT_SUBSCRIBER_TIMEOUT`-bounded so a hung subscriber is
         cancelled and logged rather than blocking this call forever --
         same protection `OfficeStateService` already applies to
-        `OfficeStateChanged` on the same bus)."""
+        `OfficeStateChanged` on the same bus). Inside a private turn
+        (`activity_private()`), `AgentReplied`/`AgentToolStarted` are
+        dropped instead."""
 
+        if activity_private() and isinstance(event, (AgentReplied, AgentToolStarted)):
+            # A turn asked from a private channel: its text stays out of
+            # every office page (see corridor/domain/activity_context.py).
+            return
         await self._event_bus.publish(event, subscriber_timeout=DEFAULT_SUBSCRIBER_TIMEOUT)
+
+    def channel_is_public(self, channel: object) -> bool:
+        """Whether `@everyone` can read `channel` (see `api.channel_is_public`).
+        A cog starting an agent turn there passes the inverse as
+        `activity_guild(..., private=...)`."""
+
+        return channel_is_public(channel)
 
     def subscribe_event(
         self,

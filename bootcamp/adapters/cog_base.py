@@ -294,7 +294,10 @@ class CogBase:
         guild = getattr(ctx, "guild", None)
         # The agent works for this guild for the turn, so its activity
         # reaches this guild's office (see corridor's activity_context).
-        with activity_guild(guild.id if guild is not None else None):
+        # A channel @everyone can't read keeps the turn's activity off
+        # every office page.
+        private = not self._corridor.channel_is_public(getattr(ctx, "channel", None))
+        with activity_guild(guild.id if guild is not None else None, private=private):
             result = await self._tool_loop_service.run(
                 base_url=llm_settings.llm_base_url,
                 api_key=llm_settings.llm_api_key or "",

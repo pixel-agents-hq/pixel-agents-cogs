@@ -227,6 +227,7 @@ class AgentToolServerRegistry:
             parameters=tool.inputSchema,
             handler=handler,
             server_instructions=instructions,
+            server_url=base_url,
         )
 
 

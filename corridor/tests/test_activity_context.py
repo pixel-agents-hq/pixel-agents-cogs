@@ -14,8 +14,10 @@ from ..domain import (
     LLMSettings,
     activity_guild,
     activity_guild_id,
+    activity_private,
     guild_from_metadata,
     guild_metadata,
+    private_from_metadata,
 )
 from ..domain.agent_executor import GenericAgentExecutor
 from .test_agent_executor import (
@@ -49,6 +51,17 @@ class TestMetadata(unittest.TestCase):
         self.assertIsNone(guild_from_metadata(None))
         self.assertIsNone(guild_from_metadata(object()))
 
+    def test_a_private_turn_round_trips_its_flag(self) -> None:
+        with activity_guild(GUILD_ID, private=True):
+            metadata = guild_metadata(GUILD_ID)
+        message = Message(message_id="m", role=Role.ROLE_USER, parts=[], metadata=metadata)
+        self.assertTrue(private_from_metadata(message.metadata))
+        self.assertFalse(private_from_metadata(Message(message_id="m").metadata))
+        self.assertFalse(private_from_metadata(guild_metadata(GUILD_ID)))
+        for raw in (None, object(), {"private_channel": True}, {"private_channel": "yes"}):
+            with self.subTest(raw=raw):
+                self.assertFalse(private_from_metadata(raw))
+
     def test_activity_guild_scopes_and_restores(self) -> None:
         self.assertIsNone(activity_guild_id())
         with activity_guild(GUILD_ID):
@@ -62,9 +75,11 @@ class TestMetadata(unittest.TestCase):
 class _RecordingToolLoop:
     def __init__(self) -> None:
         self.seen: list[int | None] = []
+        self.private: list[bool] = []
 
     async def run(self, **kwargs: object) -> FakeToolLoopResult:
         self.seen.append(activity_guild_id())
+        self.private.append(activity_private())
         return FakeToolLoopResult(0, "final_text", "done")
 
 
@@ -102,6 +117,15 @@ class TestExecutorSetsTheGuild(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(loop.seen, [GUILD_ID])
         self.assertIsNone(activity_guild_id())
+
+    async def test_a_private_request_runs_as_a_private_turn(self) -> None:
+        loop = _RecordingToolLoop()
+        await _executor(loop).execute(
+            _ContextWithMessage(guild_metadata(GUILD_ID, private=True)),  # type: ignore[arg-type]
+            FakeEventQueue(),  # type: ignore[arg-type]
+        )
+        self.assertEqual((loop.seen, loop.private), ([GUILD_ID], [True]))
+        self.assertFalse(activity_private())
 
     async def test_a_request_without_a_guild_runs_for_none(self) -> None:
         loop = _RecordingToolLoop()

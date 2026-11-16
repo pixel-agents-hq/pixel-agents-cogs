@@ -188,6 +188,31 @@ class TestAskCommand(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(answer)
         self.assertIn("could not produce an answer", self.bot.corridor.replies[-1]["description"])
 
+    async def test_a_private_channel_makes_the_turn_private(self) -> None:
+        from corridor.domain import activity_private
+
+        seen: list[bool] = []
+
+        async def _tool_loop_run(**kwargs: object) -> ToolLoopResult:
+            seen.append(activity_private())
+            return ToolLoopResult(
+                tool_calls_made=0,
+                stopped_reason="final_text",
+                text="done",
+                successful_tool_calls=0,
+                failed_tool_calls=0,
+            )
+
+        class _Loop:
+            run = staticmethod(_tool_loop_run)
+
+        self.cog._tool_loop_service = _Loop()  # type: ignore[assignment]
+        self.bot.corridor.public_channel = False
+
+        await self.cog.run_agent(self.ctx, "recruiter", "hello")
+
+        self.assertEqual(seen, [True])
+
     async def test_activity_is_published_while_running(self) -> None:
         async def _tool_loop_run(**kwargs: object) -> ToolLoopResult:
             on_activity = kwargs["on_activity"]

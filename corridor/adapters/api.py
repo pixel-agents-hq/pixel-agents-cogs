@@ -55,6 +55,25 @@ class BotIconResolver:
         return str(guild.icon.url)
 
 
+def channel_is_public(channel: object) -> bool:
+    """Whether everyone in the channel's guild can read it: `@everyone` has
+    View Channel there and it is not a private thread. Only such a
+    channel's messages and agent turns reach an office page (which can be
+    public), so a staff-only channel's conversation never does."""
+
+    guild = getattr(channel, "guild", None)
+    default_role = getattr(guild, "default_role", None)
+    if default_role is None:
+        return False
+    is_private = getattr(channel, "is_private", None)
+    if callable(is_private) and is_private():
+        return False
+    try:
+        return bool(channel.permissions_for(default_role).view_channel)  # type: ignore[attr-defined]
+    except Exception:
+        return False
+
+
 # No reply pings anyone: an agent's reply text is LLM-written and may echo
 # `@everyone`, role or user mentions from the conversation it read. They
 # still render as names; Red's bot-wide default is not relied on.

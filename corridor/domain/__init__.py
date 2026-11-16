@@ -5,10 +5,13 @@ if TYPE_CHECKING:
 
 from .activity_context import (
     A2A_GUILD_METADATA_KEY,
+    A2A_PRIVATE_METADATA_KEY,
     activity_guild,
     activity_guild_id,
+    activity_private,
     guild_from_metadata,
     guild_metadata,
+    private_from_metadata,
 )
 from .agent_tool_server import AgentAllowedCheck, McpCallOptions, RegisteredMcpServer
 from .llm_tools import LLMToolSpec, ToolDescription, infer_parameters, llm_tool, llm_tool_spec
@@ -61,10 +64,13 @@ from .reply_colors import REPLY_CATEGORY_COLORS
 
 __all__ = [
     "A2A_GUILD_METADATA_KEY",
+    "A2A_PRIVATE_METADATA_KEY",
     "activity_guild",
     "activity_guild_id",
+    "activity_private",
     "guild_from_metadata",
     "guild_metadata",
+    "private_from_metadata",
     "EMPLOYEE_KEY",
     "LLMToolSpec",
     "OWNER_KEY",

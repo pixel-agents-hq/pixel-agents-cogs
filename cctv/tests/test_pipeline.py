@@ -105,7 +105,6 @@ class TestCctvPipeline(unittest.IsolatedAsyncioTestCase):
             _SeatRepository(self.pixelagents),
             {},
             lambda user_id: _true(),
-            open_editor=False,
         )
         self.socket = _Socket()
         self.pipeline.clients.add(self.socket, is_editor=True)  # type: ignore[arg-type]

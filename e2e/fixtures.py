@@ -27,6 +27,7 @@ from aiohttp import web
 from cctv.cctv import CCTV
 from cctv.infrastructure import settings as cctv_settings
 from cctv.infrastructure.webview import (
+    EDITOR_SESSION_PATH,
     EDITOR_WS_PATH,
     WEBVIEW_BASE_PATH,
     office_ws_path,
@@ -281,6 +282,10 @@ async def construct_core_cogs(
 
 # --- Playwright-facing serving + frame capture ----------------------------
 
+# The cookie `build_frontend_app`'s editor session route reads the signed-in
+# user id from -- see `sign_in`.
+E2E_USER_COOKIE = "e2e-user"
+
 
 async def build_frontend_app(cctv_cog: CCTV, server: object) -> web.Application:
     """A tiny, test-only aiohttp app that serves the real page/asset
@@ -290,7 +295,12 @@ async def build_frontend_app(cctv_cog: CCTV, server: object) -> web.Application:
     is out of scope to stand up here) alongside the *real* WebSocket
     handlers `CctvServer` binds in production -- reusing the same bound
     methods, not reimplementing them, so this never drifts from what a
-    real client actually talks to."""
+    real client actually talks to.
+
+    `EDITOR_SESSION_PATH` stands in for the Dashboard's editor session page:
+    it mints a real cctv editor ticket for the user an `E2E_USER_COOKIE`
+    names (the Dashboard's login cookie, in production), and answers 403
+    without one, exactly as an anonymous visitor's ticket fetch fails."""
 
     app = web.Application()
     app.router.add_get("/cctv/office/{guild_id}/ws", server.handle_office)  # type: ignore[attr-defined]
@@ -302,7 +312,7 @@ async def build_frontend_app(cctv_cog: CCTV, server: object) -> web.Application:
     async def page_handler(request: web.Request) -> web.Response:
         page = request.match_info["page"]
         if page == "editor":
-            response = assets.page_response(EDITOR_WS_PATH)
+            response = assets.page_response(EDITOR_WS_PATH, ticket_path=EDITOR_SESSION_PATH)
         elif page.isdecimal():
             office = cctv_cog.office(int(page))
             response = assets.page_response(
@@ -331,7 +341,15 @@ async def build_frontend_app(cctv_cog: CCTV, server: object) -> web.Application:
         # parsing of it.
         return web.Response(body=body, headers={"Content-Type": str(raw["content_type"])})
 
+    async def editor_session_handler(request: web.Request) -> web.Response:
+        raw = request.cookies.get(E2E_USER_COOKIE, "")
+        if not raw.isdecimal():
+            return web.json_response({"ticket": None}, status=403)
+        ticket = cctv_cog._tickets.mint(int(raw), None)  # noqa: SLF001
+        return web.json_response({"ticket": ticket})
+
     app.router.add_get("/e2e/page/{page}", page_handler)
+    app.router.add_get(EDITOR_SESSION_PATH, editor_session_handler)
     app.router.add_get(WEBVIEW_BASE_PATH + "{tail:.*}", static_handler)
     return app
 
@@ -418,3 +436,49 @@ async def wait_for_bootstrap(page: Page, frames: list[dict[str, object]]) -> Non
     frame = await wait_for_frame(page, frames, lambda f: f.get("type") == "layoutLoaded")
     assert frame is not None, "browser never received the bootstrap layoutLoaded"
     frames.clear()
+
+
+async def sign_in(page: Page, port: int, user_id: int) -> None:
+    """Signs `page`'s browser in to the e2e frontend as `user_id`, the way a
+    Dashboard login would: the editor page's ticket fetch then gets a real
+    ticket for that user."""
+
+    await page.context.add_cookies(
+        [{"name": E2E_USER_COOKIE, "value": str(user_id), "url": f"http://127.0.0.1:{port}"}]
+    )
+
+
+async def paint_a_tile_and_save(page: Page, col: int, row: int) -> None:
+    """Paints the floor tile at (`col`, `row`) through the real bundled
+    webview UI and clicks its real Save button, which sends a real
+    `SaveLayoutMessage` over the real (shimmed) WebSocket.
+
+    Real toolbar clicks -- the same path a user takes, mirroring
+    vendor/pixel-agents/e2e/helpers/editor.ts's own
+    enterEditMode/selectCarpetTool convention for its floor equivalent.
+    Tile targeting goes through `window.__pixelAgentsTestHooks`, bypassing
+    only canvas pixel->tile geometry: it calls the exact same
+    handleEditorTileAction the canvas's own click handler calls
+    (webview-ui/src/App.tsx). The page must have set
+    `window.__PIXEL_AGENTS_E2E = true` in an init script."""
+
+    # First-run tooltips (dismissed the same way upstream's own harness's
+    # dismissFirstRunTooltips does) would otherwise overlay the toolbar and
+    # intercept these clicks.
+    for tooltip_text in ("Instant Detection Active", "Updated to v"):
+        tooltip = page.locator("div", has_text=tooltip_text).first
+        try:
+            if await tooltip.is_visible():
+                await tooltip.locator("button", has_text="x").first.click()
+        except Exception:  # best-effort dismiss only
+            pass
+    await page.locator('button[title="Edit office layout"]').click()
+    await page.locator('button[title="Paint floor tiles"]').click()
+    await page.evaluate(
+        "([c, r]) => window.__pixelAgentsTestHooks.editorTileAction(c, r)", [col, row]
+    )
+    # Only visible while the editor is dirty, same as
+    # vendor/pixel-agents/e2e/helpers/editor.ts's own saveLayout().
+    save_button = page.locator("button", has_text="Save")
+    await save_button.wait_for(state="visible", timeout=5_000)
+    await save_button.click()

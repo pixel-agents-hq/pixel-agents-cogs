@@ -18,11 +18,8 @@ LAYOUT = {"version": 1, "cols": 1, "rows": 1, "tiles": [1], "furniture": []}
 
 
 class _Pipeline:
-    def __init__(
-        self, page: str, *, open_editor: bool, guild_id: int | None, private: bool = False
-    ) -> None:
+    def __init__(self, page: str, *, guild_id: int | None, private: bool = False) -> None:
         self.page = page
-        self.open_editor = open_editor
         self.private = private
         self._guild_id = guild_id
         self.clients = ClientHub(page)
@@ -64,10 +61,10 @@ class _Socket:
 
 class TestCctvServer(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
-        self.office = _Pipeline(f"office/{GUILD}", open_editor=False, guild_id=GUILD)
-        self.other = _Pipeline(f"office/{OTHER_GUILD}", open_editor=False, guild_id=OTHER_GUILD)
+        self.office = _Pipeline(f"office/{GUILD}", guild_id=GUILD)
+        self.other = _Pipeline(f"office/{OTHER_GUILD}", guild_id=OTHER_GUILD)
         self.offices = {GUILD: self.office, OTHER_GUILD: self.other}
-        self.editor = _Pipeline("editor", open_editor=True, guild_id=None)
+        self.editor = _Pipeline("editor", guild_id=None)
         tokens = iter(f"ticket-{n}" for n in range(100))
         self.tickets = TicketStore(token_factory=lambda: next(tokens))
         self.server = CctvServer(
@@ -121,17 +118,90 @@ class TestCctvServer(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.tickets.consume(ticket, GUILD), MEMBER)
         self.assertIsNone(self.tickets.consume(ticket, GUILD))
 
-    async def test_editor_write_is_open(self) -> None:
+    async def test_an_anonymous_editor_socket_watches_but_cannot_write(self) -> None:
         socket = _Socket()
-        self.editor.clients.add(socket, is_editor=True)  # type: ignore[arg-type]
+        self.editor.clients.add(socket)  # type: ignore[arg-type]
+
+        for write in (
+            {"type": "saveLayout", "layout": LAYOUT},
+            {"type": "saveAgentSeats", "seats": {"agent": {"palette": 1}}},
+            {"type": "importLayout", "layout": LAYOUT},
+        ):
+            await self.server.handle_payload(self.editor, socket, write)  # type: ignore[arg-type]
+        self.assertEqual(self.editor.messages, [])
 
         await self.server.handle_payload(
             self.editor,  # type: ignore[arg-type]
             socket,  # type: ignore[arg-type]
-            {"type": "saveAgentSeats", "seats": {"agent": {"palette": 1}}},
+            {"type": "webviewReady"},
+        )
+        self.assertEqual([m.type for m in self.editor.messages], ["webviewReady"])  # type: ignore[attr-defined]
+        self.assertEqual(socket.sent, [json.dumps({"type": "layoutLoaded"})])
+
+    async def test_an_editor_write_needs_an_editor_ticket_for_an_allowed_user(self) -> None:
+        socket = _Socket()
+        self.editor.clients.add(socket)  # type: ignore[arg-type]
+        write = {"type": "saveLayout", "layout": LAYOUT}
+
+        for refused in (
+            self.tickets.mint(MEMBER, GUILD),  # a guild office's ticket
+            self.tickets.mint(STRANGER, None),  # signed in, but not let in by the gate
+            "forged",
+        ):
+            with self.subTest(ticket=refused):
+                await self.server.handle_payload(
+                    self.editor,  # type: ignore[arg-type]
+                    socket,  # type: ignore[arg-type]
+                    {"type": "authorize", "ticket": refused},
+                )
+                await self.server.handle_payload(self.editor, socket, write)  # type: ignore[arg-type]
+                self.assertEqual(self.editor.messages, [])
+
+        await self.server.handle_payload(
+            self.editor,  # type: ignore[arg-type]
+            socket,  # type: ignore[arg-type]
+            {"type": "authorize", "ticket": self.tickets.mint(MEMBER, None)},
+        )
+        await self.server.handle_payload(self.editor, socket, write)  # type: ignore[arg-type]
+        self.assertEqual(len(self.editor.messages), 1)
+
+    async def test_an_editor_ticket_does_not_open_a_guild_office(self) -> None:
+        socket = _Socket()
+        self.office.clients.add(socket)  # type: ignore[arg-type]
+
+        await self.server.handle_payload(
+            self.office,  # type: ignore[arg-type]
+            socket,  # type: ignore[arg-type]
+            {"type": "authorize", "ticket": self.tickets.mint(MEMBER, None)},
+        )
+        await self.server.handle_payload(
+            self.office,  # type: ignore[arg-type]
+            socket,  # type: ignore[arg-type]
+            {"type": "saveLayout", "layout": LAYOUT},
         )
 
-        self.assertEqual(len(self.editor.messages), 1)
+        self.assertEqual(self.office.messages, [])
+
+    async def test_editor_permission_is_rechecked_for_each_write(self) -> None:
+        socket = _Socket()
+        self.editor.clients.add(socket)  # type: ignore[arg-type]
+        await self.server.handle_payload(
+            self.editor,  # type: ignore[arg-type]
+            socket,  # type: ignore[arg-type]
+            {"type": "authorize", "ticket": self.tickets.mint(MEMBER, None)},
+        )
+        self.editor.allowed = False
+
+        await self.server.handle_payload(
+            self.editor,  # type: ignore[arg-type]
+            socket,  # type: ignore[arg-type]
+            {"type": "saveLayout", "layout": LAYOUT},
+        )
+
+        self.assertEqual(self.editor.messages, [])
+        state = self.editor.clients.get(socket)  # type: ignore[arg-type]
+        assert state is not None
+        self.assertFalse(state.is_editor)
 
     async def test_office_permission_is_rechecked_for_each_write(self) -> None:
         socket = _Socket()
@@ -159,12 +229,10 @@ class _LiveServer(unittest.IsolatedAsyncioTestCase):
     private = False
 
     async def asyncSetUp(self) -> None:
-        self.office = _Pipeline(
-            f"office/{GUILD}", open_editor=False, guild_id=GUILD, private=self.private
-        )
-        self.other = _Pipeline(f"office/{OTHER_GUILD}", open_editor=False, guild_id=OTHER_GUILD)
+        self.office = _Pipeline(f"office/{GUILD}", guild_id=GUILD, private=self.private)
+        self.other = _Pipeline(f"office/{OTHER_GUILD}", guild_id=OTHER_GUILD)
         self.offices = {GUILD: self.office, OTHER_GUILD: self.other}
-        self.editor = _Pipeline("editor", open_editor=True, guild_id=None)
+        self.editor = _Pipeline("editor", guild_id=None)
         self.tickets = TicketStore()
         self.origin: str | None = None
 
@@ -241,13 +309,31 @@ class TestOfficeRouting(_LiveServer):
             await second.receive()
             self.assertTrue(first.closed and second.closed)
 
-    async def test_live_editor_write_is_open(self) -> None:
+    async def test_a_live_editor_socket_is_read_only_until_an_editor_signs_in(self) -> None:
         async with ClientSession() as session:
             editor = await session.ws_connect(f"{self.base}/cctv/editor/ws")
             await editor.send_json({"type": "saveAgentSeats", "seats": {"agent": {"palette": 1}}})
-            await asyncio.wait_for(self.editor.message_received.wait(), timeout=1)
-            self.assertEqual(len(self.editor.messages), 1)
+            await editor.send_json({"type": "saveLayout", "layout": LAYOUT})
+            await editor.send_json({"type": "webviewReady"})
+            # Anonymous viewers still see the office...
+            message = await asyncio.wait_for(editor.receive(), timeout=1)
+            self.assertEqual(json.loads(message.data), {"type": "layoutLoaded"})
+            # ...but none of their writes reached it.
+            self.assertEqual([m.type for m in self.editor.messages], ["webviewReady"])  # type: ignore[attr-defined]
+
+            await editor.send_json({"type": "authorize", "ticket": self.tickets.mint(MEMBER, None)})
+            await editor.send_json({"type": "saveLayout", "layout": LAYOUT})
+            await _wait_for(lambda: len(self.editor.messages) == 2)
+            self.assertEqual(self.editor.messages[-1].type, "saveLayout")  # type: ignore[attr-defined]
             await editor.close()
+
+    async def test_an_editor_ticket_does_not_open_an_unavailable_office(self) -> None:
+        async with ClientSession() as session:
+            socket = await session.ws_connect(f"{self.base}/cctv/office/abc/ws")
+            await socket.send_json({"type": "authorize", "ticket": self.tickets.mint(MEMBER, None)})
+            message = await asyncio.wait_for(socket.receive(), timeout=1)
+            self.assertEqual(message.type, WSMsgType.CLOSE)
+            self.assertEqual(socket.close_code, OFFICE_UNAVAILABLE_CLOSE_CODE)
 
     async def test_an_oversized_frame_closes_the_socket_unread(self) -> None:
         async with ClientSession() as session:

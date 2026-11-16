@@ -13,6 +13,7 @@ from redbot.core import commands
 
 from ..domain import OfficeAccess
 from ..infrastructure import (
+    EDITOR_SESSION_PATH,
     EDITOR_WS_PATH,
     PICKER_PATH,
     PickerEntry,
@@ -51,6 +52,19 @@ def parse_guild_id(raw: object) -> int | None:
 def dashboard_cog_loaded(bot: Any) -> bool:
     dashboard = bot.get_cog(DASHBOARD_COG_NAME)
     return getattr(getattr(dashboard, "rpc", None), "third_parties_handler", None) is not None
+
+
+def _ticket_response(ticket: str | None) -> dict[str, object]:
+    body = json.dumps({"ticket": ticket}).encode()
+    return {
+        "status": 0,
+        "raw_response": {
+            "status": 200 if ticket is not None else 403,
+            "content_type": "application/json",
+            "body_base64": base64.b64encode(body).decode("ascii"),
+            "headers": {"Cache-Control": "no-store"},
+        },
+    }
 
 
 class DashboardMixin(CctvBase):
@@ -144,12 +158,17 @@ class DashboardMixin(CctvBase):
 
     @dashboard_page(name="editor", description="Agent editor CCTV.", methods=("GET",))
     async def dashboard_editor(self, **kwargs: object) -> dict[str, object]:
+        """The editor office: anyone may watch it; a signed-in user who
+        passes the edit gate may also edit it (checked on its socket)."""
+
         del kwargs
         error = await self._ensure_editor_page()
         return (
             self._assets.unavailable_response(error)
             if error is not None
-            else await asyncio.to_thread(self._assets.page_response, EDITOR_WS_PATH)
+            else await asyncio.to_thread(
+                self._assets.page_response, EDITOR_WS_PATH, ticket_path=EDITOR_SESSION_PATH
+            )
         )
 
     async def _picker_entries(self, *, user_id: int | None) -> list[PickerEntry]:
@@ -202,16 +221,22 @@ class DashboardMixin(CctvBase):
             and (not office.private or await self._is_member(guild_id, user_id))
         )
         ticket = self._tickets.mint(user_id, guild_id) if allowed and guild_id else None
-        body = json.dumps({"ticket": ticket}).encode()
-        return {
-            "status": 0,
-            "raw_response": {
-                "status": 200 if ticket is not None else 403,
-                "content_type": "application/json",
-                "body_base64": base64.b64encode(body).decode("ascii"),
-                "headers": {"Cache-Control": "no-store"},
-            },
-        }
+        return _ticket_response(ticket)
+
+    @dashboard_page(
+        name="editorsession",
+        description="CCTV editor office session.",
+        methods=("GET",),
+        hidden=True,
+    )
+    async def dashboard_editor_session(self, user_id: int, **kwargs: object) -> dict[str, object]:
+        """A single-use, one-minute ticket proving the signed-in user to the
+        editor office's socket. The ticket proves identity only: the socket
+        lets it edit only while the user passes the edit gate."""
+
+        del kwargs
+        ticket = self._tickets.mint(user_id, None) if user_id > 0 else None
+        return _ticket_response(ticket)
 
     @dashboard_page(name="static", description="Shared CCTV static asset.", methods=("GET", "HEAD"))
     async def dashboard_static(self, asset_path: str, **kwargs: object) -> dict[str, object]:

@@ -11,7 +11,8 @@ which sends a real `SaveLayoutMessage` over the real (shimmed) WebSocket to
 cctv's real `CctvServer` -> `pipeline.handle_message` ->
 `pixelagents.set_office_layout()` -> a real corridor `Config` write ->
 `OfficeStateChanged` -> a real `layoutLoaded` broadcast back to the same
-browser tab.
+browser tab. The browser is signed in as the bot owner, the one user the
+editor office's default edit gate lets edit.
 
 The one thing bypassed is canvas pixel-to-tile-coordinate geometry: tile
 targeting goes through `window.__pixelAgentsTestHooks.editorTileAction`,
@@ -33,11 +34,16 @@ from .fixtures import (
     FakeBot,
     capture_websocket_frames,
     construct_core_cogs,
+    paint_a_tile_and_save,
     real_webview_build_enabled,
+    sign_in,
     start_frontend_app,
     wait_for_bootstrap,
     wait_for_frame,
 )
+
+# `FakeBot`'s default bot owner.
+OWNER_ID = 1
 
 # A single tile deep inside the bundled default layout's floor-7 room (see
 # test_live_office.py's own comment on the same room) -- clear of every
@@ -89,42 +95,22 @@ class TestEditorUiSaveReachesTheServer(unittest.IsolatedAsyncioTestCase):
             await page.add_init_script("window.__PIXEL_AGENTS_E2E = true;")
             frames = capture_websocket_frames(page)
 
+            # Editing the editor office needs a sign-in as someone the edit
+            # gate lets in: the bot owner, by default. See
+            # test_editor_anonymous_edit.py for the refused anonymous edit.
+            await sign_in(page, self._port, OWNER_ID)
             await page.goto(f"http://127.0.0.1:{self._port}/e2e/page/editor")
             await wait_for_bootstrap(page, frames)
+            # The page presents its ticket in-band; wait until cctv has
+            # checked it, so the save below can't race it.
+            editor = self.cctv.editor_pipeline
+            for _ in range(50):
+                if editor.clients.editor_count:
+                    break
+                await page.wait_for_timeout(100)
+            self.assertEqual(editor.clients.editor_count, 1, "the owner's socket never signed in")
 
-            # Real toolbar clicks -- the same path a user takes, mirroring
-            # vendor/pixel-agents/e2e/helpers/editor.ts's own
-            # enterEditMode/selectCarpetTool convention for its floor
-            # equivalent. First-run tooltips (dismissed the same way
-            # upstream's own harness's dismissFirstRunTooltips does) would
-            # otherwise overlay the toolbar and intercept these clicks.
-            for tooltip_text in ("Instant Detection Active", "Updated to v"):
-                tooltip = page.locator("div", has_text=tooltip_text).first
-                try:
-                    if await tooltip.is_visible():
-                        await tooltip.locator("button", has_text="x").first.click()
-                except Exception:  # best-effort dismiss only
-                    pass
-            await page.locator('button[title="Edit office layout"]').click()
-            await page.locator('button[title="Paint floor tiles"]').click()
-
-            # Tile targeting goes through the test hook, bypassing only
-            # canvas pixel->tile geometry -- it calls the exact same
-            # handleEditorTileAction the canvas's own click handler calls
-            # (webview-ui/src/App.tsx), which reads the real
-            # activeTool/selectedTileType the toolbar clicks above just set.
-            await page.evaluate(
-                "([c, r]) => window.__pixelAgentsTestHooks.editorTileAction(c, r)",
-                [_EDIT_COL, _EDIT_ROW],
-            )
-
-            # Real Save button click -- only visible while the editor is
-            # dirty, same as vendor/pixel-agents/e2e/helpers/editor.ts's own
-            # saveLayout(). Sends a real SaveLayoutMessage over the real
-            # WebSocket.
-            save_button = page.locator("button", has_text="Save")
-            await save_button.wait_for(state="visible", timeout=5_000)
-            await save_button.click()
+            await paint_a_tile_and_save(page, _EDIT_COL, _EDIT_ROW)
 
             layout_loaded = await wait_for_frame(
                 page, frames, lambda f: f.get("type") == "layoutLoaded"

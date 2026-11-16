@@ -11,11 +11,11 @@ import discord
 from discord import app_commands
 from redbot.core import commands
 
-from corridor.domain import ReplyField
+from corridor.domain import RESERVED_GROUP_KEYS, ReplyField
 from pixelagents.domain import AgentKey, GenuineAgentKey, OfficeIdentity
 from pixelagents.domain.characters import CharacterRecord, PixatarFailure
 
-from ..domain import GlobalSettings, OfficeAccess
+from ..domain import EditorGate, GlobalSettings, OfficeAccess
 from ..infrastructure import EDITOR_WS_PATH, PICKER_PATH, office_page_path, office_ws_path
 from .cog_base import CctvBase, roster_warnings
 from .dashboard import dashboard_cog_loaded
@@ -389,6 +389,72 @@ class CommandsMixin(CctvBase):
             await self._reply(ctx, str(exc))
             return
         await self._reply(ctx, f"Character designer set to <{clean}>.")
+
+    @cctv_group.group(name="editors", invoke_without_command=True)
+    @commands.guild_only()
+    @commands.is_owner()
+    async def cmd_editors(self, ctx: commands.Context) -> None:
+        """Show who may edit the editor office from its page. Bot owner only.
+
+        Anyone may watch the editor page. Editing it needs a Dashboard sign-in
+        as the bot owner, or as a member the edit gate (`[p]cctv editors set`)
+        lets in. The agents' own edits are never gated by this.
+        """
+
+        gate = (await self._settings.global_settings()).editor_gate
+        await self._reply(ctx, self._editor_gate_text(gate))
+
+    @cmd_editors.command(name="set")
+    @commands.guild_only()
+    @commands.is_owner()
+    @app_commands.describe(group="A corridor permission group key in this server, e.g. keyholder")
+    async def cmd_editors_set(self, ctx: commands.Context, group: str) -> None:
+        """Also let this server's members in a corridor permission group edit
+        the editor office. Bot owner only.
+
+        `group` is a key from `[p]corridorsettings`: `owner` (Administrator),
+        `employee` (every member), or one of this server's own groups.
+        """
+
+        guild = self._guild(ctx)
+        key = group.strip()
+        settings = await self._corridor.guild_settings(guild.id)
+        if key not in RESERVED_GROUP_KEYS and settings.permissions.group(key) is None:
+            await self._reply(
+                ctx,
+                f"This server has no `{key}` permission group. Use `owner`, `employee`, "
+                "or one of the groups `[p]corridorsettings` lists.",
+            )
+            return
+        gate = EditorGate(guild.id, key)
+        await self._settings.set_editor_gate(gate)
+        await self._reauthorize_editor()
+        await self._reply(ctx, self._editor_gate_text(gate))
+
+    @cmd_editors.command(name="reset")
+    @commands.guild_only()
+    @commands.is_owner()
+    async def cmd_editors_reset(self, ctx: commands.Context) -> None:
+        """Let only the bot owner edit the editor office again. Bot owner only."""
+
+        await self._settings.set_editor_gate(None)
+        await self._reauthorize_editor()
+        await self._reply(ctx, self._editor_gate_text(None))
+
+    def _editor_gate_text(self, gate: EditorGate | None) -> str:
+        if gate is None:
+            return (
+                "Only the bot owner, signed in to the Dashboard, can edit the editor office. "
+                "Everyone else who opens it can watch only."
+            )
+        guild = self.bot.get_guild(gate.guild_id)
+        server = f"**{guild.name}**" if guild is not None else f"server `{gate.guild_id}`"
+        return (
+            "The bot owner, and members of "
+            f"{server} in its `{gate.group_key}` permission group, signed in to the "
+            "Dashboard, can edit the editor office. Everyone else who opens it can "
+            "watch only."
+        )
 
     @cctv_group.group(name="character", invoke_without_command=True)
     @commands.guild_only()

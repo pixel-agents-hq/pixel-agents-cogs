@@ -259,7 +259,6 @@ class CctvBase:
                 self._pixelagents.office_seat_repository(ref),
                 self._assets.assets,
                 self._can_edit_editor,
-                open_editor=True,
                 logger=log,
             )
         guild_id = ref.guild_id
@@ -277,7 +276,6 @@ class CctvBase:
             self._pixelagents.office_seat_repository(ref),
             self._assets.assets,
             authorize,
-            open_editor=False,
             can_view=can_view,
             logger=log,
         )
@@ -672,7 +670,32 @@ class CctvBase:
                 await pipeline.office.set_status(identity, event.status, event.awaiting_input)
 
     async def _can_edit_editor(self, user_id: int) -> bool:
-        return user_id >= 0
+        """Whether `user_id` may edit the editor office: the bot owner, or,
+        only once the bot owner opts in with `[p]cctv editors set`, a member
+        of the chosen server satisfying the chosen corridor permission group
+        there. Fails closed. Agents edit it through pixelagents' facade,
+        never through this check."""
+
+        if user_id <= 0:
+            return False
+        owner = cast("discord.User", discord.Object(id=user_id))
+        if await self.bot.is_owner(owner):
+            return True
+        gate = (await self._settings.global_settings()).editor_gate
+        if gate is None:
+            return False
+        guild = self.bot.get_guild(gate.guild_id)
+        member = await self._guild_member(guild, user_id) if guild is not None else None
+        return member is not None and bool(
+            await self._corridor.capabilities_satisfy(member, gate.group_key)
+        )
+
+    async def _reauthorize_editor(self) -> None:
+        """Re-check every signed-in editor socket after the edit gate changes
+        (each write re-checks too)."""
+
+        if self._editor is not None:
+            await self._editor.clients.reauthorize(self._can_edit_editor)
 
     async def _can_edit_guild(self, guild_id: int, user_id: int) -> bool:
         """Whether `user_id` may edit `guild_id`'s office: the bot owner, or
@@ -686,17 +709,26 @@ class CctvBase:
         guild = self.bot.get_guild(guild_id)
         if guild is None or not await self._settings.guild_enabled(guild_id):
             return False
-        member = guild.get_member(user_id)
-        if member is None:
-            fetch_member = getattr(guild, "fetch_member", None)
-            if fetch_member is not None:
-                try:
-                    member = await fetch_member(user_id)
-                except Exception:
-                    member = None
+        member = await self._guild_member(guild, user_id)
         return member is not None and bool(
             await self._corridor.capabilities_satisfy(member, "keyholder")
         )
+
+    @staticmethod
+    async def _guild_member(guild: discord.Guild, user_id: int) -> discord.Member | None:
+        """`user_id`'s member in `guild`, from the cache or Discord; None if
+        they aren't one or the lookup fails."""
+
+        member = guild.get_member(user_id)
+        if member is not None:
+            return member
+        fetch_member = getattr(guild, "fetch_member", None)
+        if fetch_member is None:
+            return None
+        try:
+            return cast("discord.Member | None", await fetch_member(user_id))
+        except Exception:
+            return None
 
     async def _ensure_editor_page(self) -> str | None:
         error = await self._ensure_assets()

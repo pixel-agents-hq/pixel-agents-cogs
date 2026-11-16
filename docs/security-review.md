@@ -54,9 +54,10 @@ bootcamp agent) can act through:
   `required_permission_group` (bootcamp agents); `[p]bootcamp ask` checks
   the same group and works only in a server. Architect, painter and
   animator have no group: their native tools only read and edit the
-  shared editor office, which the open editor page already lets anyone
-  edit (an open item, see section 2), and animator's renders go to the
-  pixel-art-mcp server the owner registered.
+  shared editor office, the agents' own sandbox that no server's office
+  reads (its page lets only the bot owner, or an opt-in corridor group,
+  edit it; see section 2), and animator's renders go to the pixel-art-mcp
+  server the owner registered.
 - **The A2A listener cannot be used to skip those gates.** It requires a
   per-load bearer token only in-process callers hold (section 2).
 - **MCP-bridged tools have no Discord access.** Their handler gets `None`
@@ -71,7 +72,8 @@ bootcamp agent) can act through:
   access in that guild.
 - **Owner-only configuration stays owner-only.** LLM endpoint/key, A2A and
   MCP listener addresses, MCP server registration, agent creation, toolbox
-  tool selection, webview pins and switchboard are all `@commands.is_owner()`.
+  tool selection, webview pins, the editor office's edit gate
+  (`[p]cctv editors`) and switchboard are all `@commands.is_owner()`.
   Corridor's `owner` permission group means the bot owner or a member with
   Administrator in that server.
 
@@ -89,7 +91,7 @@ on every listener, and what is disclosed about each.
 | Listener | Default bind | Who gets in | Limits |
 |---|---|---|---|
 | corridor A2A (uvicorn/Starlette) | `127.0.0.1:8931` | Only requests with `Authorization: Bearer <token>`, a random token minted on each corridor load and handed only to in-process callers (`corridor.a2a_auth_headers()`); anything else gets 401 | Request body 1 MiB (413) |
-| cctv office/editor (aiohttp) | `127.0.0.1:3210` | Public and unlisted offices: anyone with the link. Private offices: nothing is sent until the socket presents a one-minute, single-use, guild-bound Dashboard ticket for a member, and the `Origin` must match `[p]cctv publicurl` once set. Office writes re-check bot owner or keyholder on every write. The editor page is open to anyone, to watch and edit | Client frame 4 MiB; ticket wait 10 s; `/cctv/health` returns aggregate counts only |
+| cctv office/editor (aiohttp) | `127.0.0.1:3210` | Public and unlisted offices: anyone with the link. Private offices: nothing is sent until the socket presents a one-minute, single-use, guild-bound Dashboard ticket for a member, and the `Origin` must match `[p]cctv publicurl` once set. Office writes re-check bot owner or keyholder on every write. The editor page: anyone may watch; writes need an in-band, one-minute, single-use editor ticket for a Dashboard user who passes the edit gate (bot owner only by default; `[p]cctv editors set` opts in one server's corridor permission group), re-checked on every write, so an anonymous socket's edits are dropped | Client frame 4 MiB; ticket wait 10 s; `/cctv/health` returns aggregate counts only |
 | cctv static assets (Red Web Dashboard route) | Dashboard's | Anyone | Paths resolved inside the built webview only (no `..`, `\`, `:`, control characters, or symlink escape) |
 | suggestionbox MCP (FastMCP) | `127.0.0.1:8934` | Only requests with the suggestionbox listener's own bearer token, minted on each load and handed only to corridor's MCP client (`RegisteredMcpServer.headers`); anything else gets 401 | Request body 4 MiB; DNS-rebinding protection on loopback (FastMCP) |
 | telephonepole | none (outbound only) | Connects to MCP servers the bot owner registers | 30 s discovery handshake; image/resource payloads capped at 8 MiB |
@@ -99,14 +101,6 @@ command. All of them are disclosed in the root `README.md` and in the
 owning cog's `install_msg`. Corridor's `BearerTokenGuard`
 (`corridor/infrastructure/listener_guard.py`) is the one guard both
 token-protected listeners use.
-
-**Open item: the editor page.** The editor office page and socket are open
-to anyone who can reach them, to watch and to edit the shared editor layout,
-whatever `[p]cctv` visibility a server picks. This is disclosed in the
-README, cctv's README and `install_msg`, and its end-user data statement.
-Whether to gate it (for example to the bot owner) or keep it open and
-disclosed is still being decided with the bot owner; until then it stays
-open.
 
 **Summary.** The cogs open three loopback-only listeners by default. The
 agent (A2A) listener and the feedback MCP endpoint accept only the bot's

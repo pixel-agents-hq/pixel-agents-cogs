@@ -17,7 +17,7 @@ through Pixelagents' office-state facade:
 |---|---|---|---|---|
 | Server picker | `/third-party/cctv` (`/third-party/cctv/mine` signed in) | -- | Every public guild office (plus your own servers' unlisted and private ones): name, icon, live headcount | -- |
 | A guild's office | `/third-party/cctv/office?guild=<server id>` (private: `/dashboard/<server id>/third-party/cctv/private`) | `/cctv/office/<server id>/ws` | That guild's members plus every registered A2A agent | Bot owner or a member satisfying Corridor's `keyholder` capability in that guild |
-| Editor | `/third-party/cctv/editor` | `/cctv/editor/ws` | Registered A2A agents plus the bot's own Discord account | Open to any connected client |
+| Editor | `/third-party/cctv/editor` | `/cctv/editor/ws` | Registered A2A agents plus the bot's own Discord account | Bot owner, signed in to the Dashboard (or members of an opt-in corridor permission group, `[p]cctv editors set`); everyone else watches only |
 
 A guild has an office while CCTV is enabled there (`[p]cctv enable`);
 `[p]cctv url` gives its link. Each office is `public` (anyone, listed on the
@@ -27,9 +27,15 @@ Manager picks with `[p]cctv visibility`. A private office's socket is sent
 nothing until it presents a single-use ticket proving a member, and leavers
 are disconnected. Message text reaches an office only from channels
 `@everyone` can read, never from a restricted channel or private thread,
-and an agent's activity is left out when it was asked for from one. The
-editor page is open to anyone who can reach it, to watch and to edit; it
-shows the agents' activity for requests from those readable channels. The offices share static assets and one
+and an agent's activity is left out when it was asked for from one.
+Anyone who can reach the editor page can watch it; it shows the agents'
+activity for requests from those readable channels. Editing it from the
+page needs a Dashboard sign-in as the bot owner, checked on its socket for
+every write, so an anonymous visitor's edits are refused. The bot owner can
+also let one server's members in a corridor permission group edit it with
+`[p]cctv editors set <group>`, run in that server, and go back to owner-only
+with `[p]cctv editors reset`. Architect, Painter and Animator edit it through
+Pixelagents' facade, so this never limits them. The offices share static assets and one
 aiohttp listener, but each keeps its own client hub, projection service,
 current revision, bootstrap lock, and state aggregate, so nothing one
 guild's office shows reaches another guild's page or socket. A Pixel Index
@@ -67,6 +73,9 @@ together.
 | `[p]cctv cleardelay <discord\|editor> <seconds>` | Bot owner | Set the activity-clear delay of every guild office or the editor |
 | `[p]cctv designer <url>` | Bot owner | Set the character designer `[p]cctv character` links to |
 | `[p]cctv publicurl [url]` | Bot owner | Show or set the address browsers reach the Dashboard at, which `[p]cctv url` links from |
+| `[p]cctv editors` | Bot owner | Show who may edit the editor office from its page |
+| `[p]cctv editors set <group>` | Bot owner | Also let this server's members in a corridor permission group edit the editor office |
+| `[p]cctv editors reset` | Bot owner | Let only the bot owner edit the editor office again |
 | `[p]cctv character` | Any member | Show your office character, its seed code, and a designer link that opens it |
 | `[p]cctv character set <px.…>` | Any member | Wear the character a seed code stands for, e.g. one copied from the designer |
 | `[p]cctv character reset` | Any member | Go back to the character dealt from your Discord user id |
@@ -126,8 +135,8 @@ hands out absolute links.
 
 CCTV uses its own, fresh Config identity: no Floorplan or Architect setting
 is read or migrated into it. Global defaults are listener host
-`127.0.0.1`, port `3210`, both activity-clear delays at `2.0` seconds, and
-no public URL. Per-guild defaults are `disabled` with bots included and
+`127.0.0.1`, port `3210`, both activity-clear delays at `2.0` seconds, no
+public URL, and the editor office editable by the bot owner only. Per-guild defaults are `disabled` with bots included and
 drawn translucent, offline members hidden (translucent when shown), and
 rich-presence and message display on, and a public office. A newly enabled guild's office
 starts from the bundled default layout. See "Who a guild's office shows" in

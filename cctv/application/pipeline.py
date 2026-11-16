@@ -75,7 +75,6 @@ class CctvPipeline:
         assets: dict[str, object],
         authorize: Authorize,
         *,
-        open_editor: bool,
         can_view: Authorize | None = None,
         private: bool = False,
         logger: logging.Logger | None = None,
@@ -86,7 +85,6 @@ class CctvPipeline:
         self.private = private
         self._can_view = can_view
         self.ref = ref
-        self.open_editor = open_editor
         self.clients = ClientHub(page, logger=logger)
         self._pixelagents = pixelagents
         self._assets = assets
@@ -121,7 +119,9 @@ class CctvPipeline:
         return self.ref.guild_id
 
     async def authorize(self, user_id: int) -> bool:
-        return self.open_editor or await self._authorize(user_id)
+        """Whether `user_id` may write to this office (its layout and seats)."""
+
+        return await self._authorize(user_id)
 
     async def can_view(self, user_id: int) -> bool:
         """Whether `user_id` may watch this office (a private office's

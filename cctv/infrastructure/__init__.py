@@ -18,6 +18,7 @@ from .settings import (
 )
 from .tickets import TICKET_TTL_SECONDS, Ticket, TicketStore
 from .webview import (
+    EDITOR_SESSION_PATH,
     EDITOR_WS_PATH,
     PICKER_PATH,
     WEBVIEW_BASE_PATH,
@@ -34,6 +35,7 @@ from .webview import (
 
 __all__ = [
     "CONFIG_IDENTIFIER",
+    "EDITOR_SESSION_PATH",
     "EDITOR_WS_PATH",
     "OFFICE_UNAVAILABLE_CLOSE_CODE",
     "PICKER_PATH",

@@ -162,7 +162,7 @@ projection, revision and authorization remain isolated. A guild office is
 public, unlisted or private: a private one is reached through the
 Dashboard's members-only guild route, and its socket is sent nothing until it
 presents a single-use, guild-bound Dashboard session ticket for a member
-(checked bot-side). Writes require bot-owner/keyholder access in that guild. The editor page is intentionally open. On every
+(checked bot-side). Writes require bot-owner/keyholder access in that guild. Anyone may watch the editor page; its writes need a single-use editor ticket for the bot owner, or for a member the bot owner's opt-in edit gate (`[p]cctv editors set`) lets in, re-checked on every write. On every
 `webviewReady`, CCTV reads the current aggregate and serializes bootstrap with
 event application.
 

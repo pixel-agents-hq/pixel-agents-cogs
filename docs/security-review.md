@@ -55,8 +55,8 @@ bootcamp agent) can act through:
   the same group and works only in a server. Architect, painter and
   animator have no group: their native tools only read and edit the
   shared editor office, which the open editor page already lets anyone
-  edit, and animator's renders go to the pixel-art-mcp server the owner
-  registered.
+  edit (an open item, see section 2), and animator's renders go to the
+  pixel-art-mcp server the owner registered.
 - **The A2A listener cannot be used to skip those gates.** It requires a
   per-load bearer token only in-process callers hold (section 2).
 - **MCP-bridged tools have no Discord access.** Their handler gets `None`
@@ -91,18 +91,27 @@ on every listener, and what is disclosed about each.
 | corridor A2A (uvicorn/Starlette) | `127.0.0.1:8931` | Only requests with `Authorization: Bearer <token>`, a random token minted on each corridor load and handed only to in-process callers (`corridor.a2a_auth_headers()`); anything else gets 401 | Request body 1 MiB (413) |
 | cctv office/editor (aiohttp) | `127.0.0.1:3210` | Public and unlisted offices: anyone with the link. Private offices: nothing is sent until the socket presents a one-minute, single-use, guild-bound Dashboard ticket for a member, and the `Origin` must match `[p]cctv publicurl` once set. Office writes re-check bot owner or keyholder on every write. The editor page is open to anyone, to watch and edit | Client frame 4 MiB; ticket wait 10 s; `/cctv/health` returns aggregate counts only |
 | cctv static assets (Red Web Dashboard route) | Dashboard's | Anyone | Paths resolved inside the built webview only (no `..`, `\`, `:`, control characters, or symlink escape) |
-| suggestionbox MCP (FastMCP) | `127.0.0.1:8934` | Served at a random path minted on each load that only corridor's registry knows; anything else gets 404 | 4 MiB body, DNS-rebinding protection on loopback (FastMCP defaults) |
+| suggestionbox MCP (FastMCP) | `127.0.0.1:8934` | Only requests with the suggestionbox listener's own bearer token, minted on each load and handed only to corridor's MCP client (`RegisteredMcpServer.headers`); anything else gets 401 | Request body 4 MiB; DNS-rebinding protection on loopback (FastMCP) |
 | telephonepole | none (outbound only) | Connects to MCP servers the bot owner registers | 30 s discovery handshake; image/resource payloads capped at 8 MiB |
 
 Every listener binds loopback by default, and changing that is an owner
 command. All of them are disclosed in the root `README.md` and in the
-owning cog's `install_msg`.
+owning cog's `install_msg`. Corridor's `BearerTokenGuard`
+(`corridor/infrastructure/listener_guard.py`) is the one guard both
+token-protected listeners use.
+
+**Open item: the editor page.** The editor office page and socket are open
+to anyone who can reach them, to watch and to edit the shared editor layout,
+whatever `[p]cctv` visibility a server picks. This is disclosed in the
+README, cctv's README and `install_msg`, and its end-user data statement.
+Whether to gate it (for example to the bot owner) or keep it open and
+disclosed is still being decided with the bot owner; until then it stays
+open.
 
 **Summary.** The cogs open three loopback-only listeners by default. The
-agent (A2A) listener accepts only the bot's own cogs, via a per-load token.
-The feedback MCP endpoint lives at an unguessable per-load path. The office
-pages are view-only for the public, member-gated for private offices, and
-write-gated by role. Every request and frame size is bounded.
+agent (A2A) listener and the feedback MCP endpoint accept only the bot's
+own cogs, via per-load bearer tokens. The office pages are view-only for
+the public, member-gated for private offices, and write-gated by role. Every request and frame size is bounded.
 
 ## 3. Data exposure
 

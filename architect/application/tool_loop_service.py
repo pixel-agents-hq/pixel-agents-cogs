@@ -29,7 +29,7 @@ from corridor.infrastructure.llm_client import (
 
 from ..tools.base import ToolSpec
 
-log = logging.getLogger("red.architect")
+log = logging.getLogger("red.pixel-agents-cogs.architect")
 
 
 class ToolLLM(Protocol):

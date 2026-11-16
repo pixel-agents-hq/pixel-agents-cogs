@@ -6,6 +6,7 @@ Discord wire behavior."""
 
 from __future__ import annotations
 
+import dataclasses
 import tempfile
 import unittest
 from pathlib import Path
@@ -111,6 +112,18 @@ class TestBuildReplyPayload(unittest.TestCase):
         kwargs, _files = build_reply_payload(_reply())
 
         self.assertIsNone(kwargs["embed"].color)
+
+    def test_no_category_uses_the_resolved_embed_color(self) -> None:
+        reply = dataclasses.replace(_reply(), embed_color=0x123456)
+        kwargs, _files = build_reply_payload(reply)
+
+        self.assertEqual(kwargs["embed"].color, 0x123456)
+
+    def test_a_category_color_wins_over_the_embed_color(self) -> None:
+        reply = dataclasses.replace(_reply(category=ReplyCategory.ROOM), embed_color=0x123456)
+        kwargs, _files = build_reply_payload(reply)
+
+        self.assertEqual(kwargs["embed"].color, REPLY_CATEGORY_COLORS[ReplyCategory.ROOM])
 
     def test_category_sets_its_mapped_color(self) -> None:
         kwargs, _files = build_reply_payload(_reply(category=ReplyCategory.AGENT))

@@ -36,7 +36,7 @@ from ..infrastructure import CorridorLLMClient, RedBootcampRepository
 from ..tools.agent_tool_server import AgentToolServerTool
 from ..tools.base import ToolSpec
 
-log = logging.getLogger("red.bootcamp")
+log = logging.getLogger("red.pixel-agents-cogs.bootcamp")
 
 
 _AGENT_DESCRIPTION_PROMPT_PREVIEW = 200

@@ -2,9 +2,10 @@
 events into corridor's Discord-vocabulary Pub/Sub bus.
 
 Moved here from floorplan's own `discord_gateway.py` -- see
-docs/corridor-pubsub-design.md. Publishes unconditionally, for every
-guild and every member: no guild-enabled/include_bots/office-tracking/
-broadcast-toggle gating, unlike floorplan's old version of this module.
+docs/corridor-pubsub-design.md. Publishes for every guild Corridor is
+not disabled in (`bot.cog_disabled_in_guild`) and every member, bots
+included: no guild-enabled/include_bots/office-tracking/broadcast-toggle
+gating, unlike floorplan's old version of this module.
 That filtering is now each subscriber's own concern (floorplan's
 `event_subscriptions.py` applies it on the way in), not a publisher's --
 corridor is a leaf package (see `corridor/info.json`'s empty
@@ -66,15 +67,23 @@ def _presence_event(member: discord.Member, *, bot_user_id: int | None) -> Agent
 
 
 class DiscordGatewayMixin(CogBase):
-    """Normalize Discord events, then publish unconditionally -- deciding
-    what's worth rendering stays entirely a subscriber's job."""
+    """Normalize Discord events, then publish them for every guild Corridor
+    is not disabled in -- deciding what's worth rendering stays entirely a
+    subscriber's job."""
 
     def _bot_user_id(self) -> int | None:
         return self.bot.user.id if self.bot.user is not None else None
 
+    async def _disabled_in(self, guild: discord.Guild) -> bool:
+        """Whether a server admin disabled Corridor in `guild`
+        (`[p]command disablecog`): then nothing from that guild reaches the
+        bus. Checked after each listener's own cheap early exits."""
+
+        return bool(await self.bot.cog_disabled_in_guild(self, guild))
+
     @commands.Cog.listener()
     async def on_member_update(self, before: discord.Member, after: discord.Member) -> None:
-        if before.display_name == after.display_name:
+        if before.display_name == after.display_name or await self._disabled_in(after.guild):
             return
         try:
             await self.publish_event(_presence_event(after, bot_user_id=self._bot_user_id()))
@@ -85,6 +94,8 @@ class DiscordGatewayMixin(CogBase):
     async def on_presence_update(self, before: discord.Member, after: discord.Member) -> None:
         if before.status == after.status and before.activities == after.activities:
             return
+        if await self._disabled_in(after.guild):
+            return
         try:
             await self.publish_event(_presence_event(after, bot_user_id=self._bot_user_id()))
         except Exception as exc:
@@ -92,6 +103,8 @@ class DiscordGatewayMixin(CogBase):
 
     @commands.Cog.listener()
     async def on_member_join(self, member: discord.Member) -> None:
+        if await self._disabled_in(member.guild):
+            return
         try:
             await self.publish_event(_presence_event(member, bot_user_id=self._bot_user_id()))
         except Exception as exc:
@@ -99,6 +112,8 @@ class DiscordGatewayMixin(CogBase):
 
     @commands.Cog.listener()
     async def on_member_remove(self, member: discord.Member) -> None:
+        if await self._disabled_in(member.guild):
+            return
         try:
             await self.publish_event(
                 AgentPresenceChanged(
@@ -123,7 +138,11 @@ class DiscordGatewayMixin(CogBase):
             # publishes AgentReplied for its own reply directly. Without
             # this guard, corridor would see that same outgoing message
             # and publish a second, duplicate AgentReplied for it. Other
-            # bots' messages are unaffected -- they keep publishing.
+            # bots' messages are unaffected -- they keep publishing, on
+            # purpose: offices render bot members too, and each subscriber
+            # applies its own include_bots filter.
+            return
+        if await self._disabled_in(guild):
             return
         try:
             await self.publish_event(

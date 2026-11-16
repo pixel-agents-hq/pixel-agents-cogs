@@ -144,7 +144,7 @@ class OfficeService:
         self._repository = repository
         self._send = send
         self.presence = presence or PresenceService(send)
-        self._log = logger or logging.getLogger(__name__)
+        self._log = logger or logging.getLogger(f"red.pixel-agents-cogs.{__name__}")
         self._palette_count = palette_count
         self._choose = choose
         self._agents: dict[tuple[int, int], tuple[str, str]] = {}

@@ -401,7 +401,9 @@ class TestOfficeService(unittest.IsolatedAsyncioTestCase):
     def test_collision_diagnostic_is_logged_once(self) -> None:
         self.service.active_agents[(1, 1)] = ("online", "First")
 
-        with self.assertLogs("pixelagents.application.office", level=logging.WARNING) as logs:
+        with self.assertLogs(
+            "red.pixel-agents-cogs.pixelagents.application.office", level=logging.WARNING
+        ) as logs:
             self.service.detect_collision(JS_MAX_SAFE + 1)
             self.service.detect_collision(JS_MAX_SAFE + 1)
 

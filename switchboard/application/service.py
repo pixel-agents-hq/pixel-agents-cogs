@@ -7,6 +7,7 @@ wire in plain in-memory fakes.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Callable, Iterable, Sequence
 from pathlib import Path
@@ -33,7 +34,7 @@ from ..domain import (
     unsatisfied,
 )
 
-log = logging.getLogger("red.office-cogs.switchboard")
+log = logging.getLogger("red.pixel-agents-cogs.switchboard")
 
 #: Expands to every non-disabled cog on an addpath/--cog-path directory.
 ALL_KEYWORD = "all"
@@ -111,7 +112,8 @@ class SwitchboardService:
                 | {name for name in loaded if name in packages}
             )
 
-        lookup = self._lookup_factory()
+        # Reads every installed distribution's metadata: off the event loop.
+        lookup = await asyncio.to_thread(self._lookup_factory)
         statuses: list[CogStatus] = []
         for name in names:
             copies = packages.get(name, [])
@@ -152,7 +154,7 @@ class SwitchboardService:
             names=names,
             not_found=tuple(not_found),
             install=install,
-            still_missing=self._missing_by_cog(names, packages),
+            still_missing=await self._missing_by_cog(names, packages),
             unknown_dependencies=deps.unknown,
         )
 
@@ -173,9 +175,9 @@ class SwitchboardService:
         pending = [name for name in order if name not in loaded]
 
         install: InstallResult | None = None
-        if self._missing_by_cog(pending, packages):
+        if await self._missing_by_cog(pending, packages):
             install = await self._installer.install(await self._requirement_set(order, packages))
-        still_missing = self._missing_by_cog(pending, packages)
+        still_missing = await self._missing_by_cog(pending, packages)
 
         results: list[LoadResult] = []
         not_loaded: set[str] = set()
@@ -326,10 +328,10 @@ class SwitchboardService:
     def _requires(packages: dict[str, list[CogPackage]]) -> dict[str, tuple[str, ...]]:
         return {name: copies[0].required_cogs for name, copies in packages.items()}
 
-    def _missing_by_cog(
+    async def _missing_by_cog(
         self, names: Iterable[str], packages: dict[str, list[CogPackage]]
     ) -> dict[str, tuple[str, ...]]:
-        lookup = self._lookup_factory()
+        lookup = await asyncio.to_thread(self._lookup_factory)
         missing: dict[str, tuple[str, ...]] = {}
         for name in names:
             copies = packages.get(name)

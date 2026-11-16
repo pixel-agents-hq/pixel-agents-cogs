@@ -3,6 +3,7 @@ editor office, all sharing one static Pixel Agents bundle."""
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 from collections.abc import Callable
@@ -93,8 +94,10 @@ class DashboardMixin(CctvBase):
         return (
             self._assets.unavailable_response(error)
             if error is not None
-            else self._assets.page_response(
-                office_ws_path(guild_id), ticket_path=session_path(guild_id)
+            else await asyncio.to_thread(
+                self._assets.page_response,
+                office_ws_path(guild_id),
+                ticket_path=session_path(guild_id),
             )
         )
 
@@ -121,8 +124,11 @@ class DashboardMixin(CctvBase):
         return (
             self._assets.unavailable_response(error)
             if error is not None
-            else self._assets.page_response(
-                office_ws_path(guild_id), ticket_path=session_path(guild_id), private=True
+            else await asyncio.to_thread(
+                self._assets.page_response,
+                office_ws_path(guild_id),
+                ticket_path=session_path(guild_id),
+                private=True,
             )
         )
 
@@ -143,7 +149,7 @@ class DashboardMixin(CctvBase):
         return (
             self._assets.unavailable_response(error)
             if error is not None
-            else self._assets.page_response(EDITOR_WS_PATH)
+            else await asyncio.to_thread(self._assets.page_response, EDITOR_WS_PATH)
         )
 
     async def _picker_entries(self, *, user_id: int | None) -> list[PickerEntry]:
@@ -209,7 +215,10 @@ class DashboardMixin(CctvBase):
 
     @dashboard_page(name="static", description="Shared CCTV static asset.", methods=("GET", "HEAD"))
     async def dashboard_static(self, asset_path: str, **kwargs: object) -> dict[str, object]:
-        return self._assets.static_response(asset_path, head_only=kwargs.get("method") == "HEAD")
+        # Reads and base64-encodes the file: off the event loop.
+        return await asyncio.to_thread(
+            self._assets.static_response, asset_path, head_only=kwargs.get("method") == "HEAD"
+        )
 
 
 __all__ = [

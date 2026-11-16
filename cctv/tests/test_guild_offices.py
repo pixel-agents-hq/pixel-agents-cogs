@@ -147,14 +147,20 @@ class _Cctv(DashboardMixin):
         self._genuine_agents = {"architect": ("Architect", "online")}
         self._server = None
         self._tickets = TicketStore(token_factory=lambda: "ticket")
+        # Guild ids `[p]command disablecog CCTV` turned off.
+        self.cog_disabled_guilds: set[int] = set()
         self.bot = SimpleNamespace(  # type: ignore[assignment]
             user=SimpleNamespace(id=99),
             get_guild=guilds.get,
             is_owner=self._is_owner,
+            cog_disabled_in_guild=self._cog_disabled_in_guild,
         )
 
     async def _is_owner(self, user: object) -> bool:
         return getattr(user, "id", None) == OWNER
+
+    async def _cog_disabled_in_guild(self, cog: object, guild: Any) -> bool:
+        return cog is self and guild.id in self.cog_disabled_guilds
 
     async def _ensure_office_page(self, office: Any) -> str | None:
         return None
@@ -259,6 +265,23 @@ class TestGuildOffices(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(leaver.closed)
         self.assertEqual(leaver.close_code, OFFICE_UNAVAILABLE_CLOSE_CODE)
         self.assertFalse(other.closed)
+
+    async def test_a_leaver_still_loses_a_private_office_cctv_is_disabled_in(self) -> None:
+        await self.cctv._set_office_access(GUILD_A, OfficeAccess.PRIVATE)
+        self.cctv.cog_disabled_guilds.add(GUILD_A)
+        leaver = _Socket()
+        self.a.clients.add(leaver, user_id=1)  # type: ignore[arg-type]
+
+        await self.cctv._on_agent_presence_changed(
+            AgentPresenceChanged(
+                agent=AgentRef(discord_user_id=1, guild_id=GUILD_A, is_bot=False),
+                display_name="Ada",
+                status="offline",
+                left_guild=True,
+            )
+        )
+
+        self.assertTrue(leaver.closed)
 
     async def test_membership_is_checked_bot_side(self) -> None:
         self.assertTrue(await self.cctv._is_member(GUILD_A, 1))

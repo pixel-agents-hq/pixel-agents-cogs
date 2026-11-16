@@ -29,7 +29,7 @@ from corridor.infrastructure.llm_client import (
 from ..domain import ConversationContext
 from ..tools.base import ToolSpec
 
-log = logging.getLogger("red.pico")
+log = logging.getLogger("red.pixel-agents-cogs.pico")
 
 
 class ToolLLM(Protocol):

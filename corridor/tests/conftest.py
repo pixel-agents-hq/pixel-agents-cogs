@@ -56,6 +56,15 @@ class FakeUser:
     display_avatar = _Avatar()
 
 
+# Red's default embed colour (`[p]set colour` unset).
+RED_EMBED_COLOUR = 0xE74C3C
+
+
+class FakeColour:
+    def __init__(self, value: int) -> None:
+        self.value = value
+
+
 class FakeBot:
     def __init__(
         self,
@@ -69,9 +78,17 @@ class FakeBot:
         self.unload_extension_calls: list[str] = []
         self.unload_extension_failures: set[str] = set()
         self._valid_prefixes = valid_prefixes
+        # (cog class name, guild id) pairs `[p]command disablecog` turned off.
+        self.disabled_cogs: set[tuple[str, int]] = set()
+
+    async def cog_disabled_in_guild(self, cog: Any, guild: Any) -> bool:
+        return guild is not None and (type(cog).__name__, guild.id) in self.disabled_cogs
 
     async def get_valid_prefixes(self) -> list[str]:
         return list(self._valid_prefixes)
+
+    async def get_embed_colour(self, location: Any) -> FakeColour:
+        return FakeColour(RED_EMBED_COLOUR)
 
     def register_guild(self, guild: FakeGuild) -> None:
         self._guilds[guild.id] = guild
@@ -120,6 +137,9 @@ class FakeContext:
         self.clean_prefix = clean_prefix
         self.sent: list[dict[str, Any]] = []
         self.message = FakeMessage()
+
+    async def embed_color(self) -> FakeColour:
+        return FakeColour(RED_EMBED_COLOUR)
 
     async def send(
         self, content: str | None = None, *, embed: Any = None, **kwargs: object

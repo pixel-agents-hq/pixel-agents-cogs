@@ -298,7 +298,7 @@ def ensure_webview_built(
     previously working `webview_dist`.
     """
 
-    log = logger or logging.getLogger(__name__)
+    log = logger or logging.getLogger(f"red.pixel-agents-cogs.{__name__}")
     commit = commit or pinned_commit()
     webview_dist = cog_data_dir / "webview_dist"
 

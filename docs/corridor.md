@@ -167,8 +167,8 @@ missing or failing resolver means a reply with no icon. See
 An embed's accent color comes from `ReplyCategory` — `AGENT` (Discord
 blurple, `0x5865F2`), `ROOM` (Discord teal, `0x1ABC9C`), or `FURNITURE`
 (Discord gold, `0xF1C40F`) — resolved through `REPLY_CATEGORY_COLORS` in
-`corridor/domain/reply_colors.py`. `category=None` (the default) leaves
-Discord's own gray; a cog that doesn't fit the scheme (deskutils,
+`corridor/domain/reply_colors.py`. `category=None` (the default) uses
+Red's configured embed colour (`ctx.embed_color()`); a cog that doesn't fit the scheme (deskutils,
 pixelagents) simply stays uncategorized. corridor binds its own identity
 the same way every dependent does (`owner="Corridor"`, `category=ReplyCategory.ROOM`).
 

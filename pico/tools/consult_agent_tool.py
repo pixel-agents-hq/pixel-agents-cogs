@@ -79,7 +79,7 @@ from corridor.domain import AgentRef, FooterOverride, ReplyField
 from ..infrastructure.architect_client import AgentAskResult, ArchitectRequestError
 from .activity import publish_agent_replied
 
-log = logging.getLogger("red.pico")
+log = logging.getLogger("red.pixel-agents-cogs.pico")
 
 
 class ConsultAgentInput(BaseModel):

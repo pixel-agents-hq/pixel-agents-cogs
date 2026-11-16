@@ -27,7 +27,7 @@ class ClientHub:
     def __init__(self, page: str, *, logger: logging.Logger | None = None) -> None:
         self.page = page
         self.clients: dict[web.WebSocketResponse, ClientState] = {}
-        self._log = logger or logging.getLogger(__name__)
+        self._log = logger or logging.getLogger(f"red.pixel-agents-cogs.{__name__}")
 
     @property
     def client_count(self) -> int:

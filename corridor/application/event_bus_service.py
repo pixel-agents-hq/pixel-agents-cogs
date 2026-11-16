@@ -13,7 +13,7 @@ from collections import defaultdict
 from collections.abc import Awaitable, Callable
 from typing import Any, TypeVar
 
-log = logging.getLogger("red.corridor")
+log = logging.getLogger("red.pixel-agents-cogs.corridor")
 
 _EventT = TypeVar("_EventT")
 

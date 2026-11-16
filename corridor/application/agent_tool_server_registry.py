@@ -35,7 +35,7 @@ from ..domain.agent_tool_server import McpCallOptions, RegisteredMcpServer
 from ..domain.models import RegisteredTool
 from ..infrastructure.mcp_client import McpRequestError, McpToolListing
 
-log = logging.getLogger("red.corridor")
+log = logging.getLogger("red.pixel-agents-cogs.corridor")
 
 # Short enough that a third-party server's schema change is picked up
 # without a manual refresh or cog reload; long enough that an agent

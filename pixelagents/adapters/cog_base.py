@@ -41,7 +41,7 @@ from ..infrastructure.webview_build import (
     owner_notification_for,
 )
 
-log = logging.getLogger("red.d_cogs.pixelagents")
+log = logging.getLogger("red.pixel-agents-cogs.pixelagents")
 MutationResult = TypeVar("MutationResult")
 
 

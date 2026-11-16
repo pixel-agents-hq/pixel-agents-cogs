@@ -18,7 +18,7 @@ from corridor.infrastructure.llm_client import ChatCompletionResponse, ChatMessa
 
 from ..domain import ConversationContext, GateDecision
 
-log = logging.getLogger("red.pico")
+log = logging.getLogger("red.pixel-agents-cogs.pico")
 
 _PICO_MENTION = re.compile(r"(?i)\bpico\b")
 

@@ -267,8 +267,10 @@ sequenceDiagram
     Sub->>Sub: apply its own guild/office-tracking filtering,<br/>then reconcile the office canvas
 ```
 
-Corridor's listeners publish unconditionally, for every guild and every
-member — no guild-enabled/include-bots/office-tracking gating. That
+Corridor's listeners publish for every guild Corridor is not disabled in
+(`bot.cog_disabled_in_guild`, i.e. `[p]command disablecog Corridor`) and
+every member, bots included — no guild-enabled/include-bots/office-tracking
+gating. That
 filtering is entirely the subscriber's own concern; corridor is a leaf
 package (empty `required_cogs`) and never depends on a subscriber cog to
 decide what counts as "something happened."

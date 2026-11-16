@@ -38,7 +38,7 @@ from corridor.domain import RegisteredTool
 
 from .attachment import Attachment
 
-log = logging.getLogger("red.animator")
+log = logging.getLogger("red.pixel-agents-cogs.animator")
 
 _ZIP_FILENAME = "pixel-agents.zip"
 # Prefer an animated preview when available, otherwise the render_asset contact sheet.

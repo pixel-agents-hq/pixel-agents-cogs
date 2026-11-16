@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -10,6 +11,11 @@ from redbot.core.bot import Red
 from ..application import CounterService
 from ..dependency_loader import ensure_corridor_loaded
 from ..infrastructure import RedCounterRepository
+
+# Every cog logs under one red.pixel-agents-cogs.<cog> namespace; submodules
+# use a child name (red.pixel-agents-cogs.<cog>.<sub>). Enforced in CI by
+# contracts/runtime_hygiene/lint_runtime_hygiene.py.
+log = logging.getLogger("red.pixel-agents-cogs.{{cookiecutter.cog_name}}")
 
 # Conventional path for this cog's own bundled avatar image -- passed to
 # corridor.reply_sender() regardless of whether a real file exists here
@@ -66,7 +72,8 @@ class CogBase:
         self._corridor.register_llm_tools(self, owner="{{ cookiecutter.cog_name.replace('-', '_').split('_') | map('capitalize') | join }}")
 
     async def cog_unload(self) -> None:
-        """Extension point for teardown work."""
+        """Extension point for teardown work: cancel every background task
+        cog_load() started and await it (see docs/runtime-hygiene.md)."""
 
         if self._corridor is not None:
             self._corridor.unregister_tool_owner("{{ cookiecutter.cog_name.replace('-', '_').split('_') | map('capitalize') | join }}")

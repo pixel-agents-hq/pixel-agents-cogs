@@ -10,9 +10,12 @@ relocated from."""
 
 from __future__ import annotations
 
+import asyncio
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
 
 import aiohttp
 from a2a.server.agent_execution.agent_executor import AgentExecutor
@@ -22,6 +25,7 @@ from a2a.types import AgentCapabilities, AgentCard, AgentInterface
 from a2a.utils import TransportProtocol
 
 from ..domain import RegisteredAgent
+from ..infrastructure import a2a_server
 from ..infrastructure.a2a_server import A2AServer
 
 
@@ -82,6 +86,37 @@ class TestA2AServerBindFailure(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(error)
         self.assertFalse(server.running)
         await server.stop()  # must not raise even though start() never fully succeeded
+
+
+class TestA2AServerStop(unittest.IsolatedAsyncioTestCase):
+    async def test_a_listener_that_never_drains_is_cancelled_and_logged(self) -> None:
+        """stop() bounds the drain, then cancels; a serve() task that raises
+        on the way out is logged by the done-callback and never fails
+        cog_unload."""
+
+        async def serve_forever_then_fail() -> None:
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                raise RuntimeError("shutdown went wrong") from None
+
+        server = A2AServer()
+        task = asyncio.create_task(serve_forever_then_fail())
+        task.add_done_callback(server._log_unexpected_exit)
+        server._server = SimpleNamespace(should_exit=False)  # type: ignore[assignment]
+        server._task = task
+
+        with (
+            mock.patch.object(a2a_server, "STOP_GRACE_SECONDS", 0.01),
+            self.assertLogs("red.pixel-agents-cogs.corridor", level="WARNING") as logs,
+        ):
+            await server.stop()
+
+        self.assertTrue(task.done())
+        self.assertFalse(server.running)
+        output = "\n".join(logs.output)
+        self.assertIn("did not drain", output)
+        self.assertIn("stopped with an error", output)
 
 
 class TestA2AServerRouting(unittest.IsolatedAsyncioTestCase):

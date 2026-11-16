@@ -34,7 +34,7 @@ from corridor.infrastructure.llm_client import (
 
 from ..tools.base import ToolSpec
 
-log = logging.getLogger("red.painter")
+log = logging.getLogger("red.pixel-agents-cogs.painter")
 
 
 class ToolLLM(Protocol):

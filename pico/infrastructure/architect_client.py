@@ -37,7 +37,7 @@ import httpx
 from a2a.client import ClientConfig, create_client
 from a2a.types import Message, Part, Role, SendMessageRequest, TaskState
 
-log = logging.getLogger("red.pico")
+log = logging.getLogger("red.pixel-agents-cogs.pico")
 
 # a2a-sdk falls back to a plain `httpx.AsyncClient()` -- httpx's own
 # default timeout (5.0s total, every phase) -- when ClientConfig isn't

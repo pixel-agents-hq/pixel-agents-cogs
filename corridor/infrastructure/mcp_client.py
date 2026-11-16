@@ -87,7 +87,7 @@ from mcp import ClientSession
 from mcp import types as mcp_types
 from mcp.client.streamable_http import streamable_http_client
 
-log = logging.getLogger("red.corridor")
+log = logging.getLogger("red.pixel-agents-cogs.corridor")
 
 MAX_MEDIA_BYTES = 8 * 1024 * 1024
 MAX_MEDIA_BLOCKS = 8

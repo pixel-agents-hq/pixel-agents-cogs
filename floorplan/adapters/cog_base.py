@@ -16,7 +16,7 @@ from ..dependency_loader import ensure_corridor_loaded
 from ..infrastructure.pixel_index import PixelIndexClient
 from ..infrastructure.settings import RedSettingsRepository
 
-log = logging.getLogger("red.d_cogs.floorplan")
+log = logging.getLogger("red.pixel-agents-cogs.floorplan")
 
 
 class FloorplanBase:

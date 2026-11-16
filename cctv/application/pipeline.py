@@ -91,7 +91,7 @@ class CctvPipeline:
         self._pixelagents = pixelagents
         self._assets = assets
         self._authorize = authorize
-        self._log = logger or logging.getLogger(__name__)
+        self._log = logger or logging.getLogger(f"red.pixel-agents-cogs.{__name__}")
         self._lock = asyncio.Lock()
         self._state: OfficeState | None = None
         self.error: str | None = None

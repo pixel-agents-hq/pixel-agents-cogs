@@ -18,7 +18,7 @@ from typing import Protocol
 
 from corridor.domain import AgentRef, AgentReplied
 
-log = logging.getLogger("red.pico")
+log = logging.getLogger("red.pixel-agents-cogs.pico")
 
 
 class CorridorEventPublisher(Protocol):

@@ -189,6 +189,7 @@ class ReplySender:
             footer_override=footer_override,
             category=self._category,
         )
+        rendered = await self._cog_base.with_channel_embed_color(rendered, channel)
         return await send_rendered_reply_to_channel(
             channel,
             rendered,

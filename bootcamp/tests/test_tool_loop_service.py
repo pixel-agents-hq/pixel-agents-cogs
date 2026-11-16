@@ -322,7 +322,7 @@ class TestToolLoopService(unittest.IsolatedAsyncioTestCase):
         )
         service = ToolLoopService(llm)
 
-        with self.assertNoLogs("red.bootcamp"):
+        with self.assertNoLogs("red.pixel-agents-cogs.bootcamp"):
             await service.run(
                 base_url="https://x",
                 api_key="k",
@@ -340,7 +340,7 @@ class TestToolLoopService(unittest.IsolatedAsyncioTestCase):
         )
         service = ToolLoopService(llm)
 
-        with self.assertLogs("red.bootcamp", level="INFO") as captured:
+        with self.assertLogs("red.pixel-agents-cogs.bootcamp", level="INFO") as captured:
             await service.run(
                 base_url="https://x",
                 api_key="k",
@@ -361,7 +361,7 @@ class TestToolLoopService(unittest.IsolatedAsyncioTestCase):
         llm = ScriptedLLM([_response(content="the answer is 42")])
         service = ToolLoopService(llm)
 
-        with self.assertLogs("red.bootcamp", level="INFO") as captured:
+        with self.assertLogs("red.pixel-agents-cogs.bootcamp", level="INFO") as captured:
             await service.run(
                 base_url="https://x",
                 api_key="k",

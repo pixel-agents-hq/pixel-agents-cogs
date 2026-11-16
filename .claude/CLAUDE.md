@@ -97,6 +97,7 @@ python -m mypy corridor floorplan pixelagents cctv toolbox pico architect painte
 python -m unittest discover -s contracts/tests
 python -m contracts.discord_replies.lint_reply_channel
 python -m contracts.info_json.lint_info_json  # info.json keys/install_msg/bot-version range + root README
+python -m contracts.runtime_hygiene.lint_runtime_hygiene  # logger namespace + no blocking call in async def
 ```
 
 A single test: `python -m pytest -q corridor/tests/test_reply_sender.py::TestReplySender::test_foo`.

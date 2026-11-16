@@ -25,12 +25,18 @@ listener ever starts, since suggestionbox depends on corridor.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 
 import uvicorn
 from mcp.server.fastmcp import FastMCP
 
-log = logging.getLogger("red.suggestionbox")
+log = logging.getLogger("red.pixel-agents-cogs.suggestionbox")
+
+# How long stop() lets the listener drain open connections before it
+# cancels the serve() task outright, so cog_unload never hangs on a
+# client that keeps a connection open.
+STOP_GRACE_SECONDS = 5.0
 
 
 class McpListener:
@@ -84,19 +90,37 @@ class McpListener:
                 return message
         self._server = server
         self._task = task
+        task.add_done_callback(self._log_unexpected_exit)
         self._log.info("suggestionbox: MCP listener starting on %s:%d", host, port)
         return None
 
     async def stop(self) -> None:
         if self._server is not None:
             self._server.should_exit = True
-        if self._task is not None:
-            try:
-                await self._task
-            except Exception:
-                self._log.exception("suggestionbox: MCP listener did not shut down cleanly")
-            self._task = None
+        task, self._task = self._task, None
+        if task is not None:
+            _, pending = await asyncio.wait({task}, timeout=STOP_GRACE_SECONDS)
+            if pending:
+                self._log.warning(
+                    "suggestionbox: MCP listener did not drain within %ss; cancelling it",
+                    STOP_GRACE_SECONDS,
+                )
+                task.cancel()
+                # Best-effort: an exception here was already logged by
+                # _log_unexpected_exit, and must not fail cog_unload.
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await task
         self._server = None
+
+    def _log_unexpected_exit(self, task: asyncio.Task[None]) -> None:
+        """Log a serve() task that ended with an exception, whether it
+        crashed mid-run or while stop() drained it, the moment it ends."""
+
+        if not task.cancelled() and (error := task.exception()) is not None:
+            self._log.error(
+                "suggestionbox: MCP listener stopped with an error",
+                exc_info=(type(error), error, error.__traceback__),
+            )
 
 
 __all__ = ["McpListener"]

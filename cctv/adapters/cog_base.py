@@ -51,7 +51,7 @@ from ..infrastructure import (
     member_snapshot,
 )
 
-log = logging.getLogger("red.d_cogs.cctv")
+log = logging.getLogger("red.pixel-agents-cogs.cctv")
 # How often a private office's viewers are re-checked for membership.
 PRIVATE_SWEEP_SECONDS = 300.0
 # Close code when a guild's office changes who may watch it: the page
@@ -165,7 +165,7 @@ class CctvBase:
             self._corridor = await ensure_loaded(self.bot, "corridor", "Corridor")
             self._corridor.register_dependent("cctv")
             self._pixelagents = await ensure_loaded(self.bot, "pixelagents", "PixelAgents")
-            self._sync_assets()
+            await self._sync_assets()
             await self._notify_owners_if_assets_degraded()
             self._editor = self._create_pipeline(OfficeRef.editor())
 
@@ -379,9 +379,9 @@ class CctvBase:
             editor.error = str(exc)
             log.error("cctv/editor: office state unavailable: %s", exc)
 
-    def _sync_assets(self) -> None:
+    async def _sync_assets(self) -> None:
         try:
-            self._assets.sync(self._pixelagents.webview_bundle_status())
+            await self._assets.refresh(self._pixelagents.webview_bundle_status)
         except Exception as exc:
             self._assets.ready = False
             self._assets.error = f"could not read Pixel Agents bundle: {exc}"
@@ -526,7 +526,7 @@ class CctvBase:
         if office is not None and event.left_guild and office.private:
             # Left or was banned: no longer a member, so no longer a viewer.
             await office.clients.close_user(identity.user_id, code=OFFICE_UNAVAILABLE_CLOSE_CODE)
-        if office is not None:
+        if office is not None and not await self._cog_disabled_in(identity.guild_id):
             settings = await self._settings.guild_settings(identity.guild_id)
             # A member who left is removed even where offline members show:
             # the default policy hides an offline snapshot.
@@ -541,6 +541,31 @@ class CctvBase:
             await self.editor_pipeline.reconcile_discord(
                 snapshot, include_bots=True, rich_presence_enabled=False
             )
+
+    async def _cog_disabled_in(self, guild_id: int | None) -> bool:
+        """Whether a server admin disabled CCTV in `guild_id`
+        (`[p]command disablecog`). Red only reads the guild's id, so no
+        cache lookup is needed. Activity from such a guild stops reaching
+        its office; access control (closing a departed member's private
+        socket) still applies."""
+
+        if guild_id is None:
+            return False
+        guild = cast("discord.Guild", discord.Object(id=guild_id))
+        return bool(await self.bot.cog_disabled_in_guild(self, guild))
+
+    async def _live_targets(
+        self, identity: OfficeIdentity, context_guild_id: int | None
+    ) -> tuple[CctvPipeline, ...]:
+        """`_event_targets`, minus the office of a guild CCTV is disabled in."""
+
+        return tuple(
+            [
+                pipeline
+                for pipeline in self._event_targets(identity, context_guild_id)
+                if not await self._cog_disabled_in(pipeline.ref.guild_id)
+            ]
+        )
 
     def _event_targets(
         self, identity: OfficeIdentity, context_guild_id: int | None
@@ -580,7 +605,7 @@ class CctvBase:
         if identity is None:
             return
         global_settings = await self._settings.global_settings()
-        for pipeline in self._event_targets(identity, event.context_guild_id):
+        for pipeline in await self._live_targets(identity, event.context_guild_id):
             if not await self._shows_messages(pipeline):
                 continue
             delay = (
@@ -623,19 +648,19 @@ class CctvBase:
     async def _on_agent_highlighted(self, event: AgentHighlighted) -> None:
         identity = _office_identity(event.agent)
         if identity is not None:
-            for pipeline in self._event_targets(identity, event.context_guild_id):
+            for pipeline in await self._live_targets(identity, event.context_guild_id):
                 await pipeline.office.highlight_agent(identity)
 
     async def _on_agent_unhighlighted(self, event: AgentUnhighlighted) -> None:
         identity = _office_identity(event.agent)
         if identity is not None:
-            for pipeline in self._event_targets(identity, event.context_guild_id):
+            for pipeline in await self._live_targets(identity, event.context_guild_id):
                 await pipeline.office.unhighlight_agent(identity)
 
     async def _on_agent_tool_started(self, event: AgentToolStarted) -> None:
         identity = _office_identity(event.agent)
         if identity is not None:
-            for pipeline in self._event_targets(identity, event.context_guild_id):
+            for pipeline in await self._live_targets(identity, event.context_guild_id):
                 await pipeline.office.start_tool_activity(
                     identity, event.tool_id, event.status, event.tool_name
                 )
@@ -643,7 +668,7 @@ class CctvBase:
     async def _on_agent_status_changed(self, event: AgentStatusChanged) -> None:
         identity = _office_identity(event.agent)
         if identity is not None:
-            for pipeline in self._event_targets(identity, event.context_guild_id):
+            for pipeline in await self._live_targets(identity, event.context_guild_id):
                 await pipeline.office.set_status(identity, event.status, event.awaiting_input)
 
     async def _can_edit_editor(self, user_id: int) -> bool:
@@ -697,7 +722,7 @@ class CctvBase:
         return None
 
     async def _ensure_assets(self) -> str | None:
-        self._sync_assets()
+        await self._sync_assets()
         await self._notify_owners_if_assets_degraded()
         if not self._assets.ready:
             return self._assets.error or "Pixel Agents bundle is unavailable."

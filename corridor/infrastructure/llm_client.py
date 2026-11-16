@@ -194,7 +194,7 @@ class LiteLLMClient:
         logger: logging.Logger | None = None,
     ) -> None:
         self._session_factory = session_factory
-        self._log = logger or logging.getLogger("red.corridor")
+        self._log = logger or logging.getLogger("red.pixel-agents-cogs.corridor")
         self._session: aiohttp.ClientSession | None = None
         self._timeout = aiohttp.ClientTimeout(
             total=REQUEST_TIMEOUT_SECONDS,

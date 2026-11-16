@@ -86,7 +86,7 @@ class CharacterService:
         self._corridor = corridor
         self._pixatar = pixatar
         self._default_profiles = default_profiles
-        self._log = logger or logging.getLogger(__name__)
+        self._log = logger or logging.getLogger(f"red.pixel-agents-cogs.{__name__}")
 
     def _required_pixatar(self) -> Pixatar:
         pixatar = self._pixatar()

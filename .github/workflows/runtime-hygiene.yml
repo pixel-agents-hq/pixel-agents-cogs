@@ -1,0 +1,45 @@
+name: "Runtime hygiene"
+
+# Red's Approved Cog Creator guide recommends one logger namespace per
+# repo and no blocking work on the event loop. This keeps every cog on
+# red.pixel-agents-cogs.<cog> and keeps blocking calls out of coroutines
+# (docs/runtime-hygiene.md). Stdlib only: no dependencies.
+on:
+  push:
+    paths:
+      - "**.py"
+      - "*/info.json"
+      - "contracts/runtime_hygiene/**"
+      - ".github/workflows/runtime-hygiene.yml"
+  pull_request:
+    paths:
+      - "**.py"
+      - "*/info.json"
+      - "contracts/runtime_hygiene/**"
+      - ".github/workflows/runtime-hygiene.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: runtime-hygiene-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Logger namespace and event-loop blocking
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Check logger names and blocking calls
+        run: python -m contracts.runtime_hygiene.lint_runtime_hygiene
+
+      - name: Test the runtime hygiene lint
+        run: python -m unittest discover -s contracts/runtime_hygiene/tests -t .

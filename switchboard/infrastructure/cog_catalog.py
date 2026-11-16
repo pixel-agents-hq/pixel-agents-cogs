@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import keyword
 import logging
@@ -11,7 +12,7 @@ from typing import Any, Protocol
 
 from ..domain import CogPackage, CogSource, classify_root
 
-log = logging.getLogger("red.office-cogs.switchboard.catalog")
+log = logging.getLogger("red.pixel-agents-cogs.switchboard.catalog")
 
 
 class CogManager(Protocol):
@@ -57,7 +58,9 @@ class CogCatalog:
             source = classify_root(
                 root, install_path=install_path, user_paths=user_paths, core_path=core_path
             )
-            for package in _scan_root(root, source, tracked):
+            # Directory listing plus one info.json read per package, for every
+            # cog path: off the event loop.
+            for package in await asyncio.to_thread(_scan_root, root, source, tracked):
                 packages.setdefault(package.name, []).append(package)
         return packages
 

@@ -32,7 +32,7 @@ from ..tools.base import ToolSpec
 from ..tools.consult_architect_tool import ConsultArchitectTool
 from ..tools.painter_tools import build_painter_tools
 
-log = logging.getLogger("red.painter")
+log = logging.getLogger("red.pixel-agents-cogs.painter")
 
 PAINTER_AGENT_KEY = "painter"
 

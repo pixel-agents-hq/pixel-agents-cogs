@@ -264,6 +264,11 @@ class RenderedReply:
     # (`CogBase.render_reply`), never by `ReplyService` -- the application
     # layer stays free of filesystem paths.
     member_icon_path: Path | None = None
+    # Red's configured embed colour for the reply's destination
+    # (`ctx.embed_color()` / `bot.get_embed_colour(channel)`, i.e.
+    # `[p]set colour` and `[p]embedset`), as a plain int. Set by the adapter
+    # only for an EMBED reply with no `category`; a category color wins.
+    embed_color: int | None = None
 
 
 @dataclass(frozen=True, slots=True)

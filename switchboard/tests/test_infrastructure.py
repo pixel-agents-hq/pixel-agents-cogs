@@ -213,7 +213,7 @@ class TestReadDownloaderIndex(unittest.IsolatedAsyncioTestCase):
 
         with (
             mock.patch("redbot.core.Config.get_conf", return_value=FakeConfig()),
-            self.assertLogs("red.office-cogs.switchboard.downloader", "WARNING"),
+            self.assertLogs("red.pixel-agents-cogs.switchboard.downloader", "WARNING"),
         ):
             index = await read_downloader_index(_Bot(Broken()))
 

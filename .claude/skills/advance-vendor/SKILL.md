@@ -196,7 +196,7 @@ it by hand. Update the test fixtures that fake a Vite build
 describe it in the same change (`docs/contract-testing.md`,
 `docs/cctv-design.md`, `pixelagents/Architecture.md`). Then rerun step 3 at
 the final pin, plus ruff and mypy over the cogs (the command in
-`.claude/CLAUDE.md`). Don't format `contracts/` with ruff: CI doesn't, and
+`AGENTS.md`). Don't format `contracts/` with ruff: CI doesn't, and
 it rewrites unrelated files.
 
 ### 5. Only if an upstream change is genuinely needed

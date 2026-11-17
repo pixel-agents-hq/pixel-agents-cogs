@@ -19,6 +19,7 @@ from contracts.red_release.track_red_release import (
     bump_text,
     closed_pulls_url,
     labels,
+    log_fence,
     main,
     marker,
     parse_final,
@@ -26,6 +27,7 @@ from contracts.red_release.track_red_release import (
     plan,
     rejected_version,
     render_body,
+    stale_labels,
     title,
 )
 
@@ -253,6 +255,22 @@ class TestBody(unittest.TestCase):
         self.assertEqual(labels(0), "red-release")
         self.assertEqual(labels(1), "red-release,red-breaking")
 
+    def test_a_pass_after_a_fail_removes_red_breaking(self) -> None:
+        failed = set(labels(1).split(","))
+        passed = (failed | set(labels(0).split(","))) - {stale_labels(0)}
+
+        self.assertEqual(passed, {"red-release"})
+        self.assertEqual(stale_labels(1), "")
+
+    def test_a_log_holding_a_fence_cannot_close_the_block(self) -> None:
+        log = "before\n```\n`````\nafter"
+
+        body = render_body(self.data, 1, log, True, date(2026, 11, 17))
+
+        self.assertEqual(log_fence(log), "``````")
+        self.assertIn("``````\nbefore\n```\n`````\nafter\n``````", body)
+        self.assertEqual(log_fence("no backticks"), "```")
+
 
 class TestCli(unittest.TestCase):
     def test_body_writes_title_and_labels_to_github_output(self) -> None:
@@ -277,6 +295,7 @@ class TestCli(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertIn("title=chore(red): raise max_bot_version to 3.6.0\n", output.read_text())
             self.assertIn("labels=red-release\n", output.read_text())
+            self.assertIn("remove-labels=red-breaking\n", output.read_text())
             self.assertIn(marker("3.6.0"), (root / "body.md").read_text(encoding="utf-8"))
 
 

@@ -21,7 +21,8 @@ Stdlib only, like the other contracts lints. Three steps:
   rejected bump stays closed until Red releases again.
 - **bump**: rewrites `max_bot_version` in every cog `info.json` and in the
   cookiecutter defaults, leaving each file's formatting alone.
-- **body**: the pull request's title, labels and body -- the pending
+- **body**: the pull request's title, labels (and the stale `red-breaking`
+  label a passing run removes) and body -- the pending
   versions, release notes, the delisting deadline (the oldest pending
   release's date plus one month, since any of them may be the one that
   breaks us) and the switchboard gate's result.
@@ -224,6 +225,14 @@ def bump(version: str, root: Path = REPO_ROOT) -> list[Path]:
     return changed
 
 
+def log_fence(text: str) -> str:
+    """A backtick fence longer than any backtick run in `text`, so a log
+    line holding a fence of its own can't close the code block early."""
+
+    longest = max((len(run) for run in re.findall(r"`+", text)), default=0)
+    return "`" * max(3, longest + 1)
+
+
 def _gate_section(code: int, log: str) -> list[str]:
     if code == 0:
         return [
@@ -234,15 +243,16 @@ def _gate_section(code: int, log: str) -> list[str]:
             'relies on (docs/dependency-loading.md, "Private Red APIs").',
         ]
     tail = "\n".join(log.splitlines()[-GATE_LOG_LINES:])
+    fence = log_fence(tail)
     return [
         "### ❌ switchboard suite on the new Red: failed",
         "",
         "Installing the new Red or running `python -m pytest -q switchboard/` against the",
         "bumped tree failed. Fix what `tests/test_red_private_api.py` reports before merging.",
         "",
-        "```",
+        fence,
         tail,
-        "```",
+        fence,
     ]
 
 
@@ -313,8 +323,21 @@ def title(data: dict[str, Any]) -> str:
     return f"chore(red): raise max_bot_version to {data['latest']}"
 
 
+BREAKING_LABEL = "red-breaking"
+
+
 def labels(gate_code: int) -> str:
-    return "red-release" if gate_code == 0 else "red-release,red-breaking"
+    """Labels to add. `red-breaking` tracks the latest gate result: the PR
+    action only ever adds labels, so `stale_labels` names the one to remove
+    once a later run passes."""
+
+    return "red-release" if gate_code == 0 else f"red-release,{BREAKING_LABEL}"
+
+
+def stale_labels(gate_code: int) -> str:
+    """Labels a passing run removes from the PR an earlier failing run labelled."""
+
+    return BREAKING_LABEL if gate_code == 0 else ""
 
 
 def _get_json(url: str) -> Any:
@@ -387,7 +410,13 @@ def main(argv: list[str] | None = None) -> int:
     args.out.write_text(
         render_body(data, args.gate_code, log, not args.no_ci_token, today), encoding="utf-8"
     )
-    _write_outputs({"title": title(data), "labels": labels(args.gate_code)})
+    _write_outputs(
+        {
+            "title": title(data),
+            "labels": labels(args.gate_code),
+            "remove-labels": stale_labels(args.gate_code),
+        }
+    )
     return 0
 
 

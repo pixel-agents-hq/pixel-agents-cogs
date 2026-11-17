@@ -240,8 +240,10 @@ switchboard's suite on that Red, and opens or updates one pull request on
 the `chore/red-max-bot-version` branch. The PR lists the pending releases,
 the gate result, and the Red Index delisting deadline: the oldest pending
 release's date plus one month, the time a cog a new Red breaks has to be
-fixed. A later Red release updates the same PR. A bump PR closed without
-merging stays closed until Red releases a newer version; its body's
+fixed. A later Red release updates the same PR. The PR carries the
+`red-breaking` label exactly while the latest gate run fails. A bump PR
+closed without merging stays closed until Red releases a newer version;
+its body's
 `<!-- red-release latest=X.Y.Z -->` marker is what the next run reads. The
 PR is opened with the `AUTOMATION_TOKEN` repository secret, because pull
 requests opened with `GITHUB_TOKEN` get no `pull_request` checks. `vendor-update.yml` uses the same secret. Fixing

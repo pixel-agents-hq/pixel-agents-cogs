@@ -132,6 +132,22 @@ jobs:
             */info.json
             .cookiecutter/cog-cookiecutter/cookiecutter.json
 
+      # The PR action only ever adds labels, so a PR an earlier run marked
+      # red-breaking would keep it after the gate passes. red-breaking tracks
+      # the latest gate result: drop it here. A 404 just means the label
+      # wasn't on the PR.
+      - name: Remove labels the gate no longer earns
+        if: steps.body.outputs.remove-labels != '' && steps.pr.outputs.pull-request-number != ''
+        env:
+          GH_TOKEN: ${{ secrets.AUTOMATION_TOKEN || secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ steps.pr.outputs.pull-request-number }}
+          REMOVE_LABELS: ${{ steps.body.outputs.remove-labels }}
+        run: |
+          for label in ${REMOVE_LABELS//,/ }; do
+            gh api -X DELETE "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/labels/$label" \
+              >/dev/null 2>&1 || echo "$label was not on #$PR_NUMBER."
+          done
+
       - name: Summarise
         if: always() && steps.plan.outputs.action != ''
         env:

@@ -232,6 +232,24 @@ To support a newer Red: install it, run
 `info.json` and in `.cookiecutter/cog-cookiecutter/cookiecutter.json`
 together.
 
+`.github/workflows/red-release.yml` does the mechanical part daily. When
+Red-DiscordBot has a final release newer than `max_bot_version` on both
+GitHub Releases and PyPI (not yanked), it raises `max_bot_version` to the
+newest one with `contracts/red_release/track_red_release.py`, runs
+switchboard's suite on that Red, and opens or updates one pull request on
+the `chore/red-max-bot-version` branch. The PR lists the pending releases,
+the gate result, and the Red Index delisting deadline: the oldest pending
+release's date plus one month, the time a cog a new Red breaks has to be
+fixed. A later Red release updates the same PR. A bump PR closed without
+merging stays closed until Red releases a newer version; its body's
+`<!-- red-release latest=X.Y.Z -->` marker is what the next run reads. The
+PR is opened with the `AUTOMATION_TOKEN` repository secret, a classic
+personal access token on a machine account with only the `public_repo`
+scope, because pull requests opened with `GITHUB_TOKEN` get no
+`pull_request` checks. `vendor-update.yml` uses the same secret. Fixing
+what the gate or the PR's `switchboard.yml`/`check-cogs.yml` runs report,
+and merging, stay manual.
+
 Red would need these public methods for the pins to go away:
 
 - a public cog lookup on `Red`, e.g. `await bot.find_cog_spec(name)`,

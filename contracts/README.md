@@ -101,6 +101,7 @@ doc's "Verifying this design: two committed contracts" section.
 | `corridor/lint_office_state_contract.py` | CI lint: fails if a name declared in `office_state.yaml` isn't mentioned in `docs/cctv-design.md`'s text (same doc-cross-reference role as `lint_corridor_contract.py`, but against `docs/cctv-design.md` instead of the Pub/Sub design doc) |
 | `discord_replies/lint_reply_channel.py` | CI lint: fails on a raw Discord send reachable from a command handler without going through corridor's `send_reply`/`render_reply` |
 | `info_json/lint_info_json.py` | CI lint (`.github/workflows/info-json.yml`): fails if the repo or a cog `info.json` lacks a key Red's Approved Cog Creator guide requires (`author`/`short`/`description`, an `install_msg` disclosure, version keys), uses a key outside Red's schema or a `type` other than `COG`/`SHARED_LIBRARY`, lacks `max_bot_version` or pins a `min_bot_version`/`max_bot_version` range different from the other cogs or the cookiecutter defaults (`--red-versions` prints that range for the CI jobs that test against real Red), has an `install_msg` that doesn't name each of its `required_cogs`, carries stale wording, or if the root `README.md` misses its install instructions, credits or any cog |
+| `red_release/track_red_release.py` | Used by `.github/workflows/red-release.yml` (tests run in `info-json.yml`): finds final Red-DiscordBot releases newer than the shared `max_bot_version` that GitHub Releases and PyPI both list (not yanked), raises `max_bot_version` in every cog `info.json` and the cookiecutter defaults, and renders the bump PR body with the release notes, the switchboard gate result and the delisting deadline (oldest pending release + one month). A bump PR closed without merging stays closed until a newer Red, via its body's `<!-- red-release latest=X.Y.Z -->` marker. See `docs/dependency-loading.md`, "Private Red APIs" |
 | `runtime_hygiene/lint_runtime_hygiene.py` | CI lint (`.github/workflows/runtime-hygiene.yml`): fails if a cog or the cookiecutter template calls `getLogger` with a name outside `red.pixel-agents-cogs.<cog>[.<sub>]` (or `f"red.pixel-agents-cogs.{__name__}"`), or makes a known blocking call (subprocess, `time.sleep`, `urlopen`, `requests`, bulk `shutil`, whole-file `Path` IO) directly inside an `async def`. See `docs/runtime-hygiene.md` |
 | `ast_call_graph.py` | Shared AST call-graph crawling helpers (`index_functions`/`crawl_call_graph`) used by `discord_replies/lint_reply_channel.py` to follow `self.<name>(...)` calls across a package rather than just one function's own body |
 
@@ -125,6 +126,10 @@ python -m unittest discover -s contracts/corridor/tests -v
 
 python -m contracts.info_json.lint_info_json
 python -m unittest discover -s contracts/info_json/tests -v
+
+python -m contracts.red_release.track_red_release plan \
+  --repo pixel-agents-hq/pixel-agents-cogs --branch chore/red-max-bot-version --out plan.json
+python -m unittest discover -s contracts/red_release/tests -v
 
 python -m contracts.runtime_hygiene.lint_runtime_hygiene
 python -m unittest discover -s contracts/runtime_hygiene/tests -t . -v

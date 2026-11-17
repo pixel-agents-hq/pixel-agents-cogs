@@ -150,7 +150,8 @@ for what each listener accepts and what the agents can do.
 
 ## Development
 
-See [`docs/AGENTS.md`](docs/AGENTS.md) for each package's purpose, the
+Coding agents start at [`AGENTS.md`](AGENTS.md). See
+[`docs/AGENTS.md`](docs/AGENTS.md) for each package's purpose, the
 local quality gate and where the design docs live, and each cog's own
 `README.md` for its commands.
 

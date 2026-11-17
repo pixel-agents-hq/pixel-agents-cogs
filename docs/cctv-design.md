@@ -268,8 +268,8 @@ them) every time it matters: when the Dashboard serves the private page
 (its own `guild_id` page check), when a ticket is minted, when a socket
 presents it, when a member leaves or is banned (their sockets on that
 office are closed), and in a sweep of every private office's viewers every
-five minutes. No Discord token is stored and no extra OAuth scope is
-needed; a kick or leave takes effect at once.
+five minutes. Nothing from the Discord login is stored and the login asks
+for no extra OAuth permission; a kick or leave takes effect at once.
 
 A private office is reached like this:
 

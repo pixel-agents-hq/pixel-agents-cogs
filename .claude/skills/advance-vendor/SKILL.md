@@ -196,7 +196,7 @@ it by hand. Update the test fixtures that fake a Vite build
 describe it in the same change (`docs/contract-testing.md`,
 `docs/cctv-design.md`, `pixelagents/Architecture.md`). Then rerun step 3 at
 the final pin, plus ruff and mypy over the cogs (the command in
-`.claude/CLAUDE.md`). Don't format `contracts/` with ruff: CI doesn't, and
+`AGENTS.md`). Don't format `contracts/` with ruff: CI doesn't, and
 it rewrites unrelated files.
 
 ### 5. Only if an upstream change is genuinely needed
@@ -229,7 +229,7 @@ regardless: the build fetches branches, not pull refs.
 - Upstream or fork PRs that turned out unnecessary: close both, with a short
   apology upstream saying why.
 
-`gh pr edit` needs `read:org`, which the bot token lacks. Edit with
+`gh pr edit` fails in this environment (see `.claude/STOP_HOOKS.md`). Edit with
 `gh api -X PATCH repos/<owner>/<repo>/pulls/<N> -f title=... -F body=@file`.
 
 ### 7. The PR body

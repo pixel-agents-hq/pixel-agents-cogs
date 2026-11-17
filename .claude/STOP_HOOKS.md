@@ -222,10 +222,12 @@ a `gh api` call with `-f`/`-F`/`--field`/`--raw-field`/`--input`, or
 `git commit`, when its text or a file it passes (`--body-file`, `-F`,
 `--file`, `--input`, `-F field=@path`) contains:
 
-- a GitHub token scope name;
-- a token type ("classic"/"fine-grained" token, personal access token, PAT);
-- "token" and "scope" in the same phrase;
-- "outside collaborator".
+- the name of a GitHub permission a credential can be granted;
+- the kind of credential a secret holds;
+- a phrase pairing a credential with what it may access;
+- an account's collaborator status.
+
+`_SENSITIVE` in the script lists the exact patterns.
 
 Everything else, including reading commands such as `gh pr view` or
 `grep`, is unaffected. Rephrase to say what the secret is for and run the

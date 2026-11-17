@@ -229,7 +229,7 @@ regardless: the build fetches branches, not pull refs.
 - Upstream or fork PRs that turned out unnecessary: close both, with a short
   apology upstream saying why.
 
-`gh pr edit` needs `read:org`, which the bot token lacks. Edit with
+`gh pr edit` fails in this environment (see `.claude/STOP_HOOKS.md`). Edit with
 `gh api -X PATCH repos/<owner>/<repo>/pulls/<N> -f title=... -F body=@file`.
 
 ### 7. The PR body

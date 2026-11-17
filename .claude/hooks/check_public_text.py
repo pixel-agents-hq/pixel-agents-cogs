@@ -42,7 +42,7 @@ _GH_API_WRITE_RE = re.compile(
 _SENSITIVE = [
     (
         re.compile(
-            r"\b(?:public_repo|repo:status|repo_deployment|delete_repo|"
+            r"\b(?:public_repo|repo:status|repo_deployment|"
             r"(?:read|write|admin):(?:org|discussion|packages|repo_hook|public_key|gpg_key)|"
             r"delete:packages|read:user|user:email)\b",
             re.IGNORECASE,

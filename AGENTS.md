@@ -115,7 +115,7 @@ PIXELAGENTS_REAL_WEBVIEW_BUILD=1 python -m pytest -q e2e/   # multi-cog, see e2e
   help, because GitHub keeps edit history and history is not rewritten.
   Never write:
   - secret values;
-  - token types or scopes;
+  - what kind of credential a secret holds, or what it may access;
   - which account owns a credential, or any account's role or access
     level;
   - whether a secret is set;

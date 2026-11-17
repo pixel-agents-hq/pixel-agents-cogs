@@ -218,9 +218,10 @@ purpose. This guard catches the common slips before they are published.
 ### What gets blocked
 
 A `Bash` command that runs `gh pr|issue|release create/edit/comment/review`,
-a `gh api` call with `-f`/`-F`/`--field`/`--raw-field`/`--input`, or
+`gh pr merge` (its `--subject`/`--body`/`--body-file` become the squash
+commit), a `gh api` call with `-f`/`-F`/`--field`/`--raw-field`/`--input`, or
 `git commit`, when its text or a file it passes (`--body-file`, `-F`,
-`--file`, `--input`, `-F field=@path`) contains:
+`--file`, `--input`, with a space or `=`, or `-F field=@path`) contains:
 
 - the name of a GitHub permission a credential can be granted;
 - the kind of credential a secret holds;
@@ -228,6 +229,10 @@ a `gh api` call with `-f`/`-F`/`--field`/`--raw-field`/`--input`, or
 - an account's collaborator status.
 
 `_SENSITIVE` in the script lists the exact patterns.
+
+It checks only the command text and the body files the command passes,
+not staged repository files: a commit's diff is covered by `AGENTS.md`'s
+"No sensitive information" rule and by review, not by this guard.
 
 Everything else, including reading commands such as `gh pr view` or
 `grep`, is unaffected. Rephrase to say what the secret is for and run the

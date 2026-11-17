@@ -6,12 +6,14 @@ and GitHub keeps their edit history, so a sentence describing what kind of
 token a secret holds, what it can access, or whose account it belongs to
 can't be fully taken back once posted. AGENTS.md's rule is to name a secret
 by its name and purpose only; this hook catches the common slips before
-`gh pr|issue|release create/edit/comment/review`, a writing `gh api` call,
+`gh pr|issue|release create/edit/comment/review`, `gh pr merge`, a writing
+`gh api` call,
 or `git commit` runs.
 
 It scans the command text (which covers `-m`, `--body`, `-f body=...` and
-heredocs) plus any file passed as `--body-file`, `-F`/`--file` or
-`-F field=@path`. It is a tripwire for wording, not a secret scanner.
+heredocs) plus any file passed as `--body-file`, `-F`/`--file`, `--input`
+(with a space or `=`) or `-F field=@path`. Staged repository files are not
+scanned. It is a tripwire for wording, not a secret scanner.
 
 See ../STOP_HOOKS.md for the full writeup.
 """
@@ -29,7 +31,7 @@ from pathlib import Path
 _COMMAND_START = r"(?:^|[;&|(]|\$\()\s*(?:\S*/)?"
 _PUBLISHING_RE = re.compile(
     _COMMAND_START + r"(?:gh(?:\s+(?:-R|--repo)\s+\S+)?\s+(?:pr|issue|release)\s+"
-    r"(?:create|edit|comment|review)\b"
+    r"(?:create|edit|comment|review|merge)\b"
     r"|git(?:\s+-C\s+\S+)?\s+commit\b)",
     re.MULTILINE,
 )
@@ -80,7 +82,7 @@ def _referenced_files(command: str, cwd: Path) -> list[Path]:
         value = None
         if token in _FILE_FLAGS and index + 1 < len(tokens):
             value = tokens[index + 1]
-        elif token.startswith("--body-file="):
+        elif token.startswith(tuple(f"{flag}=" for flag in _FILE_FLAGS if flag.startswith("--"))):
             value = token.split("=", 1)[1]
         if value is None:
             continue

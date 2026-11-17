@@ -26,6 +26,7 @@ class TestCheckPublicText(unittest.TestCase):
             "gh issue comment 1 --body 'the bot is an outside collaborator'",
             'gh api repos/o/r/pulls/1 -X PATCH -f body="token lacks the read:org scope"',
             "gh -R o/r pr comment 3 --body 'needs a personal access token'",
+            "gh pr merge 130 --squash --subject 'docs: x' --body 'uses a classic PAT'",
         ):
             with self.subTest(command=command):
                 self.assertTrue(self.blocked(command))
@@ -36,6 +37,9 @@ class TestCheckPublicText(unittest.TestCase):
 
             self.assertTrue(self.blocked("gh pr create --body-file body.md", Path(tmp)))
             self.assertTrue(self.blocked("git commit -F body.md", Path(tmp)))
+            self.assertTrue(self.blocked("git commit --file=body.md", Path(tmp)))
+            self.assertTrue(self.blocked("gh pr merge 130 --squash --body-file body.md", Path(tmp)))
+            self.assertTrue(self.blocked("gh pr merge 130 --body-file=body.md", Path(tmp)))
             self.assertTrue(
                 self.blocked("gh api repos/o/r/issues/1/comments -F body=@body.md", Path(tmp))
             )
@@ -45,6 +49,7 @@ class TestCheckPublicText(unittest.TestCase):
             'git commit -m "open the bump PR with the AUTOMATION_TOKEN secret so CI runs"',
             'gh pr create --title t --body "uses the AUTOMATION_TOKEN repository secret"',
             "gh pr view 129 --json body",
+            "gh pr merge 130 --squash --subject 'docs: add AGENTS.md (#130)'",
             "gh api repos/o/r/pulls/1",
             "grep -rn public_repo .",
             "echo PATH=$PATH",

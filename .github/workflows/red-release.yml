@@ -1,0 +1,189 @@
+name: Raise max_bot_version for a new Red
+
+# Every cog's info.json pins one tested min/max_bot_version range, because
+# the cogs use Red's private cog manager (docs/dependency-loading.md,
+# "Private Red APIs"). Downloader refuses to install them on a newer Red
+# until the range is raised, and the Red Index delists a cog a new Red
+# breaks unless it is fixed within a month -- so this watches for Red
+# releases daily and opens one pull request that raises max_bot_version,
+# gated by switchboard's suite (tests/test_red_private_api.py) on the new
+# Red. See contracts/red_release/track_red_release.py for what counts as a
+# release and how a rejected bump stays closed. Issue #128.
+# The PR is for a human to merge: a green gate means "the private APIs we
+# pin are still there", not "nothing in the release affects us".
+
+on:
+  schedule:
+    # Daily, 06:00 UTC. A quiet day costs well under a minute and opens
+    # nothing.
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+# A manual dispatch during a scheduled run must not race two force-pushes
+# onto the same branch. Never cancel-in-progress: a half-published branch is
+# worse than a late one.
+concurrency:
+  group: red-release
+  cancel-in-progress: false
+
+env:
+  # A constant branch is what makes this update the open PR instead of
+  # opening a second one each time Red releases again.
+  PR_BRANCH: chore/red-max-bot-version
+
+jobs:
+  bump:
+    name: Raise max_bot_version and gate it on the new Red
+    # Forks must not open bump PRs of their own.
+    if: github.repository == 'pixel-agents-hq/pixel-agents-cogs'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      # Always this branch's max_bot_version, never the open PR's -- a PR
+      # that already moved 3.5.24 -> 3.5.25 and now moves to 3.5.26 has to
+      # report 3.5.24 -> 3.5.26, because that is the diff a reviewer merges.
+      - name: Find Red releases newer than max_bot_version
+        id: plan
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python -m contracts.red_release.track_red_release plan \
+            --repo "$GITHUB_REPOSITORY" --branch "$PR_BRANCH" \
+            --out "$RUNNER_TEMP/red-plan.json"
+
+      - name: Raise max_bot_version
+        if: steps.plan.outputs.action == 'bump'
+        run: |
+          python -m contracts.red_release.track_red_release bump "$RUNNER_TEMP/red-plan.json"
+          python -m contracts.info_json.lint_info_json
+
+      # The gate: switchboard is the one suite that imports the real Red, and
+      # its tests/test_red_private_api.py pins every private API this repo
+      # uses (plus that the installed Red is inside the now-raised range).
+      # Captured rather than failing the step outright, so a broken bump
+      # still gets a PR to look at instead of a red run with nothing to
+      # click on. The PR's own switchboard.yml/check-cogs.yml runs then cover
+      # both ends of the range end to end.
+      - name: Run switchboard's suite on the new Red
+        id: gate
+        if: steps.plan.outputs.action == 'bump'
+        env:
+          RED: ${{ steps.plan.outputs.latest }}
+        run: |
+          set +e
+          {
+            python -m pip install --upgrade pip \
+              && python -m pip install "red-discordbot==$RED" pytest pytest-timeout \
+              && python -m pytest -q switchboard/
+          } 2>&1 | tee "$RUNNER_TEMP/red-gate.log"
+          echo "code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+
+      # `secrets` is not available in a step-level `if:`, so whether
+      # AUTOMATION_TOKEN is set is a shell check. The token is only ever
+      # tested for emptiness -- never echoed.
+      - name: Compose the pull request
+        id: body
+        if: steps.plan.outputs.action == 'bump'
+        env:
+          AUTOMATION_TOKEN: ${{ secrets.AUTOMATION_TOKEN }}
+        run: |
+          token_flag=()
+          if [ -z "$AUTOMATION_TOKEN" ]; then token_flag=(--no-ci-token); fi
+          python -m contracts.red_release.track_red_release body "$RUNNER_TEMP/red-plan.json" \
+            --gate-code "${{ steps.gate.outputs.code }}" --gate-log "$RUNNER_TEMP/red-gate.log" \
+            --out "$RUNNER_TEMP/red-pr-body.md" "${token_flag[@]}"
+
+      - name: Open or update the pull request
+        id: pr
+        continue-on-error: true
+        if: steps.plan.outputs.action == 'bump'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          # AUTOMATION_TOKEN is what makes the PR's own checks run;
+          # GITHUB_TOKEN still opens one, and the body says out loud that it
+          # has no checks.
+          token: ${{ secrets.AUTOMATION_TOKEN || secrets.GITHUB_TOKEN }}
+          branch: ${{ env.PR_BRANCH }}
+          base: ${{ github.ref_name }}
+          delete-branch: false
+          commit-message: |
+            ${{ steps.body.outputs.title }}
+
+            ${{ steps.plan.outputs.ceiling }} -> ${{ steps.plan.outputs.latest }}
+
+            Opened by .github/workflows/red-release.yml. Refs #128.
+          title: ${{ steps.body.outputs.title }}
+          body-path: ${{ runner.temp }}/red-pr-body.md
+          labels: ${{ steps.body.outputs.labels }}
+          add-paths: |
+            */info.json
+            .cookiecutter/cog-cookiecutter/cookiecutter.json
+
+      # The PR action only ever adds labels, so a PR an earlier run marked
+      # red-breaking would keep it after the gate passes. red-breaking tracks
+      # the latest gate result: drop it here. A 404 just means the label
+      # wasn't on the PR.
+      - name: Remove labels the gate no longer earns
+        if: steps.body.outputs.remove-labels != '' && steps.pr.outputs.pull-request-number != ''
+        env:
+          GH_TOKEN: ${{ secrets.AUTOMATION_TOKEN || secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ steps.pr.outputs.pull-request-number }}
+          REMOVE_LABELS: ${{ steps.body.outputs.remove-labels }}
+        run: |
+          for label in ${REMOVE_LABELS//,/ }; do
+            gh api -X DELETE "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/labels/$label" \
+              >/dev/null 2>&1 || echo "$label was not on #$PR_NUMBER."
+          done
+
+      - name: Summarise
+        if: always() && steps.plan.outputs.action != ''
+        env:
+          ACTION: ${{ steps.plan.outputs.action }}
+          CEILING: ${{ steps.plan.outputs.ceiling }}
+          LATEST: ${{ steps.plan.outputs.latest }}
+          PR_URL: ${{ steps.pr.outputs.pull-request-url }}
+        run: |
+          {
+            case "$ACTION" in
+              none) echo "max_bot_version $CEILING is the newest installable Red. Nothing to do." ;;
+              skip) echo "A bump to $LATEST was closed without merging; waiting for a newer Red." ;;
+              bump) cat "$RUNNER_TEMP/red-pr-body.md" 2>/dev/null || true ;;
+            esac
+            if [ -n "$PR_URL" ]; then echo; echo "PR: $PR_URL"; fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Explain a pull request that could not be opened
+        if: always() && steps.pr.outcome == 'failure'
+        run: |
+          {
+            echo "::error::The pull-request action failed; its log above has the specific cause."
+            echo "Common causes:"
+            echo "  * 401 or 403 -- AUTOMATION_TOKEN has expired or lost access."
+            echo "  * \"not permitted to create or approve pull requests\" (GITHUB_TOKEN fallback"
+            echo "    only) -- enable Settings -> Actions -> General -> Workflow permissions ->"
+            echo "    \"Allow GitHub Actions to create and approve pull requests\"."
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          exit 1
+
+      # Last, so the PR always exists to be read even when this fails the run.
+      - name: Fail if the new Red broke the gate
+        if: steps.plan.outputs.action == 'bump'
+        run: |
+          if [ "${{ steps.gate.outputs.code }}" != "0" ]; then
+            echo "::error::switchboard's suite failed on Red ${{ steps.plan.outputs.latest }}. See the PR body."
+            exit 1
+          fi
+          echo "switchboard's suite passes on Red ${{ steps.plan.outputs.latest }}."

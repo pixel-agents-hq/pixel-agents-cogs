@@ -3,7 +3,9 @@ name: "info.json and README"
 # Red's Approved Cog Creator guide requires a root README and, in every
 # info.json, author/short/description plus an install_msg disclosure. This
 # keeps them from silently going missing, and keeps every cog's
-# min/max_bot_version on one tested Red range. Stdlib only: no dependencies.
+# min/max_bot_version on one tested Red range. Also tests
+# contracts/red_release, which raises that range for red-release.yml.
+# Stdlib only: no dependencies.
 on:
   push:
     paths:
@@ -12,6 +14,7 @@ on:
       - "README.md"
       - ".cookiecutter/cog-cookiecutter/cookiecutter.json"
       - "contracts/info_json/**"
+      - "contracts/red_release/**"
       - ".github/workflows/info-json.yml"
   pull_request:
     paths:
@@ -20,6 +23,7 @@ on:
       - "README.md"
       - ".cookiecutter/cog-cookiecutter/cookiecutter.json"
       - "contracts/info_json/**"
+      - "contracts/red_release/**"
       - ".github/workflows/info-json.yml"
 
 permissions:
@@ -47,3 +51,6 @@ jobs:
 
       - name: Test the info.json lint
         run: python -m unittest discover -s contracts/info_json/tests
+
+      - name: Test the Red release tracker
+        run: python -m unittest discover -s contracts/red_release/tests

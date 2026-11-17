@@ -216,9 +216,9 @@ jobs:
       - name: Note if the pull request will arrive without CI
         if: steps.candidate.outputs.moved == 'true'
         env:
-          VENDOR_UPDATE_TOKEN: ${{ secrets.VENDOR_UPDATE_TOKEN }}
+          AUTOMATION_TOKEN: ${{ secrets.AUTOMATION_TOKEN }}
         run: |
-          if [ -n "$VENDOR_UPDATE_TOKEN" ]; then exit 0; fi
+          if [ -n "$AUTOMATION_TOKEN" ]; then exit 0; fi
           {
             echo
             echo "### ⚠️ No checks will run on this pull request"
@@ -226,9 +226,8 @@ jobs:
             echo "It was opened with \`GITHUB_TOKEN\`, and GitHub does not trigger"
             echo "\`pull_request\` workflows for anything that token creates, so"
             echo "\`cogs-quality.yml\` and \`check-cogs.yml\` are not running here,"
-            echo "however green the gates above look. Set a \`VENDOR_UPDATE_TOKEN\`"
-            echo "repository secret (a PAT on a machine account with \`repo\`) to get"
-            echo "real checks on this PR."
+            echo "however green the gates above look. Set an \`AUTOMATION_TOKEN\`"
+            echo "repository secret to get real checks on this PR."
           } >> gate-report.md
 
       # Not fatal on its own: by the time this runs the pin bump is already
@@ -243,7 +242,7 @@ jobs:
           # Falls back to GITHUB_TOKEN so this still opens a PR before the
           # secret exists -- just one without checks, which the step above
           # says out loud rather than leaving as a mystery.
-          token: ${{ secrets.VENDOR_UPDATE_TOKEN || secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.AUTOMATION_TOKEN || secrets.GITHUB_TOKEN }}
           # A constant branch is what makes this reuse the open PR instead of
           # opening a second one every time upstream moves.
           branch: ${{ env.PR_BRANCH }}
@@ -279,7 +278,7 @@ jobs:
             echo "  * \"not permitted to create or approve pull requests\" -- enable Settings ->"
             echo "    Actions -> General -> Workflow permissions -> \"Allow GitHub Actions to"
             echo "    create and approve pull requests\"."
-            echo "  * 401 or 403 -- VENDOR_UPDATE_TOKEN has expired or lost access."
+            echo "  * 401 or 403 -- AUTOMATION_TOKEN has expired or lost access."
           } | tee -a "$GITHUB_STEP_SUMMARY"
           exit 1
 

@@ -227,8 +227,7 @@ jobs:
             echo "\`pull_request\` workflows for anything that token creates, so"
             echo "\`cogs-quality.yml\` and \`check-cogs.yml\` are not running here,"
             echo "however green the gates above look. Set an \`AUTOMATION_TOKEN\`"
-            echo "repository secret (a classic PAT on a machine account with"
-            echo "\`public_repo\`) to get real checks on this PR."
+            echo "repository secret to get real checks on this PR."
           } >> gate-report.md
 
       # Not fatal on its own: by the time this runs the pin bump is already

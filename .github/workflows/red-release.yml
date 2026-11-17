@@ -112,9 +112,9 @@ jobs:
         if: steps.plan.outputs.action == 'bump'
         uses: peter-evans/create-pull-request@v7
         with:
-          # AUTOMATION_TOKEN (a classic PAT with public_repo on a machine
-          # account) is what makes the PR's own checks run; GITHUB_TOKEN still
-          # opens one, and the body says out loud that it has no checks.
+          # AUTOMATION_TOKEN is what makes the PR's own checks run;
+          # GITHUB_TOKEN still opens one, and the body says out loud that it
+          # has no checks.
           token: ${{ secrets.AUTOMATION_TOKEN || secrets.GITHUB_TOKEN }}
           branch: ${{ env.PR_BRANCH }}
           base: ${{ github.ref_name }}
@@ -155,8 +155,7 @@ jobs:
           {
             echo "::error::The pull-request action failed; its log above has the specific cause."
             echo "Common causes:"
-            echo "  * 401 or 403 -- AUTOMATION_TOKEN has expired, lost access, or the org"
-            echo "    blocks classic personal access tokens."
+            echo "  * 401 or 403 -- AUTOMATION_TOKEN has expired or lost access."
             echo "  * \"not permitted to create or approve pull requests\" (GITHUB_TOKEN fallback"
             echo "    only) -- enable Settings -> Actions -> General -> Workflow permissions ->"
             echo "    \"Allow GitHub Actions to create and approve pull requests\"."

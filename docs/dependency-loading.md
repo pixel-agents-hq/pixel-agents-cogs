@@ -243,10 +243,8 @@ release's date plus one month, the time a cog a new Red breaks has to be
 fixed. A later Red release updates the same PR. A bump PR closed without
 merging stays closed until Red releases a newer version; its body's
 `<!-- red-release latest=X.Y.Z -->` marker is what the next run reads. The
-PR is opened with the `AUTOMATION_TOKEN` repository secret, a classic
-personal access token on a machine account with only the `public_repo`
-scope, because pull requests opened with `GITHUB_TOKEN` get no
-`pull_request` checks. `vendor-update.yml` uses the same secret. Fixing
+PR is opened with the `AUTOMATION_TOKEN` repository secret, because pull
+requests opened with `GITHUB_TOKEN` get no `pull_request` checks. `vendor-update.yml` uses the same secret. Fixing
 what the gate or the PR's `switchboard.yml`/`check-cogs.yml` runs report,
 and merging, stay manual.
 

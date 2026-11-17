@@ -298,7 +298,7 @@ def render_body(
             "",
             "It was opened with `GITHUB_TOKEN`, and GitHub does not trigger `pull_request`",
             "workflows for anything that token creates. Set the `AUTOMATION_TOKEN` repository",
-            "secret (a classic PAT with `public_repo`) to get real checks here.",
+            "secret to get real checks here.",
         ]
     lines += [
         "",

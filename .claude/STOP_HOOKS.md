@@ -20,7 +20,8 @@ command instead.
         "matcher": "Bash",
         "hooks": [
           { "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/check_pytest_scope.py\"", "timeout": 5 },
-          { "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/check_gh_pr_edit.py\"", "timeout": 5 }
+          { "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/check_gh_pr_edit.py\"", "timeout": 5 },
+          { "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/check_public_text.py\"", "timeout": 5 }
         ]
       }
     ]
@@ -171,14 +172,12 @@ Everything else is allowed, including:
 
 ### The problem this solves
 
-This environment's `gh` token is scoped to `read:user`, `repo`,
-`user:email`, `workflow`, and `write:packages` — it lacks `read:org` and
-`read:discussion`. `gh pr edit`'s underlying GraphQL mutation resolves a
-few fields (the acting user's `login`, an org's `name`, a discussion
-`slug`) on the way to the actual edit, even though the edit itself needs
-neither scope, so the whole call fails with a wall of "Your token has not
-been granted the required scopes..." text — every time, regardless of
-which PR or which fields are being edited. The fix is always the same:
+`gh pr edit`'s underlying GraphQL mutation resolves a few fields (the
+acting user's `login`, an org's `name`, a discussion `slug`) on the way to
+the actual edit. This environment's `gh` credentials can't read them, even
+though the edit itself is allowed, so the whole call fails with a wall of
+permission-error text — every time, regardless of which PR or which fields
+are being edited. The fix is always the same:
 use the REST API directly instead, which never reaches that GraphQL path:
 
 ```sh
@@ -198,8 +197,7 @@ where only one side is `gh pr edit` — is unaffected.
 
 ### If you need to change this
 
-- If this token's scopes ever change to include `read:org`/
-  `read:discussion`, `gh pr edit` would work again and this guard could be
+- If `gh pr edit` ever works in this environment, this guard can be
   deleted along with `check_gh_pr_edit.py`.
 - `_PR_EDIT_VALUE_FLAGS` may need a new entry if a future `gh` version adds
   a value-taking flag to `pr edit`; a missing entry would show up as the
@@ -207,6 +205,39 @@ where only one side is `gh pr edit` — is unaffected.
   for the target) rather than a false block.
 - To disable temporarily, remove or comment out its entry in
   `.claude/settings.json`, or delete `.claude/hooks/check_gh_pr_edit.py`.
+
+## Public-text guard (`check_public_text.py`)
+
+### The problem this solves
+
+PR bodies, issue comments and commit messages are public, and GitHub keeps
+their edit history, so text describing a credential can't be fully taken
+back once posted. `AGENTS.md` says to name a secret only by its name and
+purpose. This guard catches the common slips before they are published.
+
+### What gets blocked
+
+A `Bash` command that runs `gh pr|issue|release create/edit/comment/review`,
+a `gh api` call with `-f`/`-F`/`--field`/`--raw-field`/`--input`, or
+`git commit`, when its text or a file it passes (`--body-file`, `-F`,
+`--file`, `--input`, `-F field=@path`) contains:
+
+- a GitHub token scope name;
+- a token type ("classic"/"fine-grained" token, personal access token, PAT);
+- "token" and "scope" in the same phrase;
+- "outside collaborator".
+
+Everything else, including reading commands such as `gh pr view` or
+`grep`, is unaffected. Rephrase to say what the secret is for and run the
+command again.
+
+### If you need to change this
+
+- `_SENSITIVE` holds the patterns. It is a wording tripwire, not a secret
+  scanner: it does not catch secret values, other phrasings, or text posted
+  through tools other than `Bash`.
+- Tests: `python3 -m unittest discover -s .claude/hooks -p 'test_*.py'`.
+- To disable temporarily, remove its entry in `.claude/settings.json`.
 
 ## Where this lives (and where it doesn't)
 
@@ -219,8 +250,8 @@ which live in `.claude/settings.local.json`, a Claude Code-recognized
 Claude Code merges hooks from `settings.json` and `settings.local.json`
 per event, so both files' hooks are active at once.
 
-`.claude/settings.json`, `.claude/hooks/check_pytest_scope.py`,
-`.claude/hooks/check_gh_pr_edit.py`, and this file are force-added
+`.claude/settings.json`, the scripts under `.claude/hooks/`, and this file
+are force-added
 (`git add -f`, bypassing that local exclude) and committed normally —
 they're genuinely project-level and belong in the repo, unlike the
 orchestrator's own session plumbing.

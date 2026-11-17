@@ -2,12 +2,10 @@
 """PreToolUse(Bash) guard: block `gh pr edit` in this environment and
 redirect to the REST call that actually works.
 
-Why this exists: this environment's `gh` token lacks the `read:org`/
-`read:discussion` scopes `gh pr edit`'s GraphQL mutation resolves on the
-way to the actual edit (even though the edit itself needs neither scope),
-so it always fails with a wall of "Your token has not been granted the
-required scopes..." text -- never a real permissions problem with the
-edit itself, always the same fix: `gh api repos/<owner>/<repo>/pulls/
+Why this exists: `gh pr edit`'s GraphQL mutation resolves extra fields on
+the way to the actual edit that this environment's `gh` credentials can't
+read, so it always fails with a wall of permission-error text -- never a
+real problem with the edit itself, always the same fix: `gh api repos/<owner>/<repo>/pulls/
 <number> -X PATCH -f title="..." -f body="..."` instead, which uses the
 REST API and never touches that GraphQL path. Rediscovering that by
 reading the same scope-error wall a second time is a slow, repeatable
@@ -116,10 +114,9 @@ def _check_command(command: str) -> str | None:
         pr_ref = target or "<number>"
         return (
             "`gh pr edit` fails in this environment: its GraphQL mutation "
-            "resolves fields (login/name/slug) that need the 'read:org'/"
-            "'read:discussion' scopes this token doesn't have, even though "
-            "the edit itself needs neither. Use the REST API directly "
-            "instead, which never touches that path:\n"
+            "resolves extra fields (login/name/slug) these credentials can't "
+            "read, even though the edit itself is allowed. Use the REST API "
+            "directly instead, which never touches that path:\n"
             f"  gh api repos/<owner>/<repo>/pulls/{pr_ref} -X PATCH \\\n"
             '    -f title="..." -f body="..."\n'
             "(owner/repo: from `gh repo view --json owner,name`, or read "

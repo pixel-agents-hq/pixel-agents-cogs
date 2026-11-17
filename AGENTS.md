@@ -22,6 +22,9 @@ dependency graph before a cross-cog change.
     path.
   - `check_gh_pr_edit.py`: `gh pr edit`. Use
     `gh api repos/<owner>/<repo>/pulls/<n> -X PATCH` instead.
+  - `check_public_text.py`: a commit, PR, issue, comment or `gh api` write
+    whose text describes a credential's type, scopes or account access.
+    Rephrase it; never work around the guard.
 
 ## Commands
 
@@ -43,6 +46,7 @@ python -m contracts.discord_replies.lint_reply_channel
 python -m contracts.info_json.lint_info_json
 python -m contracts.runtime_hygiene.lint_runtime_hygiene
 python -m unittest discover -s contracts/red_release/tests
+python3 -m unittest discover -s .claude/hooks -p 'test_*.py'
 
 PIXELAGENTS_REAL_WEBVIEW_BUILD=1 python -m pytest -q e2e/   # multi-cog, see e2e/README.md
 ```
@@ -107,14 +111,20 @@ PIXELAGENTS_REAL_WEBVIEW_BUILD=1 python -m pytest -q e2e/   # multi-cog, see e2e
 - **No history and no dates or times:** no "Update:", "used to", "as of",
   "superseded by", and no timestamps. Git records when things changed.
 - **No sensitive information in anything public:** repository files,
-  commit messages, PRs, issues or comments. Never write:
+  commit messages, PRs, issues or comments. Editing it out later doesn't
+  help, because GitHub keeps edit history and history is not rewritten.
+  Never write:
   - secret values;
   - token types or scopes;
-  - account names, roles or access levels;
+  - which account owns a credential, or any account's role or access
+    level;
   - whether a secret is set;
   - org or security settings.
 
-  Refer to a secret by its name and purpose only.
+  Name a secret by its name and purpose only. Write "the bump PR is opened
+  with the `AUTOMATION_TOKEN` secret so its checks run", not what kind of
+  token it is, what it can access, or whose it is. Credential setup goes to
+  the repo owner privately, never into the repo. When unsure, leave it out.
 - **Fix documented drift** you find while touching related code in the same
   change.
 

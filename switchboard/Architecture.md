@@ -50,8 +50,9 @@ in-memory fakes.
     alphabetically, cycles raise `DependencyCycleError`).
   - `requirements.py` holds `unsatisfied()`: specifiers, markers, extras
     (an extra's own gated `Requires-Dist` lines must be satisfied too),
-    direct references (their base `Requires-Dist` lines must be satisfied
-    too) and bare-URL requirements.
+    direct references (the installed `direct_url.json` must name the same
+    URL, ref and subdirectory, and the base `Requires-Dist` lines must be
+    satisfied too) and bare-URL requirements.
 - **application/service.py**: `SwitchboardService` handles status, install,
   load, unload, reload and repair, plus expanding `all` and directory-name
   tokens. Anything a run installs or loads comes from one catalog scan.

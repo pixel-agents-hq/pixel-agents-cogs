@@ -12,6 +12,7 @@ from unittest import mock
 
 from ..domain import CogSource
 from ..infrastructure import CogCatalog, PipInstaller, build_lookup
+from ..infrastructure.distribution_index import direct_url
 from ..infrastructure.downloader_index import index_from_installed_cogs, read_downloader_index
 
 
@@ -151,14 +152,51 @@ class TestDistributionIndex(unittest.TestCase):
             assert a2a is not None
             self.assertEqual(a2a.requires, ('starlette>=0.40; extra == "http-server"',))
             self.assertIsNone(lookup("uvicorn"))
+            self.assertIsNone(a2a.direct_url)
+
+    def test_direct_url_json_becomes_a_pep_508_url(self) -> None:
+        with tempfile.TemporaryDirectory() as lib:
+            info = self._dist(Path(lib), "pixel-agents-deps", "1")
+            # The shape pip writes for a git requirement with a subdirectory.
+            (info / "direct_url.json").write_text(
+                json.dumps(
+                    {
+                        "subdirectory": "requirements",
+                        "url": "https://github.com/pixel-agents-hq/pixel-agents-cogs",
+                        "vcs_info": {
+                            "commit_id": "d1f9476534d8ddb272cb51f466beaf50928ac895",
+                            "requested_revision": "pixel-agents-deps-v1",
+                            "vcs": "git",
+                        },
+                    }
+                )
+            )
+
+            deps = build_lookup([lib])("pixel-agents-deps")
+
+            assert deps is not None
+            self.assertEqual(
+                deps.direct_url,
+                "git+https://github.com/pixel-agents-hq/pixel-agents-cogs"
+                "@pixel-agents-deps-v1#subdirectory=requirements",
+            )
+
+    def test_unreadable_direct_url_json_is_ignored(self) -> None:
+        for text in ("not json", "[]", '{"url": 1}', ""):
+            self.assertIsNone(direct_url(text))
+        self.assertEqual(
+            direct_url('{"url": "https://x.invalid/p-1.tar.gz", "archive_info": {}}'),
+            "https://x.invalid/p-1.tar.gz",
+        )
 
     @staticmethod
-    def _dist(path: Path, name: str, version: str, requires: list[str] | None = None) -> None:
+    def _dist(path: Path, name: str, version: str, requires: list[str] | None = None) -> Path:
         info = path / f"{name.replace('-', '_')}-{version}.dist-info"
         info.mkdir()
         lines = ["Metadata-Version: 2.1", f"Name: {name}", f"Version: {version}"]
         lines += [f"Requires-Dist: {line}" for line in requires or []]
         (info / "METADATA").write_text("\n".join(lines) + "\n")
+        return info
 
 
 class TestDownloaderIndex(unittest.TestCase):

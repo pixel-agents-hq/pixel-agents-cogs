@@ -7,14 +7,7 @@
     "install_msg": "Install corridor too ([p]cog install pixel-agents-cogs corridor); it loads automatically. Outside services: in servers where it is enabled, pico sends message content and recent channel history to corridor's LLM endpoint, and prompts to any A2A agent it consults. Setup: [p]corridor llm endpoint/key/model (bot owner), then [p]pico enabled true in a server (off by default). It reads messages, so the bot needs the message content intent.",
     "author": ["Pixel Agents HQ Contributors"],
     "required_cogs": {"corridor": "https://github.com/pixel-agents-hq/pixel-agents-cogs"},
-    "requirements": [
-        "aiohttp",
-        "httpx",
-        "pydantic>=2.11.3,<2.12",
-        "a2a-sdk",
-        "typing-inspection<0.4.3",
-        "anyio<4.15"
-    ],
+    "requirements": ["pixel-agents-deps @ git+https://github.com/pixel-agents-hq/pixel-agents-cogs@pixel-agents-deps-v1#subdirectory=requirements"],
     "tags": [
         "pico",
         "llm",

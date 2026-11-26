@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -11,13 +12,22 @@ from contracts.info_json.lint_info_json import (
     README_REQUIRED,
     check_bot_version_range,
     check_cog_info,
+    check_deps_project,
+    check_deps_tag,
+    check_pin_fix,
     check_readme,
     check_repo_info,
+    check_requirements,
+    check_template_requirements,
+    deps_requirement,
     discover_cogs,
     lint,
     main,
     tested_red_versions,
 )
+
+REQUIREMENT = deps_requirement("1")
+PYPROJECT = '[project]\nname = "pixel-agents-deps"\nversion = "1"\ndependencies = ["anyio<4.15"]\n'
 
 
 def _cog(name: str = "newcog", **overrides: Any) -> dict[str, Any]:
@@ -51,7 +61,32 @@ def _repo(**overrides: Any) -> dict[str, Any]:
 
 
 def _readme(*cogs: str) -> str:
-    return "\n".join([*README_REQUIRED, *(f"`{cog}`" for cog in cogs)])
+    return "\n".join(
+        [*README_REQUIRED, *(f"`{cog}`" for cog in cogs), f'[p]pipinstall "{REQUIREMENT}"']
+    )
+
+
+def _project(**overrides: Any) -> dict[str, Any]:
+    data: dict[str, Any] = {
+        "name": "pixel-agents-deps",
+        "version": "1",
+        "dependencies": ["mcp>=1.29,<2", "anyio<4.15"],
+    }
+    data.update(overrides)
+    return data
+
+
+def _write_deps(root: Path, text: str = PYPROJECT) -> None:
+    (root / "requirements").mkdir(exist_ok=True)
+    (root / "requirements" / "pyproject.toml").write_text(text)
+
+
+def _git(root: Path, *args: str) -> None:
+    subprocess.run(
+        ["git", "-C", str(root), "-c", "user.name=t", "-c", "user.email=t@example.invalid", *args],
+        check=True,
+        capture_output=True,
+    )
 
 
 class TestRealRepository(unittest.TestCase):
@@ -263,6 +298,7 @@ class TestLintTree(unittest.TestCase):
             data = _cog()
             del data["install_msg"]
             (root / "newcog" / "info.json").write_text(json.dumps(data))
+            _write_deps(root)
             (root / "lib").mkdir()
             (root / "lib" / "info.json").write_text(
                 json.dumps({"type": "SHARED_LIBRARY", "hidden": True})
@@ -279,11 +315,152 @@ class TestLintTree(unittest.TestCase):
             (root / "README.md").write_text(_readme("newcog"))
             (root / "newcog").mkdir()
             (root / "newcog" / "info.json").write_text(json.dumps(_cog(type="cog")))
+            _write_deps(root)
 
             self.assertEqual(
                 lint(root),
                 ["newcog/info.json: 'type' must be 'COG' or 'SHARED_LIBRARY', not 'cog'"],
             )
+
+    def test_a_missing_meta_package_fails(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "info.json").write_text(json.dumps(_repo()))
+            (root / "README.md").write_text(_readme("newcog"))
+            (root / "newcog").mkdir()
+            (root / "newcog" / "info.json").write_text(json.dumps(_cog()))
+
+            self.assertEqual(lint(root), ["requirements/pyproject.toml: missing"])
+
+    def test_a_cog_with_its_own_pin_is_caught(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "info.json").write_text(json.dumps(_repo()))
+            (root / "README.md").write_text(_readme("newcog"))
+            (root / "newcog").mkdir()
+            data = _cog(required_cogs={"corridor": "url"}, requirements=[REQUIREMENT, "anyio<4.15"])
+            (root / "newcog" / "info.json").write_text(json.dumps(data))
+            _write_deps(root)
+
+            problems = lint(root)
+
+            self.assertEqual(len(problems), 1)
+            self.assertIn("newcog/info.json: 'requirements' must be", problems[0])
+
+
+class TestRequirements(unittest.TestCase):
+    def test_requirement_names_the_versioned_tag(self) -> None:
+        self.assertEqual(
+            REQUIREMENT,
+            "pixel-agents-deps @ git+https://github.com/pixel-agents-hq/pixel-agents-cogs"
+            "@pixel-agents-deps-v1#subdirectory=requirements",
+        )
+
+    def test_corridor_and_its_dependents_need_exactly_the_requirement(self) -> None:
+        cogs = {
+            "corridor": _cog("corridor", requirements=[REQUIREMENT]),
+            "alpha": _cog("alpha", required_cogs={"corridor": "url"}, requirements=[REQUIREMENT]),
+        }
+
+        self.assertEqual(check_requirements(cogs, REQUIREMENT), [])
+
+    def test_a_dependent_without_the_requirement_fails(self) -> None:
+        cogs = {"alpha": _cog("alpha", required_cogs={"corridor": "url"})}
+
+        problems = check_requirements(cogs, REQUIREMENT)
+
+        self.assertEqual(len(problems), 1)
+        self.assertNotIn(" or []", problems[0])
+
+    def test_a_stale_ref_fails(self) -> None:
+        cogs = {"corridor": _cog("corridor", requirements=[deps_requirement("0")])}
+
+        self.assertEqual(len(check_requirements(cogs, REQUIREMENT)), 1)
+
+    def test_an_extra_spelling_fails(self) -> None:
+        variant = REQUIREMENT.replace("pixel-agents-deps @", "pixel-agents-deps[cctv] @")
+        cogs = {"corridor": _cog("corridor", requirements=[variant])}
+
+        self.assertEqual(len(check_requirements(cogs, REQUIREMENT)), 1)
+
+    def test_a_corridor_free_cog_may_list_nothing_or_the_requirement(self) -> None:
+        cogs = {"alpha": _cog("alpha"), "beta": _cog("beta", requirements=[REQUIREMENT])}
+
+        self.assertEqual(check_requirements(cogs, REQUIREMENT), [])
+
+    def test_a_corridor_free_cog_with_its_own_requirement_fails(self) -> None:
+        cogs = {"alpha": _cog("alpha", requirements=["packaging"])}
+
+        problems = check_requirements(cogs, REQUIREMENT)
+
+        self.assertEqual(len(problems), 1)
+        self.assertIn(" or []", problems[0])
+
+    def test_template_must_carry_the_requirement(self) -> None:
+        good = '"requirements": ' + json.dumps([REQUIREMENT])
+
+        self.assertEqual(check_template_requirements(good, REQUIREMENT), [])
+        self.assertEqual(len(check_template_requirements('"requirements": []', REQUIREMENT)), 1)
+
+    def test_project_name_and_version_are_checked(self) -> None:
+        self.assertEqual(check_deps_project(_project()), [])
+        self.assertEqual(len(check_deps_project(_project(name="other", version="1.0"))), 2)
+
+
+class TestPinFix(unittest.TestCase):
+    def test_readme_and_install_msg_with_the_fix_pass(self) -> None:
+        fix = f'[p]pipinstall "{REQUIREMENT}"'
+        readme = f'{fix}\n[p]pipinstall "anyio<4.15"\n'
+
+        self.assertEqual(check_pin_fix(readme, _cog(install_msg=f"Run {fix}."), _project()), [])
+
+    def test_missing_fix_fails(self) -> None:
+        problems = check_pin_fix("", _cog(), _project())
+
+        self.assertEqual(len(problems), 2)
+
+    def test_a_stale_pin_in_the_readme_fails(self) -> None:
+        readme = f'[p]pipinstall "{REQUIREMENT}"\n[p]pipinstall "anyio<4.14"\n'
+
+        problems = check_pin_fix(readme, None, _project())
+
+        self.assertEqual(len(problems), 1)
+        self.assertIn("'anyio<4.14'", problems[0])
+
+
+class TestDepsTag(unittest.TestCase):
+    def _tagged_repo(self, root: Path) -> None:
+        _write_deps(root)
+        _git(root, "init", "-q")
+        _git(root, "add", ".")
+        _git(root, "commit", "-q", "-m", "deps")
+        _git(root, "tag", "pixel-agents-deps-v1")
+
+    def test_matching_tag_passes(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._tagged_repo(root)
+
+            self.assertEqual(check_deps_tag(root, _project(), required=True), [])
+
+    def test_tag_with_other_content_fails(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._tagged_repo(root)
+            _write_deps(root, PYPROJECT.replace("anyio<4.15", "anyio<4.16"))
+
+            problems = check_deps_tag(root, _project(), required=False)
+
+            self.assertEqual(len(problems), 1)
+            self.assertIn("different requirements/pyproject.toml", problems[0])
+
+    def test_missing_tag_fails_only_when_required(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_deps(root)
+
+            self.assertEqual(check_deps_tag(root, _project(), required=False), [])
+            self.assertEqual(len(check_deps_tag(root, _project(), required=True)), 1)
 
 
 if __name__ == "__main__":

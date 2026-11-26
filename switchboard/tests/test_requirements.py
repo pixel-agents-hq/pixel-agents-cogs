@@ -58,6 +58,36 @@ class TestUnsatisfied(unittest.TestCase):
         # Base dependencies (httpx) and other extras (grpc) are not checked.
         self.assertEqual(unsatisfied(["a2a-sdk"], without, environment=ENV), ())
 
+    def test_direct_reference_needs_its_own_base_requirements(self) -> None:
+        deps = InstalledDistribution(
+            "1",
+            requires=(
+                "anyio<4.15",
+                "a2a-sdk[http-server]",
+                'pywin32; sys_platform == "win32"',
+                'pytest; extra == "test"',
+            ),
+        )
+        a2a = InstalledDistribution("0.3.0", requires=('starlette; extra == "http-server"',))
+        raw = (
+            "pixel-agents-deps @ git+https://github.com/pixel-agents-hq/pixel-agents-cogs"
+            "@pixel-agents-deps-v1#subdirectory=requirements"
+        )
+        held = {
+            "pixel-agents-deps": deps,
+            "a2a-sdk": a2a,
+            "starlette": InstalledDistribution("0.47.0"),
+            "anyio": InstalledDistribution("4.14.2"),
+        }
+
+        self.assertEqual(unsatisfied([raw], lookup_from(**held), environment=ENV), ())
+        bumped = {**held, "anyio": InstalledDistribution("4.16.0")}
+        self.assertEqual(unsatisfied([raw], lookup_from(**bumped), environment=ENV), (raw,))
+        without_starlette = {k: v for k, v in held.items() if k != "starlette"}
+        self.assertEqual(
+            unsatisfied([raw], lookup_from(**without_starlette), environment=ENV), (raw,)
+        )
+
     def test_bare_vcs_url_is_satisfied_by_a_distribution_named_after_it(self) -> None:
         raw = "git+https://github.com/AAA3A-AAA3A/AAA3A_utils.git"
         installed = lookup_from(**{"aaa3a-utils": InstalledDistribution("0.1")})

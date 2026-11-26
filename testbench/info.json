@@ -7,7 +7,7 @@
     "install_msg": "Developer tool, hidden from [p]cog list. Install corridor too ([p]cog install pixel-agents-cogs corridor); it loads automatically. Bot owner only: [p]testbench publish sends a hand-built agent event onto corridor's event bus, and cctv shows it to viewers as if it were real. No outside services or stored data.",
     "author": ["pixel-agents-hq"],
     "required_cogs": {"corridor": "https://github.com/pixel-agents-hq/pixel-agents-cogs"},
-    "requirements": [],
+    "requirements": ["pixel-agents-deps @ git+https://github.com/pixel-agents-hq/pixel-agents-cogs@pixel-agents-deps-v1#subdirectory=requirements"],
     "tags": [
         "testing",
         "corridor",

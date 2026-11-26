@@ -7,7 +7,7 @@
     "install_msg": "Install corridor too ([p]cog install pixel-agents-cogs corridor); it loads automatically. No outside services, no stored data and no extra setup: [p]deskutils time, count and quote work right away and also become pico LLM tools when pico is loaded.",
     "author": ["nntin-bot"],
     "required_cogs": {"corridor": "https://github.com/pixel-agents-hq/pixel-agents-cogs"},
-    "requirements": [],
+    "requirements": ["pixel-agents-deps @ git+https://github.com/pixel-agents-hq/pixel-agents-cogs@pixel-agents-deps-v1#subdirectory=requirements"],
     "tags": [
         "time",
         "utility",

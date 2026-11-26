@@ -37,17 +37,32 @@ Checks, all static (stdlib `json` only -- no cog, redbot or discord import):
 - **Root `README.md`**: the repository name as its title, the `[p]repo add`
   and `[p]cog install` instructions, a Credits section, and every cog
   named in backticks.
+- **One requirement** (requirements/README.md): Downloader runs one pip
+  process per distinct requirement string, so a pin only holds next to
+  everything that pulls the pinned package in. corridor and every cog that
+  requires it list exactly the `pixel-agents-deps` requirement for the
+  version in `requirements/pyproject.toml`; any other cog lists that or
+  nothing. The cookiecutter template carries the same string, the README
+  and corridor's `install_msg` give the `[p]pipinstall` fix for a broken
+  pin, and a pin a README `[p]pipinstall` line quotes must be one the
+  meta-package lists. When the tag the requirement names is present locally, its
+  `pyproject.toml` must match the working copy.
 
 Run: python -m contracts.info_json.lint_info_json
      python -m contracts.info_json.lint_info_json --red-versions
        (prints the JSON list of Red versions CI installs: min and max)
+     python -m contracts.info_json.lint_info_json --deps-tag
+       (prints the tag the requirement names; with --check, fails unless
+       the local copy of that tag matches requirements/pyproject.toml)
 """
 
 from __future__ import annotations
 
 import json
 import re
+import subprocess
 import sys
+import tomllib
 from pathlib import Path
 from typing import Any
 
@@ -86,6 +101,16 @@ COG_REQUIRED_PRESENT = (
 BOT_VERSION_KEYS = ("min_bot_version", "max_bot_version")
 BOT_VERSION_RE = re.compile(r"\d+\.\d+\.\d+")
 COOKIECUTTER_JSON = Path(".cookiecutter") / "cog-cookiecutter" / "cookiecutter.json"
+COOKIECUTTER_INFO = (
+    Path(".cookiecutter") / "cog-cookiecutter" / "{{cookiecutter.cog_name}}" / "info.json"
+)
+
+DEPS_DIR = "requirements"
+DEPS_PYPROJECT = Path(DEPS_DIR) / "pyproject.toml"
+DEPS_NAME = "pixel-agents-deps"
+# The cog every other cog needs; it and its dependents must carry the deps.
+SHARED_COG = "corridor"
+PIPINSTALL = "[p]pipinstall"
 
 # Leaves headroom under Discord's 2000-character message limit for `[p]`
 # expanding to a long prefix.
@@ -239,6 +264,123 @@ def check_readme(text: str | None, cog_names: list[str]) -> list[str]:
     return problems
 
 
+def deps_tag(version: str) -> str:
+    return f"{DEPS_NAME}-v{version}"
+
+
+def deps_requirement(version: str) -> str:
+    """The one requirement string every cog lists: identical everywhere, so
+    Downloader's set of requirements holds it once and pip runs once."""
+
+    return f"{DEPS_NAME} @ git+{REPO_URL}@{deps_tag(version)}#subdirectory={DEPS_DIR}"
+
+
+def load_deps_project(root: Path = REPO_ROOT) -> dict[str, Any]:
+    with (root / DEPS_PYPROJECT).open("rb") as handle:
+        project = tomllib.load(handle).get("project")
+    if not isinstance(project, dict):
+        raise ValueError(f"{DEPS_PYPROJECT} has no [project] table")
+    return project
+
+
+def check_deps_project(project: dict[str, Any]) -> list[str]:
+    label = str(DEPS_PYPROJECT)
+    problems = []
+    if project.get("name") != DEPS_NAME:
+        problems.append(f"{label}: project.name must be {DEPS_NAME!r}")
+    version = project.get("version")
+    if not (isinstance(version, str) and re.fullmatch(r"\d+", version)):
+        problems.append(f"{label}: project.version must be a whole number, not {version!r}")
+    dependencies = project.get("dependencies")
+    if not (isinstance(dependencies, list) and all(_is_text(dep) for dep in dependencies)):
+        problems.append(f"{label}: project.dependencies must be a list of requirements")
+    return problems
+
+
+def check_requirements(cogs: dict[str, dict[str, Any]], requirement: str) -> list[str]:
+    """corridor and its dependents list exactly `requirement`; any other cog
+    lists that or nothing. Anything else is a second pip run that can undo
+    the meta-package's pins."""
+
+    problems = []
+    for name, data in cogs.items():
+        listed = data.get("requirements")
+        needs_deps = name == SHARED_COG or SHARED_COG in (data.get("required_cogs") or {})
+        allowed = [[requirement]] if needs_deps else [[requirement], []]
+        if listed not in allowed:
+            problems.append(
+                f"{name}/info.json: 'requirements' must be [{requirement!r}]"
+                + ("" if needs_deps else " or []")
+                + f", not {listed!r}; add packages and pins to {DEPS_PYPROJECT} instead"
+            )
+    return problems
+
+
+def check_template_requirements(text: str | None, requirement: str) -> list[str]:
+    expected = f'"requirements": {json.dumps([requirement])}'
+    if text is not None and expected not in text:
+        return [f"{COOKIECUTTER_INFO}: must contain {expected}"]
+    return []
+
+
+def check_pin_fix(
+    readme: str | None, shared: dict[str, Any] | None, project: dict[str, Any]
+) -> list[str]:
+    """The README and corridor's install_msg give the `[p]pipinstall` fix for
+    an overwritten pin, and every argument a README `[p]pipinstall` line
+    quotes is the requirement or one of the meta-package's own lines."""
+
+    requirement = deps_requirement(str(project.get("version")))
+    fix = f'{PIPINSTALL} "{requirement}"'
+    known = {requirement, *(project.get("dependencies") or [])}
+    problems = []
+    if readme is not None:
+        if fix not in readme:
+            problems.append(f"README.md: missing {fix!r}")
+        for line in readme.splitlines():
+            if line.strip().startswith(PIPINSTALL):
+                problems += [
+                    f"README.md: {PIPINSTALL} argument {arg!r} is not in {DEPS_PYPROJECT}"
+                    for arg in re.findall(r'"([^"]+)"', line)
+                    if arg not in known
+                ]
+    if shared is not None:
+        install_msg = shared.get("install_msg")
+        if not (isinstance(install_msg, str) and fix in install_msg):
+            problems.append(f"{SHARED_COG}/info.json: 'install_msg' must give the fix {fix}")
+    return problems
+
+
+def tagged_deps_pyproject(root: Path, tag: str) -> str | None:
+    """`requirements/pyproject.toml` at `tag` in the local clone, or None if
+    the tag (or git) is not available."""
+
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(root), "show", f"refs/tags/{tag}:{DEPS_PYPROJECT.as_posix()}"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return None
+    return result.stdout if result.returncode == 0 else None
+
+
+def check_deps_tag(root: Path, project: dict[str, Any], *, required: bool) -> list[str]:
+    tag = deps_tag(str(project.get("version")))
+    tagged = tagged_deps_pyproject(root, tag)
+    if tagged is None:
+        return [f"tag {tag!r} is not available locally"] if required else []
+    current = (root / DEPS_PYPROJECT).read_text(encoding="utf-8")
+    if tagged != current:
+        return [
+            f"tag {tag!r} has a different {DEPS_PYPROJECT}: bump project.version and tag "
+            "the new one, or move the tag if this change has not merged yet"
+        ]
+    return []
+
+
 def lint(root: Path = REPO_ROOT) -> list[str]:
     problems = check_repo_info(_load(root / "info.json"))
     cogs = discover_cogs(root)
@@ -247,9 +389,24 @@ def lint(root: Path = REPO_ROOT) -> list[str]:
     template = root / COOKIECUTTER_JSON
     problems += check_bot_version_range(cogs, _load(template) if template.is_file() else None)
     readme = root / "README.md"
-    problems += check_readme(
-        readme.read_text(encoding="utf-8") if readme.is_file() else None, sorted(cogs)
+    readme_text = readme.read_text(encoding="utf-8") if readme.is_file() else None
+    problems += check_readme(readme_text, sorted(cogs))
+    if not (root / DEPS_PYPROJECT).is_file():
+        return problems + [f"{DEPS_PYPROJECT}: missing"]
+    project = load_deps_project(root)
+    deps_problems = check_deps_project(project)
+    problems += deps_problems
+    if deps_problems:
+        return problems
+    requirement = deps_requirement(project["version"])
+    problems += check_requirements(cogs, requirement)
+    template_info = root / COOKIECUTTER_INFO
+    problems += check_template_requirements(
+        template_info.read_text(encoding="utf-8") if template_info.is_file() else None,
+        requirement,
     )
+    problems += check_pin_fix(readme_text, cogs.get(SHARED_COG), project)
+    problems += check_deps_tag(root, project, required=False)
     return problems
 
 
@@ -258,8 +415,20 @@ def main(argv: list[str] | None = None) -> int:
     if args == ["--red-versions"]:
         print(json.dumps(tested_red_versions()))
         return 0
+    if args == ["--deps-tag"]:
+        print(deps_tag(str(load_deps_project().get("version"))))
+        return 0
+    if args == ["--deps-tag", "--check"]:
+        project = load_deps_project()
+        problems = check_deps_tag(REPO_ROOT, project, required=True)
+        tag = deps_tag(str(project.get("version")))
+        print("\n".join(problems) or f"Tag {tag} matches {DEPS_PYPROJECT}.")
+        return 1 if problems else 0
     if args:
-        print("usage: python -m contracts.info_json.lint_info_json [--red-versions]")
+        print(
+            "usage: python -m contracts.info_json.lint_info_json "
+            "[--red-versions | --deps-tag [--check]]"
+        )
         return 2
     problems = lint()
     if problems:

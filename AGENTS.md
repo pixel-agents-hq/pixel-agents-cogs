@@ -92,8 +92,12 @@ PIXELAGENTS_REAL_WEBVIEW_BUILD=1 python -m pytest -q e2e/   # multi-cog, see e2e
     only once switchboard's suite passes on the new Red; `red-release.yml`
     opens that PR. A new private Red API must be listed in
     `docs/dependency-loading.md` and pinned in
-    `switchboard/tests/test_red_private_api.py`.
-- **Purity:** `corridor/ui_limits.py` stays free of discord/redbot imports.
+    `switchboard/tests/test_red_private_api.py`;
+  - `requirements` is the one `pixel-agents-deps` requirement (switchboard:
+    `[]`). Add a package or pin to `requirements/pyproject.toml`, never to
+    an `info.json`; see [`requirements/README.md`](requirements/README.md).
+- **Purity:** `corridor/ui_limits.py` and `corridor/requirement_hint.py`
+  stay free of discord/redbot imports.
 - **Logging and async:** loggers are named `red.pixel-agents-cogs.<cog>`, and
   nothing blocks inside `async def`. See
   [`docs/runtime-hygiene.md`](docs/runtime-hygiene.md).

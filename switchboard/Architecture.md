@@ -49,8 +49,9 @@ in-memory fakes.
     of a set, and a deterministic topological load/unload order (ties break
     alphabetically, cycles raise `DependencyCycleError`).
   - `requirements.py` holds `unsatisfied()`: specifiers, markers, extras
-    (an extra's own gated `Requires-Dist` lines must be satisfied too) and
-    bare-URL requirements.
+    (an extra's own gated `Requires-Dist` lines must be satisfied too),
+    direct references (their base `Requires-Dist` lines must be satisfied
+    too) and bare-URL requirements.
 - **application/service.py**: `SwitchboardService` handles status, install,
   load, unload, reload and repair, plus expanding `all` and directory-name
   tokens. Anything a run installs or loads comes from one catalog scan.

@@ -30,6 +30,9 @@ python_version = "3.11"
 strict = true
 ignore_missing_imports = true
 follow_imports = "silent"
+# `contracts/` and `e2e/` are namespace packages (no `__init__.py`), so name
+# modules from the repo root: `e2e/fixtures.py` is `e2e.fixtures`.
+explicit_package_bases = true
 # Every production cog module is part of the strict type gate (corridor
 # includes the shared component-limit checker, ui_limits.py).
 files = [

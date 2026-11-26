@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import unittest
 
-from .fixtures import (
+from e2e.fixtures import (
     FakeBot,
     capture_websocket_frames,
     construct_core_cogs,

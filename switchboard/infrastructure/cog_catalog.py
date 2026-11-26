@@ -43,8 +43,9 @@ class CogCatalog:
         """name -> every copy on disk, in Red's own resolution priority.
 
         The first entry is the one `[p]load <name>` resolves to; the rest are
-        shadowed. `SHARED_LIBRARY` packages are skipped (Red's Downloader skips
-        them too).
+        shadowed. A directory without an `__init__.py` (such as this repo's
+        `contracts/` and `e2e/` namespace packages) is not a package, and
+        `SHARED_LIBRARY` packages are skipped, as Red's Downloader skips them.
         """
 
         install_path = (await self._cog_manager.install_path()).resolve()

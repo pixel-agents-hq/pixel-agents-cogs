@@ -237,7 +237,7 @@ default. `/third-party/cctv/discord` redirects to the server picker.
 
 ## CI-only edges
 
-The root `contracts` package is a `SHARED_LIBRARY`, never loaded by Red.
+The root `contracts` namespace package is CI-only, never installed or loaded by Red.
 
 - Pixel Index checks generate schemas from Floorplan's runtime models and verify
   live production/staging APIs.

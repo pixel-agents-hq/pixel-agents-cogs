@@ -7,9 +7,9 @@ Checks, all static (stdlib `json` only -- no cog, redbot or discord import):
 
 - **Repo `info.json`**: non-empty `author`, `short`, `description`, and an
   `install_msg` (the guide's disclosure for the repo as a whole).
-- **Every cog `info.json`** (any top-level package with an `info.json`
+- **Every cog `info.json`** (any top-level folder with an `info.json`
   whose `type` is not `SHARED_LIBRARY` -- derived from the tree, not a
-  hardcoded list): `type` exactly `COG` (Red skips any other value, such
+  hardcoded list; `contracts/` and `e2e/` have none): `type` exactly `COG` (Red skips any other value, such
   as a lowercase `cog`, as an unknown installable), `name` matching its
   folder, non-empty `author`, `short`, `description`, `install_msg` and
   `end_user_data_statement`, plus `requirements`, `min_bot_version`,

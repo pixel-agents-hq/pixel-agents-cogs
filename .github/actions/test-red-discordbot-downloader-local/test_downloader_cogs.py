@@ -314,6 +314,18 @@ async def add_test_repo(
     return repo
 
 
+def reject_shared_libraries(repo: Repo) -> None:
+    """`[p]cog install` copies every shared library in a repo into
+    `cog_shared/` and prints Downloader's deprecation notice whenever
+    `repo.available_libraries` is non-empty."""
+    libraries = sorted(library.name for library in repo.available_libraries)
+    if libraries:
+        raise RuntimeError(
+            f"Repository {repo.name} ships shared libraries {libraries}; "
+            "`[p]cog install` would install them and print Downloader's deprecation notice"
+        )
+
+
 async def get_cog_install_path() -> Path:
     manager = CogManager()
     path = await manager.install_path()
@@ -526,6 +538,7 @@ async def main_async() -> None:
     installed: List[str] = []
     try:
         repo = await add_test_repo(repo_manager, repo_name, repo_target, repo_branch)
+        reject_shared_libraries(repo)
         if expected_names is None:
             expected_names = sorted(cog.name for cog in repo.available_cogs)
             if not expected_names:

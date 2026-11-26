@@ -28,9 +28,7 @@ from __future__ import annotations
 
 import unittest
 
-from floorplan.floorplan import Floorplan
-
-from .fixtures import (
+from e2e.fixtures import (
     FakeBot,
     capture_websocket_frames,
     construct_core_cogs,
@@ -40,6 +38,7 @@ from .fixtures import (
     wait_for_bootstrap,
     wait_for_frame,
 )
+from floorplan.floorplan import Floorplan
 
 _GUILD_ID = 999333
 

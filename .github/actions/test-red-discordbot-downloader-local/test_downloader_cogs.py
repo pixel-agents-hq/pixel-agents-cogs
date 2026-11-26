@@ -21,9 +21,10 @@ try:
 except ImportError:  # pragma: no cover - fallback for newer jsonschema versions
     RefResolver = None  # type: ignore[assignment, misc]
 
-from importlib.metadata import distributions
+from importlib.metadata import Distribution, distributions
 
 from packaging.requirements import InvalidRequirement, Requirement
+from packaging.utils import canonicalize_name
 from redbot.cogs.downloader import errors as downloader_errors
 from redbot.cogs.downloader.downloader import Downloader
 from redbot.cogs.downloader.installable import Installable
@@ -479,11 +480,11 @@ async def install_requirements_like_downloader(
 
     Red's Downloader dedupes every requirement of every cog into a set and
     runs one `pip install -U --target <lib>` per requirement, in set order
-    (which varies with PYTHONHASHSEED). A pin such as `anyio<4.15` therefore
-    only constrains its own pip run: a later run for `mcp` or `uvicorn`
-    resolves anyio afresh and overwrites it. `Repo.install_requirements(cog)`,
-    which CI used before, puts all of one cog's requirements into a single
-    pip run, so pins held in CI but not for real users (#134).
+    (which varies with PYTHONHASHSEED). A pin only constrains its own pip
+    run, which is why every cog lists the one pixel-agents-deps requirement
+    (requirements/README.md). `Repo.install_requirements(cog)` puts all of
+    one cog's requirements into a single pip run instead, so it would hide a
+    pin that a later run overwrites (#134).
     """
     shim = _DownloaderRequirementsShim(repo_manager, lib_path)
     failed = await Downloader._install_requirements(shim, cogs)  # type: ignore[arg-type]
@@ -491,37 +492,68 @@ async def install_requirements_like_downloader(
         raise RuntimeError(f"Failed to install requirements: {', '.join(failed)}")
 
 
-def _project_key(name: str) -> str:
-    return name.lower().replace("_", "-").replace(".", "-")
+def _requirement_checks(
+    raw: str, dists: Mapping[str, Sequence[Distribution]]
+) -> List[tuple[str, Requirement]]:
+    """The requirement itself and, for a direct reference such as
+    pixel-agents-deps, every Requires-Dist of its installed distribution.
+
+    A direct reference carries no version specifier: the pins it exists for
+    live in its own metadata, so those are what must hold in the lib dir.
+    """
+    req = Requirement(raw)
+    checks = [(raw, req)]
+    found = dists.get(canonicalize_name(req.name), [])
+    if req.url and len(found) == 1:
+        extras = req.extras or {""}
+        for dep in found[0].requires or []:
+            dep_req = Requirement(dep)
+            if dep_req.marker is None or any(
+                dep_req.marker.evaluate({"extra": extra}) for extra in extras
+            ):
+                checks.append((f"{req.name} -> {dep}", dep_req))
+    return checks
 
 
 def verify_requirement_pins(lib_path: Path, cogs: Sequence[Installable]) -> None:
-    """Fail if the shared lib dir breaks any cog's requirement specifier.
+    """Fail if the shared lib dir breaks any cog's requirement specifier, or
+    holds more than one dist-info for a project.
 
     This doesn't depend on install order, so it also fails on a run whose set
     order happened to put the pins last.
     """
-    installed: Dict[str, List[str]] = {}
+    dists: Dict[str, List[Distribution]] = {}
     for dist in distributions(path=[str(lib_path)]):
-        installed.setdefault(_project_key(dist.metadata["Name"]), []).append(dist.version)
-    problems: List[str] = []
+        dists.setdefault(canonicalize_name(dist.metadata["Name"]), []).append(dist)
+    problems = [
+        f"{name}: {len(found)} dist-info dirs ({', '.join(d.version for d in found)})"
+        for name, found in sorted(dists.items())
+        if len(found) > 1
+    ]
+    cogs_by_requirement: Dict[str, List[str]] = {}
     for cog in cogs:
         for raw in cog.requirements:
-            try:
-                req = Requirement(raw)
-            except InvalidRequirement:
-                continue  # VCS/URL requirements carry no version specifier
-            if req.url:
-                continue
-            versions = installed.get(_project_key(req.name), [])
-            if len(versions) != 1 or not req.specifier.contains(versions[0], prereleases=True):
-                problems.append(f"{cog.name}: {raw!r}, lib has {versions or 'nothing'}")
+            cogs_by_requirement.setdefault(raw, []).append(cog.name)
+    checked = 0
+    for raw, cog_names in sorted(cogs_by_requirement.items()):
+        try:
+            checks = _requirement_checks(raw, dists)
+        except InvalidRequirement as exc:
+            problems.append(f"{', '.join(cog_names)}: {raw!r} does not parse: {exc}")
+            continue
+        for label, req in checks:
+            checked += 1
+            versions = [d.version for d in dists.get(canonicalize_name(req.name), [])]
+            if len(versions) != 1 or (
+                not req.url and not req.specifier.contains(versions[0], prereleases=True)
+            ):
+                problems.append(f"{label!r}, lib has {versions or 'nothing'}")
     if problems:
         raise RuntimeError(
             "Requirement pins not honoured by Red's Downloader install:\n  "
             + "\n  ".join(problems)
         )
-    print("✅ Every cog requirement specifier holds in the shared lib dir")
+    print(f"✅ All {checked} requirement specifiers hold in the shared lib dir")
 
 
 def _transitive_dependencies(

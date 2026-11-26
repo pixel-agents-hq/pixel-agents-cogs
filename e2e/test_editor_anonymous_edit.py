@@ -21,8 +21,7 @@ import unittest
 from copy import deepcopy
 
 from corridor.domain import OfficeRef
-
-from .fixtures import (
+from e2e.fixtures import (
     FakeBot,
     capture_websocket_frames,
     construct_core_cogs,

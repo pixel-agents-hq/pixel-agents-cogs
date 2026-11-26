@@ -8,7 +8,7 @@ revisioned office-state persistence.
 ## Overview
 
 `corridor` is a hidden (`"hidden": true` in `info.json`), `COG`-type cog —
-auto-loaded, running infrastructure, not a `SHARED_LIBRARY` like
+auto-loaded, running infrastructure, unlike
 [`contracts/`](../contracts/) (a CI-only, non-runtime package). Every other
 cog in this repository declares it via `required_cogs` and loads it through
 `corridor.dependency_loader.ensure_corridor_loaded()`.

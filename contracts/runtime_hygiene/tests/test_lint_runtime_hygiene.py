@@ -74,10 +74,13 @@ class LintTreeTests(unittest.TestCase):
         (cog / "info.json").write_text(json.dumps({"type": "COG"}))
         (cog / "x.py").write_text(body)
         (cog / "tests" / "test_x.py").write_text(test_body)
-        shared = root / "contracts"
+        shared = root / "sharedlib"
         shared.mkdir()
         (shared / "info.json").write_text(json.dumps({"type": "SHARED_LIBRARY"}))
         (shared / "y.py").write_text('import logging\nlogging.getLogger("anything")\n')
+        namespace = root / "contracts"
+        namespace.mkdir()
+        (namespace / "z.py").write_text('import logging\nlogging.getLogger("anything")\n')
 
     def test_tests_and_shared_libraries_are_skipped(self) -> None:
         with TemporaryDirectory() as tmp:

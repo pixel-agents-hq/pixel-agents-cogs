@@ -28,8 +28,7 @@ import unittest
 
 from architect.application import ToolLoopService
 from architect.architect import Architect
-
-from .fixtures import (
+from e2e.fixtures import (
     FakeBot,
     ScriptedLLM,
     capture_websocket_frames,

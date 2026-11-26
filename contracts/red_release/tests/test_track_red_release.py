@@ -201,14 +201,14 @@ class TestBump(unittest.TestCase):
 
         self.assertIn(REPO_ROOT / "corridor" / "info.json", targets)
         self.assertIn(REPO_ROOT / COOKIECUTTER_JSON, targets)
-        self.assertNotIn(REPO_ROOT / "contracts" / "info.json", targets)
+        self.assertFalse({"contracts", "e2e"} & {path.parent.name for path in targets})
 
     def test_bumped_repository_still_passes_the_info_json_lint(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
             shutil.copy(REPO_ROOT / "info.json", root / "info.json")
             shutil.copy(REPO_ROOT / "README.md", root / "README.md")
-            for path in [*bump_targets(), REPO_ROOT / "contracts" / "info.json"]:
+            for path in bump_targets():
                 target = root / path.relative_to(REPO_ROOT)
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy(path, target)

@@ -57,7 +57,8 @@ in-memory fakes.
 - **infrastructure/**:
   - `cog_catalog.py` scans `CogManager.paths()` in Red's resolution order
     (install path, `--cog-path`, addpath, core). A package is a directory
-    with an `__init__.py` whose name is an identifier. `SHARED_LIBRARY`
+    with an `__init__.py` whose name is an identifier, so namespace
+    packages such as `contracts/` and `e2e/` are not packages. `SHARED_LIBRARY`
     packages are skipped.
   - `downloader_index.py` reads Downloader's `installed_cogs` straight from
     its Config (identifier `998240343`). That tells a real `[p]cog install`

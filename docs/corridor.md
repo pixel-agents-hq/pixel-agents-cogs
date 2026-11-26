@@ -1,7 +1,7 @@
 # corridor: shared infrastructure reference
 
 [`corridor/`](../corridor/) is a hidden, `COG`-type cog — loaded and
-running, unlike [`contracts/`](../contracts/), a `SHARED_LIBRARY`-type
+running, unlike [`contracts/`](../contracts/), a CI-only
 consumer-driven-contract *testing* package other cogs never import at
 runtime. Every cog generated from
 [`.cookiecutter/cog-cookiecutter`](../.cookiecutter/cog-cookiecutter)

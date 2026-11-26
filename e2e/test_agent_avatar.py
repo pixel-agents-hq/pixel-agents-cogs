@@ -18,8 +18,7 @@ from typing import Any
 from unittest import mock
 
 from corridor.domain import AgentRef
-
-from .fixtures import FakeBot, construct_core_cogs, real_webview_build_enabled
+from e2e.fixtures import FakeBot, construct_core_cogs, real_webview_build_enabled
 
 _AGENT = AgentRef(discord_user_id=None, guild_id=None, is_bot=True, agent_key="e2e-avatar-agent")
 _PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"

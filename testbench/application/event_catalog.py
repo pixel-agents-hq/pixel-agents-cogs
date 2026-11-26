@@ -2,10 +2,9 @@
 testbench's own typed EventSpec/FieldSpec shape.
 
 Imports `corridor` directly, never `contracts` -- contracts/ is documented
-(docs/corridor.md) as a SHARED_LIBRARY-type package no real cog imports at
-runtime. corridor.event_catalog.build_contract() is the same pure
-introspection contracts/corridor/generate_corridor_contract.py uses to
-regenerate the committed corridor/corridor.yaml, so this module's output is
+(docs/corridor.md) as a CI-only package no real cog imports at runtime.
+corridor.event_catalog.build_contract() is the same pure introspection
+contracts/corridor/generate_corridor_contract.py uses to regenerate the committed corridor/corridor.yaml, so this module's output is
 always exactly what that file says, without reading it as a file."""
 
 from __future__ import annotations

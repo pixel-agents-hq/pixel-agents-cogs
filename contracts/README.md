@@ -6,14 +6,11 @@ environments. **Not a runtime-loaded cog.**
 
 ## Overview
 
-`contracts` is a separate top-level package that exists purely for CI. Its
-`info.json` declares `"type": "SHARED_LIBRARY"` specifically so Red's
-Downloader excludes it from cog discovery — without that marker, Red would
-offer it as an installable cog. `contracts/__init__.py` does define a
-no-op `setup()`, but not because it's a real cog: it's there only so
-dev-time hot reload tooling (which infers "reloadable cog" from any
-top-level package with an `info.json`, without checking `type`/`hidden`)
-doesn't report a spurious reload failure — see that function's docstring.
+`contracts` is a top-level namespace package (no `__init__.py`, no
+`info.json`) that exists purely for CI. Red's Downloader and `switchboard`
+only treat a top-level folder with an `__init__.py` as an installable, so
+neither lists, installs nor ships it. Run its tools and tests from the repo
+root (`python -m contracts.…`), which puts `contracts` on the import path.
 
 It owns contracts for two external dependencies plus Corridor's internal agent
 event and office-state models:

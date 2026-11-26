@@ -269,9 +269,8 @@ installs and loads/unloads every non-shared-library cog in the repo,
 **alphabetically**: `animator` → `architect` → `bootcamp` → `cctv` →
 `corridor` → `deskutils` → `floorplan` → `painter` → `pico` →
 `pixelagents` → `suggestionbox` → `switchboard` → `telephonepole` →
-`testbench` → `toolbox` (`contracts` and `e2e` are `SHARED_LIBRARY`-type
-installables, so Downloader's own `available_cogs` excludes them from this
-list).
+`testbench` → `toolbox` (`contracts` and `e2e` have no `__init__.py`, so
+Downloader never discovers them).
 
 Before testing a cog, `test_downloader_cogs.py` (`exercise_cogs()`)
 unconditionally `unload_quietly()`s that cog by name first, tolerating "was

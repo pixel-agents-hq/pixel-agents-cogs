@@ -1,9 +1,9 @@
 # Multi-cog end-to-end tests
 
-Not a cog: `info.json` declares `"type": "SHARED_LIBRARY"` (same pattern
-as `contracts/`, see its own README) specifically so Red's Downloader
-excludes it from cog discovery, and it's not collected by any per-cog
-pytest invocation either. This package loads corridor, pixelagents,
+Not a cog: `e2e` is a namespace package (no `__init__.py`, no
+`info.json`, same as `contracts/`), so Red's Downloader and `switchboard`
+never list, install or ship it, and no per-cog pytest invocation collects
+it. Run it from the repo root so `e2e.fixtures` is importable. This package loads corridor, pixelagents,
 architect, and cctv as real, `cog_load()`-ed instances in one process
 against a real built Pixel Agents webview, drives architect through a
 scripted LLM double, publishes real corridor pub/sub events directly, and

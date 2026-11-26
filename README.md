@@ -132,6 +132,31 @@ answers only the bot's own cogs; set its channel with
 servers you add with `[p]telephonepole add <name> <url>`; grant agents with
 `[p]telephonepole agents <name>`.
 
+## Troubleshooting
+
+### A cog fails to load with an import error from typing_extensions
+
+For example `Corridor could not be auto-loaded: cannot import name 'sentinel'
+from 'typing_extensions'`. Red's own `typing-extensions` shadows the copy in
+Downloader's lib folder, so the cogs pin anyio, pydantic and
+typing-inspection to releases that work with it. Every cog lists one
+requirement, [`pixel-agents-deps`](requirements/README.md), so those pins
+install in a single pip run. Another repo's requirement, or an install from
+before that requirement existed, can still upgrade one of those packages.
+Reinstall the pinned set in one pip run, then restart the bot:
+
+```text
+[p]pipinstall "pixel-agents-deps @ git+https://github.com/pixel-agents-hq/pixel-agents-cogs@pixel-agents-deps-v1#subdirectory=requirements"
+```
+
+Pinning only the three packages does the same:
+
+```text
+[p]pipinstall "anyio<4.15" "pydantic>=2.11.3,<2.12" "typing-inspection<0.4.3"
+```
+
+Corridor's load error names this fix when it detects such a break.
+
 ## What leaves the bot
 
 | Destination | Sent by | What |
@@ -140,7 +165,7 @@ servers you add with `[p]telephonepole add <name> <url>`; grant agents with
 | MCP servers you register | telephonepole, animator, bootcamp agents | Tool-call arguments chosen by the agent |
 | GitHub, npm registry | pixelagents | Clones and package installs for the webview and pixatar builds |
 | nodejs.org | toolbox | Node.js release download, only on `[p]toolbox node install` |
-| PyPI | switchboard | `pip install` of cog requirements |
+| PyPI, GitHub | switchboard | `pip install` of cog requirements, including the `pixel-agents-deps` package from this repository |
 | Pixel Index | floorplan | Catalogue searches and layout downloads |
 
 `corridor`, `cctv` and `suggestionbox` also accept connections on their own

@@ -20,6 +20,9 @@ class InstalledDistribution:
     version: str
     # Raw Requires-Dist lines, used to check a requested extra's own deps.
     requires: tuple[str, ...] = ()
+    # Where pip installed it from (its `direct_url.json`) as a PEP 508 URL,
+    # e.g. `git+https://host/repo@ref#subdirectory=dir`; None from an index.
+    direct_url: str | None = None
 
 
 #: canonical distribution name -> the distribution Python would import.
@@ -36,7 +39,12 @@ def unsatisfied(
 
     A requirement whose marker does not apply to this interpreter is
     satisfied. A requested extra (`a2a-sdk[http-server]`) is satisfied only
-    if the distribution's own extra-gated requirements are too. A bare VCS
+    if the distribution's own extra-gated requirements are too. A direct
+    reference (`pixel-agents-deps @ git+https://...`) is satisfied only if
+    the installed copy came from the same URL, ref and subdirectory, and its
+    own base requirements hold too: such a package can be nothing but a list
+    of pinned dependencies, which a newer ref may change and another pip run
+    may since have upgraded past. A bare VCS
     or archive URL (`git+https://.../AAA3A_utils.git`) is satisfied when a
     distribution named after its `#egg=` fragment or its last path segment
     is installed, at any version. Any other unparseable requirement is
@@ -83,7 +91,29 @@ def _satisfied(
         for dep in _extra_only_requirements(installed.requires, wanted, env):
             if not _satisfied(dep, lookup, env, visited=visited):
                 return False
+    if requirement.url and not same_direct_url(requirement.url, installed.direct_url):
+        return False
+    if requirement.url and (name, "") not in visited:
+        visited.add((name, ""))
+        for dep in _base_requirements(installed.requires, env):
+            if not _satisfied(dep, lookup, env, visited=visited):
+                return False
     return True
+
+
+def _base_requirements(requires: Iterable[str], env: dict[str, str]) -> list[str]:
+    """Requires-Dist lines that apply without any extra."""
+
+    selected: list[str] = []
+    for raw in requires:
+        try:
+            requirement = Requirement(raw)
+        except InvalidRequirement:
+            continue
+        marker = requirement.marker
+        if marker is None or marker.evaluate({**env, "extra": ""}):
+            selected.append(raw)
+    return selected
 
 
 def _extra_only_requirements(requires: Iterable[str], extra: str, env: dict[str, str]) -> list[str]:
@@ -108,6 +138,39 @@ def _extra_only_requirements(requires: Iterable[str], extra: str, env: dict[str,
             requirement.marker = None
             selected.append(str(requirement))
     return selected
+
+
+def same_direct_url(wanted: str, installed: str | None) -> bool:
+    """Whether a PEP 508 direct-reference URL names what was installed."""
+
+    return installed is not None and _url_key(wanted) == _url_key(installed)
+
+
+def _url_key(url: str) -> tuple[str, str, str, str]:
+    """(vcs, location, ref, subdirectory), with `.git` and slashes trimmed."""
+
+    url, _, fragment = url.strip().partition("#")
+    subdirectory = ""
+    for part in fragment.split("&"):
+        key, _, value = part.partition("=")
+        if key == "subdirectory":
+            subdirectory = value.strip("/")
+    vcs, plus, rest = url.partition("+")
+    if not plus or "://" in vcs:
+        vcs, rest = "", url
+    ref = ""
+    if vcs:
+        scheme_end = rest.find("://") + 3
+        location, at, revision = rest[scheme_end:].rpartition("@")
+        # `user@host` has no `/` after the `@`; `path@ref` does before it.
+        if at and "/" in location:
+            rest, ref = rest[:scheme_end] + location, revision
+    location = rest.rstrip("/").removesuffix(".git").rstrip("/")
+    scheme, sep, remainder = location.partition("://")
+    if sep:
+        host, slash, path = remainder.partition("/")
+        location = f"{scheme.lower()}://{host.lower()}{slash}{path}"
+    return vcs.lower(), location, ref, subdirectory
 
 
 def _name_from_url(raw: str) -> str | None:

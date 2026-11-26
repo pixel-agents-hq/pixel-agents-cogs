@@ -10,10 +10,7 @@
         "corridor": "https://github.com/pixel-agents-hq/pixel-agents-cogs",
         "pixelagents": "https://github.com/pixel-agents-hq/pixel-agents-cogs"
     },
-    "requirements": [
-        "aiohttp",
-        "pydantic>=2.11.3,<2.12"
-    ],
+    "requirements": ["pixel-agents-deps @ git+https://github.com/pixel-agents-hq/pixel-agents-cogs@pixel-agents-deps-v1#subdirectory=requirements"],
     "tags": [
         "floorplan",
         "pixel-index",

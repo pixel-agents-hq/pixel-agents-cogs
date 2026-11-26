@@ -3,7 +3,8 @@ name: "info.json and README"
 # Red's Approved Cog Creator guide requires a root README and, in every
 # info.json, author/short/description plus an install_msg disclosure. This
 # keeps them from silently going missing, and keeps every cog's
-# min/max_bot_version on one tested Red range. Also tests
+# min/max_bot_version on one tested Red range, and every cog on the one
+# pixel-agents-deps requirement (requirements/README.md). Also tests
 # contracts/red_release, which raises that range for red-release.yml.
 # Stdlib only: no dependencies.
 on:
@@ -13,6 +14,8 @@ on:
       - "*/info.json"
       - "README.md"
       - ".cookiecutter/cog-cookiecutter/cookiecutter.json"
+      - ".cookiecutter/cog-cookiecutter/*/info.json"
+      - "requirements/**"
       - "contracts/info_json/**"
       - "contracts/red_release/**"
       - ".github/workflows/info-json.yml"
@@ -22,6 +25,8 @@ on:
       - "*/info.json"
       - "README.md"
       - ".cookiecutter/cog-cookiecutter/cookiecutter.json"
+      - ".cookiecutter/cog-cookiecutter/*/info.json"
+      - "requirements/**"
       - "contracts/info_json/**"
       - "contracts/red_release/**"
       - ".github/workflows/info-json.yml"
@@ -48,6 +53,14 @@ jobs:
 
       - name: Check info.json files and README.md
         run: python -m contracts.info_json.lint_info_json
+
+      # The requirement installs from this tag, so it must exist and hold
+      # this branch's requirements/pyproject.toml.
+      - name: Check the pixel-agents-deps tag
+        run: |
+          tag="$(python -m contracts.info_json.lint_info_json --deps-tag)"
+          git fetch --no-tags --depth=1 origin "refs/tags/${tag}:refs/tags/${tag}"
+          python -m contracts.info_json.lint_info_json --deps-tag --check
 
       - name: Test the info.json lint
         run: python -m unittest discover -s contracts/info_json/tests

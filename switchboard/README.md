@@ -146,6 +146,12 @@ against the installed Red.
   at a different version in Red's own environment still shadows the copy
   pip installs. Switchboard reports such a requirement as still missing
   after the install.
+- A direct reference (`name @ git+https://...`) is satisfied only if pip's
+  `direct_url.json` shows the installed copy came from the same URL, ref
+  and subdirectory, and the distribution's own base requirements hold too.
+  So a meta-package such as [`pixel-agents-deps`](../requirements/README.md)
+  counts as missing once its ref moves to a new version or another pip run
+  has upgraded one of its pins, and `[p]switchboard load` reinstalls it.
 - A bare VCS/archive URL requirement is checked by name only (from
   `#egg=` or the URL's last path segment), at any version.
 - `required_cogs` entries that no cog path provides are reported as

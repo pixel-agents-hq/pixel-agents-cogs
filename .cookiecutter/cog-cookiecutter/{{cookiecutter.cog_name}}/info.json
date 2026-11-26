@@ -8,7 +8,7 @@
     "end_user_data_statement": "{{ cookiecutter.end_user_data_statement }}",
     {{ install_msg_line }}"author": ["{{ cookiecutter.author }}"],
     "required_cogs": {"corridor": "https://github.com/pixel-agents-hq/pixel-agents-cogs"},
-    "requirements": [],
+    "requirements": ["pixel-agents-deps @ git+https://github.com/pixel-agents-hq/pixel-agents-cogs@pixel-agents-deps-v1#subdirectory=requirements"],
     "tags": {{ tags | jsonify | indent(4) }},
     "min_bot_version": "{{ cookiecutter.min_bot_version }}",
     "max_bot_version": "{{ cookiecutter.max_bot_version }}",

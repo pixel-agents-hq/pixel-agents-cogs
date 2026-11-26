@@ -160,6 +160,12 @@ or `--cog-path` therefore fails on its first missing import, e.g. corridor's
 failed at startup from its autoload list, so the failure does not stay
 visible.
 
+Downloader dedupes the requirements of every cog it installs into a set and
+runs that pip command once per requirement, so a pin only constrains its
+own run. Every cog therefore lists the same single requirement, the
+[`pixel-agents-deps`](../requirements/README.md) meta-package, which holds
+every dependency and pin.
+
 [`switchboard`](../switchboard) covers that route. It has no `required_cogs`
 and no `requirements` of its own (it uses only the `packaging` library Red
 already ships), so it loads in an environment where corridor cannot import:

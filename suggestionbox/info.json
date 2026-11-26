@@ -7,7 +7,7 @@
     "install_msg": "Install corridor too ([p]cog install pixel-agents-cogs corridor); it loads automatically. Starts an MCP HTTP server (127.0.0.1:8934 by default; it accepts only corridor, which holds a token minted on each load) that registered A2A agents call to post error reports and suggestions to a Discord channel. Setup (bot owner): [p]suggestionbox channel #channel, [p]suggestionbox mcp host/port, then grant agents access with [p]suggestionbox agents.",
     "author": ["Pixel Agents HQ Contributors"],
     "required_cogs": {"corridor": "https://github.com/pixel-agents-hq/pixel-agents-cogs"},
-    "requirements": ["mcp>=1.29,<2", "uvicorn", "pydantic>=2.11.3,<2.12", "typing-inspection<0.4.3", "anyio<4.15"],
+    "requirements": ["pixel-agents-deps @ git+https://github.com/pixel-agents-hq/pixel-agents-cogs@pixel-agents-deps-v1#subdirectory=requirements"],
     "tags": [
         "mcp",
         "feedback",

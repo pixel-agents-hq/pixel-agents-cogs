@@ -9,7 +9,7 @@
     "required_cogs": {
         "corridor": "https://github.com/pixel-agents-hq/pixel-agents-cogs"
     },
-    "requirements": [],
+    "requirements": ["pixel-agents-deps @ git+https://github.com/pixel-agents-hq/pixel-agents-cogs@pixel-agents-deps-v1#subdirectory=requirements"],
     "tags": ["toolbox", "node", "npm", "tooling"],
     "min_bot_version": "3.5.24",
     "max_bot_version": "3.5.24",

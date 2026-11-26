@@ -7,7 +7,7 @@
     "install_msg": "Install corridor too ([p]cog install pixel-agents-cogs corridor); it loads automatically. Outside services: each custom agent sends its prompts, A2A task text and tool results to corridor's LLM endpoint, and may call MCP servers granted to it through suggestionbox or telephonepole. Setup: configure [p]corridor llm endpoint/key/model, create an agent with [p]bootcamp create (bot owner), then consult it through pico or directly with [p]bootcamp ask <agent_key> <prompt>.",
     "author": ["Pixel Agents HQ Contributors"],
     "required_cogs": {"corridor": "https://github.com/pixel-agents-hq/pixel-agents-cogs"},
-    "requirements": [],
+    "requirements": ["pixel-agents-deps @ git+https://github.com/pixel-agents-hq/pixel-agents-cogs@pixel-agents-deps-v1#subdirectory=requirements"],
     "tags": [
         "bootcamp",
         "llm",

@@ -10,7 +10,13 @@ from tempfile import TemporaryDirectory
 from typing import Any
 from unittest import mock
 
-from contracts.info_json.lint_info_json import COOKIECUTTER_JSON, REPO_ROOT, lint
+from contracts.info_json.lint_info_json import (
+    COOKIECUTTER_INFO,
+    COOKIECUTTER_JSON,
+    DEPS_PYPROJECT,
+    REPO_ROOT,
+    lint,
+)
 from contracts.red_release.track_red_release import (
     add_month,
     bump,
@@ -208,7 +214,11 @@ class TestBump(unittest.TestCase):
             root = Path(tmp)
             shutil.copy(REPO_ROOT / "info.json", root / "info.json")
             shutil.copy(REPO_ROOT / "README.md", root / "README.md")
-            for path in bump_targets():
+            for path in [
+                *bump_targets(),
+                REPO_ROOT / DEPS_PYPROJECT,
+                REPO_ROOT / COOKIECUTTER_INFO,
+            ]:
                 target = root / path.relative_to(REPO_ROOT)
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy(path, target)

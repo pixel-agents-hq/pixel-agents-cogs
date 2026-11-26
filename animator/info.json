@@ -7,13 +7,7 @@
     "install_msg": "Install corridor too ([p]cog install pixel-agents-cogs corridor); it loads automatically. Outside services: A2A task text and rendered images go to corridor's LLM endpoint, and its tools call the pixel-art-mcp server, whose output files it downloads and attaches in Discord. Setup: run pixel-art-mcp yourself, load telephonepole, then [p]telephonepole add pixel-art <url> and [p]telephonepole agents pixel-art to grant animator access. Also configure [p]corridor llm endpoint/key/model and [p]corridor a2a host/port.",
     "author": ["NNTin"],
     "required_cogs": {"corridor": "https://github.com/pixel-agents-hq/pixel-agents-cogs"},
-    "requirements": [
-        "httpx",
-        "pydantic>=2.11.3,<2.12",
-        "a2a-sdk",
-        "typing-inspection<0.4.3",
-        "anyio<4.15"
-    ],
+    "requirements": ["pixel-agents-deps @ git+https://github.com/pixel-agents-hq/pixel-agents-cogs@pixel-agents-deps-v1#subdirectory=requirements"],
     "tags": [
         "agent",
         "a2a",

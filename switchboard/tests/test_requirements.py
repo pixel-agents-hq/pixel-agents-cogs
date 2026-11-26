@@ -5,8 +5,12 @@ import unittest
 from packaging.markers import default_environment
 
 from ..domain import InstalledDistribution, unsatisfied
+from ..domain.requirements import same_direct_url
 
 ENV = {**default_environment(), "python_version": "3.11", "sys_platform": "linux"}
+DEPS_URL = (
+    "git+https://github.com/pixel-agents-hq/pixel-agents-cogs@{ref}#subdirectory=requirements"
+)
 
 
 def lookup_from(**dists: InstalledDistribution):  # type: ignore[no-untyped-def]
@@ -57,6 +61,68 @@ class TestUnsatisfied(unittest.TestCase):
         self.assertEqual(unsatisfied(["a2a-sdk[http-server]"], with_starlette, environment=ENV), ())
         # Base dependencies (httpx) and other extras (grpc) are not checked.
         self.assertEqual(unsatisfied(["a2a-sdk"], without, environment=ENV), ())
+
+    def test_direct_reference_needs_its_own_base_requirements(self) -> None:
+        deps = InstalledDistribution(
+            "1",
+            requires=(
+                "anyio<4.15",
+                "a2a-sdk[http-server]",
+                'pywin32; sys_platform == "win32"',
+                'pytest; extra == "test"',
+            ),
+            direct_url=DEPS_URL.format(ref="pixel-agents-deps-v1"),
+        )
+        a2a = InstalledDistribution("0.3.0", requires=('starlette; extra == "http-server"',))
+        raw = "pixel-agents-deps @ " + DEPS_URL.format(ref="pixel-agents-deps-v1")
+        held = {
+            "pixel-agents-deps": deps,
+            "a2a-sdk": a2a,
+            "starlette": InstalledDistribution("0.47.0"),
+            "anyio": InstalledDistribution("4.14.2"),
+        }
+
+        self.assertEqual(unsatisfied([raw], lookup_from(**held), environment=ENV), ())
+        bumped = {**held, "anyio": InstalledDistribution("4.16.0")}
+        self.assertEqual(unsatisfied([raw], lookup_from(**bumped), environment=ENV), (raw,))
+        without_starlette = {k: v for k, v in held.items() if k != "starlette"}
+        self.assertEqual(
+            unsatisfied([raw], lookup_from(**without_starlette), environment=ENV), (raw,)
+        )
+
+    def test_direct_reference_installed_from_another_ref_is_unsatisfied(self) -> None:
+        v1 = InstalledDistribution(
+            "1", requires=("foo",), direct_url=DEPS_URL.format(ref="pixel-agents-deps-v1")
+        )
+        lookup = lookup_from(**{"pixel-agents-deps": v1, "foo": InstalledDistribution("2.1")})
+        v2 = "pixel-agents-deps @ " + DEPS_URL.format(ref="pixel-agents-deps-v2")
+
+        self.assertEqual(unsatisfied([v2], lookup, environment=ENV), (v2,))
+
+    def test_direct_reference_without_a_recorded_origin_is_unsatisfied(self) -> None:
+        lookup = lookup_from(**{"pixel-agents-deps": InstalledDistribution("1")})
+        raw = "pixel-agents-deps @ " + DEPS_URL.format(ref="pixel-agents-deps-v1")
+
+        self.assertEqual(unsatisfied([raw], lookup, environment=ENV), (raw,))
+
+    def test_direct_url_comparison_ignores_dot_git_case_and_slashes(self) -> None:
+        installed = "git+https://GitHub.com/o/r@v1#subdirectory=requirements/"
+
+        self.assertTrue(
+            same_direct_url(
+                "git+https://github.com/o/r.git/@v1#subdirectory=requirements", installed
+            )
+        )
+        self.assertFalse(same_direct_url("git+https://github.com/o/r@v1", installed))
+        self.assertFalse(
+            same_direct_url("git+https://github.com/o/r#subdirectory=requirements", installed)
+        )
+        self.assertTrue(
+            same_direct_url("git+ssh://git@github.com/o/r", "git+ssh://git@github.com/o/r")
+        )
+        self.assertTrue(
+            same_direct_url("https://x.invalid/p-1.tar.gz", "https://x.invalid/p-1.tar.gz")
+        )
 
     def test_bare_vcs_url_is_satisfied_by_a_distribution_named_after_it(self) -> None:
         raw = "git+https://github.com/AAA3A-AAA3A/AAA3A_utils.git"

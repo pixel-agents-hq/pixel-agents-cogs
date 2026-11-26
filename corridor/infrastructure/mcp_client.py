@@ -2,66 +2,25 @@
 (suggestionbox's own server today, see docs/suggestionbox-design.md) over
 MCP's Streamable HTTP transport, using the official `mcp` SDK.
 
-Pinned `mcp>=1.29,<2` (see `corridor/info.json`): `mcp` 2.0 renamed
-`FastMCP` to `MCPServer` and reshuffled several client-side modules, and
-also forces a `pydantic>=2.12` floor that collides with the
-`pydantic>=2.11.3,<2.12` ceiling every other cog in this repo is pinned to
-(see that pin's own comment in `corridor/info.json`). `mcp<2` keeps the
-API this module (and `suggestionbox`'s own server) is written against.
+Pinned `mcp>=1.29,<2` in `requirements/pyproject.toml`: `mcp` 2.0 renamed
+`FastMCP` to `MCPServer`, reshuffled several client-side modules, and needs
+`pydantic>=2.12`, which the meta-package's `pydantic<2.12` ceiling rules
+out. `mcp<2` keeps the API this module (and `suggestionbox`'s own server)
+is written against.
 
-A second incident, from the same root cause, needed a second, non-obvious
-fix. Red's real Downloader (`redbot.cogs.downloader.repo_manager.Repo.
-install_requirements`) installs *every currently-loaded cog's*
-`requirements` into **one shared directory**, via one `pip install -U -t
-<shared dir> <that cog's requirements>` call per cog (`-U` = `--upgrade`).
-`mcp` pulls in `pydantic-settings`, whose own `pydantic>=2.7.0` floor has
-no upper bound. `suggestionbox` (the only cog that needs `mcp` without
-already needing `pydantic` for its own reasons) originally didn't declare
-`pydantic` at all -- so *its* pip call, running after corridor's already-
-correctly-pinned one in the same shared directory, had nothing in its own
-constraint set stopping pip from using `-U` to upgrade the
-already-installed, compatible `pydantic` to the latest release (2.12+),
-silently breaking every other cog that shares that one directory. Confirmed
-by reproducing the exact two-call sequence locally: corridor's own pinned
-install lands `pydantic==2.11.10` (`pydantic_core==2.33.2`, no `Sentinel`
-import); a subsequent unpinned `pip install -U -t <same dir> mcp>=1.29,<2
-uvicorn` then upgrades it to `pydantic==2.13.5`, whose `pydantic_core` does
-`from typing_extensions import Sentinel` at its own top level -- Red-
-DiscordBot's own site-packages `typing_extensions` is pinned to `4.13.2`
-and sits ahead of the Downloader's shared directory on `sys.path` (see
-`corridor/info.json`'s own `pydantic` comment), so that import always
-fails at runtime regardless of what actually got installed into the
-cog-requirements directory. The fix: `suggestionbox/info.json` declares
-`pydantic>=2.11.3,<2.12` too, even though nothing in `suggestionbox`'s own
-code imports pydantic directly -- purely to stop its own `pip install -U`
-call from ever being allowed to move the shared directory's `pydantic`
-off the version every other cog was built and tested against.
-
-`typing-inspection<0.4.3` (declared alongside `mcp` on every cog that
-needs it) is a separate, narrower defensive pin for the same class of
-"an unconstrained transitive floor resolves to a too-new release that
-needs a newer `typing_extensions` than Red ships" failure -- 0.4.3 raised
-its own `typing_extensions` floor to `>=4.15.0` (0.4.0-0.4.2 only need
-`>=4.12.0`) -- kept even though the `pydantic_core` incident above turned
-out to be the one actually observed in CI.
-
-A third incident, same root cause, hit `anyio` instead: `httpx` (pulled
-in by `a2a-sdk` and directly by `pico`/`painter`) and `mcp` both declare
-`anyio` with no upper bound at all. `anyio==4.15.0`'s
-`anyio/_core/_typedattr.py` (also `itertools.py`, `_backends/_trio.py`)
-unconditionally does `from typing_extensions import sentinel` on
-Python <3.15 -- that lowercase `sentinel()` factory (distinct from the
-`Sentinel` class the `pydantic_core` incident above hit) was only added
-in `typing_extensions` 4.16.0, so it fails to import against Red's
-pinned 4.13.2 for the same shadowing reason. Every cog whose own
-`requirements` list declares `a2a-sdk`, `httpx`, or `mcp` (`architect`,
-`corridor`, `painter`, `pico`, `suggestionbox`) now also pins
-`anyio<4.15`, for the same "stop this cog's own `pip install -U` from
-being the one that bumps the shared directory's `anyio` past what Red's
-`typing_extensions` can satisfy" reason `suggestionbox`'s `pydantic` pin
-exists -- confirmed by reproducing the full install order locally: any
-one of those cogs left unpinned re-resolves `anyio` back up to 4.15.0
-on its own turn, regardless of what an earlier cog's turn pinned it to.
+The ceilings on `pydantic`, `typing-inspection` and `anyio` exist because
+Red pins `typing_extensions==4.13.2` in site-packages, ahead of
+Downloader's lib dir on `sys.path`, so a newer copy pip installs there is
+shadowed: pydantic 2.12's `pydantic_core` imports
+`typing_extensions.Sentinel`, typing-inspection 0.4.3 needs
+`typing_extensions>=4.15`, and anyio 4.15 imports the lowercase
+`typing_extensions.sentinel` (4.16+). `mcp` (through `pydantic-settings`)
+and `httpx` declare `pydantic`/`anyio` without an upper bound, and
+Downloader runs one `pip install -U` per requirement string, so the pins
+hold only because every cog lists the single `pixel-agents-deps`
+requirement and everything resolves in one pip run
+(`requirements/README.md`). `corridor/requirement_hint.py` names the fix
+when one breaks anyway.
 
 Opens a fresh `streamable_http_client`/`ClientSession` pair per call rather
 than holding one open across calls -- unlike `LiteLLMClient`'s one

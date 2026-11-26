@@ -350,7 +350,7 @@ class SwitchboardService:
         Everything goes to pip in one run, so its resolver sees every pin
         together. Installing one cog's requirements alone lets pip upgrade a
         shared package past a pin another cog relies on (the pydantic/anyio
-        incident documented in .github/workflows/cogs-quality.yml).
+        incident described in requirements/README.md).
         """
 
         everything = [

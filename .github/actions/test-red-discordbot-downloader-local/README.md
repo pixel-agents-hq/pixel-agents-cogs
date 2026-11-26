@@ -89,7 +89,7 @@ motivated pulling in the heavier downloader-based variant instead.
 | --- | --- | --- |
 | Installs via downloader git repo | ❌ copies directories directly | ✅ clones and installs through downloader |
 | Validates `repo info.json` metadata | ❌ | ✅ |
-| Installs requirements using downloader logic | ❌ (manual `uv pip install`) | ✅ (repo-managed pip install) |
+| Installs requirements using downloader logic | ❌ (manual `uv pip install`) | ✅ (Red's `Downloader._install_requirements`, then checks every pin holds) |
 | Exercises load/unload through RPC | ✅ | ✅ |
 | Detects downloader-specific regressions (repo config, git hooks, metadata) | ❌ | ✅ |
 

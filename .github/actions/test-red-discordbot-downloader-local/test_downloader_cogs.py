@@ -21,7 +21,13 @@ try:
 except ImportError:  # pragma: no cover - fallback for newer jsonschema versions
     RefResolver = None  # type: ignore[assignment, misc]
 
+from importlib.metadata import Distribution, distributions
+
+from packaging.requirements import InvalidRequirement, Requirement
+from packaging.utils import canonicalize_name
 from redbot.cogs.downloader import errors as downloader_errors
+from redbot.cogs.downloader.downloader import Downloader
+from redbot.cogs.downloader.installable import Installable
 from redbot.cogs.downloader.repo_manager import Repo, RepoManager
 from redbot.core import data_manager
 from redbot.core._cog_manager import CogManager
@@ -415,6 +421,7 @@ def validate_info_json(info_json_path: Path) -> None:
 
 
 async def install_cogs_from_repo(
+    repo_manager: RepoManager,
     repo: Repo,
     install_path: Path,
     requirements_path: Path,
@@ -449,13 +456,104 @@ async def install_cogs_from_repo(
             await repo.install_cog(cog, target_dir=install_path)
         except downloader_errors.DownloaderException as exc:
             raise RuntimeError(f"Failed to install cog {name} from {repo.name}: {exc}") from exc
-        if cog.requirements:
-            ok = await repo.install_requirements(cog=cog, target_dir=requirements_path)
-            if not ok:
-                raise RuntimeError(f"Failed to install requirements for {name}")
         installed.append(name)
         required_cogs_by_name[name] = dict(cog.required_cogs)
+    cogs = [available[name] for name in installed]
+    await install_requirements_like_downloader(repo_manager, requirements_path, cogs)
+    verify_requirement_pins(requirements_path, cogs)
     return installed, required_cogs_by_name
+
+
+class _DownloaderRequirementsShim:
+    """The two attributes `Downloader._install_requirements` reads, so CI runs
+    Red's real `[p]cog install` requirements code instead of a lookalike."""
+
+    def __init__(self, repo_manager: RepoManager, lib_path: Path) -> None:
+        self._repo_manager = repo_manager
+        self.LIB_PATH = lib_path
+
+
+async def install_requirements_like_downloader(
+    repo_manager: RepoManager, lib_path: Path, cogs: Sequence[Installable]
+) -> None:
+    """Install requirements exactly as `[p]cog install` does.
+
+    Red's Downloader dedupes every requirement of every cog into a set and
+    runs one `pip install -U --target <lib>` per requirement, in set order
+    (which varies with PYTHONHASHSEED). A pin only constrains its own pip
+    run, which is why every cog lists the one pixel-agents-deps requirement
+    (requirements/README.md). `Repo.install_requirements(cog)` puts all of
+    one cog's requirements into a single pip run instead, so it would hide a
+    pin that a later run overwrites (#134).
+    """
+    shim = _DownloaderRequirementsShim(repo_manager, lib_path)
+    failed = await Downloader._install_requirements(shim, cogs)  # type: ignore[arg-type]
+    if failed:
+        raise RuntimeError(f"Failed to install requirements: {', '.join(failed)}")
+
+
+def _requirement_checks(
+    raw: str, dists: Mapping[str, Sequence[Distribution]]
+) -> List[tuple[str, Requirement]]:
+    """The requirement itself and, for a direct reference such as
+    pixel-agents-deps, every Requires-Dist of its installed distribution.
+
+    A direct reference carries no version specifier: the pins it exists for
+    live in its own metadata, so those are what must hold in the lib dir.
+    """
+    req = Requirement(raw)
+    checks = [(raw, req)]
+    found = dists.get(canonicalize_name(req.name), [])
+    if req.url and len(found) == 1:
+        extras = req.extras or {""}
+        for dep in found[0].requires or []:
+            dep_req = Requirement(dep)
+            if dep_req.marker is None or any(
+                dep_req.marker.evaluate({"extra": extra}) for extra in extras
+            ):
+                checks.append((f"{req.name} -> {dep}", dep_req))
+    return checks
+
+
+def verify_requirement_pins(lib_path: Path, cogs: Sequence[Installable]) -> None:
+    """Fail if the shared lib dir breaks any cog's requirement specifier, or
+    holds more than one dist-info for a project.
+
+    This doesn't depend on install order, so it also fails on a run whose set
+    order happened to put the pins last.
+    """
+    dists: Dict[str, List[Distribution]] = {}
+    for dist in distributions(path=[str(lib_path)]):
+        dists.setdefault(canonicalize_name(dist.metadata["Name"]), []).append(dist)
+    problems = [
+        f"{name}: {len(found)} dist-info dirs ({', '.join(d.version for d in found)})"
+        for name, found in sorted(dists.items())
+        if len(found) > 1
+    ]
+    cogs_by_requirement: Dict[str, List[str]] = {}
+    for cog in cogs:
+        for raw in cog.requirements:
+            cogs_by_requirement.setdefault(raw, []).append(cog.name)
+    checked = 0
+    for raw, cog_names in sorted(cogs_by_requirement.items()):
+        try:
+            checks = _requirement_checks(raw, dists)
+        except InvalidRequirement as exc:
+            problems.append(f"{', '.join(cog_names)}: {raw!r} does not parse: {exc}")
+            continue
+        for label, req in checks:
+            checked += 1
+            versions = [d.version for d in dists.get(canonicalize_name(req.name), [])]
+            if len(versions) != 1 or (
+                not req.url and not req.specifier.contains(versions[0], prereleases=True)
+            ):
+                problems.append(f"{label!r}, lib has {versions or 'nothing'}")
+    if problems:
+        raise RuntimeError(
+            "Requirement pins not honoured by Red's Downloader install:\n  "
+            + "\n  ".join(problems)
+        )
+    print(f"✅ All {checked} requirement specifiers hold in the shared lib dir")
 
 
 def _transitive_dependencies(
@@ -548,7 +646,7 @@ async def main_async() -> None:
             )
         assert expected_names is not None
         installed, required_cogs_by_name = await install_cogs_from_repo(
-            repo, install_path, requirements_path, expected_names
+            repo_manager, repo, install_path, requirements_path, expected_names
         )
 
         rpc_url = RPC_URL_TEMPLATE.format(port=port)

@@ -24,6 +24,7 @@ on:
       - "architect/**/*.py"
       - "painter/**/*.py"
       - "cctv/**/*.py"
+      - "requirements/**"
       - ".github/workflows/contract-checks.yml"
 
 permissions:
@@ -78,7 +79,7 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: pip install -r contracts/pixel_index/requirements.txt
+        run: pip install ./requirements -r contracts/pixel_index/requirements.txt
 
       - name: Run contract check
         # Regenerates contract.yaml from floorplan/contracts/pixel_index.py + endpoints.py
@@ -150,17 +151,15 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        # aiohttp/pydantic are what CCTV's serving adapter imports once
-        # contracts.pixel_agents.verify reaches it -- see that module's
-        # docstring for the pixelagents-builds/CCTV-serves split. discord.py itself is not
-        # required: importing pixelagents.tests.conftest first (for its
-        # redbot stub) also stubs `discord` in sys.modules before anything
-        # does a real `import discord`. Matches the dependency set
-        # vendor-update.yml's real-build gate installs for this same code
-        # path. pyyaml/jsonschema are for contracts/pixel_agents/verify_outbound.py
+        # ./requirements: CCTV's serving adapter, which contracts.pixel_agents.verify
+        # reaches -- see that module's docstring for the pixelagents-builds/
+        # CCTV-serves split. discord.py itself is not required: importing
+        # pixelagents.tests.conftest first (for its redbot stub) also stubs
+        # `discord` in sys.modules before anything does a real `import
+        # discord`. pyyaml/jsonschema are for contracts/pixel_agents/verify_outbound.py
         # and schema.py, which parse the cloned repo's core/asyncapi.yaml and
         # validate captured messages against it.
-        run: pip install aiohttp 'pydantic>=2.11.3,<2.14' 'pyyaml>=6.0' 'jsonschema>=4.20'
+        run: pip install ./requirements 'pyyaml>=6.0' 'jsonschema>=4.20'
 
       - name: Run contract check
         run: |

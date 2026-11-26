@@ -31,6 +31,7 @@ on:
       - "architect/**/*.py"
       - "cctv/**/*.py"
       - "floorplan/**/*.py"
+      - "requirements/**"
       - ".github/workflows/e2e.yml"
 
 permissions:
@@ -62,14 +63,12 @@ jobs:
           cache: "pip"
 
       - name: Install Python dependencies
-        # Union of what corridor/pixelagents/architect/cctv/floorplan each
-        # need in cogs-quality.yml's matrix, plus playwright for the
-        # browser half.
+        # ./requirements: the cogs' own dependencies, as Downloader installs
+        # them. playwright: the browser half. pyyaml/jsonschema: as in
+        # cogs-quality.yml's pixelagents leg.
         run: |
           python -m pip install --upgrade pip
-          python -m pip install pytest pytest-timeout playwright \
-            aiohttp 'pydantic>=2.11.3,<2.12' 'a2a-sdk[http-server]' uvicorn \
-            'mcp>=1.29,<2' 'typing-inspection<0.4.3' 'anyio<4.15' \
+          python -m pip install pytest pytest-timeout playwright ./requirements \
             'pyyaml>=6.0' 'jsonschema>=4.20'
 
       - name: Install Playwright's Chromium

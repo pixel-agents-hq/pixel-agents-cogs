@@ -53,7 +53,8 @@ PIXELAGENTS_REAL_WEBVIEW_BUILD=1 python -m pytest -q e2e/   # multi-cog, see e2e
 
 - The `corridor`, `pico` and `cctv` suites bind real `127.0.0.1` listeners.
 - `floorplan` also needs `pip install -r contracts/pixel_index/requirements.txt`.
-- Per-cog dependencies are in [`.github/workflows/cogs-quality.yml`](.github/workflows/cogs-quality.yml).
+- Every cog's third-party dependencies: `pip install ./requirements`. Per-cog
+  test tooling is in [`.github/workflows/cogs-quality.yml`](.github/workflows/cogs-quality.yml).
 - Don't run ruff format over `contracts/`; CI doesn't, and it rewrites
   unrelated files.
 

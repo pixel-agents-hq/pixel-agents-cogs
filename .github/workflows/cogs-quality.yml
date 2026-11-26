@@ -91,8 +91,8 @@ jobs:
           # same 'a2a-sdk[http-server]'+uvicorn pair as architect/pico below.
           # mcp pulls in pydantic-settings, whose own pydantic>=2.7.0 floor
           # has no upper bound -- Red's real Downloader installs every
-          # loaded cog's requirements into ONE shared directory via `pip
-          # install -U` per cog, so suggestionbox's own pip call (mcp,
+          # loaded cog's requirements into ONE shared directory via one `pip
+          # install -U` per requirement (#134), so suggestionbox's own pip call (mcp,
           # uvicorn -- no pydantic pin of its own, originally) was free to
           # upgrade the shared directory's already-correctly-pinned
           # pydantic to 2.12+, whose pydantic_core needs a newer

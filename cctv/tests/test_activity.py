@@ -243,7 +243,14 @@ class TestTokenExchange(_ActivityFixture):
             self.assertNotIn(SECRET, await r.text())
 
     async def test_malformed_requests_never_reach_discord(self) -> None:
-        for body in ({}, {"code": ""}, {"code": 5}, {"code": "a b"}, {"code": "x" * 600}):
+        for body in (
+            {},
+            {"code": ""},
+            {"code": 5},
+            {"code": "a b"},
+            {"code": "été"},
+            {"code": "x" * 600},
+        ):
             async with self.http.post(f"{self.base}/api/token", json=body) as r:
                 self.assertEqual(r.status, 400, body)
         async with self.http.post(f"{self.base}/api/token", data=b"x" * 5000) as r:

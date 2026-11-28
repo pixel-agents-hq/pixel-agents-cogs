@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import string
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Protocol
@@ -42,6 +43,7 @@ ACTIVITY_CONFIG_SCRIPT = "activity-config.js"
 ACTIVITY_SCOPES = ("identify",)
 MAX_BODY_BYTES = 4096
 _MAX_CODE_LENGTH = 512
+_CODE_CHARACTERS = frozenset(string.ascii_letters + string.digits + "-_.")
 _NO_STORE = {"Cache-Control": "no-store"}
 
 TicketIssuer = Callable[[int, "int | None"], Awaitable["str | None"]]
@@ -362,7 +364,7 @@ class ActivityEndpoints:
         if (
             not isinstance(code, str)
             or not 0 < len(code) <= _MAX_CODE_LENGTH
-            or not all(character.isalnum() or character in "-_." for character in code)
+            or not all(character in _CODE_CHARACTERS for character in code)
         ):
             return _error(400, "invalid request")
         client_id = self._client_id()

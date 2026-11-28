@@ -21,12 +21,17 @@ class _Settings:
         self.enabled = True
         self.broadcast_messages = True
         self.access = OfficeAccess.PUBLIC
+        self.activity_enabled = False
 
     async def global_settings(self) -> Any:
         return SimpleNamespace(
             designer_url="https://designer.example/assets/design",
             public_base_url=self.public_base_url,
+            activity_enabled=self.activity_enabled,
         )
+
+    async def set_activity_enabled(self, value: bool) -> None:
+        self.activity_enabled = value
 
     async def guild_settings(self, guild: object) -> Any:
         return SimpleNamespace(
@@ -61,6 +66,8 @@ class _Harness(CommandsMixin):
         self.synced: list[int] = []
         self.replies: list[str] = []
         self.codes: list[list[str]] = []
+        self.buttons: list[object] = []
+        self.fields: list[tuple[Any, ...]] = []
         dashboard_cog = (
             SimpleNamespace(rpc=SimpleNamespace(third_parties_handler=object()))
             if dashboard
@@ -81,10 +88,12 @@ class _Harness(CommandsMixin):
         if content is not None:
             self.replies.append(content)
         self.codes.append(list(kwargs.get("code", ())))  # type: ignore[call-overload]
+        self.buttons.append(kwargs.get("buttons"))
+        self.fields.append(tuple(kwargs.get("fields", ())))  # type: ignore[arg-type]
 
 
 def _office_ctx() -> Any:
-    return SimpleNamespace(guild=SimpleNamespace(id=GUILD_ID))
+    return SimpleNamespace(guild=SimpleNamespace(id=GUILD_ID), interaction=None)
 
 
 class TestCctvDisplayCommands(unittest.IsolatedAsyncioTestCase):
@@ -160,6 +169,192 @@ class TestUrlCommand(unittest.IsolatedAsyncioTestCase):
         await CommandsMixin.cmd_url.callback(cog, _office_ctx())
 
         self.assertIn("Dashboard isn't loaded", cog.replies[-1])
+
+
+class _Response:
+    def __init__(self, *, launch_error: Exception | None = None) -> None:
+        self.launched = 0
+        self.sent: list[str] = []
+        self._done = False
+        self._launch_error = launch_error
+
+    def is_done(self) -> bool:
+        return self._done
+
+    async def launch_activity(self) -> None:
+        if self._launch_error is not None:
+            raise self._launch_error
+        self.launched += 1
+        self._done = True
+
+    async def send_message(self, content: str, *, ephemeral: bool = False) -> None:
+        assert ephemeral
+        self.sent.append(content)
+        self._done = True
+
+
+class _Http:
+    def __init__(self, commands: list[dict[str, object]]) -> None:
+        self.commands = commands
+        self.created: list[dict[str, object]] = []
+
+    async def get_global_commands(self, application_id: int) -> list[dict[str, object]]:
+        assert application_id == 99
+        return self.commands
+
+    async def upsert_global_command(
+        self, application_id: int, *, payload: dict[str, object]
+    ) -> dict[str, object]:
+        assert application_id == 99
+        self.created.append(payload)
+        return payload
+
+
+class _ActivityHarness(_Harness):
+    def __init__(self, *, secret: str | None = "s3cret", **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.secret = secret
+        self.built = 0
+        self.closed_codes: list[int] = []
+        self.http = _Http([])
+        harness = self
+
+        class _Server:
+            running = True
+
+            async def close_activity_sockets(self, *, code: int) -> int:
+                harness.closed_codes.append(code)
+                return 2
+
+        self._server = _Server()  # type: ignore[assignment]
+        dashboard_cog = self.bot.get_cog("Dashboard")
+        self.bot = SimpleNamespace(  # type: ignore[assignment]
+            get_cog=lambda name: dashboard_cog, http=self.http, application_id=99
+        )
+
+    async def _dashboard_client_secret(self) -> str | None:
+        return self.secret
+
+    async def _build_activity(self) -> str:
+        self.built += 1
+        return "✅ Activity built."
+
+    def _activity_build_status(self) -> str:
+        return "✅ built"
+
+    def _activity_client_id(self) -> int | None:
+        return 99
+
+    async def _activity_enabled(self) -> bool:
+        return self._settings.activity_enabled  # type: ignore[attr-defined, no-any-return]
+
+
+class TestActivityCommands(unittest.IsolatedAsyncioTestCase):
+    async def test_url_has_no_launch_button_until_the_owner_switches_it_on(self) -> None:
+        cog = _ActivityHarness()
+
+        await CommandsMixin.cmd_url.callback(cog, _office_ctx())
+        self.assertIsNone(cog.buttons[-1])
+
+        cog._settings.activity_enabled = True
+        await CommandsMixin.cmd_url.callback(cog, _office_ctx())
+        from ..adapters.activity_views import LAUNCH_CUSTOM_ID, ActivityLaunchView
+
+        view = cog.buttons[-1]
+        self.assertIsInstance(view, ActivityLaunchView)
+        assert isinstance(view, ActivityLaunchView)
+        self.assertIsNone(view.timeout)
+        self.assertEqual([item.custom_id for item in view.children], [LAUNCH_CUSTOM_ID])
+        self.assertIn("in Discord", cog.replies[-1])
+
+    async def test_enable_stores_it_builds_it_and_shows_the_mapping(self) -> None:
+        cog = _ActivityHarness()
+        cog._settings.public_base_url = "https://dash.example.com"
+
+        await CommandsMixin.cmd_activity_enable.callback(cog, _office_ctx())
+
+        self.assertTrue(cog._settings.activity_enabled)
+        self.assertEqual(cog.built, 1)
+        fields = {field.name: field.value for field in cog.fields[-1]}
+        self.assertEqual(fields["Activity"], "✅ on")
+        self.assertEqual(fields["Activity build"], "✅ Activity built.")
+        self.assertEqual(fields["URL mapping"], "`/` → `dash.example.com/cctv/activity`")
+        self.assertIn("client secret", fields["Sign-in"])
+        self.assertNotIn("s3cret", " ".join(fields.values()))
+
+    async def test_status_says_when_the_dashboard_secret_is_missing(self) -> None:
+        cog = _ActivityHarness(secret=None)
+
+        await CommandsMixin.cmd_activity.callback(cog, _office_ctx())
+
+        fields = {field.name: field.value for field in cog.fields[-1]}
+        self.assertEqual(fields["Activity"], "🛑 off")
+        self.assertIn("[p]dashboard settings secret", fields["Sign-in"])
+        self.assertEqual(fields["URL mapping"], "`/` → `<public host>/cctv/activity`")
+
+    async def test_disable_closes_the_activity_sockets(self) -> None:
+        from ..infrastructure import OFFICE_UNAVAILABLE_CLOSE_CODE
+
+        cog = _ActivityHarness()
+        cog._settings.activity_enabled = True
+
+        await CommandsMixin.cmd_activity_disable.callback(cog, _office_ctx())
+
+        self.assertFalse(cog._settings.activity_enabled)
+        self.assertEqual(cog.closed_codes, [OFFICE_UNAVAILABLE_CLOSE_CODE])
+        self.assertIn("browser pages are unchanged", cog.replies[-1])
+
+    async def test_entrypoint_creates_only_a_missing_entry_point_command(self) -> None:
+        cog = _ActivityHarness()
+        cog.http.commands = [{"name": "cctv", "type": 1}]
+
+        await CommandsMixin.cmd_activity_entrypoint.callback(cog, _office_ctx())
+
+        self.assertEqual(len(cog.http.created), 1)
+        created = cog.http.created[0]
+        self.assertEqual((created["type"], created["handler"]), (4, 2))
+        self.assertIn("Created", cog.replies[-1])
+
+        cog.http.commands = [{"name": "launch", "type": 4}]
+        await CommandsMixin.cmd_activity_entrypoint.callback(cog, _office_ctx())
+        self.assertEqual(len(cog.http.created), 1)
+        self.assertIn("already there", cog.replies[-1])
+
+
+class TestActivityLaunchButton(unittest.IsolatedAsyncioTestCase):
+    async def test_launches_the_activity_while_it_is_on(self) -> None:
+        from ..adapters.activity_views import ActivityLaunchView
+
+        async def on() -> bool:
+            return True
+
+        response = _Response()
+        await ActivityLaunchView(on).launch(SimpleNamespace(response=response))  # type: ignore[arg-type]
+        self.assertEqual(response.launched, 1)
+        self.assertEqual(response.sent, [])
+
+    async def test_says_so_once_the_owner_switched_it_off(self) -> None:
+        from ..adapters.activity_views import ActivityLaunchView
+
+        async def off() -> bool:
+            return False
+
+        response = _Response()
+        await ActivityLaunchView(off).launch(SimpleNamespace(response=response))  # type: ignore[arg-type]
+        self.assertEqual(response.launched, 0)
+        self.assertIn("switched the office Activity off", response.sent[0])
+
+    async def test_a_refused_launch_is_explained(self) -> None:
+        import discord
+
+        from ..adapters.activity_views import ActivityLaunchView
+
+        async def on() -> bool:
+            return True
+
+        response = _Response(launch_error=discord.HTTPException("refused"))
+        await ActivityLaunchView(on).launch(SimpleNamespace(response=response))  # type: ignore[arg-type]
+        self.assertIn("App Launcher", response.sent[0])
 
 
 class TestVisibilityCommand(unittest.IsolatedAsyncioTestCase):

@@ -226,6 +226,16 @@ def _install_discord() -> None:
             self.children.append(item)
             return self
 
+    class _MockView(_MockLayoutView):
+        """A classic (non-Components-V2) view: rides under an embed."""
+
+        def __init__(self, *, timeout: float | None = 180.0) -> None:
+            super().__init__(timeout=timeout)
+            self.stopped = False
+
+        def stop(self) -> None:
+            self.stopped = True
+
     class _MockContainer:
         def __init__(self, *items: Any, **kwargs: object) -> None:
             self.children: list[Any] = list(items)
@@ -321,6 +331,7 @@ def _install_discord() -> None:
     discord_ui.Modal = _MockModal
     discord_ui.TextInput = _MockTextInput
     discord_ui.LayoutView = _MockLayoutView
+    discord_ui.View = _MockView
     discord_ui.Container = _MockContainer
     discord_ui.ActionRow = _MockActionRow
     discord_ui.TextDisplay = _MockTextDisplay

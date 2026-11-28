@@ -1,4 +1,5 @@
-"""Red's data deletion API: CCTV revokes a user's unspent Dashboard tickets."""
+"""Red's data deletion API: CCTV revokes a user's unspent tickets and
+forgets which Activity sign-in tokens are theirs."""
 
 from __future__ import annotations
 
@@ -9,7 +10,7 @@ from unittest.mock import MagicMock
 
 from .. import __red_end_user_data_statement__
 from ..cctv import CCTV
-from ..infrastructure import TicketStore
+from ..infrastructure import DiscordOAuth, TicketStore
 
 USER = 42
 OTHER = 43
@@ -37,11 +38,15 @@ class TestRedDeleteDataForUser(unittest.IsolatedAsyncioTestCase):
             with self.subTest(requester=requester):
                 cog = MagicMock()
                 cog._tickets = TicketStore()
+                cog._oauth = DiscordOAuth()
                 token = cog._tickets.mint(USER, GUILD)
+                cog._oauth._users["mine"] = (USER, float("inf"))
+                cog._oauth._users["theirs"] = (OTHER, float("inf"))
 
                 await CCTV.red_delete_data_for_user(cog, requester=requester, user_id=USER)
 
                 self.assertIsNone(cog._tickets.consume(token, GUILD))
+                self.assertEqual(list(cog._oauth._users), ["theirs"])
 
 
 class TestEndUserDataStatement(unittest.TestCase):

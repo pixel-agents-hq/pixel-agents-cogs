@@ -16,12 +16,15 @@ office per guild, plus the editor office) and publishes their change events.
 | `application/tasks.py` | Supervised, cancellable delayed activity clears |
 | `infrastructure/settings.py` | CCTV's own Red Config identity for listener/display settings |
 | `infrastructure/client_hub.py` | Per-office connection registry, editor flags, and broadcasts |
-| `infrastructure/server.py` | One aiohttp listener: a WebSocket route per guild office, the editor's, and a JSON health route |
-| `infrastructure/tickets.py` | Single-use, 60-second, guild-bound browser identity tickets |
+| `infrastructure/server.py` | One aiohttp listener: a WebSocket route per guild office, the editor's, a JSON health route, and the Discord Activity's routes |
+| `infrastructure/activity.py` | The Discord Activity's routes under `/cctv/activity`: its page, config script, assets, token exchange, ticket issue and office sockets |
+| `infrastructure/discord_oauth.py` | The Activity's Discord OAuth calls: code exchange, and which user (of this application) a token signs in |
+| `infrastructure/tickets.py` | Single-use, 60-second, office-bound identity tickets, for the Dashboard pages and the Activity |
 | `infrastructure/webview.py` | Pixelagents bundle loading, per-office HTML/WebSocket-target rewriting, and the server picker page |
 | `adapters/dashboard.py` | Picker/office/editor/session/static Dashboard route registrations (and the old `discord` page's redirect) |
-| `adapters/cog_base.py` | Dependency wiring, atomic startup watches, pub/sub projection, lifecycle, health |
-| `adapters/commands.py` | Listener, guild, display, delay, URL, and status commands |
+| `adapters/cog_base.py` | Dependency wiring, atomic startup watches, pub/sub projection, lifecycle, health, and the Activity's access rules and client secret lookup |
+| `adapters/commands.py` | Listener, guild, display, delay, URL, Activity and status commands |
+| `adapters/activity_views.py` | The persistent **Open in Discord** button (`LAUNCH_ACTIVITY` response) |
 
 ```mermaid
 flowchart TB
@@ -29,7 +32,7 @@ flowchart TB
         direction TB
         Adapters["adapters<br/>dashboard routes, commands, cog_base"]
         Application["application<br/>pipeline, offices, tasks"]
-        Infrastructure["infrastructure<br/>server, client_hub, tickets, webview, settings"]
+        Infrastructure["infrastructure<br/>server, activity, discord_oauth, client_hub,<br/>tickets, webview, settings"]
         Domain["domain<br/>settings"]
         Adapters --> Application
         Adapters --> Infrastructure
@@ -41,6 +44,9 @@ flowchart TB
     Pixelagents["pixelagents<br/><small>office-state facade<br/>webview bundle</small>"]
     Discord["Discord gateway cache"]
     Browser["Browser (picker / guild office / editor page)"]
+    Activity["Discord client (office Activity)"]
+    OAuth["Discord OAuth API"]
+    Dashboard["Red Web Dashboard cog<br/><small>OAuth client secret</small>"]
 
     Adapters -->|watch_agent_events, capabilities_satisfy| Corridor
     Application -->|office_state, set_office_layout,<br/>mutate_office_seats, watch_office_state| Pixelagents
@@ -48,12 +54,17 @@ flowchart TB
     Infrastructure -->|webview_bundle_status, static assets| Pixelagents
     Adapters -->|guild + member scan| Discord
     Infrastructure -->|office + editor WebSocket routes,<br/>GET /cctv/health, Dashboard HTTP| Browser
+    Infrastructure -->|/cctv/activity page, tickets, sockets| Activity
+    Infrastructure -->|code exchange, token check| OAuth
+    Adapters -->|reads client secret at use| Dashboard
 ```
 
 Corridor and Pixelagents are the only cross-cog dependencies. `cog_base.py`
 loads both on demand via `corridor.dependency_loader.ensure_loaded`, never
 through a module-scope import, so a reload ordering that runs before either
-dependency is loaded cannot crash the module.
+dependency is loaded cannot crash the module. Red Web Dashboard is optional:
+CCTV registers its pages when it loads and reads its client secret through
+`bot.get_cog("Dashboard")` at use, never importing it.
 
 ## Key flows
 

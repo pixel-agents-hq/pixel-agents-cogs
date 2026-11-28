@@ -41,6 +41,9 @@ class GlobalSettings:
     # Who besides the bot owner may edit the editor office; None (the
     # default) is the bot owner only.
     editor_gate: EditorGate | None = None
+    # Whether the offices open inside Discord as an Activity
+    # (`[p]cctv activity enable`); off until the bot owner sets it up.
+    activity_enabled: bool = False
 
 
 @dataclass(frozen=True, slots=True)

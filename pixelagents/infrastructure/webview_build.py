@@ -610,6 +610,8 @@ ACTIVITY_REQUIRED_TOOLS = ("node", "npm")
 _ACTIVITY_SOURCE_DIR = Path(__file__).parent / "webview_build_scripts" / "activity"
 _ACTIVITY_SOURCES = ("package.json", "package-lock.json", "bootstrap.ts")
 _ACTIVITY_BUILD_DIR = "activity_build"
+# Present while a consumer wants the Activity build (see `activity_requested`).
+_ACTIVITY_REQUESTED_MARKER = ".requested"
 _BUILT_ACTIVITY_MARKER = ".built_activity"
 _INSTALLED_LOCK_MARKER = ".installed_lock"
 # Build tools in the lockfile, not shipped in the bundle (no license notice).
@@ -647,9 +649,23 @@ def activity_html(index_source: str) -> str:
 
 
 def activity_requested(cog_data_dir: Path) -> bool:
-    """Whether a consumer has asked for the Activity build on this host."""
+    """Whether a consumer wants the Activity build on this host: set by
+    `ensure_activity_built`, cleared by `cancel_activity`."""
 
-    return (cog_data_dir / _ACTIVITY_BUILD_DIR).is_dir()
+    return (cog_data_dir / _ACTIVITY_BUILD_DIR / _ACTIVITY_REQUESTED_MARKER).is_file()
+
+
+def cancel_activity(cog_data_dir: Path) -> bool:
+    """Stop rebuilding the Activity with every webview build; whether it had
+    been requested. The installed npm packages stay, so asking again later
+    doesn't reinstall them."""
+
+    marker = cog_data_dir / _ACTIVITY_BUILD_DIR / _ACTIVITY_REQUESTED_MARKER
+    try:
+        marker.unlink()
+    except FileNotFoundError:
+        return False
+    return True
 
 
 def _activity_marker(webview_dist: Path) -> str | None:
@@ -679,6 +695,7 @@ def ensure_activity_built(
     webview_dist = cog_data_dir / "webview_dist"
     build_dir = cog_data_dir / _ACTIVITY_BUILD_DIR
     build_dir.mkdir(parents=True, exist_ok=True)
+    (build_dir / _ACTIVITY_REQUESTED_MARKER).write_text("1\n", encoding="utf-8")
     with _build_lock(cog_data_dir):
         if not (webview_dist / "index.html").is_file():
             raise WebviewBuildError("the webview isn't built yet")

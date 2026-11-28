@@ -290,6 +290,7 @@ class CommandsMixin(CctvBase):
         """Stop opening the offices inside Discord. Bot owner only."""
 
         await self._settings.set_activity_enabled(False)
+        await self._cancel_activity_build()
         closed = (
             await self._server.close_activity_sockets(code=OFFICE_UNAVAILABLE_CLOSE_CODE)
             if self._server is not None
@@ -297,8 +298,8 @@ class CommandsMixin(CctvBase):
         )
         await self._reply(
             ctx,
-            f"The office Activity is off; {closed} open Activity connection(s) were closed. "
-            "The browser pages are unchanged.",
+            f"The office Activity is off; {closed} open Activity connection(s) were closed, "
+            "and webview rebuilds no longer build it. The browser pages are unchanged.",
         )
 
     @cmd_activity.command(name="entrypoint")

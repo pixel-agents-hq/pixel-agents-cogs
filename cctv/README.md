@@ -77,7 +77,7 @@ together.
 | `[p]cctv editors set <group>` | Bot owner | Also let this server's members in a corridor permission group edit the editor office |
 | `[p]cctv editors reset` | Bot owner | Let only the bot owner edit the editor office again |
 | `[p]cctv activity` | Bot owner | Whether the offices open inside Discord, the Activity build, sign-in, and the URL mapping to set |
-| `[p]cctv activity enable` / `disable` | Bot owner | Open the offices inside Discord as an Activity / stop, closing the Activity's connections |
+| `[p]cctv activity enable` / `disable` | Bot owner | Open the offices inside Discord as an Activity / stop, closing the Activity's connections and no longer building it |
 | `[p]cctv activity entrypoint` | Bot owner | Create the App Launcher's `launch` Entry Point command if it's missing |
 | `[p]cctv character` | Any member | Show your office character, its seed code, and a designer link that opens it |
 | `[p]cctv character set <px.…>` | Any member | Wear the character a seed code stands for, e.g. one copied from the designer |

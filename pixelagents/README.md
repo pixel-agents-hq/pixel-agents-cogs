@@ -92,7 +92,9 @@ A failed build does not prevent the cog loading; status remains available
 and the owner is notified best-effort.
 
 `webview_bundle_status()` exposes the built path, readiness, commit, and
-relative base marker.
+relative base marker. `furniture_style_manifest()` and
+`bundled_default_layout()` expose the generated schema inputs needed by
+the state facade and agent tools.
 
 ### Discord Activity build
 
@@ -111,12 +113,19 @@ in its `package-lock.json` (`npm ci --ignore-scripts`), and their licenses
 ship as `activity/THIRD_PARTY_LICENSES.txt`. Nothing upstream changes, and
 the browser page is untouched.
 
-It needs `node` and `npm`. Once asked for, every webview build rebuilds it;
-a failed Activity build never fails the webview build. Until a consumer
-asks, nothing is installed or built for it. `activity_bundle_status()`
-reports whether the bundle holds a current Activity build. `furniture_style_manifest()` and
-`bundled_default_layout()` expose the generated schema inputs needed by
-the state facade and agent tools.
+It needs `node` and `npm`. From the first request until the consumer
+cancels it (`cancel_activity_bundle()`; CCTV does on
+`[p]cctv activity disable`), every webview build rebuilds it; a failed
+Activity build never fails the webview build. Without a request nothing is
+installed or built for it, and a cancelled request keeps its installed npm
+packages for the next one. `activity_bundle_status()` reports whether the
+bundle holds a current Activity build.
+
+A webview rebuild replaces the whole bundle, Activity page included, and
+builds the Activity again right after. In between (usually a few seconds:
+an esbuild run, plus an `npm ci` only when the lockfile changed)
+`activity.html` is missing, so CCTV's Activity page answers 503 and a
+reload once the rebuild's status line reports the Activity fixes it.
 
 ## Commands
 

@@ -215,6 +215,7 @@ class _ActivityHarness(_Harness):
         super().__init__(**kwargs)
         self.secret = secret
         self.built = 0
+        self.cancelled = 0
         self.closed_codes: list[int] = []
         self.http = _Http([])
         harness = self
@@ -241,6 +242,9 @@ class _ActivityHarness(_Harness):
 
     def _activity_build_status(self) -> str:
         return "✅ built"
+
+    async def _cancel_activity_build(self) -> None:
+        self.cancelled += 1
 
     def _activity_client_id(self) -> int | None:
         return 99
@@ -305,6 +309,8 @@ class TestActivityCommands(unittest.IsolatedAsyncioTestCase):
 
         self.assertFalse(cog._settings.activity_enabled)
         self.assertEqual(cog.closed_codes, [OFFICE_UNAVAILABLE_CLOSE_CODE])
+        # Later webview rebuilds don't build (or npm-install for) it.
+        self.assertEqual(cog.cancelled, 1)
         self.assertIn("browser pages are unchanged", cog.replies[-1])
 
     async def test_entrypoint_creates_only_a_missing_entry_point_command(self) -> None:

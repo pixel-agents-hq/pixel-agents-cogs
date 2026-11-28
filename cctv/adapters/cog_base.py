@@ -437,6 +437,14 @@ class CctvBase:
         await self._sync_assets()
         return status
 
+    async def _cancel_activity_build(self) -> None:
+        """Tell pixelagents to stop rebuilding the Activity with every
+        webview build, so nothing is installed or bundled for it while off."""
+
+        cancel = getattr(self._pixelagents, "cancel_activity_bundle", None)
+        if cancel is not None:
+            await cancel()
+
     def _activity_build_status(self) -> str:
         status = getattr(self._pixelagents, "activity_bundle_status", None)
         if status is None:

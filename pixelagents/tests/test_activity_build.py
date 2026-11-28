@@ -74,11 +74,20 @@ class TestActivityHtml(unittest.TestCase):
 
 
 class TestActivityMarkers(unittest.TestCase):
-    def test_not_requested_until_a_consumer_asks(self) -> None:
+    def test_requested_from_the_first_build_until_cancelled(self) -> None:
         with TemporaryDirectory() as tmp:
-            self.assertFalse(webview_build.activity_requested(Path(tmp)))
-            (Path(tmp) / "activity_build").mkdir()
-            self.assertTrue(webview_build.activity_requested(Path(tmp)))
+            cog_data_dir = Path(tmp)
+            _built_webview(cog_data_dir)
+            self.assertFalse(webview_build.activity_requested(cog_data_dir))
+            with patch.object(webview_build, "_run", side_effect=_fake_esbuild):
+                webview_build.ensure_activity_built(cog_data_dir, logger=_LOG)
+            self.assertTrue(webview_build.activity_requested(cog_data_dir))
+
+            self.assertTrue(webview_build.cancel_activity(cog_data_dir))
+            self.assertFalse(webview_build.activity_requested(cog_data_dir))
+            self.assertFalse(webview_build.cancel_activity(cog_data_dir))
+            # The npm install is kept for a later request.
+            self.assertTrue((cog_data_dir / "activity_build" / "node_modules").is_dir())
 
     def test_stale_once_the_webview_is_rebuilt_from_another_commit(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -156,6 +165,16 @@ class TestBuildWebviewRebuildsTheActivity(unittest.TestCase):
         (dist / ".built_base_path").write_text(webview_build.RELATIVE_BASE_PATH + "\n")
         (dist / ".built_manifest_version").write_text(f"{webview_build.MANIFEST_SCHEMA_VERSION}\n")
 
+    def test_not_built_once_cancelled(self) -> None:
+        with TemporaryDirectory() as tmp:
+            cog_data_dir = Path(tmp)
+            self._up_to_date_webview(cog_data_dir)
+            (cog_data_dir / "activity_build").mkdir()
+            webview_build.cancel_activity(cog_data_dir)
+            with patch.object(webview_build, "build_activity") as build:
+                webview_build.build_webview(cog_data_dir, logger=_LOG)
+        build.assert_not_called()
+
     def test_not_built_unless_requested(self) -> None:
         with TemporaryDirectory() as tmp:
             cog_data_dir = Path(tmp)
@@ -170,6 +189,7 @@ class TestBuildWebviewRebuildsTheActivity(unittest.TestCase):
             cog_data_dir = Path(tmp)
             self._up_to_date_webview(cog_data_dir)
             (cog_data_dir / "activity_build").mkdir()
+            (cog_data_dir / "activity_build" / ".requested").write_text("1")
             with patch.object(
                 webview_build, "_run", side_effect=webview_build.WebviewBuildError("x")
             ):

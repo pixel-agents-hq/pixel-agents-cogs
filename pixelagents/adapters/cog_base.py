@@ -40,6 +40,7 @@ from ..infrastructure.webview_build import (
     build_webview,
     built_base_path,
     built_commit,
+    cancel_activity,
     load_bundled_default_layout,
     owner_notification_for,
 )
@@ -238,13 +239,22 @@ class PixelAgentsBase:
     async def build_activity_bundle(self, *, force: bool = False) -> str:
         """Public cross-cog surface: add the Discord Activity build to the
         webview bundle, off the event loop; a status line. From then on every
-        webview rebuild rebuilds it too. Never raises."""
+        webview rebuild rebuilds it too, until `cancel_activity_bundle`.
+        Never raises."""
 
         outcome = await asyncio.to_thread(
             build_activity, self._cog_data_dir, logger=log, force=force
         )
         self._activity_build_outcome = outcome
         return outcome.status_line
+
+    async def cancel_activity_bundle(self) -> None:
+        """Public cross-cog surface: stop rebuilding the Discord Activity
+        with every webview build (CCTV calls it when its Activity is turned
+        off). The Activity files already built stay until the next webview
+        rebuild replaces the bundle."""
+
+        await asyncio.to_thread(cancel_activity, self._cog_data_dir)
 
     def activity_bundle_status(self) -> ActivityBundleStatus:
         """Public, read-only cross-cog surface: whether the webview bundle

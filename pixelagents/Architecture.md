@@ -149,8 +149,9 @@ their writes, but a process crash mid-`_sync_dist` can leave a partial
 failed build never fails `cog_load`: `webview_bundle_status()` reports the
 failure and the owner is notified best-effort, but the cog stays loaded.
 
-Once a consumer has asked for the Discord Activity build
-(`build_activity_bundle`, which creates `cog_data_path/activity_build`),
+While a consumer wants the Discord Activity build (`build_activity_bundle`
+marks `cog_data_path/activity_build/.requested`; `cancel_activity_bundle`
+removes the mark),
 `build_webview` follows every webview build with `build_activity`: under
 the same lock it copies `webview_build_scripts/activity/` into
 `activity_build`, runs `npm ci --ignore-scripts` there when the lockfile

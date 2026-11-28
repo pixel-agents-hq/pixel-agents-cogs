@@ -93,7 +93,7 @@ on every listener, and what is disclosed about each.
 | corridor A2A (uvicorn/Starlette) | `127.0.0.1:8931` | Only requests with `Authorization: Bearer <token>`, a random token minted on each corridor load and handed only to in-process callers (`corridor.a2a_auth_headers()`); anything else gets 401 | Request body 1 MiB (413) |
 | cctv office/editor (aiohttp) | `127.0.0.1:3210` | Public and unlisted offices: anyone with the link. Private offices: nothing is sent until the socket presents a one-minute, single-use, guild-bound Dashboard ticket for a member, and the `Origin` must match `[p]cctv publicurl` once set. Office writes re-check bot owner or keyholder on every write. The editor page: anyone may watch; writes need an in-band, one-minute, single-use editor ticket for a Dashboard user who passes the edit gate (bot owner only by default; `[p]cctv editors set` opts in one server's corridor permission group), re-checked on every write, so an anonymous socket's edits are dropped | Client frame 4 MiB; ticket wait 10 s; `/cctv/health` returns aggregate counts only |
 | cctv static assets (Red Web Dashboard route) | Dashboard's | Anyone | Paths resolved inside the built webview only (no `..`, `\`, `:`, control characters, or symlink escape) |
-| cctv Discord Activity (`/cctv/activity`, same aiohttp listener) | `127.0.0.1:3210` | Every route is 404 until the bot owner runs `[p]cctv activity enable`. The page and assets: anyone (the same guild-agnostic bundle as the static route). `api/token`: exchanges an OAuth code with Red Web Dashboard's client secret, read from the loaded Dashboard cog at use and never stored by CCTV or returned. `api/ticket`: only a bearer token Discord vouches for (`GET /oauth2/@me`) and that was issued to the bot's own application; it mints the browser's single-use, 60-second, office-bound ticket on the browser's rules, checked bot-side (a private office needs a member; every office the user may not watch answers the same 404; an editor ticket proves identity and the socket checks the edit gate on every write). The office sockets skip the Dashboard `Origin` check because their ticket comes from a bearer request, not a cookie | Request body 4 KiB; OAuth code 512 characters. Calls to Discord: 60 sign-ins and 60 other token checks a minute across all users, in separate budgets; refused calls 10 a minute per client address and, past 30 a minute in total, none more from an address that already had one refused (429 without calling Discord). The client address is the last `X-Forwarded-For` hop only from a loopback peer (the owner's reverse proxy on the same host). The office sockets' frame and ticket-wait limits |
+| cctv Discord Activity (`/cctv/activity`, same aiohttp listener) | `127.0.0.1:3210` | Every route is 404 until the bot owner runs `[p]cctv activity enable`. The page and assets: anyone (the same guild-agnostic bundle as the static route). `api/token`: exchanges an OAuth code with Red Web Dashboard's client secret, read from the loaded Dashboard cog at use and never stored by CCTV or returned. `api/ticket`: only a bearer token Discord vouches for (`GET /oauth2/@me`) and that was issued to the bot's own application; it mints the browser's single-use, 60-second, office-bound ticket on the browser's rules, checked bot-side (a private office needs a member; every office the user may not watch answers the same 404; an editor ticket proves identity and the socket checks the edit gate on every write). The office sockets skip the Dashboard `Origin` check because their ticket comes from a bearer request, not a cookie | Request body 4 KiB; OAuth code 512 characters. Calls to Discord: 60 sign-ins and 60 other token checks a minute across all users, in separate budgets (429 without calling Discord); nothing is counted per caller address, which all Activity users share behind Discord's proxy. The office sockets' frame and ticket-wait limits |
 | suggestionbox MCP (FastMCP) | `127.0.0.1:8934` | Only requests with the suggestionbox listener's own bearer token, minted on each load and handed only to corridor's MCP client (`RegisteredMcpServer.headers`); anything else gets 401 | Request body 4 MiB; DNS-rebinding protection on loopback (FastMCP) |
 | telephonepole | none (outbound only) | Connects to MCP servers the bot owner registers | 30 s discovery handshake; image/resource payloads capped at 8 MiB |
 
@@ -104,12 +104,14 @@ owning cog's `install_msg`. Corridor's `BearerTokenGuard`
 token-protected listeners use.
 
 The Activity is reached through Discord's proxy, which serves only what the
-owner's URL mapping points at. Junk sign-in codes or tokens cost the caller's
-own address its budget, not other users': a legitimate sign-in spends a
-budget junk tokens can't reach, and its token is then cached. If every
-Activity request arrives from one address (for example Discord's proxy, if
-it doesn't forward the user's), the per-address limit is shared by all
-Activity users; the owner checklist covers checking that. Nothing the Activity's page sends is
+owner's URL mapping points at. Junk bearer tokens spend only the
+token-check budget: a sign-in checks its own token on the sign-in budget and
+then caches it, so they can't block sign-ins or a signed-in user's tickets.
+Junk codes can't be told from real ones before Discord answers, and every
+Activity user reaches the listener from Discord's proxy, so no per-caller
+cap is possible without locking everyone out together; a flood of junk
+codes can use up the sign-in budget (429) until it eases. That budget is
+there to protect the application's OAuth rate limit. Nothing the Activity's page sends is
 trusted: the server picks the user from Discord's answer for the token and
 treats the SDK's guild id as a choice to check, not a grant.
 

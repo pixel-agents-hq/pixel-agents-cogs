@@ -596,13 +596,12 @@ sequenceDiagram
   ASCII URL-safe characters. Calls to Discord have two budgets a minute
   across all users: 60 for sign-ins (each code exchange and its token
   check) and 60 for other token checks, so junk bearer tokens can't use up
-  sign-ins. Calls Discord refuses also count per client address: 10 a
-  minute per address, and past 30 a minute in total, none more from an
-  address that already had one refused; an address with no refusals is
-  never held up by others'. Over a budget: 429, without calling Discord.
-  The client address is the last `X-Forwarded-For` hop when the peer is
-  loopback (the bot owner's reverse proxy on the same host), otherwise the
-  peer itself; earlier hops are the caller's claim and are ignored.
+  sign-ins. Over a budget: 429, without calling Discord. Nothing is counted
+  per caller: every Activity request arrives through Discord's proxy, so
+  all users share one upstream address, and a cap keyed on it would let a
+  few junk requests lock everyone out. A flood of junk codes can still use
+  up the sign-in budget for a minute at a time; the budget exists to
+  protect the application's OAuth rate limit.
 - **Launch.** The App Launcher's Entry Point command (`DISCORD_LAUNCH_ACTIVITY`
   handler: Discord launches it) and `[p]cctv url`'s persistent **Open in
   Discord** button, which answers with a `LAUNCH_ACTIVITY` interaction

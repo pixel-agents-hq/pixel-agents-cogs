@@ -236,6 +236,9 @@ def _install_discord() -> None:
         def stop(self) -> None:
             self.stopped = True
 
+        def is_finished(self) -> bool:
+            return self.stopped
+
     class _MockContainer:
         def __init__(self, *items: Any, **kwargs: object) -> None:
             self.children: list[Any] = list(items)

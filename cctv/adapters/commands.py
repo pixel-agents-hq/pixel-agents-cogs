@@ -183,16 +183,21 @@ class CommandsMixin(CctvBase):
                 "The bot owner hasn't set the Dashboard's public address yet "
                 "(`[p]cctv publicurl`), so this is the path on the Dashboard's host."
             )
+        buttons = None
         if settings.activity_enabled:
             lines.append("Or open it right here in Discord, with the button below.")
+            # Only the button is sent: the persistent view registered in
+            # `cog_load` answers every click. A finished view is rendered but
+            # never stored per message by discord.py, so nothing piles up or
+            # keeps an unloaded cog alive.
+            buttons = ActivityLaunchView(self._activity_enabled)
+            buttons.stop()
         await self._reply(
             ctx,
             "\n".join(lines),
             title="This server's office",
             code=[self._page_link(settings, office_page_path(guild.id))],
-            buttons=ActivityLaunchView(self._activity_enabled)
-            if settings.activity_enabled
-            else None,
+            buttons=buttons,
         )
 
     @cctv_group.command(name="visibility")

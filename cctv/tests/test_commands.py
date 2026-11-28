@@ -265,6 +265,9 @@ class TestActivityCommands(unittest.IsolatedAsyncioTestCase):
         assert isinstance(view, ActivityLaunchView)
         self.assertIsNone(view.timeout)
         self.assertEqual([item.custom_id for item in view.children], [LAUNCH_CUSTOM_ID])
+        # Finished, so discord.py renders it without storing a per-message
+        # view: the persistent one from `cog_load` answers the click.
+        self.assertTrue(view.is_finished())
         self.assertIn("in Discord", cog.replies[-1])
 
     async def test_enable_stores_it_builds_it_and_shows_the_mapping(self) -> None:

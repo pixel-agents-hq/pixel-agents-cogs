@@ -24,6 +24,7 @@ class ReplyMixin(CctvBase):
         fields: Sequence[ReplyField] = (),
         code: Sequence[str] = (),
         files: Sequence[discord.File] = (),
+        buttons: discord.ui.View | None = None,
         **kwargs: Any,
     ) -> None:
         from corridor.adapters.api import build_reply_payload
@@ -43,6 +44,9 @@ class ReplyMixin(CctvBase):
             kwargs.update(payload)
             if attachments:
                 kwargs["files"] = attachments
+            if buttons is not None:
+                # Buttons ride under the rendered reply (an embed or text).
+                kwargs["view"] = buttons
         elif content is not None:
             kwargs["content"] = content
 

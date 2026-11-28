@@ -23,6 +23,7 @@ GLOBAL_DEFAULTS: dict[str, object] = {
     # corridor permission group key, both set or both None.
     "editor_gate_guild": None,
     "editor_gate_group": None,
+    "activity_enabled": False,
 }
 GUILD_DEFAULTS: dict[str, object] = {
     "enabled": False,
@@ -127,6 +128,7 @@ class RedSettingsRepository:
             editor_gate=_editor_gate(
                 await self._config.editor_gate_guild(), await self._config.editor_gate_group()
             ),
+            activity_enabled=await self._config.activity_enabled() is True,
         )
 
     def _guild(self, guild: int | GuildReference) -> tuple[int, Any]:
@@ -191,6 +193,11 @@ class RedSettingsRepository:
             raise ValueError("An editor gate needs a server and a permission group.")
         await self._config.editor_gate_guild.set(gate.guild_id if gate is not None else None)
         await self._config.editor_gate_group.set(gate.group_key if gate is not None else None)
+
+    async def set_activity_enabled(self, value: bool) -> None:
+        if not isinstance(value, bool):
+            raise ValueError("Activity setting must be a boolean.")
+        await self._config.activity_enabled.set(value)
 
     async def set_guild_broadcast_rich_presence(self, guild_id: int, value: bool) -> None:
         if not isinstance(value, bool):

@@ -96,6 +96,38 @@ relative base marker. `furniture_style_manifest()` and
 `bundled_default_layout()` expose the generated schema inputs needed by
 the state facade and agent tools.
 
+### Discord Activity build
+
+A consumer can also ask for a Discord Activity build of the same bundle
+(`build_activity_bundle()`; CCTV does on `[p]cctv activity enable`). It adds
+`activity.html` to the bundle: `index.html` with its module scripts held
+back, plus `activity/bootstrap.js`, which runs the
+[Embedded App SDK](https://github.com/discord/embedded-app-sdk) handshake
+and OAuth sign-in and then starts the webview. The page first loads the
+consumer's own `activity-config.js` (served next to it), which names the
+application, the route that trades the OAuth code for a token, and an
+optional `start` hook, which gets the SDK, the access token and the token
+route's whole answer (`signIn`); see
+`infrastructure/webview_build_scripts/activity/bootstrap.ts`. The
+bootstrap is bundled from that file with esbuild, from the exact versions
+in its `package-lock.json` (`npm ci --ignore-scripts`), and their licenses
+ship as `activity/THIRD_PARTY_LICENSES.txt`. Nothing upstream changes, and
+the browser page is untouched.
+
+It needs `node` and `npm`. From the first request until the consumer
+cancels it (`cancel_activity_bundle()`; CCTV does on
+`[p]cctv activity disable`), every webview build rebuilds it; a failed
+Activity build never fails the webview build. Without a request nothing is
+installed or built for it, and a cancelled request keeps its installed npm
+packages for the next one. `activity_bundle_status()` reports whether the
+bundle holds a current Activity build.
+
+A webview rebuild replaces the whole bundle, Activity page included, and
+builds the Activity again right after. In between (usually a few seconds:
+an esbuild run, plus an `npm ci` only when the lockfile changed)
+`activity.html` is missing, so CCTV's Activity page answers 503 and a
+reload once the rebuild's status line reports the Activity fixes it.
+
 ## Commands
 
 All commands are bot-owner scoped.
@@ -121,6 +153,7 @@ Every dependent cog (`architect`, `painter`, `floorplan`, `cctv`) reaches
 Pixelagents through its cross-cog facade methods
 (`office_state`, `set_office_layout`, `set_office_seats`,
 `mutate_office_seats`, `watch_office_state`, `webview_bundle_status`,
+`build_activity_bundle`, `activity_bundle_status`,
 `furniture_style_manifest`, `bundled_default_layout`, and the
 `office_character*` methods) rather than reading Config or the built bundle
 directly.

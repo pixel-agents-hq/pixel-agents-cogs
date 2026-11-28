@@ -43,13 +43,16 @@ from ..application import CctvPipeline, GuildOffices, TaskSupervisor
 from ..domain import GuildSettings, OfficeAccess
 from ..infrastructure import (
     OFFICE_UNAVAILABLE_CLOSE_CODE,
+    ActivityEndpoints,
     CctvServer,
+    DiscordOAuth,
     RedSettingsRepository,
     TicketStore,
     WebviewAssets,
     degraded_asset_notification,
     member_snapshot,
 )
+from .activity_views import ActivityLaunchView
 
 log = logging.getLogger("red.pixel-agents-cogs.cctv")
 # How often a private office's viewers are re-checked for membership.
@@ -57,6 +60,9 @@ PRIVATE_SWEEP_SECONDS = 300.0
 # Close code when a guild's office changes who may watch it: the page
 # reconnects under the new rule (WebSocket "service restart").
 ACCESS_CHANGED_CLOSE_CODE = 1012
+# Red Web Dashboard's cog, whose Config holds the OAuth client secret the
+# Activity's token exchange reuses (`[p]dashboard settings secret`).
+DASHBOARD_COG_NAME = "Dashboard"
 _synthetic_message_ids = itertools.count(1)
 
 
@@ -130,6 +136,8 @@ class CctvBase:
         self._pixelagents: Any = None
         self._assets = WebviewAssets(logger=log)
         self._tickets = TicketStore()
+        self._oauth = DiscordOAuth(logger=log)
+        self._launch_view: ActivityLaunchView | None = None
         self._tasks = TaskSupervisor(logger=log)
         self._offices = GuildOffices()
         self._editor: CctvPipeline | None = None
@@ -238,6 +246,16 @@ class CctvBase:
                 self._tickets,
                 self._health_snapshot,
                 public_origin=self._public_origin,
+                activity=ActivityEndpoints(
+                    enabled=self._activity_enabled,
+                    client_id=self._activity_client_id,
+                    client_secret=self._dashboard_client_secret,
+                    issue_ticket=self._activity_ticket,
+                    assets=self._assets,
+                    oauth=self._oauth,
+                    refresh_assets=self._ensure_assets,
+                    logger=log,
+                ),
                 logger=log,
             )
             await self._server.start(global_settings.listener_host, global_settings.listener_port)
@@ -245,6 +263,11 @@ class CctvBase:
                 self._sync_after_ready(), name="cctv-initial-sync"
             )
             self._tasks.create(self._sweep_private_viewers(), name="cctv-private-sweep")
+            if global_settings.activity_enabled:
+                self._tasks.create(self._build_activity(), name="cctv-activity-build")
+            # Persistent: a launch button posted before a restart keeps working.
+            self._launch_view = ActivityLaunchView(self._activity_enabled)
+            self.bot.add_view(self._launch_view)
             await self._notify_owners_if_degraded()
         except Exception:
             await self.cog_unload()
@@ -357,6 +380,77 @@ class CctvBase:
                                 state.user_id, code=OFFICE_UNAVAILABLE_CLOSE_CODE
                             )
 
+    async def _mint_office_ticket(self, user_id: int, guild_id: int) -> str | None:
+        """A ticket proving `user_id` to `guild_id`'s office socket, only for
+        an open office the user may watch: anyone for a public or unlisted
+        office, members (and the bot owner) for a private one."""
+
+        office = self.office(guild_id)
+        if user_id <= 0 or office is None:
+            return None
+        if office.private and not await self._is_member(guild_id, user_id):
+            return None
+        return self._tickets.mint(user_id, guild_id)
+
+    async def _activity_ticket(self, user_id: int, guild_id: int | None) -> str | None:
+        """The Activity's ticket for a Discord-verified user: a guild
+        office's, on the same rules as a Dashboard page, or (None) the
+        editor office's, whose socket checks the edit gate on every write."""
+
+        if guild_id is not None:
+            return await self._mint_office_ticket(user_id, guild_id)
+        return self._tickets.mint(user_id, None) if user_id > 0 else None
+
+    async def _activity_enabled(self) -> bool:
+        return (await self._settings.global_settings()).activity_enabled
+
+    def _activity_client_id(self) -> int | None:
+        """The bot's own application: the one whose Activity this is."""
+
+        application_id = getattr(self.bot, "application_id", None)
+        return application_id if isinstance(application_id, int) and application_id > 0 else None
+
+    async def _dashboard_client_secret(self) -> str | None:
+        """The OAuth client secret Red Web Dashboard holds for the bot's
+        application, read from its loaded cog on each use and never stored
+        by CCTV. None while the Dashboard isn't loaded or has none."""
+
+        dashboard = self.bot.get_cog(DASHBOARD_COG_NAME)
+        config = getattr(dashboard, "config", None)
+        if config is None:
+            return None
+        try:
+            secret = await config.webserver.core.secret()
+        except Exception:
+            log.warning("cctv: could not read Red Web Dashboard's client secret", exc_info=True)
+            return None
+        return secret if isinstance(secret, str) and secret else None
+
+    async def _build_activity(self) -> str:
+        """Ask pixelagents for the Activity build of the webview."""
+
+        build = getattr(self._pixelagents, "build_activity_bundle", None)
+        if build is None:
+            return "⚠️ This pixelagents version can't build the Activity; update it."
+        status = cast(str, await build())
+        log.info("cctv: %s", status)
+        await self._sync_assets()
+        return status
+
+    async def _cancel_activity_build(self) -> None:
+        """Tell pixelagents to stop rebuilding the Activity with every
+        webview build, so nothing is installed or bundled for it while off."""
+
+        cancel = getattr(self._pixelagents, "cancel_activity_bundle", None)
+        if cancel is not None:
+            await cancel()
+
+    def _activity_build_status(self) -> str:
+        status = getattr(self._pixelagents, "activity_bundle_status", None)
+        if status is None:
+            return "⚠️ This pixelagents version can't build the Activity; update it."
+        return cast(str, status().detail)
+
     async def _public_origin(self) -> str | None:
         return (await self._settings.global_settings()).public_base_url
 
@@ -423,6 +517,10 @@ class CctvBase:
         if self._server is not None:
             await self._server.stop()
         self._server = None
+        await self._oauth.close()
+        if self._launch_view is not None:
+            self._launch_view.stop()
+        self._launch_view = None
         self._offices.clear()
         self._editor = None
 

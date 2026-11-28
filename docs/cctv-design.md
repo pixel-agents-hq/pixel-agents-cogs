@@ -214,6 +214,8 @@ class GlobalSettings:
     editor_clear_delay: float
     designer_url: str
     public_base_url: str | None
+    editor_gate: EditorGate | None   # who besides the bot owner may edit the editor office
+    activity_enabled: bool           # the offices open inside Discord too
 
 @dataclass(frozen=True, slots=True)
 class GuildSettings:
@@ -232,6 +234,7 @@ CCTV registers these under its own fresh Red Config identity (no Floorplan
 or Architect setting is read into it). Defaults: host `127.0.0.1`, port
 `3210`, both clear delays `2.0` seconds, the character designer at
 `https://pixel-index-staging.nntin.xyz/assets/design`, no public base URL,
+the editor office editable by the bot owner only, the Discord Activity off,
 and every guild starts disabled with bots included and drawn translucent,
 offline members hidden (drawn translucent once `showoffline` shows them),
 rich-presence and message display on, and a `public` office. Guild
@@ -530,6 +533,98 @@ atomic `watch_agent_events` call alongside `list_agents()`, then performs
 its Discord guild-cache scan without an intervening `await`, so no
 presence change occurring during startup can be missed.
 
+### The office as a Discord Activity
+
+Optional and off by default (`activity_enabled`): `[p]cctv activity enable`
+opens every office inside the Discord client too, as an Activity of the
+bot's own application. While it's off every Activity route answers 404 and
+`[p]cctv url` shows no launch button. The browser pages never change.
+
+```mermaid
+sequenceDiagram
+    participant D as Discord client
+    participant A as Activity page (iframe)
+    participant S as cctv listener (/cctv/activity)
+    participant O as Discord OAuth API
+
+    D->>A: load / (URL mapping -> /cctv/activity/)
+    A->>S: activity-config.js, then pixelagents' bootstrap.js
+    A->>D: SDK handshake, ready(), authorize(identify)
+    D-->>A: code
+    A->>S: POST api/token {code}
+    S->>O: exchange (client id + Red Web Dashboard's client secret)
+    O-->>S: access token
+    S->>O: GET /oauth2/@me: whose, and issued to this application?
+    S->>S: remember the sign-in under a new random session id
+    S-->>A: {access_token, session}
+    A->>D: authenticate(access_token)
+    A->>S: POST api/ticket (Bearer session) {office}
+    S->>S: a session this listener issued? office open? private: member? mint ticket
+    S-->>A: {ticket, ws}
+    A->>S: WebSocket ws/office/<id> or ws/editor, then {"type":"authorize"}
+```
+
+- **Page.** pixelagents' Activity build (`activity.html`): the webview with
+  its module scripts held back until the SDK bootstrap has signed the user
+  in and cctv's `start` hook has a ticket. Every URL in it is relative to
+  the page, so it works under whatever the URL mapping's target is.
+- **Office.** The SDK's `guildId` picks the guild office; with none (a DM)
+  or after the in-page switch (`#editor`), the editor office. The guild id
+  only selects: it is never trusted for access.
+- **Who.** Only `api/token` calls Discord: it exchanges the code, then
+  checks the new token with `GET /oauth2/@me` (its user, and that it was
+  issued to the bot's own application), and remembers the sign-in under a
+  random session id it issues (`secrets.token_urlsafe(32)`, kept as its
+  SHA-256), in memory while the Activity keeps using it (two hours idle at
+  most, never past the token's own expiry). The access token goes back to
+  the page only for the SDK's `authenticate()`. `api/ticket` accepts only
+  such a session id, looked up locally, and never calls Discord, so any
+  other bearer (the Discord token included) answers 401 at no cost; the page then asks the user to reopen the
+  Activity, as it does once a sign-in has ended (after a bot restart too).
+- **Access.** The same as the browser's, checked bot-side: a ticket is
+  minted only for an open office the user may watch (`_mint_office_ticket`,
+  shared with `/third-party/cctv/session`), so a private office needs a
+  member; every office the user may not watch answers the same 404. An
+  editor ticket proves identity only; the editor socket checks the edit
+  gate on every write. Tickets are the browser's: single-use, 60 seconds,
+  bound to one office, presented in-band.
+- **Sockets.** `ws/office/<id>` and `ws/editor` are the browser's handlers
+  under the Activity prefix. They skip the Dashboard `Origin` check (the
+  page is served by Discord's proxy); the ticket is the gate, and it comes
+  from a bearer-token request, never a cookie. `[p]cctv activity disable`
+  closes every socket opened this way.
+- **Secret.** The token exchange reuses Red Web Dashboard's OAuth client
+  secret, read from the loaded `Dashboard` cog's Config
+  (`webserver.core.secret`) each time and never copied into CCTV's. Without
+  it, `api/token` answers 503.
+- **Limits.** Request bodies are capped at 4 KiB, and an OAuth code or
+  bearer token must be 1-512 ASCII URL-safe characters; anything else is
+  refused without calling Discord. Nothing is counted or blocked per
+  caller: every Activity request arrives through Discord's proxy, so all
+  users share one upstream address, and a cap keyed on it would let a few
+  junk requests lock everyone out. Instead a code Discord refused is
+  remembered for 10 minutes (by SHA-256), so repeating it costs no call
+  (Discord answers a junk code 400, which its invalid-request limit doesn't
+  count); at most 8 calls to Discord run at once, the rest waiting their
+  turn; a Discord 429 backs that route off for its `Retry-After`; a token
+  endpoint refusing the client id or secret (401/403) stops sign-ins for a
+  minute; and once Discord has answered 300 calls with 401, 403 or non-shared 429 (what
+  its invalid-request limit counts; the 400s junk codes draw don't) in ten
+  minutes, no further call is made until the oldest ages out: sign-ins,
+  real ones included, get 503 with `Retry-After`. Discord restricts an
+  address after about 10,000 answers of 401, 403 or 429 in ten minutes,
+  which would cut off the bot's own gateway and REST traffic from the host;
+  keeping the bot reachable comes before Activity sign-ins during a flood.
+  A refused code answers 400, an unknown bearer 401, Discord unreachable
+  or misconfigured 503, and 429 (with `Retry-After`) while Discord has
+  asked to back off. A sign-in Discord has revoked keeps opening tickets
+  while it is remembered; membership and the edit gate are still checked
+  on every ticket and write.
+- **Launch.** The App Launcher's Entry Point command (`DISCORD_LAUNCH_ACTIVITY`
+  handler: Discord launches it) and `[p]cctv url`'s persistent **Open in
+  Discord** button, which answers with a `LAUNCH_ACTIVITY` interaction
+  response.
+
 ## API / command / route reference
 
 ### HTTP and WebSocket routes
@@ -548,6 +643,13 @@ presence change occurring during startup can be missed.
 | `/third-party/cctv/editorsession` | Dashboard GET (hidden, login) | Mints a single-use, 60-second ticket bound to the signed-in user and the editor office; the editor socket checks the edit gate |
 | `/third-party/cctv/session?guild=<guild id>` | Dashboard GET (hidden, login) | Mints a single-use, 60-second ticket bound to the signed-in user and that guild, for an open office they may watch; otherwise answers 403 with no ticket |
 | `/third-party/cctv/static/<path>` | Dashboard GET/HEAD | Shared webview asset |
+| `/cctv/activity/` | GET | The Discord Activity's page (pixelagents' `activity.html`); 503 until it's built. Every `/cctv/activity` route answers 404 while the Activity is off |
+| `/cctv/activity/activity-config.js` | GET | The page's settings (the bot's application id, the token route, the `identify` scope) and its office picker and socket shim |
+| `/cctv/activity/api/token` | POST | `{code}` from the SDK's `authorize()` -> `{access_token, session}` (the session id is the listener's own, for `api/ticket`), exchanged with Red Web Dashboard's client secret; 400 for a refused or malformed code, 503 without the secret, 429 while Discord has asked to back off, 503 if Discord can't be reached (see the Activity's limits) |
+| `/cctv/activity/api/ticket` | POST (`Authorization: Bearer <session>`) | `{"office": "guild", "guild": "<id>"}` or `{"office": "editor"}` -> `{ticket, ws}` for the signed-in user, without calling Discord; 401 for any bearer that isn't a live session id this listener issued, the same 404 for every office the user may not watch |
+| `/cctv/activity/ws/office/<guild id>` | WebSocket | A guild office's socket from the Activity: as `/cctv/office/<guild id>/ws`, without the Dashboard `Origin` check |
+| `/cctv/activity/ws/editor` | WebSocket | The editor office's socket from the Activity: as `/cctv/editor/ws` |
+| `/cctv/activity/<path>` | GET/HEAD | Webview asset, resolved inside the built bundle as `static` is |
 
 The Dashboard renders every page's source as a Jinja template
 (`render_template_string`). The office and editor pages inject only a
@@ -583,7 +685,7 @@ each page uses:
 
 | Command | Scope | Description |
 |---|---|---|
-| `[p]cctv url` | Any member | This server's office link (absolute once `publicurl` is set), who may watch it, and a note that chat messages from every channel show while `messages` is on |
+| `[p]cctv url` | Any member | This server's office link (absolute once `publicurl` is set), who may watch it, a note that chat messages from every channel show while `messages` is on, and, while the Activity is on, an **Open in Discord** button |
 | `[p]cctv visibility [public\|unlisted\|private]` | Building Manager | Show or set who may watch this server's office; changing it reconnects every viewer |
 | `[p]cctv status` | Guild admin | Listener, this server's office route/page, assets, this office's and the editor's revision/client counts, guild settings, health |
 | `[p]cctv dashboard` | Guild admin | Dashboard readiness and the picker, this server's office, and the editor page links |
@@ -604,6 +706,9 @@ each page uses:
 | `[p]cctv editors` | Bot owner | Show who may edit the editor office from its page |
 | `[p]cctv editors set <group>` | Bot owner | Also let this server's members in a corridor permission group edit the editor office |
 | `[p]cctv editors reset` | Bot owner | Let only the bot owner edit the editor office again |
+| `[p]cctv activity` | Bot owner | The Discord Activity: on or off, its build, whether sign-in can use the Dashboard's client secret, the listener, and the URL mapping to set |
+| `[p]cctv activity enable` / `disable` | Bot owner | Turn the Activity on (builds it through pixelagents) / off, closing every Activity socket and telling pixelagents to stop building it |
+| `[p]cctv activity entrypoint` | Bot owner | Create the `launch` Entry Point command (type `PRIMARY_ENTRY_POINT`, handler `DISCORD_LAUNCH_ACTIVITY`) if the application has none, touching no other command |
 | `[p]cctv character` | Any member | Show your office character: its seed code, avatar, and a designer link that opens it |
 | `[p]cctv character set <px.…>` | Any member | Wear the character a seed code stands for; the pages re-dress you live |
 | `[p]cctv character reset` | Any member | Go back to the character dealt from your Discord user id |
@@ -668,7 +773,8 @@ silently replaced with a default.
 `cog_unload` unsubscribes CCTV from every Corridor event (office-state
 watches and the six `Agent*` handlers), cancels every supervised background
 task (delayed activity clears, the post-ready guild/bot sync), closes every
-office's client sockets, stops the aiohttp listener, and drops every
+office's client sockets, stops the aiohttp listener, closes the Activity's
+Discord OAuth client, and drops every
 pipeline -- in that order, so no in-flight event can reach a half-torn-down
 pipeline. `[p]cctv disable` closes one guild's office the same way, while
 the rest keep running.

@@ -93,6 +93,7 @@ on every listener, and what is disclosed about each.
 | corridor A2A (uvicorn/Starlette) | `127.0.0.1:8931` | Only requests with `Authorization: Bearer <token>`, a random token minted on each corridor load and handed only to in-process callers (`corridor.a2a_auth_headers()`); anything else gets 401 | Request body 1 MiB (413) |
 | cctv office/editor (aiohttp) | `127.0.0.1:3210` | Public and unlisted offices: anyone with the link. Private offices: nothing is sent until the socket presents a one-minute, single-use, guild-bound Dashboard ticket for a member, and the `Origin` must match `[p]cctv publicurl` once set. Office writes re-check bot owner or keyholder on every write. The editor page: anyone may watch; writes need an in-band, one-minute, single-use editor ticket for a Dashboard user who passes the edit gate (bot owner only by default; `[p]cctv editors set` opts in one server's corridor permission group), re-checked on every write, so an anonymous socket's edits are dropped | Client frame 4 MiB; ticket wait 10 s; `/cctv/health` returns aggregate counts only |
 | cctv static assets (Red Web Dashboard route) | Dashboard's | Anyone | Paths resolved inside the built webview only (no `..`, `\`, `:`, control characters, or symlink escape) |
+| cctv Discord Activity (`/cctv/activity`, same aiohttp listener) | `127.0.0.1:3210` | Every route is 404 until the bot owner runs `[p]cctv activity enable`. The page and assets: anyone (the same guild-agnostic bundle as the static route). `api/token`: exchanges an OAuth code with Red Web Dashboard's client secret, read from the loaded Dashboard cog at use and never stored by CCTV or returned. `api/token` is the only route that calls Discord: the code exchange, then `GET /oauth2/@me` to learn the new token's user and that it was issued to the bot's own application. The sign-in is kept under a random session id the listener issues; `api/ticket` accepts only such an id, looked up locally, never calling Discord, so any other bearer (the Discord token included) is 401 at no cost; it mints the browser's single-use, 60-second, office-bound ticket on the browser's rules, checked bot-side (a private office needs a member; every office the user may not watch answers the same 404; an editor ticket proves identity and the socket checks the edit gate on every write). The office sockets skip the Dashboard `Origin` check because their ticket comes from a bearer request, not a cookie | Request body 4 KiB; an OAuth code or bearer token must be 1-512 ASCII URL-safe characters (else refused without calling Discord); a code Discord refused is remembered for 10 minutes, so a repeat costs no call; at most 8 calls to Discord at once (others wait); a Discord 429 backs that route off for its `Retry-After`; a refused client secret stops sign-ins for a minute; and after 300 answers of 401, 403 or non-shared 429 (the answers Discord's invalid-request limit counts) in ten minutes, no further call is made until the oldest ages out (sign-ins get 503 with `Retry-After`); the 400s junk codes draw don't count. Nothing is counted or blocked per caller. The office sockets' frame and ticket-wait limits |
 | suggestionbox MCP (FastMCP) | `127.0.0.1:8934` | Only requests with the suggestionbox listener's own bearer token, minted on each load and handed only to corridor's MCP client (`RegisteredMcpServer.headers`); anything else gets 401 | Request body 4 MiB; DNS-rebinding protection on loopback (FastMCP) |
 | telephonepole | none (outbound only) | Connects to MCP servers the bot owner registers | 30 s discovery handshake; image/resource payloads capped at 8 MiB |
 
@@ -102,10 +103,52 @@ owning cog's `install_msg`. Corridor's `BearerTokenGuard`
 (`corridor/infrastructure/listener_guard.py`) is the one guard both
 token-protected listeners use.
 
+The Activity is reached through Discord's proxy, which serves only what the
+owner's URL mapping points at. Every Activity user reaches the listener from
+Discord's proxy, so all of them share one upstream address, and Discord
+documents no header naming the real user; nothing is therefore counted or
+blocked per caller address, which would let a few junk requests lock everyone
+out. Junk can't stop a valid sign-in: a malformed code or token is refused
+locally, a refused code is remembered so repeating it costs nothing, and no
+well-formed sign-in is refused before Discord has been asked, except while
+Discord has asked the route to back off (its 429 and `Retry-After`) or has
+refused the client secret. Ticket requests never call Discord: only a
+session id this listener issued is accepted, so junk bearers can't make
+Discord answer with refusals. That matters beyond the Activity: Discord
+restricts an address after about 10,000 answers of 401, 403 or 429 in ten
+minutes, and that restriction would cut off the whole bot (its gateway and
+REST traffic from the same host), not just the Activity. **Protecting the
+bot's address comes first:** once Discord has answered 300 of the
+Activity's calls with an answer that limit counts (401, 403 or non-shared 429; a
+429 with `X-RateLimit-Scope: shared` isn't counted) in ten minutes, the
+listener makes no further call until the oldest ages out, and every
+sign-in, a real one included, gets 503 with `Retry-After` meanwhile. Junk
+codes can't raise that shield: Discord answers them 400, which its limit
+doesn't count. Only something that makes Discord refuse the application
+itself (a wrong client secret, or Discord rate-limiting it) can, and users
+already signed in keep their tickets throughout.
+
+Remaining limits, stated plainly: a flood of distinct, well-formed junk
+codes still costs one call to Discord each (queued at most 8 at a time), and
+if it drives Discord to rate-limit the application, real sign-ins get 429
+until Discord's `Retry-After` passes (and those 429s count toward the shield
+above). A sign-in is remembered while the
+Activity keeps using it (two hours idle at most, never past the token's own
+expiry, which Discord sets at about a week), so a token Discord has revoked,
+for example by the user removing the app's access, keeps opening tickets
+here for that long. Membership of a private office and the edit gate are
+still checked bot-side on every ticket and every write, and
+`red_delete_data_for_user` forgets the user's sign-ins at once. A bot
+restart forgets every sign-in, and each Activity open then asks its user to
+reopen it. Nothing the Activity's page sends is
+trusted: the server picks the user from Discord's answer for the token and
+treats the SDK's guild id as a choice to check, not a grant.
+
 **Summary.** The cogs open three loopback-only listeners by default. The
 agent (A2A) listener and the feedback MCP endpoint accept only the bot's
-own cogs, via per-load bearer tokens. The office pages are view-only for
-the public, member-gated for private offices, and write-gated by role. Every request and frame size is bounded.
+own cogs, via per-load bearer tokens. The office pages, in a browser or
+the optional Discord Activity, are view-only for the public, member-gated
+for private offices, and write-gated by role. Every request and frame size is bounded.
 
 ## 3. Data exposure
 
@@ -137,7 +180,12 @@ servers; what the office pages show and to whom; and whether each
   carried to consulted agents in A2A metadata), so corridor drops its
   `AgentReplied`/`AgentToolStarted` events. The editor page shows the
   agents' activity under the same rule. Server managers can hide offline
-  members and rich presence.
+  members and rich presence. The optional Discord Activity shows the same
+  offices on the same rules and asks Discord only for `identify`; its
+  sign-in token is passed through and never stored, and an Activity
+  session (a random id the listener issues, kept as its SHA-256, and the
+  user it signed in) is held in memory while the Activity keeps using it
+  (two hours idle at most) and forgotten on a data deletion request.
 - **Stored user data.** It is listed in
   [`architecture.md#end-user-data`](architecture.md#end-user-data), and
   `red_delete_data_for_user` deletes all of it. The one exception is the
@@ -171,7 +219,9 @@ subprocess, a URL or a query.
   Cogs write only under `cog_data_path`.
 - **Subprocesses.** `git`, `npm`, `node` and `pip` run with argument lists
   (no shell). The webview and pixatar commits come from pinned files or an
-  owner command validated as a 7-40 character hex hash. `pip` installs the
+  owner command validated as a 7-40 character hex hash. The Activity
+  bootstrap's npm packages come only from its committed `package-lock.json`
+  (`npm ci --ignore-scripts`, so no install script runs). `pip` installs the
   requirements in installed cogs' `info.json`, as Downloader does.
 - **URLs and SSRF.**
   - Owner-set URLs (LLM endpoint, Pixel Index API/web, MCP servers, CCTV
@@ -184,6 +234,11 @@ subprocess, a URL or a query.
     (`RegisteredTool.server_url`), without following redirects, capped at
     25 MiB.
   - A message link resolves through Discord's API only.
+  - The Activity calls only Discord's OAuth API, at a fixed URL. The
+    OAuth code it forwards must be at most 512 URL-safe characters, and a
+    guild id must be decimal and at most 20 digits.
+  - The Activity's `activity-config.js` splices in only the bot's integer
+    application id; every other byte is constant.
 - **Queries.** There is no SQL. Config access uses fixed keys and
   integer IDs. CCTV parses socket messages with strict pydantic models
   (`cctv/contracts/websocket.py`), and guild IDs in socket paths must be
@@ -214,6 +269,11 @@ cogs build and serve, and their attribution.
   on the host and only runs there.
 - **`emit_decoded_assets.ts`** imports upstream's own decoders from the
   checkout rather than copying them.
+- **The Discord Activity bootstrap** bundles Discord's Embedded App SDK
+  (MIT) and its runtime dependencies, installed from npm on the host only
+  once the owner turns the Activity on. Every build writes the license of
+  each bundled package (from the lockfile; esbuild, the build tool, isn't
+  bundled) to `activity/THIRD_PARTY_LICENSES.txt`, served with the bundle.
 - **Switchboard** calls Red's load/unload code rather than copying it.
 - **The cogs' `avatar.png` assets** are the project's own.
 - **Credits.** The root README's Credits section names Pixel Agents,
@@ -221,5 +281,6 @@ cogs build and serve, and their attribution.
 
 **Summary.** The repository is MIT and contains no copied third-party
 code. The Pixel Agents webview (MIT) is built from upstream on the bot
-host and served with its license file, and every upstream project and art
+host and served with its license file, the optional Activity bootstrap
+ships its bundled packages' licenses, and every upstream project and art
 source is credited in the README.

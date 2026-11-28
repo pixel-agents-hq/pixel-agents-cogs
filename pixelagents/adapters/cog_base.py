@@ -33,10 +33,14 @@ from ..infrastructure.pixatar_build import PixatarBuildOutcome, build_pixatar
 from ..infrastructure.pixatar_client import PixatarClient
 from ..infrastructure.settings import RedSettingsRepository
 from ..infrastructure.webview_build import (
+    ActivityBuildOutcome,
     BuildOutcome,
+    activity_is_up_to_date,
+    build_activity,
     build_webview,
     built_base_path,
     built_commit,
+    cancel_activity,
     load_bundled_default_layout,
     owner_notification_for,
 )
@@ -64,6 +68,16 @@ class WebviewBundleStatus:
     built_base_path: str | None
 
 
+@dataclass(frozen=True)
+class ActivityBundleStatus:
+    """Read-only cross-cog view of the Discord Activity build
+    (`infrastructure.webview_build.ACTIVITY_PAGE`), inside `dist_path`."""
+
+    dist_path: Path
+    ready: bool
+    detail: str
+
+
 class PixelAgentsBase:
     """Own the bundle lifecycle and compose Corridor's schema-aware facade."""
 
@@ -82,6 +96,7 @@ class PixelAgentsBase:
         # time cog_load runs. See infrastructure/webview_build.py.
         self._cog_data_dir: Path = data_manager.cog_data_path(self)
         self._webview_build_outcome: BuildOutcome | None = None
+        self._activity_build_outcome: ActivityBuildOutcome | None = None
         self._style_loader = FurnitureStyleLoader(self)
         self._office_state: OfficeStateFacade | None = None
         self._pixatar_build_outcome: PixatarBuildOutcome | None = None
@@ -220,6 +235,41 @@ class PixelAgentsBase:
             built_commit=built_commit(dist_path) if ready else None,
             built_base_path=built_base_path(dist_path) if ready else None,
         )
+
+    async def build_activity_bundle(self, *, force: bool = False) -> str:
+        """Public cross-cog surface: add the Discord Activity build to the
+        webview bundle, off the event loop; a status line. From then on every
+        webview rebuild rebuilds it too, until `cancel_activity_bundle`.
+        Never raises."""
+
+        outcome = await asyncio.to_thread(
+            build_activity, self._cog_data_dir, logger=log, force=force
+        )
+        self._activity_build_outcome = outcome
+        return outcome.status_line
+
+    async def cancel_activity_bundle(self) -> None:
+        """Public cross-cog surface: stop rebuilding the Discord Activity
+        with every webview build (CCTV calls it when its Activity is turned
+        off). The Activity files already built stay until the next webview
+        rebuild replaces the bundle."""
+
+        await asyncio.to_thread(cancel_activity, self._cog_data_dir)
+
+    def activity_bundle_status(self) -> ActivityBundleStatus:
+        """Public, read-only cross-cog surface: whether the webview bundle
+        holds a current Activity build. No build trigger here."""
+
+        dist_path = self._webview_dist_path()
+        ready = activity_is_up_to_date(dist_path)
+        outcome = self._activity_build_outcome
+        if ready:
+            detail = "✅ built"
+        elif outcome is not None and not outcome.ok:
+            detail = outcome.status_line
+        else:
+            detail = "⚠️ not built"
+        return ActivityBundleStatus(dist_path=dist_path, ready=ready, detail=detail)
 
     def furniture_style_manifest(self) -> dict[str, Any] | None:
         """Public, read-only cross-cog surface: the generated

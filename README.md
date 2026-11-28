@@ -101,6 +101,12 @@ cog loading; `[p]pixelagents webview rebuild` retries it.
   (`[p]cctv editors set` opts in a corridor permission group).
 - Showing offline members and presences needs the members and presences
   gateway intents.
+- Optional: the offices can also open inside Discord as an Activity. It's
+  off until the bot owner turns Activities on for the bot's application in
+  Discord's Developer Portal, adds one URL mapping, routes `/cctv/activity`
+  to the listener and runs `[p]cctv activity enable`; sign-in reuses Red
+  Web Dashboard's OAuth client secret. See
+  [cctv's README](cctv/README.md#discord-activity-optional).
 
 ### Layout catalogue (floorplan)
 
@@ -163,7 +169,8 @@ Corridor's load error names this fix when it detects such a break.
 |---|---|---|
 | LLM endpoint (`[p]corridor llm endpoint`) | pico, architect, painter, animator, bootcamp | Message content and recent channel history (pico, in enabled servers), A2A prompts, office layouts, tool results, rendered images (animator) |
 | MCP servers you register | telephonepole, animator, bootcamp agents | Tool-call arguments chosen by the agent |
-| GitHub, npm registry | pixelagents | Clones and package installs for the webview and pixatar builds |
+| GitHub, npm registry | pixelagents | Clones and package installs for the webview and pixatar builds, and for the Discord Activity build once cctv's Activity is on |
+| Discord's OAuth API | cctv | Only while the optional Activity is on (`[p]cctv activity`): the sign-in code with Red Web Dashboard's client secret, and the user's token to learn who they are |
 | nodejs.org | toolbox | Node.js release download, only on `[p]toolbox node install` |
 | PyPI, GitHub | switchboard | `pip install` of cog requirements, including the `pixel-agents-deps` package from this repository |
 | Pixel Index | floorplan | Catalogue searches and layout downloads |

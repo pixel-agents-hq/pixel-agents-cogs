@@ -28,6 +28,8 @@ on:
       - "pixelagents/**/*.py"
       - "pixelagents/infrastructure/webview_vendor.commit"
       - "pixelagents/infrastructure/webview_vendor.repo"
+      - "pixelagents/infrastructure/webview_build_scripts/**"
+      - ".github/scripts/warm-vendored-npm-cache.sh"
       - "architect/**/*.py"
       - "cctv/**/*.py"
       - "floorplan/**/*.py"

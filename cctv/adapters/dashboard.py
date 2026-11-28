@@ -23,10 +23,9 @@ from ..infrastructure import (
     private_page_path,
     session_path,
 )
-from .cog_base import CctvBase
+from .cog_base import DASHBOARD_COG_NAME, CctvBase
 
 DashboardCallable = TypeVar("DashboardCallable", bound=Callable[..., Any])
-DASHBOARD_COG_NAME = "Dashboard"
 
 
 def dashboard_page(
@@ -214,13 +213,7 @@ class DashboardMixin(CctvBase):
 
         del kwargs
         guild_id = parse_guild_id(guild)
-        office = self.office(guild_id) if guild_id is not None else None
-        allowed = (
-            guild_id is not None
-            and office is not None
-            and (not office.private or await self._is_member(guild_id, user_id))
-        )
-        ticket = self._tickets.mint(user_id, guild_id) if allowed and guild_id else None
+        ticket = await self._mint_office_ticket(user_id, guild_id) if guild_id is not None else None
         return _ticket_response(ticket)
 
     @dashboard_page(

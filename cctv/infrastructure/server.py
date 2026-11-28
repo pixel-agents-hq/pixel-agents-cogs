@@ -20,6 +20,7 @@ from ..contracts import (
     WebviewReadyMessage,
     parse_client_message,
 )
+from .activity import ActivityEndpoints
 from .client_hub import ClientHub
 from .tickets import TicketStore
 
@@ -76,10 +77,15 @@ class CctvServer:
         health: HealthSnapshot,
         *,
         public_origin: OriginSource = _no_origin,
+        activity: ActivityEndpoints | None = None,
         authorize_timeout: float = AUTHORIZE_TIMEOUT_SECONDS,
         logger: logging.Logger | None = None,
     ) -> None:
         self._public_origin = public_origin
+        self._activity = activity
+        # Sockets opened from the Discord Activity, so switching it off can
+        # disconnect them.
+        self._activity_sockets: set[web.WebSocketResponse] = set()
         self._authorize_timeout = authorize_timeout
         self._offices = offices
         self._all_offices = all_offices
@@ -103,6 +109,12 @@ class CctvServer:
         app.router.add_get("/cctv/office/{guild_id}/ws", self.handle_office)
         app.router.add_get("/cctv/editor/ws", self.handle_editor)
         app.router.add_get("/cctv/health", self.handle_health)
+        if self._activity is not None:
+            self._activity.add_routes(
+                app.router,
+                office_ws=self.handle_activity_office,
+                editor_ws=self.handle_activity_editor,
+            )
         runner = web.AppRunner(app)
         try:
             await runner.setup()
@@ -145,14 +157,27 @@ class CctvServer:
         return web.json_response(dict(self._health()))
 
     async def handle_office(self, request: web.Request) -> web.WebSocketResponse:
+        return await self._handle_office(request, check_origin=True)
+
+    async def handle_activity_office(self, request: web.Request) -> web.WebSocketResponse:
+        """A guild office's socket from the Discord Activity. The same rules
+        as `handle_office`, minus the Dashboard `Origin` check: the page is
+        served by Discord's proxy, and its ticket comes from a bearer-token
+        request, not a cookie, so no other site can obtain one for a user."""
+
+        return await self._handle_office(request, check_origin=False, track=True)
+
+    async def _handle_office(
+        self, request: web.Request, *, check_origin: bool, track: bool = False
+    ) -> web.WebSocketResponse:
         raw = request.match_info.get("guild_id", "")
         guild_id = int(raw) if raw.isdecimal() and len(raw) <= 20 else None
         pipeline = self._offices(guild_id) if guild_id is not None else None
         if pipeline is not None and not pipeline.private:
-            return await self._handle_ws(pipeline, request)
-        if pipeline is not None and not await self._origin_allowed(request):
+            return await self._handle_ws(pipeline, request, track=track)
+        if pipeline is not None and check_origin and not await self._origin_allowed(request):
             pipeline = None
-        return await self._handle_gated(request, guild_id, pipeline)
+        return await self._handle_gated(request, guild_id, pipeline, track=track)
 
     async def handle_editor(self, request: web.Request) -> web.WebSocketResponse:
         """Anyone may watch the editor office. A socket may write to it only
@@ -160,6 +185,20 @@ class CctvServer:
         gate, re-checked on every write."""
 
         return await self._handle_ws(self._editor, request)
+
+    async def handle_activity_editor(self, request: web.Request) -> web.WebSocketResponse:
+        return await self._handle_ws(self._editor, request, track=True)
+
+    async def close_activity_sockets(self, *, code: int) -> int:
+        """Disconnect every socket opened from the Discord Activity."""
+
+        sockets = tuple(self._activity_sockets)
+        for socket in sockets:
+            try:
+                await socket.close(code=code)
+            except Exception:
+                self._log.debug("cctv: Activity socket close failed", exc_info=True)
+        return len(sockets)
 
     async def _origin_allowed(self, request: web.Request) -> bool:
         """A private office's socket must come from the Dashboard's own
@@ -170,10 +209,12 @@ class CctvServer:
         return expected is None or request.headers.get("Origin", "") == expected
 
     async def _handle_ws(
-        self, pipeline: PagePipeline, request: web.Request
+        self, pipeline: PagePipeline, request: web.Request, *, track: bool = False
     ) -> web.WebSocketResponse:
         socket = web.WebSocketResponse(heartbeat=30.0, max_msg_size=MAX_CLIENT_MESSAGE_BYTES)
         await socket.prepare(request)
+        if track:
+            self._activity_sockets.add(socket)
         pipeline.clients.add(socket)
         self._log.info(
             "cctv/%s: client connected (%d total)",
@@ -184,10 +225,16 @@ class CctvServer:
             await self._serve(pipeline, socket)
         finally:
             pipeline.clients.remove(socket)
+            self._activity_sockets.discard(socket)
         return socket
 
     async def _handle_gated(
-        self, request: web.Request, guild_id: int | None, pipeline: PagePipeline | None
+        self,
+        request: web.Request,
+        guild_id: int | None,
+        pipeline: PagePipeline | None,
+        *,
+        track: bool = False,
     ) -> web.WebSocketResponse:
         """A private office -- or an id with no open office, which answers
         exactly the same way. Nothing is sent until the socket presents a
@@ -196,6 +243,8 @@ class CctvServer:
 
         socket = web.WebSocketResponse(heartbeat=30.0, max_msg_size=MAX_CLIENT_MESSAGE_BYTES)
         await socket.prepare(request)
+        if track:
+            self._activity_sockets.add(socket)
         if pipeline is not None:
             pipeline.clients.add(socket, can_view=False)
         try:
@@ -210,6 +259,7 @@ class CctvServer:
         finally:
             if pipeline is not None:
                 pipeline.clients.remove(socket)
+            self._activity_sockets.discard(socket)
         return socket
 
     async def _await_ticket(

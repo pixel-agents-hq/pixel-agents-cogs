@@ -1,5 +1,13 @@
+from .activity import (
+    ACTIVITY_PREFIX,
+    ActivityEndpoints,
+    OfficeChoice,
+    activity_config_script,
+    activity_office_ws,
+)
 from .client_hub import Authorize, ClientHub, ClientState
 from .discord import member_snapshot
+from .discord_oauth import DiscordOAuth, OAuthError
 from .server import (
     OFFICE_UNAVAILABLE_CLOSE_CODE,
     CctvServer,
@@ -34,6 +42,7 @@ from .webview import (
 )
 
 __all__ = [
+    "ACTIVITY_PREFIX",
     "CONFIG_IDENTIFIER",
     "EDITOR_SESSION_PATH",
     "EDITOR_WS_PATH",
@@ -44,11 +53,15 @@ __all__ = [
     "TICKET_TTL_SECONDS",
     "WEBVIEW_BASE_PATH",
     "WEBVIEW_CACHE_CONTROL",
+    "ActivityEndpoints",
     "Authorize",
     "CctvServer",
     "ClientHub",
     "ClientState",
+    "DiscordOAuth",
     "HealthSnapshot",
+    "OAuthError",
+    "OfficeChoice",
     "OfficeList",
     "OfficeResolver",
     "OriginSource",
@@ -58,6 +71,8 @@ __all__ = [
     "Ticket",
     "TicketStore",
     "WebviewAssets",
+    "activity_config_script",
+    "activity_office_ws",
     "degraded_asset_notification",
     "member_snapshot",
     "office_page_path",

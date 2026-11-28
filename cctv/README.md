@@ -76,6 +76,9 @@ together.
 | `[p]cctv editors` | Bot owner | Show who may edit the editor office from its page |
 | `[p]cctv editors set <group>` | Bot owner | Also let this server's members in a corridor permission group edit the editor office |
 | `[p]cctv editors reset` | Bot owner | Let only the bot owner edit the editor office again |
+| `[p]cctv activity` | Bot owner | Whether the offices open inside Discord, the Activity build, sign-in, and the URL mapping to set |
+| `[p]cctv activity enable` / `disable` | Bot owner | Open the offices inside Discord as an Activity / stop, closing the Activity's connections and no longer building it |
+| `[p]cctv activity entrypoint` | Bot owner | Create the App Launcher's `launch` Entry Point command if it's missing |
 | `[p]cctv character` | Any member | Show your office character, its seed code, and a designer link that opens it |
 | `[p]cctv character set <px.…>` | Any member | Wear the character a seed code stands for, e.g. one copied from the designer |
 | `[p]cctv character reset` | Any member | Go back to the character dealt from your Discord user id |
@@ -117,8 +120,9 @@ character dealt from their key; the bot owner changes one with
 ```
 
 Corridor and Pixelagents are required and loaded on demand. Red Web
-Dashboard is needed for the page routes to be reachable; CCTV still loads
-and its commands still work without it. The aiohttp listener binds
+Dashboard is needed for the page routes to be reachable, and its OAuth
+client secret for the optional Discord Activity; CCTV still loads and its
+commands still work without it. The aiohttp listener binds
 `127.0.0.1:3210` by default. Route these public WebSocket paths to it
 through a reverse proxy:
 
@@ -149,6 +153,67 @@ aggregate, or a missing Dashboard does not unload CCTV. `[p]cctv status`
 reports the problem, the affected Dashboard page returns an unavailable
 response instead of crashing, and the bot owner is notified best-effort.
 Persisted state is never silently reset to recover from an error.
+
+## Discord Activity (optional)
+
+The offices can also open inside the Discord client, on desktop, web and
+mobile, as a [Discord Activity](https://docs.discord.com/developers/activities/overview).
+It's off until the bot owner sets it up; the browser pages stay as they
+are either way.
+
+**Using it.** Start the Activity from a channel's App Launcher, or with the
+**Open in Discord** button `[p]cctv url` shows while the Activity is on.
+In a server it opens that server's office; anywhere else (a DM) it opens
+the editor office, and the **Editor office** / **Server office** button in
+its corner switches between the two. The rules are the browser's: a
+private office opens only for the server's members, and editing the
+editor office needs the edit gate (`[p]cctv editors`). Discord asks each
+user once to let the app see who they are (the `identify` scope).
+
+**Setup.** On top of the browser setup above (Red Web Dashboard with its
+OAuth client secret set, `[p]cctv publicurl`):
+
+1. Route `/cctv/activity` and everything under it, WebSocket upgrades
+   included, to the listener through the reverse proxy, over HTTPS, as for
+   `/cctv/office/<server id>/ws`.
+2. In the [Developer Portal](https://discord.com/developers/applications),
+   open the bot's application:
+   - **Activities → Settings**: turn Activities on (Discord adds a
+     `launch` Entry Point command, which is what the App Launcher shows),
+     and under **Supported Platforms** tick web/desktop and, if wanted,
+     iOS and Android.
+   - **Activities → URL Mappings**: one root mapping, prefix `/`, target
+     `<public host>/cctv/activity` (the host without `https://`;
+     `[p]cctv activity` prints it). If the portal won't take a path in a
+     target, give the Activity a host of its own whose `/` the reverse
+     proxy forwards to the listener's `/cctv/activity/`, and map `/` to
+     that host.
+   - **OAuth2 → Redirects**: Discord needs at least one redirect URI for
+     the Activity's sign-in; the Dashboard's own login redirect counts.
+     The Activity's token exchange sends none.
+3. Run `[p]cctv activity enable`. It builds the Activity version of the
+   webview (Node.js and npm, as for the browser build) and turns the
+   Activity's routes on; `[p]cctv activity` shows what's left. If the App
+   Launcher doesn't list it (for example after a `[p]slash sync`), run
+   `[p]cctv activity entrypoint`.
+
+Until the application is distributed, Discord lets only its owner and the
+members of its developer team launch the Activity.
+
+Everything the Activity uses is under the listener's `/cctv/activity`
+(nothing else needs a mapping: the webview loads no outside resources):
+
+```text
+/cctv/activity/                       the page (pixelagents' Activity build)
+/cctv/activity/activity-config.js     the page's settings and office picker
+/cctv/activity/api/token              trades the SDK's OAuth code for a token
+/cctv/activity/api/ticket             a ticket for one office's socket
+/cctv/activity/ws/office/<server id>
+/cctv/activity/ws/editor
+/cctv/activity/<asset>                the webview's scripts, styles, fonts, icons
+```
+
+While the Activity is off, every one of them answers 404.
 
 ## Red Web Dashboard
 

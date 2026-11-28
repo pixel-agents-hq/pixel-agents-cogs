@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import io
 from collections.abc import Awaitable, Callable
-from typing import cast
-from urllib.parse import quote
+from typing import Any, cast
+from urllib.parse import quote, urlsplit
 
 import discord
 from discord import app_commands
@@ -16,7 +16,15 @@ from pixelagents.domain import AgentKey, GenuineAgentKey, OfficeIdentity
 from pixelagents.domain.characters import CharacterRecord, PixatarFailure
 
 from ..domain import EditorGate, GlobalSettings, OfficeAccess
-from ..infrastructure import EDITOR_WS_PATH, PICKER_PATH, office_page_path, office_ws_path
+from ..infrastructure import (
+    ACTIVITY_PREFIX,
+    EDITOR_WS_PATH,
+    OFFICE_UNAVAILABLE_CLOSE_CODE,
+    PICKER_PATH,
+    office_page_path,
+    office_ws_path,
+)
+from .activity_views import ActivityLaunchView
 from .cog_base import CctvBase, roster_warnings
 from .dashboard import dashboard_cog_loaded
 
@@ -25,6 +33,20 @@ from .dashboard import dashboard_cog_loaded
 # server's office (`[p]cctv visibility`). The reserved `owner` group (bot
 # owner or guild Administrator) always satisfies it too.
 MEMBER_CHARACTER_GROUP = "building_manager"
+
+# The Activity's App Launcher entry (an application command of type
+# PRIMARY_ENTRY_POINT whose handler, DISCORD_LAUNCH_ACTIVITY, lets Discord
+# launch the Activity itself). Discord creates one when Activities are
+# switched on; `[p]cctv activity entrypoint` puts it back if it's gone.
+ENTRY_POINT_TYPE = 4
+ENTRY_POINT_COMMAND: dict[str, object] = {
+    "name": "launch",
+    "description": "Open the Pixel Agents office",
+    "type": ENTRY_POINT_TYPE,
+    "handler": 2,
+    "integration_types": [0],
+    "contexts": [0, 1],
+}
 
 ACCESS_DESCRIPTIONS = {
     OfficeAccess.PUBLIC: "Anyone can watch it, and it's listed on the server picker.",
@@ -161,11 +183,21 @@ class CommandsMixin(CctvBase):
                 "The bot owner hasn't set the Dashboard's public address yet "
                 "(`[p]cctv publicurl`), so this is the path on the Dashboard's host."
             )
+        buttons = None
+        if settings.activity_enabled:
+            lines.append("Or open it right here in Discord, with the button below.")
+            # Only the button is sent: the persistent view registered in
+            # `cog_load` answers every click. A finished view is rendered but
+            # never stored per message by discord.py, so nothing piles up or
+            # keeps an unloaded cog alive.
+            buttons = ActivityLaunchView(self._activity_enabled)
+            buttons.stop()
         await self._reply(
             ctx,
             "\n".join(lines),
             title="This server's office",
             code=[self._page_link(settings, office_page_path(guild.id))],
+            buttons=buttons,
         )
 
     @cctv_group.command(name="visibility")
@@ -224,6 +256,119 @@ class CommandsMixin(CctvBase):
             await self._reply(ctx, str(exc))
             return
         await self._reply(ctx, f"The Dashboard's public address is now <{clean}>.")
+
+    @cctv_group.group(name="activity", invoke_without_command=True)
+    @commands.guild_only()
+    @commands.is_owner()
+    async def cmd_activity(self, ctx: commands.Context) -> None:
+        """Show whether the offices open inside Discord, and what's left to set up.
+
+        Bot owner only. See cctv's README for the Developer Portal steps.
+        """
+
+        await self._reply_activity_status(ctx, None)
+
+    @cmd_activity.command(name="enable")
+    @commands.guild_only()
+    @commands.is_owner()
+    async def cmd_activity_enable(self, ctx: commands.Context) -> None:
+        """Open the offices inside Discord as an Activity. Bot owner only.
+
+        Builds the Activity version of the webview, and adds an "Open in
+        Discord" button to `[p]cctv url`.
+        """
+
+        if ctx.interaction:
+            await ctx.interaction.response.defer(ephemeral=True)
+        await self._settings.set_activity_enabled(True)
+        await self._reply_activity_status(ctx, await self._build_activity())
+
+    @cmd_activity.command(name="disable")
+    @commands.guild_only()
+    @commands.is_owner()
+    async def cmd_activity_disable(self, ctx: commands.Context) -> None:
+        """Stop opening the offices inside Discord. Bot owner only."""
+
+        await self._settings.set_activity_enabled(False)
+        await self._cancel_activity_build()
+        closed = (
+            await self._server.close_activity_sockets(code=OFFICE_UNAVAILABLE_CLOSE_CODE)
+            if self._server is not None
+            else 0
+        )
+        await self._reply(
+            ctx,
+            f"The office Activity is off; {closed} open Activity connection(s) were closed, "
+            "and webview rebuilds no longer build it. The browser pages are unchanged.",
+        )
+
+    @cmd_activity.command(name="entrypoint")
+    @commands.guild_only()
+    @commands.is_owner()
+    async def cmd_activity_entrypoint(self, ctx: commands.Context) -> None:
+        """Make sure the App Launcher can start the office Activity. Bot owner only.
+
+        Discord adds a `launch` Entry Point command when Activities are
+        switched on in the Developer Portal; this creates it again if it's
+        missing, touching no other command.
+        """
+
+        application_id = self._activity_client_id()
+        if application_id is None:
+            await self._reply(ctx, "The bot's application isn't known yet; try again shortly.")
+            return
+        try:
+            existing = await self.bot.http.get_global_commands(application_id)
+            entry = next(
+                (command for command in existing if command.get("type") == ENTRY_POINT_TYPE),
+                None,
+            )
+            created = entry is None
+            if entry is None:
+                entry = await self.bot.http.upsert_global_command(
+                    application_id, payload=cast(Any, ENTRY_POINT_COMMAND)
+                )
+        except discord.HTTPException as exc:
+            await self._reply(
+                ctx,
+                "Discord refused the Entry Point command. Switch Activities on for the "
+                f"bot's application in the Developer Portal first. ({exc.status}: {exc.text})",
+            )
+            return
+        name = str(entry.get("name", "launch"))
+        await self._reply(
+            ctx,
+            f"Created the App Launcher's `{name}` Entry Point command."
+            if created
+            else f"The App Launcher's `{name}` Entry Point command is already there.",
+        )
+
+    async def _reply_activity_status(self, ctx: commands.Context, build: str | None) -> None:
+        settings = await self._settings.global_settings()
+        secret = await self._dashboard_client_secret() is not None
+        listener = self._server is not None and self._server.running
+        host = urlsplit(settings.public_base_url).netloc if settings.public_base_url else None
+        target = f"{host or '<public host>'}{ACTIVITY_PREFIX}"
+        fields = (
+            ReplyField("Activity", "✅ on" if settings.activity_enabled else "🛑 off"),
+            ReplyField("Activity build", build or self._activity_build_status()),
+            ReplyField(
+                "Sign-in",
+                "✅ uses Red Web Dashboard's OAuth client secret"
+                if secret
+                else "⚠️ load Red Web Dashboard and set its OAuth client secret "
+                "(`[p]dashboard settings secret`)",
+            ),
+            ReplyField("Listener", "✅ running" if listener else "⚠️ not running"),
+            ReplyField("URL mapping", f"`/` → `{target}`"),
+        )
+        await self._reply(
+            ctx,
+            "Set up in the Developer Portal: switch Activities on, add the URL mapping "
+            f"below, and route `{ACTIVITY_PREFIX}` to the listener. See cctv's README.",
+            title="CCTV Activity",
+            fields=fields,
+        )
 
     @staticmethod
     def _page_link(settings: GlobalSettings, path: str) -> str:

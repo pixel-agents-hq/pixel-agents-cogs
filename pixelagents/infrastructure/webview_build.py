@@ -20,8 +20,10 @@ from __future__ import annotations
 
 import contextlib
 import fcntl
+import hashlib
 import json
 import logging
+import re
 import shutil
 import subprocess
 from collections.abc import Iterator
@@ -376,7 +378,12 @@ def build_webview(
     short = result.commit[:7]
     repo = pinned_repo_url().removesuffix(".git").removeprefix("https://github.com/")
     link = f"[{repo}@{short}]({_commit_url(result.commit)})"
-    return BuildOutcome(ok=True, status_line=f"✅ Webview {verb} ({link}).")
+    status_line = f"✅ Webview {verb} ({link})."
+    if activity_requested(cog_data_dir):
+        # A rebuilt webview replaced `webview_dist`, Activity page included.
+        activity = build_activity(cog_data_dir, logger=logger, force=result.rebuilt)
+        status_line = f"{status_line}\n{activity.status_line}"
+    return BuildOutcome(ok=True, status_line=status_line)
 
 
 def owner_notification_for(outcome: BuildOutcome) -> str:
@@ -578,3 +585,227 @@ def _build_furniture_styles(catalog_path: Path, webview_dist: Path) -> None:
     (webview_dist / "assets" / "furniture-styles.json").write_text(
         json.dumps(manifest), encoding="utf-8"
     )
+
+
+# The Discord Activity build: the same bundle, plus a page that runs the
+# Embedded App SDK handshake before the webview starts. It is built only once
+# a consumer asks for it (`build_activity`, e.g. when CCTV's Activity is
+# switched on), and again after every webview rebuild from then on. A failed
+# Activity build never fails the browser build.
+#
+# `activity.html` is `index.html` with every module script made inert
+# (`DEFERRED_SCRIPT_TYPE`) and two classic scripts added: the consumer's own
+# `activity-config.js` (it sets `window.PIXEL_AGENTS_ACTIVITY`, see
+# webview_build_scripts/activity/bootstrap.ts), then `activity/bootstrap.js`,
+# which runs the handshake and OAuth and then releases the module scripts.
+# No inline script, so the page runs under a strict `script-src`.
+ACTIVITY_PAGE = "activity.html"
+ACTIVITY_CONFIG_SCRIPT = "activity-config.js"
+ACTIVITY_BOOTSTRAP = "activity/bootstrap.js"
+ACTIVITY_LICENSES = "activity/THIRD_PARTY_LICENSES.txt"
+DEFERRED_SCRIPT_TYPE = "text/x-pixel-agents-deferred"
+# Bump when the Activity build's output changes shape.
+ACTIVITY_BUILD_VERSION = 1
+ACTIVITY_REQUIRED_TOOLS = ("node", "npm")
+_ACTIVITY_SOURCE_DIR = Path(__file__).parent / "webview_build_scripts" / "activity"
+_ACTIVITY_SOURCES = ("package.json", "package-lock.json", "bootstrap.ts")
+_ACTIVITY_BUILD_DIR = "activity_build"
+# Present while a consumer wants the Activity build (see `activity_requested`).
+_ACTIVITY_REQUESTED_MARKER = ".requested"
+_BUILT_ACTIVITY_MARKER = ".built_activity"
+_INSTALLED_LOCK_MARKER = ".installed_lock"
+# Build tools in the lockfile, not shipped in the bundle (no license notice).
+_BUILD_ONLY_PACKAGES = ("esbuild", "@esbuild/")
+_MODULE_SCRIPT = re.compile(r"<script\b([^>]*?)\stype=([\"'])module\2([^>]*)>", re.IGNORECASE)
+_HEAD_END = re.compile(r"</head\s*>", re.IGNORECASE)
+
+
+@dataclass(frozen=True)
+class ActivityBuildOutcome:
+    ok: bool
+    status_line: str
+    error: str | None = None
+
+
+def activity_html(index_source: str) -> str:
+    """`activity.html` from the built `index.html` (see `ACTIVITY_PAGE`)."""
+
+    inert, count = _MODULE_SCRIPT.subn(
+        lambda match: (
+            f"<script{match[1]} type={match[2]}{DEFERRED_SCRIPT_TYPE}{match[2]}{match[3]}>"
+        ),
+        index_source,
+    )
+    if count == 0:
+        raise WebviewBuildError("the built index.html has no module script to defer")
+    head_end = _HEAD_END.search(inert)
+    if head_end is None:
+        raise WebviewBuildError("the built index.html has no </head>")
+    scripts = (
+        f'<script src="./{ACTIVITY_CONFIG_SCRIPT}"></script>\n'
+        f'<script src="./{ACTIVITY_BOOTSTRAP}"></script>\n'
+    )
+    return inert[: head_end.start()] + scripts + inert[head_end.start() :]
+
+
+def activity_requested(cog_data_dir: Path) -> bool:
+    """Whether a consumer wants the Activity build on this host: set by
+    `ensure_activity_built`, cleared by `cancel_activity`."""
+
+    return (cog_data_dir / _ACTIVITY_BUILD_DIR / _ACTIVITY_REQUESTED_MARKER).is_file()
+
+
+def cancel_activity(cog_data_dir: Path) -> bool:
+    """Stop rebuilding the Activity with every webview build; whether it had
+    been requested. The installed npm packages stay, so asking again later
+    doesn't reinstall them."""
+
+    marker = cog_data_dir / _ACTIVITY_BUILD_DIR / _ACTIVITY_REQUESTED_MARKER
+    try:
+        marker.unlink()
+    except FileNotFoundError:
+        return False
+    return True
+
+
+def _activity_sources_digest() -> str:
+    """Changes whenever the bootstrap or its pinned packages do, so an
+    updated cog rebuilds the Activity even on an unchanged webview."""
+
+    digest = hashlib.sha256()
+    for name in _ACTIVITY_SOURCES:
+        digest.update((_ACTIVITY_SOURCE_DIR / name).read_bytes())
+    return digest.hexdigest()[:16]
+
+
+def _activity_marker(webview_dist: Path) -> str | None:
+    commit = built_commit(webview_dist)
+    if commit is None:
+        return None
+    return f"{ACTIVITY_BUILD_VERSION}:{commit}:{_activity_sources_digest()}"
+
+
+def activity_is_up_to_date(webview_dist: Path) -> bool:
+    """Whether `webview_dist` holds an Activity build of its current webview."""
+
+    expected = _activity_marker(webview_dist)
+    return (
+        expected is not None
+        and (webview_dist / ACTIVITY_PAGE).is_file()
+        and (webview_dist / ACTIVITY_BOOTSTRAP).is_file()
+        and _read_marker(webview_dist / _BUILT_ACTIVITY_MARKER) == expected
+    )
+
+
+def ensure_activity_built(
+    cog_data_dir: Path, *, logger: logging.Logger | None = None, force: bool = False
+) -> bool:
+    """Add the Activity build to `<cog_data_dir>/webview_dist`; whether it was
+    (re)built. The webview must already be built. Raises `WebviewBuildError`."""
+
+    log = logger or logging.getLogger(f"red.pixel-agents-cogs.{__name__}")
+    webview_dist = cog_data_dir / "webview_dist"
+    build_dir = cog_data_dir / _ACTIVITY_BUILD_DIR
+    build_dir.mkdir(parents=True, exist_ok=True)
+    (build_dir / _ACTIVITY_REQUESTED_MARKER).write_text("1\n", encoding="utf-8")
+    with _build_lock(cog_data_dir):
+        if not (webview_dist / "index.html").is_file():
+            raise WebviewBuildError("the webview isn't built yet")
+        if not force and activity_is_up_to_date(webview_dist):
+            return False
+        missing = tuple(tool for tool in ACTIVITY_REQUIRED_TOOLS if shutil.which(tool) is None)
+        if missing:
+            raise WebviewBuildError(
+                f"missing required tool(s) to build the Activity: {', '.join(missing)}",
+                missing_tools=missing,
+            )
+        for name in _ACTIVITY_SOURCES:
+            shutil.copy2(_ACTIVITY_SOURCE_DIR / name, build_dir / name)
+        _install_activity_dependencies(build_dir, log)
+        bundle = _bundle_activity_bootstrap(build_dir, log)
+        _sync_activity(build_dir, bundle, webview_dist)
+        log.info("pixelagents: Activity build added to the webview")
+        return True
+
+
+def _install_activity_dependencies(build_dir: Path, log: logging.Logger) -> None:
+    lock = (build_dir / "package-lock.json").read_bytes()
+    digest = hashlib.sha256(lock).hexdigest()
+    marker = build_dir / _INSTALLED_LOCK_MARKER
+    if (build_dir / "node_modules").is_dir() and _read_marker(marker) == digest:
+        return
+    # --ignore-scripts, as for the webview: nothing runs at install time.
+    _run(
+        ["npm", "ci", "--prefix", str(build_dir), "--ignore-scripts", "--no-audit", "--no-fund"],
+        cwd=None,
+        timeout=600,
+        log=log,
+    )
+    marker.write_text(digest + "\n", encoding="utf-8")
+
+
+def _bundle_activity_bootstrap(build_dir: Path, log: logging.Logger) -> Path:
+    out = build_dir / "out" / "bootstrap.js"
+    _run(
+        [
+            str(build_dir / "node_modules" / ".bin" / "esbuild"),
+            "bootstrap.ts",
+            "--bundle",
+            "--format=iife",
+            "--minify",
+            "--target=es2020",
+            "--legal-comments=eof",
+            f"--outfile={out}",
+        ],
+        cwd=build_dir,
+        timeout=120,
+        log=log,
+    )
+    return out
+
+
+def _third_party_licenses(build_dir: Path) -> str:
+    """The license of every package the bootstrap bundles, from the lockfile."""
+
+    lock = json.loads((build_dir / "package-lock.json").read_text("utf-8"))
+    sections = []
+    for path, entry in sorted(cast("dict[str, dict[str, object]]", lock["packages"]).items()):
+        name = path.rsplit("node_modules/", 1)[-1]
+        if not path or name.startswith(_BUILD_ONLY_PACKAGES):
+            continue
+        heading = f"{name}@{entry.get('version', '?')} ({entry.get('license', 'see package')})"
+        package_dir = build_dir / path
+        texts = [
+            license_file.read_text("utf-8", errors="replace").strip()
+            for license_file in sorted(package_dir.glob("LICEN[CS]E*"))
+            if license_file.is_file()
+        ]
+        sections.append("\n\n".join([f"== {heading} ==", *texts]))
+    return "\n\n".join(sections) + "\n"
+
+
+def _sync_activity(build_dir: Path, bundle: Path, webview_dist: Path) -> None:
+    page = activity_html((webview_dist / "index.html").read_text("utf-8"))
+    (webview_dist / "activity").mkdir(exist_ok=True)
+    shutil.copy2(bundle, webview_dist / ACTIVITY_BOOTSTRAP)
+    (webview_dist / ACTIVITY_LICENSES).write_text(_third_party_licenses(build_dir), "utf-8")
+    (webview_dist / ACTIVITY_PAGE).write_text(page, encoding="utf-8")
+    marker = _activity_marker(webview_dist)
+    assert marker is not None  # the webview is built: it has a commit marker
+    (webview_dist / _BUILT_ACTIVITY_MARKER).write_text(marker + "\n", encoding="utf-8")
+
+
+def build_activity(
+    cog_data_dir: Path, *, logger: logging.Logger, force: bool = False
+) -> ActivityBuildOutcome:
+    """`ensure_activity_built`, but reports rather than raises."""
+
+    try:
+        rebuilt = ensure_activity_built(cog_data_dir, logger=logger, force=force)
+    except Exception as exc:  # never breaks the browser build or a command
+        logger.error("pixelagents: could not build the Activity: %s", exc)
+        return ActivityBuildOutcome(
+            ok=False, status_line=f"⚠️ Could not build the Activity: {exc}", error=str(exc)
+        )
+    verb = "built" if rebuilt else "already up to date"
+    return ActivityBuildOutcome(ok=True, status_line=f"✅ Activity {verb}.")

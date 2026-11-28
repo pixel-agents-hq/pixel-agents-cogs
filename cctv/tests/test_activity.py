@@ -25,7 +25,8 @@ from ..infrastructure import (
     WebviewAssets,
     activity_config_script,
 )
-from ..infrastructure.discord_oauth import SlidingWindow
+from ..infrastructure.activity import client_address
+from ..infrastructure.discord_oauth import FAILURES_PER_CLIENT, FailureBudget, SlidingWindow
 from .test_server import GUILD, MEMBER, OTHER_GUILD, STRANGER, _Pipeline
 
 CLIENT_ID = 99
@@ -359,12 +360,62 @@ class TestSlidingWindow(unittest.TestCase):
 
 
 class TestRateLimit(_ActivityFixture):
-    async def test_too_many_sign_ins_are_429(self) -> None:
-        self.oauth._window = SlidingWindow(1, 60.0)  # noqa: SLF001
-        async with self.http.post(f"{self.base}/api/token", json={"code": "good-code"}) as r:
-            self.assertEqual(r.status, 200)
-        async with self.http.post(f"{self.base}/api/token", json={"code": "good-code"}) as r:
-            self.assertEqual(r.status, 429)
+    async def _sign_in(self, code: str, client: str) -> int:
+        async with self.http.post(
+            f"{self.base}/api/token", json={"code": code}, headers={"X-Forwarded-For": client}
+        ) as r:
+            return r.status
+
+    async def test_one_clients_junk_codes_dont_lock_out_another(self) -> None:
+        statuses = [await self._sign_in("bad-code", "203.0.113.7") for _ in range(12)]
+        self.assertEqual(statuses[:FAILURES_PER_CLIENT], [400] * FAILURES_PER_CLIENT)
+        self.assertEqual(set(statuses[FAILURES_PER_CLIENT:]), {429})
+        # Refused without asking Discord again.
+        self.assertEqual(len(self.discord.exchanges), FAILURES_PER_CLIENT)
+        self.assertEqual(await self._sign_in("good-code", "198.51.100.1"), 200)
+
+    async def test_past_the_total_only_clients_with_refusals_are_held_up(self) -> None:
+        self.oauth._failures = FailureBudget(per_client=10, total=3)  # noqa: SLF001
+        for n in range(3):
+            self.assertEqual(await self._sign_in("bad-code", f"203.0.113.{n}"), 400)
+        self.assertEqual(await self._sign_in("good-code", "203.0.113.0"), 429)
+        self.assertEqual(await self._sign_in("good-code", "198.51.100.1"), 200)
+
+    async def test_junk_tokens_cant_spend_the_sign_in_budget(self) -> None:
+        self.oauth._checks = SlidingWindow(2, 60.0)  # noqa: SLF001
+        for n in range(4):
+            await self._ticket(f"junk-{n}", {"office": "editor"})
+        self.assertEqual(await self._sign_in("good-code", "198.51.100.1"), 200)
+        # The sign-in already vouched for its token: its tickets need no check.
+        status, _ = await self._ticket("token-member", {"office": "editor"})
+        self.assertEqual(status, 200)
+
+    async def test_the_sign_in_budget_is_a_hard_ceiling(self) -> None:
+        self.oauth._exchanges = SlidingWindow(2, 60.0)  # noqa: SLF001
+        self.assertEqual(await self._sign_in("good-code", "198.51.100.1"), 200)
+        self.assertEqual(await self._sign_in("good-code", "198.51.100.2"), 429)
+
+
+class TestClientAddress(unittest.TestCase):
+    def _request(self, remote: str, forwarded: tuple[str, ...] = ()) -> Any:
+        from multidict import CIMultiDict
+
+        headers: CIMultiDict[str] = CIMultiDict()
+        for value in forwarded:
+            headers.add("X-Forwarded-For", value)
+        return SimpleNamespace(remote=remote, headers=headers)
+
+    def test_only_a_loopback_peers_last_forwarded_hop_is_believed(self) -> None:
+        self.assertEqual(
+            client_address(self._request("127.0.0.1", ("1.2.3.4, 203.0.113.9",))),
+            "203.0.113.9",
+        )
+        self.assertEqual(
+            client_address(self._request("::1", ("1.2.3.4", "203.0.113.9"))), "203.0.113.9"
+        )
+        # Not from the reverse proxy on this host: the header is the caller's claim.
+        self.assertEqual(client_address(self._request("203.0.113.5", ("1.2.3.4",))), "203.0.113.5")
+        self.assertEqual(client_address(self._request("127.0.0.1")), "127.0.0.1")
 
 
 class _Cog(CctvBase):

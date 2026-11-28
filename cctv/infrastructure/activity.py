@@ -20,6 +20,7 @@ the edit gate on every editor write -- are checked bot-side as for a browser.
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import json
 import logging
 import string
@@ -223,6 +224,33 @@ async def _json_body(request: web.Request) -> dict[str, object] | None:
     return body if isinstance(body, dict) else None
 
 
+def _is_loopback(address: str) -> bool:
+    try:
+        return ipaddress.ip_address(address).is_loopback
+    except ValueError:
+        return False
+
+
+def client_address(request: web.BaseRequest) -> str:
+    """Who is calling, for the refusal budget. The listener binds loopback and
+    sits behind the bot owner's reverse proxy on the same host, so only a
+    loopback peer's `X-Forwarded-For` is believed, and only its last entry:
+    the address that reverse proxy saw. Earlier entries are whatever the
+    caller (or an upstream proxy) claimed, and are ignored."""
+
+    peer = request.remote or ""
+    if _is_loopback(peer):
+        hops = [
+            hop.strip()
+            for value in request.headers.getall("X-Forwarded-For", ())
+            for hop in value.split(",")
+            if hop.strip()
+        ]
+        if hops:
+            return hops[-1]
+    return peer
+
+
 def _snowflake(raw: object) -> int | None:
     text = raw if isinstance(raw, str) else ""
     return int(text) if text.isdecimal() and 0 < len(text) <= 20 and int(text) > 0 else None
@@ -371,8 +399,12 @@ class ActivityEndpoints:
         secret = await self._secret()
         if client_id is None or secret is None:
             return _error(503, "unavailable")
+        client = client_address(request)
         try:
-            token = await self._oauth.exchange_code(client_id, secret, code)
+            token = await self._oauth.exchange_code(client_id, secret, code, client=client)
+            # Checked (and remembered) now, so this sign-in's ticket requests
+            # don't need Discord's budget again.
+            await self._oauth.user_id(token, client_id, client=client, sign_in=True)
         except RateLimited:
             return _error(429, "busy")
         except OAuthError as exc:
@@ -405,7 +437,7 @@ class ActivityEndpoints:
             return _error(400, "invalid request")
         guild_id = parsed.guild_id
         try:
-            user_id = await self._oauth.user_id(token, client_id)
+            user_id = await self._oauth.user_id(token, client_id, client=client_address(request))
         except RateLimited:
             return _error(429, "busy")
         except OAuthError as exc:
@@ -434,5 +466,6 @@ __all__ = [
     "OfficeChoice",
     "activity_config_script",
     "activity_office_ws",
+    "client_address",
     "parse_office_request",
 ]

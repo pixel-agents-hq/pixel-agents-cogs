@@ -1,0 +1,10 @@
+{
+  "name": "pixel-agents-activity-bootstrap",
+  "private": true,
+  "description": "Builds the Discord Activity bootstrap pixelagents adds to the Pixel Agents webview.",
+  "license": "MIT",
+  "dependencies": {
+    "@discord/embedded-app-sdk": "2.5.0",
+    "esbuild": "0.28.2"
+  }
+}

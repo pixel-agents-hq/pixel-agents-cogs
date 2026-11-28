@@ -49,7 +49,7 @@ flowchart TB
     codec --> domain
     appstate -->|state / mutate / watch| corridor
 
-    cctv["cctv"] -->|"office_state (discord + editor)<br/>webview_bundle_status<br/>office_character*"| adapters
+    cctv["cctv"] -->|"office_state (discord + editor)<br/>webview_bundle_status, build_activity_bundle<br/>office_character*"| adapters
     floorplan["floorplan"] -->|"set_office_layout (discord)"| adapters
     architect["architect"] -->|"office_state / set_office_layout (editor)"| adapters
     painter["painter"] -->|"office_state / set_office_layout (editor)"| adapters
@@ -148,6 +148,17 @@ their writes, but a process crash mid-`_sync_dist` can leave a partial
 `webview_dist` behind rather than rolling back to the previous build. A
 failed build never fails `cog_load`: `webview_bundle_status()` reports the
 failure and the owner is notified best-effort, but the cog stays loaded.
+
+Once a consumer has asked for the Discord Activity build
+(`build_activity_bundle`, which creates `cog_data_path/activity_build`),
+`build_webview` follows every webview build with `build_activity`: under
+the same lock it copies `webview_build_scripts/activity/` into
+`activity_build`, runs `npm ci --ignore-scripts` there when the lockfile
+changed, bundles `bootstrap.ts` with esbuild, and writes `activity.html`,
+`activity/bootstrap.js` and `activity/THIRD_PARTY_LICENSES.txt` into
+`webview_dist`, marked with the webview commit it was built for
+(`.built_activity`). Its failure is reported in the status line and never
+fails the webview build.
 
 `_sync_dist` also copies the checkout's `LICENSE` to
 `webview_dist/LICENSE.txt`, since the bundle CCTV serves is a copy of MIT

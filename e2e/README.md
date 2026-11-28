@@ -39,6 +39,15 @@ cooperates end to end.
   layout from Pixel Index's real staging environment onto the `DISCORD`
   office-state kind (every other scenario here only ever writes `EDITOR`),
   observed on cctv's discord pipeline.
+- `test_activity_office.py` — the office as a Discord Activity: pixelagents'
+  real Activity build (the real Embedded App SDK, bundled by a real
+  esbuild) runs inside a stand-in for the Discord client's parent frame,
+  which answers the SDK's real handshake and `authorize`/`authenticate`.
+  The Activity's token exchange and ticket requests reach cctv's real
+  listener, checked against a loopback stand-in for Discord's OAuth API,
+  and the office loads over the Activity's own socket route: a public
+  office for anyone, a private one only for a member, and the editor
+  office outside a server.
 
 ## Running it
 

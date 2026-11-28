@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Pre-populate the runner's npm cache (~/.npm) with the dependencies of the
-# two things pixelagents builds on its first cog_load: the vendored Pixel
-# Agents webview and the pixatar CLI (pinned Pixel Index commit).
+# things pixelagents builds: the vendored Pixel Agents webview and the
+# pixatar CLI (pinned Pixel Index commit) on its first cog_load, and the
+# Discord Activity bootstrap once a consumer asks for it.
 #
 # Both builds run `npm ci` against a fresh clone inside cog_load, so a cold
 # npm cache makes that first load as slow as the npm registry is that day.
@@ -33,4 +34,10 @@ warm webview "$(tr -d '[:space:]' < "${infra}/webview_vendor.repo")" \
 warm pixatar "https://github.com/pixel-agents-hq/index.git" \
   "$(tr -d '[:space:]' < "${infra}/pixatar_vendor.commit")" \
   "$(python3 -c 'import re,sys; print(re.search(r"^WORKSPACE = \"([^\"]+)\"", open(sys.argv[1]).read(), re.M).group(1))' "${infra}/pixatar_build.py")"
+echo "🔥 Warming npm cache for the Activity bootstrap"
+mkdir -p "${work}/activity" &&
+  cp "${infra}/webview_build_scripts/activity/package.json" \
+    "${infra}/webview_build_scripts/activity/package-lock.json" "${work}/activity/" &&
+  (cd "${work}/activity" && npm ci --ignore-scripts --no-audit --no-fund) ||
+  echo "⚠️ Could not warm the npm cache for the Activity bootstrap; the suite will start cold."
 exit 0

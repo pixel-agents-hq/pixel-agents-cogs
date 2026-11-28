@@ -83,6 +83,7 @@ class FakeBot:
         self.guilds: list[Any] = []
         self._cogs: dict[str, Any] = {}
         self.owner_notifications: list[str] = []
+        self.persistent_views: list[Any] = []
 
     def get_guild(self, guild_id: int) -> Any:
         return None
@@ -120,6 +121,9 @@ class FakeBot:
 
     async def unload_extension(self, name: str) -> None:
         return
+
+    def add_view(self, view: Any) -> None:
+        self.persistent_views.append(view)
 
 
 class ScriptedLLM:

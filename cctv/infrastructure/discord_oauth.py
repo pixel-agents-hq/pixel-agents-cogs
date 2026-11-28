@@ -19,11 +19,13 @@ restricted by Discord:
 - at most `MAX_CONCURRENT_CALLS` calls run at once (others wait);
 - a Discord 429 backs its route off for `Retry-After`;
 - as a hard guard, once Discord has answered `REJECTIONS_LIMIT` calls with
-  any 4xx in ten minutes, no further call is made until the oldest ages out
-  (`Shielded`, a 503 with `Retry-After`). Discord restricts an address after
-  about 10,000 answers of 401, 403 or 429 in ten minutes, which would also
-  cut off the bot's own gateway and REST traffic from the host: keeping the
-  bot reachable comes before Activity sign-ins during a flood.
+  an answer its invalid-request limit counts (401, 403, or a 429 that isn't
+  `X-RateLimit-Scope: shared`) in ten minutes, no further call is made until
+  the oldest ages out (`Shielded`, a 503 with `Retry-After`). Discord
+  restricts an address after about 10,000 of those in ten minutes, which
+  would also cut off the bot's own gateway and REST traffic from the host:
+  keeping the bot reachable comes before Activity sign-ins. Junk codes draw
+  400s, which that limit doesn't count, so they never raise the shield.
 """
 
 from __future__ import annotations
@@ -57,8 +59,9 @@ REQUEST_TIMEOUT_SECONDS = 10.0
 # one is honoured up to the cap.
 DEFAULT_RETRY_AFTER_SECONDS = 5.0
 MAX_RETRY_AFTER_SECONDS = 300.0
-# Calls Discord answered with any 4xx allowed in REJECTIONS_WINDOW before no
-# further call is made. Discord restricts an address at about 10,000.
+# Answers Discord's invalid-request limit counts (401, 403, non-shared 429)
+# allowed in REJECTIONS_WINDOW before no further call is made. Discord
+# restricts an address at about 10,000.
 REJECTIONS_LIMIT = 300
 REJECTIONS_WINDOW = 600.0
 # A token endpoint answering 401/403 means the client id or secret is wrong:
@@ -84,7 +87,7 @@ class RateLimited(OAuthError):
 
 
 class Shielded(OAuthError):
-    """Not tried: too many of Discord's answers were 4xx lately, so no call
+    """Not tried: too many of Discord's answers were 401, 403 or 429 lately, so no call
     is made until `retry_after` seconds pass, to keep the bot's address
     clear of Discord's invalid-request limit."""
 
@@ -109,6 +112,17 @@ def _retry_after(response: aiohttp.ClientResponse, body: object) -> float:
     except (TypeError, ValueError):
         return DEFAULT_RETRY_AFTER_SECONDS
     return min(max(seconds, 1.0), MAX_RETRY_AFTER_SECONDS)
+
+
+def _counts_as_invalid(response: aiohttp.ClientResponse) -> bool:
+    """Whether Discord's invalid-request limit counts this answer: a 401, a
+    403, or a 429 other than one on a shared rate limit."""
+
+    if response.status in (401, 403):
+        return True
+    return (
+        response.status == 429 and response.headers.get("X-RateLimit-Scope", "").lower() != "shared"
+    )
 
 
 def _lifetime(body: object) -> float:
@@ -234,14 +248,14 @@ class DiscordOAuth:
                 raise RateLimited(f"Discord asked to back off {route}", retry_after=wait)
             shield = self._shield_wait()
             if shield > 0:
-                raise Shielded("too many 4xx answers from Discord lately", retry_after=shield)
+                raise Shielded("too many refusals from Discord lately", retry_after=shield)
             try:
                 async with self._client().request(
                     method, f"{self._api}{path}", data=data, headers=headers
                 ) as response:
                     status = response.status
                     body = await response.json(content_type=None) if status in (200, 429) else None
-                    if 400 <= status < 500:
+                    if _counts_as_invalid(response):
                         self._rejections.append(self._clock())
                     if status == 429:
                         retry = _retry_after(response, body)

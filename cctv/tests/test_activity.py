@@ -49,8 +49,10 @@ class _FakeDiscord:
             "stranger-code": "token-stranger",
             "other-app-code": "token-other-app",
         }
-        # Seconds Discord's next answer asks to wait (a 429), if set.
+        # Seconds Discord's next answer asks to wait (a 429), if set, and the
+        # rate limit's scope it names.
         self.retry_after: str | None = None
+        self.scope = "user"
         # access token -> (application id, user id)
         self.tokens = {"token-member": (CLIENT_ID, MEMBER), "token-stranger": (CLIENT_ID, STRANGER)}
         self.tokens["token-other-app"] = (OTHER_APP, MEMBER)
@@ -79,7 +81,7 @@ class _FakeDiscord:
         return web.json_response(
             {"message": "You are being rate limited."},
             status=429,
-            headers={"Retry-After": retry},
+            headers={"Retry-After": retry, "X-RateLimit-Scope": self.scope},
         )
 
     async def token(self, request: web.Request) -> web.Response:
@@ -493,29 +495,40 @@ class TestJunkNeverBlocksARealSignIn(_ActivityFixture):
         self.assertEqual(await self._sign_in("good-code"), 429)
         self.assertEqual(self.discord.token_calls, 1)
 
-    async def test_a_flood_of_junk_codes_stops_calling_discord_at_the_cap(self) -> None:
+    async def test_a_flood_of_400_refused_codes_never_shields_a_real_sign_in(self) -> None:
         self.oauth._rejections_limit = 5  # noqa: SLF001
-        for n in range(5):
+        for n in range(50):
             self.assertEqual(await self._sign_in(f"junk-{n}", self.SHARED), 400)
-        # Past the cap: refused here, with how long to wait, without a call.
-        for n in range(5, 20):
-            async with self.http.post(
-                f"{self.base}/api/token", json={"code": f"junk-{n}"}, headers=self.SHARED
-            ) as r:
-                self.assertEqual(r.status, 503)
-                self.assertEqual(r.headers["Retry-After"], "600")
-        self.assertEqual(self.discord.token_calls, 5)
-        # That holds for real sign-ins too: the bot's address comes first.
-        self.assertEqual(await self._sign_in("good-code"), 503)
-        self.now += 601
-        self.assertEqual(await self._sign_in("good-code"), 200)
-
-    async def test_a_valid_sign_in_works_below_the_cap(self) -> None:
-        self.oauth._rejections_limit = 5  # noqa: SLF001
-        for n in range(4):
-            self.assertEqual(await self._sign_in(f"junk-{n}", self.SHARED), 400)
+        # Discord's invalid-request limit doesn't count 400s: nothing to shield.
+        self.assertEqual(self.discord.token_calls, 50)
         self.assertEqual(await self._sign_in("good-code", self.SHARED), 200)
         self.assertEqual(await self._shared_ticket("token-member"), 200)
+
+    async def test_refusals_the_limit_counts_raise_the_shield(self) -> None:
+        self.oauth._rejections_limit = 3  # noqa: SLF001
+        self.secret = "not-the-secret"
+        for _ in range(3):
+            # 401 invalid_client; the minute's back-off is waited out each time.
+            self.assertEqual(await self._sign_in("good-code"), 503)
+            self.now += 61
+        self.secret = SECRET
+        # Past the cap: refused here, with how long to wait, without a call.
+        async with self.http.post(f"{self.base}/api/token", json={"code": "good-code"}) as r:
+            self.assertEqual(r.status, 503)
+            self.assertEqual(int(r.headers["Retry-After"]), 600 - 3 * 61)
+        self.assertEqual(self.discord.token_calls, 3)
+        # The bot's address comes first; once the oldest ages out, it lifts.
+        self.now += 600
+        self.assertEqual(await self._sign_in("good-code"), 200)
+
+    async def test_shared_scope_429s_dont_count(self) -> None:
+        self.oauth._rejections_limit = 2  # noqa: SLF001
+        self.discord.scope = "shared"
+        for _ in range(3):
+            self.discord.retry_after = "1"
+            self.assertEqual(await self._sign_in("good-code"), 429)
+            self.now += 2
+        self.assertEqual(await self._sign_in("good-code"), 200)
 
     async def test_discords_429s_count_toward_the_cap(self) -> None:
         self.oauth._rejections_limit = 2  # noqa: SLF001

@@ -608,7 +608,8 @@ sequenceDiagram
   count); at most 8 calls to Discord run at once, the rest waiting their
   turn; a Discord 429 backs that route off for its `Retry-After`; a token
   endpoint refusing the client id or secret (401/403) stops sign-ins for a
-  minute; and once Discord has answered 300 calls with any 4xx in ten
+  minute; and once Discord has answered 300 calls with 401, 403 or non-shared 429 (what
+  its invalid-request limit counts; the 400s junk codes draw don't) in ten
   minutes, no further call is made until the oldest ages out: sign-ins,
   real ones included, get 503 with `Retry-After`. Discord restricts an
   address after about 10,000 answers of 401, 403 or 429 in ten minutes,

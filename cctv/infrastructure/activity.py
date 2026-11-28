@@ -86,6 +86,7 @@ _CONFIG_SCRIPT = """(function () {
   var NO_OFFICE = "This server has no Pixel Agents office you can watch here.";
   var NO_EDITOR = "The editor office isn't available right now.";
   var GONE = "This office is no longer available to you here.";
+  var SIGNED_OUT = "Your sign-in here has ended. Close the Activity and open it again.";
 
   function notice(text, label, action) {
     var note = document.getElementById('cctv-activity-notice');
@@ -126,8 +127,10 @@ _CONFIG_SCRIPT = """(function () {
         Authorization: 'Bearer ' + token
       },
       body: JSON.stringify(office.request)
-    }).then(function (r) { return r.ok ? r.json() : null; })
-      .catch(function () { return null; });
+    }).then(function (r) {
+      if (r.status === 401) { notice(SIGNED_OUT); return { signedOut: true }; }
+      return r.ok ? r.json() : null;
+    }).catch(function () { return null; });
   }
 
   function nextTicket() {
@@ -183,6 +186,7 @@ _CONFIG_SCRIPT = """(function () {
       var editor = !guild || location.hash === '#editor';
       office = { request: editor ? { office: 'editor' } : { office: 'guild', guild: guild } };
       return requestTicket().then(function (data) {
+        if (data && data.signedOut) { return false; }
         if (!data || !data.ticket || typeof data.ws !== 'string') {
           if (editor) { notice(NO_EDITOR); }
           else { notice(NO_OFFICE, 'Open the editor office', function () { show(true); }); }
@@ -377,10 +381,7 @@ class ActivityEndpoints:
         if client_id is None or secret is None:
             return _error(503, "unavailable")
         try:
-            token = await self._oauth.exchange_code(client_id, secret, code)
-            # Checked (and remembered) now, so this sign-in's ticket requests
-            # don't need Discord's budget again.
-            await self._oauth.user_id(token, client_id)
+            token, _ = await self._oauth.sign_in(client_id, secret, code)
         except RateLimited:
             return _error(429, "busy")
         except Refused:
@@ -400,8 +401,10 @@ class ActivityEndpoints:
 
     async def handle_ticket(self, request: web.Request) -> web.Response:
         """A ticket for one office's socket, for the user the bearer token
-        signs in. Every office the user may not watch -- none open, a private
-        one they aren't a member of -- answers the same 404."""
+        signs in. Only a token this listener signed in (`api/token`) is
+        accepted, looked up without calling Discord; any other bearer is 401.
+        Every office the user may not watch -- none open, a private one they
+        aren't a member of -- answers the same 404."""
 
         if not await self._available():
             raise web.HTTPNotFound()
@@ -414,15 +417,9 @@ class ActivityEndpoints:
         if parsed is None:
             return _error(400, "invalid request")
         guild_id = parsed.guild_id
-        try:
-            user_id = await self._oauth.user_id(token, client_id)
-        except RateLimited:
-            return _error(429, "busy")
-        except Refused:
+        user_id = self._oauth.signed_in_user(token)
+        if user_id is None:
             return _error(401, "sign in first")
-        except OAuthError as exc:
-            self._log.info("cctv/activity: %s", exc)
-            return _error(503, "unavailable")
         try:
             ticket = await self._issue_ticket(user_id, guild_id)
         except Exception:

@@ -93,7 +93,7 @@ on every listener, and what is disclosed about each.
 | corridor A2A (uvicorn/Starlette) | `127.0.0.1:8931` | Only requests with `Authorization: Bearer <token>`, a random token minted on each corridor load and handed only to in-process callers (`corridor.a2a_auth_headers()`); anything else gets 401 | Request body 1 MiB (413) |
 | cctv office/editor (aiohttp) | `127.0.0.1:3210` | Public and unlisted offices: anyone with the link. Private offices: nothing is sent until the socket presents a one-minute, single-use, guild-bound Dashboard ticket for a member, and the `Origin` must match `[p]cctv publicurl` once set. Office writes re-check bot owner or keyholder on every write. The editor page: anyone may watch; writes need an in-band, one-minute, single-use editor ticket for a Dashboard user who passes the edit gate (bot owner only by default; `[p]cctv editors set` opts in one server's corridor permission group), re-checked on every write, so an anonymous socket's edits are dropped | Client frame 4 MiB; ticket wait 10 s; `/cctv/health` returns aggregate counts only |
 | cctv static assets (Red Web Dashboard route) | Dashboard's | Anyone | Paths resolved inside the built webview only (no `..`, `\`, `:`, control characters, or symlink escape) |
-| cctv Discord Activity (`/cctv/activity`, same aiohttp listener) | `127.0.0.1:3210` | Every route is 404 until the bot owner runs `[p]cctv activity enable`. The page and assets: anyone (the same guild-agnostic bundle as the static route). `api/token`: exchanges an OAuth code with Red Web Dashboard's client secret, read from the loaded Dashboard cog at use and never stored by CCTV or returned. `api/ticket`: only a bearer token Discord vouches for (`GET /oauth2/@me`) and that was issued to the bot's own application; it mints the browser's single-use, 60-second, office-bound ticket on the browser's rules, checked bot-side (a private office needs a member; every office the user may not watch answers the same 404; an editor ticket proves identity and the socket checks the edit gate on every write). The office sockets skip the Dashboard `Origin` check because their ticket comes from a bearer request, not a cookie | Request body 4 KiB; an OAuth code or bearer token must be 1-512 ASCII URL-safe characters (else refused without calling Discord); a code or token Discord refused is remembered for 10 minutes, so a repeat costs no call; at most 8 calls to Discord at once (others wait); a Discord 429 backs that route off for its `Retry-After`. Nothing is counted or blocked per caller. The office sockets' frame and ticket-wait limits |
+| cctv Discord Activity (`/cctv/activity`, same aiohttp listener) | `127.0.0.1:3210` | Every route is 404 until the bot owner runs `[p]cctv activity enable`. The page and assets: anyone (the same guild-agnostic bundle as the static route). `api/token`: exchanges an OAuth code with Red Web Dashboard's client secret, read from the loaded Dashboard cog at use and never stored by CCTV or returned. `api/token` is the only route that calls Discord: the code exchange, then `GET /oauth2/@me` to learn the new token's user and that it was issued to the bot's own application. `api/ticket` accepts only a token this listener signed in that way, never calling Discord, so any other bearer is 401 at no cost; it mints the browser's single-use, 60-second, office-bound ticket on the browser's rules, checked bot-side (a private office needs a member; every office the user may not watch answers the same 404; an editor ticket proves identity and the socket checks the edit gate on every write). The office sockets skip the Dashboard `Origin` check because their ticket comes from a bearer request, not a cookie | Request body 4 KiB; an OAuth code or bearer token must be 1-512 ASCII URL-safe characters (else refused without calling Discord); a code Discord refused is remembered for 10 minutes, so a repeat costs no call; at most 8 calls to Discord at once (others wait); a Discord 429 backs that route off for its `Retry-After`; a refused client secret stops sign-ins for a minute; and after 200 answers of 401, 403 or 429 from Discord in ten minutes no further call is made until that eases. Nothing is counted or blocked per caller. The office sockets' frame and ticket-wait limits |
 | suggestionbox MCP (FastMCP) | `127.0.0.1:8934` | Only requests with the suggestionbox listener's own bearer token, minted on each load and handed only to corridor's MCP client (`RegisteredMcpServer.headers`); anything else gets 401 | Request body 4 MiB; DNS-rebinding protection on loopback (FastMCP) |
 | telephonepole | none (outbound only) | Connects to MCP servers the bot owner registers | 30 s discovery handshake; image/resource payloads capped at 8 MiB |
 
@@ -109,20 +109,29 @@ Discord's proxy, so all of them share one upstream address, and Discord
 documents no header naming the real user; nothing is therefore counted or
 blocked per caller address, which would let a few junk requests lock everyone
 out. Junk can't stop a valid sign-in: a malformed code or token is refused
-locally, a refused one is remembered so repeating it costs nothing, and no
-well-formed request is refused before Discord has been asked, except while
-Discord itself has asked the route to back off (its 429 and `Retry-After`).
-A sign-in checks and caches its own token, so a signed-in user's tickets
-don't call Discord again.
+locally, a refused code is remembered so repeating it costs nothing, and no
+well-formed sign-in is refused before Discord has been asked, except while
+Discord has asked the route to back off (its 429 and `Retry-After`) or has
+refused the client secret. Ticket requests never call Discord: only a token
+this listener signed in is accepted, so junk bearers can't make Discord
+answer with refusals. That matters beyond the Activity: Discord restricts an
+address after about 10,000 answers of 401, 403 or 429 in ten minutes, which
+would cut off the bot's own traffic from the host too. Junk codes draw 400s,
+which that limit doesn't count, and a hard ceiling of 200 such refusals in
+ten minutes stops further calls well before it.
 
 Remaining limits, stated plainly: a flood of distinct, well-formed junk
 codes still costs one call to Discord each (queued at most 8 at a time), and
 if it drives Discord to rate-limit the application, real sign-ins get 429
-until Discord's `Retry-After` passes. The user behind a token is cached for
-30 minutes, so a token Discord has revoked keeps working here for up to 30
-minutes; membership of a private office and the edit gate are still checked
-bot-side on every ticket and every write, and `red_delete_data_for_user`
-clears the user's cached tokens at once. Nothing the Activity's page sends is
+until Discord's `Retry-After` passes. A sign-in is remembered while the
+Activity keeps using it (two hours idle at most, never past the token's own
+expiry, which Discord sets at about a week), so a token Discord has revoked,
+for example by the user removing the app's access, keeps opening tickets
+here for that long. Membership of a private office and the edit gate are
+still checked bot-side on every ticket and every write, and
+`red_delete_data_for_user` forgets the user's sign-ins at once. A bot
+restart forgets every sign-in, and each Activity open then asks its user to
+reopen it. Nothing the Activity's page sends is
 trusted: the server picks the user from Discord's answer for the token and
 treats the SDK's guild id as a choice to check, not a grant.
 
@@ -165,8 +174,9 @@ servers; what the office pages show and to whom; and whether each
   members and rich presence. The optional Discord Activity shows the same
   offices on the same rules and asks Discord only for `identify`; its
   sign-in token is passed through and never stored, and which user a
-  token belongs to is held in memory for 30 minutes (keyed by the
-  token's SHA-256) and forgotten on a data deletion request.
+  token belongs to is held in memory while the Activity keeps using it
+  (two hours idle at most; keyed by the token's SHA-256) and forgotten on a
+  data deletion request.
 - **Stored user data.** It is listed in
   [`architecture.md#end-user-data`](architecture.md#end-user-data), and
   `red_delete_data_for_user` deletes all of it. The one exception is the

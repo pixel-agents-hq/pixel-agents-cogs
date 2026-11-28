@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import secrets
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -38,7 +39,16 @@ class _FakeDiscord:
 
     def __init__(self) -> None:
         self.exchanges: list[dict[str, str]] = []
+        self.token_calls = 0
         self.lookups = 0
+        # What Discord says a new token lives for.
+        self.expires_in = 604800
+        # code -> the access token it trades for
+        self.codes = {
+            "good-code": "token-member",
+            "stranger-code": "token-stranger",
+            "other-app-code": "token-other-app",
+        }
         # Seconds Discord's next answer asks to wait (a 429), if set.
         self.retry_after: str | None = None
         # access token -> (application id, user id)
@@ -73,13 +83,19 @@ class _FakeDiscord:
         )
 
     async def token(self, request: web.Request) -> web.Response:
+        self.token_calls += 1
         if (limited := self._limited()) is not None:
             return limited
         form = {key: str(value) for key, value in (await request.post()).items()}
         self.exchanges.append(form)
-        if form.get("client_secret") != SECRET or form.get("code") != "good-code":
+        if form.get("client_secret") != SECRET:
+            return web.json_response({"error": "invalid_client"}, status=401)
+        token = self.codes.get(form.get("code", ""))
+        if token is None:
             return web.json_response({"error": "invalid_grant"}, status=400)
-        return web.json_response({"access_token": "token-member", "refresh_token": "r"})
+        return web.json_response(
+            {"access_token": token, "refresh_token": "r", "expires_in": self.expires_in}
+        )
 
     async def me(self, request: web.Request) -> web.Response:
         if (limited := self._limited()) is not None:
@@ -172,6 +188,12 @@ class _ActivityFixture(unittest.IsolatedAsyncioTestCase):
     @staticmethod
     async def _origin() -> str | None:
         return "https://dash.example.com"
+
+    async def _sign_in(self, code: str, headers: dict[str, str] | None = None) -> int:
+        async with self.http.post(
+            f"{self.base}/api/token", json={"code": code}, headers=headers or {}
+        ) as r:
+            return r.status
 
     async def _ticket(self, token: str, body: dict[str, object]) -> tuple[int, dict[str, Any]]:
         async with self.http.post(
@@ -280,8 +302,17 @@ class TestTokenExchange(_ActivityFixture):
         self.assertEqual(self.discord.exchanges, [])
 
 
-class TestActivityTickets(_ActivityFixture):
-    async def test_a_ticket_is_for_the_discord_verified_user_and_that_office(self) -> None:
+class _SignedIn(_ActivityFixture):
+    """The member and the stranger have each signed in through `api/token`."""
+
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        self.assertEqual(await self._sign_in("good-code"), 200)
+        self.assertEqual(await self._sign_in("stranger-code"), 200)
+
+
+class TestActivityTickets(_SignedIn):
+    async def test_a_ticket_is_for_the_signed_in_user_and_that_office(self) -> None:
         status, body = await self._ticket("token-member", {"office": "guild", "guild": str(GUILD)})
         self.assertEqual(status, 200)
         self.assertEqual(body["ws"], f"ws/office/{GUILD}")
@@ -308,10 +339,10 @@ class TestActivityTickets(_ActivityFixture):
         self.assertEqual(stranger, missing)
         self.assertEqual(stranger[0], 404)
 
-    async def test_an_unverified_token_gets_nothing(self) -> None:
-        for token in ("token-unknown", "token-other-app"):
-            status, _ = await self._ticket(token, {"office": "editor"})
-            self.assertEqual(status, 401, token)
+    async def test_a_token_of_another_application_never_signs_in(self) -> None:
+        self.assertEqual(await self._sign_in("other-app-code"), 503)
+        status, _ = await self._ticket("token-other-app", {"office": "editor"})
+        self.assertEqual(status, 401)
         async with self.http.post(f"{self.base}/api/ticket", json={"office": "editor"}) as r:
             self.assertEqual(r.status, 401)
 
@@ -320,13 +351,35 @@ class TestActivityTickets(_ActivityFixture):
             status, _ = await self._ticket("token-member", body)  # type: ignore[arg-type]
             self.assertEqual(status, 400, body)
 
-    async def test_the_users_token_is_checked_with_discord_once_per_cache_window(self) -> None:
+    async def test_tickets_never_call_discord(self) -> None:
+        lookups = self.discord.lookups
         for _ in range(3):
             await self._ticket("token-member", {"office": "editor"})
-        self.assertEqual(self.discord.lookups, 1)
+        self.assertEqual(self.discord.lookups, lookups)
 
 
-class TestActivitySockets(_ActivityFixture):
+class TestActivitySessions(_SignedIn):
+    async def test_a_sign_in_stays_alive_while_used(self) -> None:
+        for _ in range(4):
+            self.now += 3600
+            status, _ = await self._ticket("token-member", {"office": "editor"})
+            self.assertEqual(status, 200)
+
+    async def test_an_idle_sign_in_ends(self) -> None:
+        self.now += 2 * 3600 + 1
+        status, _ = await self._ticket("token-member", {"office": "editor"})
+        self.assertEqual(status, 401)
+
+    async def test_a_sign_in_ends_with_its_token(self) -> None:
+        self.discord.expires_in = 5000
+        self.assertEqual(await self._sign_in("good-code"), 200)
+        self.now += 3000
+        self.assertEqual((await self._ticket("token-member", {"office": "editor"}))[0], 200)
+        self.now += 3000
+        self.assertEqual((await self._ticket("token-member", {"office": "editor"}))[0], 401)
+
+
+class TestActivitySockets(_SignedIn):
     async def _connect(self, path: str) -> Any:
         url = f"{self.base.replace('http', 'ws', 1)}/{path}"
         return await self.http.ws_connect(
@@ -366,15 +419,9 @@ class TestActivitySockets(_ActivityFixture):
 class TestJunkNeverBlocksARealSignIn(_ActivityFixture):
     """Every Activity user arrives through Discord's proxy, from one shared
     upstream address. Junk from that same address must never stop a valid
-    sign-in or a signed-in user's tickets."""
+    sign-in, nor make Discord answer this listener with refusals."""
 
     SHARED = {"X-Forwarded-For": "203.0.113.7"}
-
-    async def _sign_in(self, code: str) -> int:
-        async with self.http.post(
-            f"{self.base}/api/token", json={"code": code}, headers=self.SHARED
-        ) as r:
-            return r.status
 
     async def _shared_ticket(self, token: str) -> int:
         async with self.http.post(
@@ -388,43 +435,56 @@ class TestJunkNeverBlocksARealSignIn(_ActivityFixture):
         self,
     ) -> None:
         for n in range(100):
-            self.assertEqual(await self._sign_in(f"junk-code-{n}"), 400)
+            self.assertEqual(await self._sign_in(f"junk-code-{n}", self.SHARED), 400)
             self.assertEqual(await self._shared_ticket(f"junk-token-{n}"), 401)
-        self.assertEqual(await self._sign_in("good-code"), 200)
+        self.assertEqual(await self._sign_in("good-code", self.SHARED), 200)
         self.assertEqual(await self._shared_ticket("token-member"), 200)
-
-    async def test_a_repeated_junk_code_or_token_costs_no_further_call(self) -> None:
-        for _ in range(5):
-            self.assertEqual(await self._sign_in("bad-code"), 400)
-            self.assertEqual(await self._shared_ticket("token-unknown"), 401)
-        self.assertEqual(len(self.discord.exchanges), 1)
+        # Only the real sign-in checked a token with Discord.
         self.assertEqual(self.discord.lookups, 1)
-        # Remembered for a while, then asked about again.
-        self.now += 601
-        self.assertEqual(await self._sign_in("bad-code"), 400)
-        self.assertEqual(len(self.discord.exchanges), 2)
 
-    async def test_a_malformed_bearer_is_refused_without_asking_discord(self) -> None:
-        for token in ("a b", "x" * 600, "étè"):
+    async def test_unknown_bearers_never_reach_discord(self) -> None:
+        for token in [secrets.token_urlsafe(30) for _ in range(50)] + ["a b", "x" * 600, "étè"]:
             self.assertEqual(await self._shared_ticket(token), 401)
         self.assertEqual(self.discord.lookups, 0)
+        self.assertEqual(self.discord.token_calls, 0)
 
-    async def test_a_signed_in_users_tickets_need_no_further_check(self) -> None:
-        self.assertEqual(await self._sign_in("good-code"), 200)
-        lookups = self.discord.lookups
+    async def test_a_repeated_junk_code_costs_no_further_call(self) -> None:
         for _ in range(5):
-            self.assertEqual(await self._shared_ticket("token-member"), 200)
-        self.assertEqual(self.discord.lookups, lookups)
+            self.assertEqual(await self._sign_in("bad-code", self.SHARED), 400)
+        self.assertEqual(len(self.discord.exchanges), 1)
+        # Remembered for a while, then asked about again.
+        self.now += 601
+        self.assertEqual(await self._sign_in("bad-code", self.SHARED), 400)
+        self.assertEqual(len(self.discord.exchanges), 2)
 
     async def test_discords_own_429_is_honoured_then_lifted(self) -> None:
+        self.assertEqual(await self._sign_in("stranger-code"), 200)
         self.discord.retry_after = "30"
         self.assertEqual(await self._sign_in("good-code"), 429)
         self.assertEqual(await self._sign_in("good-code"), 429)
         # The second one wasn't sent: the route waits out Retry-After.
-        self.assertEqual(len(self.discord.exchanges), 0)
-        # Token checks are a separate route and keep working.
+        self.assertEqual(self.discord.token_calls, 2)
+        # Signed-in users' tickets don't depend on Discord at all.
         self.assertEqual(await self._shared_ticket("token-stranger"), 200)
         self.now += 31
+        self.assertEqual(await self._sign_in("good-code"), 200)
+
+    async def test_a_wrong_client_secret_stops_asking(self) -> None:
+        self.secret = "not-the-secret"
+        self.assertEqual(await self._sign_in("good-code"), 503)
+        self.assertEqual(await self._sign_in("good-code"), 429)
+        self.assertEqual(self.discord.token_calls, 1)
+
+    async def test_refusals_from_discord_have_a_hard_ceiling(self) -> None:
+        self.oauth._invalid_limit = 2  # noqa: SLF001
+        for _ in range(2):
+            self.discord.retry_after = "1"
+            self.assertEqual(await self._sign_in("good-code"), 429)
+            self.now += 2
+        # Two refusals in ten minutes: no further call until they age out.
+        self.assertEqual(await self._sign_in("good-code"), 429)
+        self.assertEqual(self.discord.token_calls, 2)
+        self.now += 601
         self.assertEqual(await self._sign_in("good-code"), 200)
 
 

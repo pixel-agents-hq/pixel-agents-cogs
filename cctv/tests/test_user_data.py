@@ -40,13 +40,14 @@ class TestRedDeleteDataForUser(unittest.IsolatedAsyncioTestCase):
                 cog._tickets = TicketStore()
                 cog._oauth = DiscordOAuth()
                 token = cog._tickets.mint(USER, GUILD)
-                cog._oauth._users["mine"] = (USER, float("inf"))
-                cog._oauth._users["theirs"] = (OTHER, float("inf"))
+                cog._oauth._remember("mine", USER, 3600.0)
+                cog._oauth._remember("theirs", OTHER, 3600.0)
 
                 await CCTV.red_delete_data_for_user(cog, requester=requester, user_id=USER)
 
                 self.assertIsNone(cog._tickets.consume(token, GUILD))
-                self.assertEqual(list(cog._oauth._users), ["theirs"])
+                self.assertIsNone(cog._oauth.signed_in_user("mine"))
+                self.assertEqual(cog._oauth.signed_in_user("theirs"), OTHER)
 
 
 class TestEndUserDataStatement(unittest.TestCase):

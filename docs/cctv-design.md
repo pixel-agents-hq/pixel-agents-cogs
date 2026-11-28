@@ -554,11 +554,12 @@ sequenceDiagram
     A->>S: POST api/token {code}
     S->>O: exchange (client id + Red Web Dashboard's client secret)
     O-->>S: access token
+    S->>O: GET /oauth2/@me: whose, and issued to this application?
+    S->>S: remember the sign-in
     S-->>A: {access_token}
     A->>D: authenticate(access_token)
     A->>S: POST api/ticket (Bearer token) {office}
-    S->>O: GET /oauth2/@me (once per sign-in, then cached 30 min)
-    S->>S: office open? private: member? mint ticket
+    S->>S: a sign-in of this listener? office open? private: member? mint ticket
     S-->>A: {ticket, ws}
     A->>S: WebSocket ws/office/<id> or ws/editor, then {"type":"authorize"}
 ```
@@ -570,12 +571,13 @@ sequenceDiagram
 - **Office.** The SDK's `guildId` picks the guild office; with none (a DM)
   or after the in-page switch (`#editor`), the editor office. The guild id
   only selects: it is never trusted for access.
-- **Who.** `api/ticket` resolves the bearer token with Discord
-  (`GET /oauth2/@me`) and accepts it only when it was issued to the bot's
-  own application, so a token from another app can't stand in for its
-  user. It is checked once, right after the code exchange, and the answer
-  is cached in memory for 30 minutes, keyed by the
-  token's SHA-256.
+- **Who.** Only `api/token` calls Discord: it exchanges the code, then
+  checks the new token with `GET /oauth2/@me` (its user, and that it was
+  issued to the bot's own application), and remembers the sign-in, keyed by
+  the token's SHA-256, remembered in memory while the Activity keeps using it (two hours idle at most, and never past the token's own expiry). `api/ticket` accepts only a token this
+  listener signed in that way and never calls Discord, so any other bearer
+  answers 401 at no cost; the page then asks the user to reopen the
+  Activity, as it does once a sign-in has ended (after a bot restart too).
 - **Access.** The same as the browser's, checked bot-side: a ticket is
   minted only for an open office the user may watch (`_mint_office_ticket`,
   shared with `/third-party/cctv/session`), so a private office needs a
@@ -597,15 +599,19 @@ sequenceDiagram
   refused without calling Discord. Nothing is counted or blocked per
   caller: every Activity request arrives through Discord's proxy, so all
   users share one upstream address, and a cap keyed on it would let a few
-  junk requests lock everyone out. Instead a code or token Discord refused
-  is remembered for 10 minutes (by SHA-256), so repeating it costs no call;
-  at most 8 calls to Discord run at once, the rest waiting their turn; and
-  a Discord 429 backs that route (code exchange or token check) off for its
-  `Retry-After`, the only time a well-formed request is refused untried
-  (429). A refused code or token answers 400/401, Discord unreachable 503.
-  The user behind a token is cached for 30 minutes, so a token Discord has
-  revoked keeps opening tickets for up to that long; membership and the
-  edit gate are still checked on every ticket and write.
+  junk requests lock everyone out. Instead a code Discord refused is
+  remembered for 10 minutes (by SHA-256), so repeating it costs no call
+  (Discord answers a junk code 400, which its invalid-request limit doesn't
+  count); at most 8 calls to Discord run at once, the rest waiting their
+  turn; a Discord 429 backs that route off for its `Retry-After`; a token
+  endpoint refusing the client id or secret (401/403) stops sign-ins for a
+  minute; and once Discord has answered 401, 403 or 429 200 times in ten
+  minutes, no further call is made until that eases, far under the level
+  at which Discord restricts the bot's address. A refused code answers 400,
+  an unknown bearer 401, Discord unreachable or misconfigured 503, and 429
+  while backing off. A sign-in Discord has revoked keeps opening tickets
+  while it is remembered; membership and the edit gate are still checked
+  on every ticket and write.
 - **Launch.** The App Launcher's Entry Point command (`DISCORD_LAUNCH_ACTIVITY`
   handler: Discord launches it) and `[p]cctv url`'s persistent **Open in
   Discord** button, which answers with a `LAUNCH_ACTIVITY` interaction

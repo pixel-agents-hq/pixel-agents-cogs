@@ -182,10 +182,10 @@ servers; what the office pages show and to whom; and whether each
   agents' activity under the same rule. Server managers can hide offline
   members and rich presence. The optional Discord Activity shows the same
   offices on the same rules and asks Discord only for `identify`; its
-  sign-in token is passed through and never stored, and which user a
-  token belongs to is held in memory while the Activity keeps using it
-  (two hours idle at most; keyed by the token's SHA-256) and forgotten on a
-  data deletion request.
+  sign-in token is passed through and never stored, and an Activity
+  session (a random id the listener issues, kept as its SHA-256, and the
+  user it signed in) is held in memory while the Activity keeps using it
+  (two hours idle at most) and forgotten on a data deletion request.
 - **Stored user data.** It is listed in
   [`architecture.md#end-user-data`](architecture.md#end-user-data), and
   `red_delete_data_for_user` deletes all of it. The one exception is the

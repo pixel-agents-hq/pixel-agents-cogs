@@ -1,5 +1,5 @@
 """Red's data deletion API: CCTV revokes a user's unspent tickets and
-forgets which Activity sign-in tokens are theirs."""
+forgets their Activity sessions."""
 
 from __future__ import annotations
 

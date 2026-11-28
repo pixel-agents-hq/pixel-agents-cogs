@@ -203,7 +203,7 @@ keyed by user, which no cog reads, writes or deletes (see
 | An account's seat record (keyed by its webview agent id, `to_agent_id(user_id)`) in each guild's Discord office (including guilds the bot has left) and the editor office | Corridor's office-state `Config` | Pixelagents |
 | The avatar PNG rendered from that character's seed code (kept while another character wears the same seed) | Pixelagents' `cog_data_path/avatars/` | Pixelagents |
 | Unspent one-minute Dashboard and Discord Activity sign-in tickets | CCTV memory | CCTV |
-| Which user each Discord Activity sign-in token belongs to, while the Activity keeps using it (two hours idle at most, never past the token's expiry; keyed by the token's SHA-256, the token itself isn't kept) | CCTV memory | CCTV |
+| Each Discord Activity session: a random id the listener issued (kept as its SHA-256) and the user it signed in, while the Activity keeps using it (two hours idle at most, never past the Discord token's expiry; the token itself isn't kept) | CCTV memory | CCTV |
 
 Corridor holds the office data as opaque JSON and cannot tell which keys
 belong to a user, so its own hook is a documented no-op and pixelagents, the

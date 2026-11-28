@@ -23,8 +23,7 @@ class CCTV(DashboardMixin, CommandsMixin, ReplyMixin, commands.Cog):
         user_id: int,
     ) -> None:
         """For every requester type: revoke the user's unspent Dashboard
-        and Activity tickets, and forget which Activity sign-in tokens are
-        theirs. CCTV's own Config is per-guild display settings only; the
+        and Activity tickets, and forget their Activity sessions. CCTV's own Config is per-guild display settings only; the
         user's character and seats live in corridor's office-state store and
         are deleted once, by pixelagents (the schema-aware layer CCTV writes
         them through). Who is online and what they last said is live

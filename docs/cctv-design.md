@@ -592,16 +592,20 @@ sequenceDiagram
   secret, read from the loaded `Dashboard` cog's Config
   (`webserver.core.secret`) each time and never copied into CCTV's. Without
   it, `api/token` answers 503.
-- **Limits.** Request bodies are capped at 4 KiB and an OAuth code at 512
-  ASCII URL-safe characters. Calls to Discord have two budgets a minute
-  across all users: 60 for sign-ins (each code exchange and its token
-  check) and 60 for other token checks, so junk bearer tokens can't use up
-  sign-ins. Over a budget: 429, without calling Discord. Nothing is counted
-  per caller: every Activity request arrives through Discord's proxy, so
-  all users share one upstream address, and a cap keyed on it would let a
-  few junk requests lock everyone out. A flood of junk codes can still use
-  up the sign-in budget for a minute at a time; the budget exists to
-  protect the application's OAuth rate limit.
+- **Limits.** Request bodies are capped at 4 KiB, and an OAuth code or
+  bearer token must be 1-512 ASCII URL-safe characters; anything else is
+  refused without calling Discord. Nothing is counted or blocked per
+  caller: every Activity request arrives through Discord's proxy, so all
+  users share one upstream address, and a cap keyed on it would let a few
+  junk requests lock everyone out. Instead a code or token Discord refused
+  is remembered for 10 minutes (by SHA-256), so repeating it costs no call;
+  at most 8 calls to Discord run at once, the rest waiting their turn; and
+  a Discord 429 backs that route (code exchange or token check) off for its
+  `Retry-After`, the only time a well-formed request is refused untried
+  (429). A refused code or token answers 400/401, Discord unreachable 503.
+  The user behind a token is cached for 30 minutes, so a token Discord has
+  revoked keeps opening tickets for up to that long; membership and the
+  edit gate are still checked on every ticket and write.
 - **Launch.** The App Launcher's Entry Point command (`DISCORD_LAUNCH_ACTIVITY`
   handler: Discord launches it) and `[p]cctv url`'s persistent **Open in
   Discord** button, which answers with a `LAUNCH_ACTIVITY` interaction
@@ -627,7 +631,7 @@ sequenceDiagram
 | `/third-party/cctv/static/<path>` | Dashboard GET/HEAD | Shared webview asset |
 | `/cctv/activity/` | GET | The Discord Activity's page (pixelagents' `activity.html`); 503 until it's built. Every `/cctv/activity` route answers 404 while the Activity is off |
 | `/cctv/activity/activity-config.js` | GET | The page's settings (the bot's application id, the token route, the `identify` scope) and its office picker and socket shim |
-| `/cctv/activity/api/token` | POST | `{code}` from the SDK's `authorize()` -> `{access_token}`, exchanged with Red Web Dashboard's client secret; 400 for a refused or malformed code, 503 without the secret, 429 past a budget (see the Activity's limits) |
+| `/cctv/activity/api/token` | POST | `{code}` from the SDK's `authorize()` -> `{access_token}`, exchanged with Red Web Dashboard's client secret; 400 for a refused or malformed code, 503 without the secret, 429 while Discord has asked to back off, 503 if Discord can't be reached (see the Activity's limits) |
 | `/cctv/activity/api/ticket` | POST (`Authorization: Bearer`) | `{"office": "guild", "guild": "<id>"}` or `{"office": "editor"}` -> `{ticket, ws}` for the Discord-verified user; 401 for a token Discord doesn't vouch for, the same 404 for every office the user may not watch |
 | `/cctv/activity/ws/office/<guild id>` | WebSocket | A guild office's socket from the Activity: as `/cctv/office/<guild id>/ws`, without the Dashboard `Origin` check |
 | `/cctv/activity/ws/editor` | WebSocket | The editor office's socket from the Activity: as `/cctv/editor/ws` |

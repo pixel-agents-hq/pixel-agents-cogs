@@ -25,7 +25,6 @@ from ..infrastructure import (
     WebviewAssets,
     activity_config_script,
 )
-from ..infrastructure.discord_oauth import SlidingWindow
 from .test_server import GUILD, MEMBER, OTHER_GUILD, STRANGER, _Pipeline
 
 CLIENT_ID = 99
@@ -40,6 +39,8 @@ class _FakeDiscord:
     def __init__(self) -> None:
         self.exchanges: list[dict[str, str]] = []
         self.lookups = 0
+        # Seconds Discord's next answer asks to wait (a 429), if set.
+        self.retry_after: str | None = None
         # access token -> (application id, user id)
         self.tokens = {"token-member": (CLIENT_ID, MEMBER), "token-stranger": (CLIENT_ID, STRANGER)}
         self.tokens["token-other-app"] = (OTHER_APP, MEMBER)
@@ -61,7 +62,19 @@ class _FakeDiscord:
         if self.runner is not None:
             await self.runner.cleanup()
 
+    def _limited(self) -> web.Response | None:
+        if self.retry_after is None:
+            return None
+        retry, self.retry_after = self.retry_after, None
+        return web.json_response(
+            {"message": "You are being rate limited."},
+            status=429,
+            headers={"Retry-After": retry},
+        )
+
     async def token(self, request: web.Request) -> web.Response:
+        if (limited := self._limited()) is not None:
+            return limited
         form = {key: str(value) for key, value in (await request.post()).items()}
         self.exchanges.append(form)
         if form.get("client_secret") != SECRET or form.get("code") != "good-code":
@@ -69,6 +82,8 @@ class _FakeDiscord:
         return web.json_response({"access_token": "token-member", "refresh_token": "r"})
 
     async def me(self, request: web.Request) -> web.Response:
+        if (limited := self._limited()) is not None:
+            return limited
         self.lookups += 1
         token = request.headers.get("Authorization", "").removeprefix("Bearer ")
         if token not in self.tokens:
@@ -95,7 +110,8 @@ class _ActivityFixture(unittest.IsolatedAsyncioTestCase):
         self.discord = _FakeDiscord()
         await self.discord.start()
         self.addAsyncCleanup(self.discord.stop)
-        self.oauth = DiscordOAuth(api_base=self.discord.base)
+        self.now = 1000.0
+        self.oauth = DiscordOAuth(api_base=self.discord.base, clock=lambda: self.now)
         self.addAsyncCleanup(self.oauth.close)
 
         self.office = _Pipeline(f"office/{GUILD}", guild_id=GUILD)
@@ -347,21 +363,10 @@ class TestActivitySockets(_ActivityFixture):
         await browser.close()
 
 
-class TestSlidingWindow(unittest.TestCase):
-    def test_allows_the_limit_per_window(self) -> None:
-        now = [0.0]
-        window = SlidingWindow(2, 60.0, clock=lambda: now[0])
-        self.assertTrue(window.allow())
-        self.assertTrue(window.allow())
-        self.assertFalse(window.allow())
-        now[0] = 61.0
-        self.assertTrue(window.allow())
-
-
-class TestRateLimit(_ActivityFixture):
+class TestJunkNeverBlocksARealSignIn(_ActivityFixture):
     """Every Activity user arrives through Discord's proxy, from one shared
-    upstream address: junk from that address must not lock out the real
-    users behind it."""
+    upstream address. Junk from that same address must never stop a valid
+    sign-in or a signed-in user's tickets."""
 
     SHARED = {"X-Forwarded-For": "203.0.113.7"}
 
@@ -379,24 +384,48 @@ class TestRateLimit(_ActivityFixture):
         ) as r:
             return r.status
 
-    async def test_junk_codes_from_the_shared_address_dont_lock_out_a_real_sign_in(self) -> None:
-        self.assertEqual({await self._sign_in("bad-code") for _ in range(15)}, {400})
+    async def test_a_flood_of_junk_from_the_same_address_doesnt_stop_a_valid_sign_in(
+        self,
+    ) -> None:
+        for n in range(100):
+            self.assertEqual(await self._sign_in(f"junk-code-{n}"), 400)
+            self.assertEqual(await self._shared_ticket(f"junk-token-{n}"), 401)
         self.assertEqual(await self._sign_in("good-code"), 200)
         self.assertEqual(await self._shared_ticket("token-member"), 200)
 
-    async def test_junk_tokens_cant_spend_the_sign_in_budget(self) -> None:
-        self.oauth._checks = SlidingWindow(2, 60.0)  # noqa: SLF001
-        statuses = [await self._shared_ticket(f"junk-{n}") for n in range(4)]
-        self.assertEqual(statuses, [401, 401, 429, 429])
-        self.assertEqual(await self._sign_in("good-code"), 200)
-        # The sign-in already vouched for its token: its tickets need no check.
-        self.assertEqual(await self._shared_ticket("token-member"), 200)
-
-    async def test_the_sign_in_budget_is_a_hard_ceiling(self) -> None:
-        self.oauth._exchanges = SlidingWindow(2, 60.0)  # noqa: SLF001
-        self.assertEqual(await self._sign_in("good-code"), 200)
-        self.assertEqual(await self._sign_in("good-code"), 429)
+    async def test_a_repeated_junk_code_or_token_costs_no_further_call(self) -> None:
+        for _ in range(5):
+            self.assertEqual(await self._sign_in("bad-code"), 400)
+            self.assertEqual(await self._shared_ticket("token-unknown"), 401)
         self.assertEqual(len(self.discord.exchanges), 1)
+        self.assertEqual(self.discord.lookups, 1)
+        # Remembered for a while, then asked about again.
+        self.now += 601
+        self.assertEqual(await self._sign_in("bad-code"), 400)
+        self.assertEqual(len(self.discord.exchanges), 2)
+
+    async def test_a_malformed_bearer_is_refused_without_asking_discord(self) -> None:
+        for token in ("a b", "x" * 600, "étè"):
+            self.assertEqual(await self._shared_ticket(token), 401)
+        self.assertEqual(self.discord.lookups, 0)
+
+    async def test_a_signed_in_users_tickets_need_no_further_check(self) -> None:
+        self.assertEqual(await self._sign_in("good-code"), 200)
+        lookups = self.discord.lookups
+        for _ in range(5):
+            self.assertEqual(await self._shared_ticket("token-member"), 200)
+        self.assertEqual(self.discord.lookups, lookups)
+
+    async def test_discords_own_429_is_honoured_then_lifted(self) -> None:
+        self.discord.retry_after = "30"
+        self.assertEqual(await self._sign_in("good-code"), 429)
+        self.assertEqual(await self._sign_in("good-code"), 429)
+        # The second one wasn't sent: the route waits out Retry-After.
+        self.assertEqual(len(self.discord.exchanges), 0)
+        # Token checks are a separate route and keep working.
+        self.assertEqual(await self._shared_ticket("token-stranger"), 200)
+        self.now += 31
+        self.assertEqual(await self._sign_in("good-code"), 200)
 
 
 class _Cog(CctvBase):

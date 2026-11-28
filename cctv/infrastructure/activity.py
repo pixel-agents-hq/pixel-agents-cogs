@@ -29,7 +29,7 @@ from typing import Protocol
 
 from aiohttp import web
 
-from .discord_oauth import DiscordOAuth, OAuthError, RateLimited
+from .discord_oauth import DiscordOAuth, OAuthError, RateLimited, Refused
 
 ACTIVITY_PREFIX = "/cctv/activity"
 ACTIVITY_OFFICE_WS_ROUTE = f"{ACTIVITY_PREFIX}/ws/office/{{guild_id}}"
@@ -223,6 +223,15 @@ async def _json_body(request: web.Request) -> dict[str, object] | None:
     return body if isinstance(body, dict) else None
 
 
+def _well_formed(value: str) -> bool:
+    """An OAuth code or access token's shape: 1-512 ASCII URL-safe
+    characters. Anything else is refused here, without asking Discord."""
+
+    return 0 < len(value) <= _MAX_CODE_LENGTH and all(
+        character in _CODE_CHARACTERS for character in value
+    )
+
+
 def _snowflake(raw: object) -> int | None:
     text = raw if isinstance(raw, str) else ""
     return int(text) if text.isdecimal() and 0 < len(text) <= 20 and int(text) > 0 else None
@@ -361,11 +370,7 @@ class ActivityEndpoints:
             raise web.HTTPNotFound()
         body = await _json_body(request)
         code = body.get("code") if body is not None else None
-        if (
-            not isinstance(code, str)
-            or not 0 < len(code) <= _MAX_CODE_LENGTH
-            or not all(character in _CODE_CHARACTERS for character in code)
-        ):
+        if not isinstance(code, str) or not _well_formed(code):
             return _error(400, "invalid request")
         client_id = self._client_id()
         secret = await self._secret()
@@ -375,12 +380,14 @@ class ActivityEndpoints:
             token = await self._oauth.exchange_code(client_id, secret, code)
             # Checked (and remembered) now, so this sign-in's ticket requests
             # don't need Discord's budget again.
-            await self._oauth.user_id(token, client_id, sign_in=True)
+            await self._oauth.user_id(token, client_id)
         except RateLimited:
             return _error(429, "busy")
+        except Refused:
+            return _error(400, "sign-in failed")
         except OAuthError as exc:
             self._log.info("cctv/activity: %s", exc)
-            return _error(400, "sign-in failed")
+            return _error(503, "unavailable")
         return web.json_response({"access_token": token}, headers=_NO_STORE)
 
     async def _secret(self) -> str | None:
@@ -400,7 +407,7 @@ class ActivityEndpoints:
             raise web.HTTPNotFound()
         scheme, _, token = request.headers.get("Authorization", "").partition(" ")
         client_id = self._client_id()
-        if scheme.lower() != "bearer" or not token or len(token) > 512 or client_id is None:
+        if scheme.lower() != "bearer" or not _well_formed(token) or client_id is None:
             return _error(401, "sign in first")
         body = await _json_body(request)
         parsed = parse_office_request(body) if body is not None else None
@@ -411,9 +418,11 @@ class ActivityEndpoints:
             user_id = await self._oauth.user_id(token, client_id)
         except RateLimited:
             return _error(429, "busy")
+        except Refused:
+            return _error(401, "sign in first")
         except OAuthError as exc:
             self._log.info("cctv/activity: %s", exc)
-            return _error(401, "sign in first")
+            return _error(503, "unavailable")
         try:
             ticket = await self._issue_ticket(user_id, guild_id)
         except Exception:

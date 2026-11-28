@@ -1,12 +1,13 @@
 """Discord OAuth2 calls for the office Activity: exchanging the
 authorization code the Embedded App SDK hands the Activity, and remembering
-which user each token this listener signed in belongs to.
+which user each sign-in this listener issued belongs to.
 
 Only a sign-in (`api/token`) ever calls Discord: the code exchange, then one
-`GET /oauth2/@me` with the fresh token. A ticket request (`api/ticket`) is
-answered from the sign-ins remembered here and never calls Discord, so a
-bearer this listener didn't hand out costs nothing and can't make Discord
-answer 401.
+`GET /oauth2/@me` with the fresh token. The sign-in is then remembered under a
+random session id this listener issues (`secrets.token_urlsafe(32)`), which
+the Activity presents to `api/ticket`; that route looks the id up here and
+never calls Discord, so a bearer this listener didn't issue costs nothing and
+can't make Discord answer 401.
 
 Junk can't block a real user's sign-in, and can't get the bot's address
 restricted by Discord:
@@ -17,10 +18,12 @@ restricted by Discord:
   doesn't count;
 - at most `MAX_CONCURRENT_CALLS` calls run at once (others wait);
 - a Discord 429 backs its route off for `Retry-After`;
-- as a last guard, once Discord has answered 401, 403 or 429
-  `INVALID_ANSWERS_LIMIT` times in ten minutes (a wrong client secret,
-  say), no further call is made until that eases -- far under the limit at
-  which Discord restricts an address, which would also cut off the bot.
+- as a hard guard, once Discord has answered `REJECTIONS_LIMIT` calls with
+  any 4xx in ten minutes, no further call is made until the oldest ages out
+  (`Shielded`, a 503 with `Retry-After`). Discord restricts an address after
+  about 10,000 answers of 401, 403 or 429 in ten minutes, which would also
+  cut off the bot's own gateway and REST traffic from the host: keeping the
+  bot reachable comes before Activity sign-ins during a flood.
 """
 
 from __future__ import annotations
@@ -28,6 +31,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import secrets
 import time
 from collections import OrderedDict, deque
 from collections.abc import Callable, Mapping
@@ -53,11 +57,10 @@ REQUEST_TIMEOUT_SECONDS = 10.0
 # one is honoured up to the cap.
 DEFAULT_RETRY_AFTER_SECONDS = 5.0
 MAX_RETRY_AFTER_SECONDS = 300.0
-# Discord's 401, 403 and 429 answers allowed in INVALID_ANSWERS_WINDOW before
-# no further call is made. Discord restricts an address at about 10,000.
-INVALID_ANSWERS_LIMIT = 200
-INVALID_ANSWERS_WINDOW = 600.0
-_INVALID_STATUSES = frozenset({401, 403, 429})
+# Calls Discord answered with any 4xx allowed in REJECTIONS_WINDOW before no
+# further call is made. Discord restricts an address at about 10,000.
+REJECTIONS_LIMIT = 300
+REJECTIONS_WINDOW = 600.0
 # A token endpoint answering 401/403 means the client id or secret is wrong:
 # stop asking for this long.
 MISCONFIGURED_BACKOFF_SECONDS = 60.0
@@ -73,8 +76,21 @@ class Refused(OAuthError):
 
 
 class RateLimited(OAuthError):
-    """Not tried: Discord asked for a back-off, or too many of its answers
-    were refusals lately."""
+    """Not tried: Discord asked this route to back off."""
+
+    def __init__(self, message: str, *, retry_after: float) -> None:
+        super().__init__(message)
+        self.retry_after = retry_after
+
+
+class Shielded(OAuthError):
+    """Not tried: too many of Discord's answers were 4xx lately, so no call
+    is made until `retry_after` seconds pass, to keep the bot's address
+    clear of Discord's invalid-request limit."""
+
+    def __init__(self, message: str, *, retry_after: float) -> None:
+        super().__init__(message)
+        self.retry_after = retry_after
 
 
 @dataclass(slots=True)
@@ -108,7 +124,7 @@ class DiscordOAuth:
         *,
         api_base: str = DISCORD_API,
         max_concurrent: int = MAX_CONCURRENT_CALLS,
-        invalid_answers_limit: int = INVALID_ANSWERS_LIMIT,
+        rejections_limit: int = REJECTIONS_LIMIT,
         clock: Callable[[], float] = time.monotonic,
         logger: logging.Logger | None = None,
     ) -> None:
@@ -116,8 +132,8 @@ class DiscordOAuth:
         self._clock = clock
         self._calls = asyncio.Semaphore(max_concurrent)
         self._backoff: dict[str, float] = {}
-        self._invalid: deque[float] = deque()
-        self._invalid_limit = invalid_answers_limit
+        self._rejections: deque[float] = deque()
+        self._rejections_limit = rejections_limit
         self._sessions: OrderedDict[str, _Session] = OrderedDict()
         self._refused: OrderedDict[str, float] = OrderedDict()
         self._session: aiohttp.ClientSession | None = None
@@ -149,12 +165,12 @@ class DiscordOAuth:
     def _key(kind: str, value: str) -> str:
         return hashlib.sha256(f"{kind}:{value}".encode()).hexdigest()
 
-    def signed_in_user(self, access_token: str) -> int | None:
-        """The user a token this listener signed in belongs to, or None for
-        any other token (never asks Discord). Each use keeps the sign-in
-        alive for `SESSION_IDLE_SECONDS` more, up to the token's expiry."""
+    def signed_in_user(self, session: str) -> int | None:
+        """The user of a session id this listener issued, or None for any
+        other value (never asks Discord). Each use keeps the sign-in alive
+        for `SESSION_IDLE_SECONDS` more, up to the token's expiry."""
 
-        key = self._key("token", access_token)
+        key = self._key("session", session)
         entry = self._sessions.get(key)
         if entry is None:
             return None
@@ -166,10 +182,10 @@ class DiscordOAuth:
         self._sessions.move_to_end(key)
         return entry.user_id
 
-    def _remember(self, access_token: str, user_id: int, lifetime: float) -> None:
+    def _remember(self, session: str, user_id: int, lifetime: float) -> None:
         now = self._clock()
         expires_at = now + lifetime
-        self._sessions[self._key("token", access_token)] = _Session(
+        self._sessions[self._key("session", session)] = _Session(
             user_id, min(now + SESSION_IDLE_SECONDS, expires_at), expires_at
         )
         while len(self._sessions) > SESSION_CACHE_SIZE:
@@ -191,11 +207,15 @@ class DiscordOAuth:
             self._refused.popitem(last=False)
         return Refused("Discord refused it")
 
-    def _too_many_refusals(self) -> bool:
+    def _shield_wait(self) -> float:
+        """Seconds until a call may be made again; 0 when it may now."""
+
         now = self._clock()
-        while self._invalid and self._invalid[0] <= now - INVALID_ANSWERS_WINDOW:
-            self._invalid.popleft()
-        return len(self._invalid) >= self._invalid_limit
+        while self._rejections and self._rejections[0] <= now - REJECTIONS_WINDOW:
+            self._rejections.popleft()
+        if len(self._rejections) < self._rejections_limit:
+            return 0.0
+        return self._rejections[0] + REJECTIONS_WINDOW - now
 
     async def _call(
         self,
@@ -209,34 +229,38 @@ class DiscordOAuth:
         """One call to Discord: `(status, JSON body or None)`."""
 
         async with self._calls:
-            if self._backoff.get(route, 0.0) > self._clock():
-                raise RateLimited(f"Discord asked to back off {route}")
-            if self._too_many_refusals():
-                raise RateLimited("too many refusals from Discord lately")
+            wait = self._backoff.get(route, 0.0) - self._clock()
+            if wait > 0:
+                raise RateLimited(f"Discord asked to back off {route}", retry_after=wait)
+            shield = self._shield_wait()
+            if shield > 0:
+                raise Shielded("too many 4xx answers from Discord lately", retry_after=shield)
             try:
                 async with self._client().request(
                     method, f"{self._api}{path}", data=data, headers=headers
                 ) as response:
                     status = response.status
                     body = await response.json(content_type=None) if status in (200, 429) else None
-                    if status in _INVALID_STATUSES:
-                        self._invalid.append(self._clock())
+                    if 400 <= status < 500:
+                        self._rejections.append(self._clock())
                     if status == 429:
                         retry = _retry_after(response, body)
                         self._backoff[route] = self._clock() + retry
                         self._log.warning(
                             "cctv/activity: Discord asked to wait %.0fs (%s)", retry, route
                         )
-                        raise RateLimited(f"Discord asked to back off {route}")
+                        raise RateLimited(f"Discord asked to back off {route}", retry_after=retry)
             except (aiohttp.ClientError, TimeoutError, ValueError) as exc:
                 raise OAuthError(f"the call to Discord failed: {type(exc).__name__}") from exc
         return status, body
 
-    async def sign_in(self, client_id: int, client_secret: str, code: str) -> tuple[str, int]:
+    async def sign_in(self, client_id: int, client_secret: str, code: str) -> tuple[str, str, int]:
         """Exchange an authorization code from the SDK's `authorize()` for an
-        access token, learn its user, and remember the sign-in:
-        `(access token, user id)`. The refresh token is dropped: the
-        Activity signs in again on its next launch."""
+        access token, learn its user, and remember the sign-in under a new
+        session id: `(access token, session id, user id)`. The access token
+        is only for the SDK's `authenticate()`; tickets need the session id.
+        The refresh token is dropped: the Activity signs in again on its next
+        launch."""
 
         key = self._key("code", code)
         if self._refused_before(key):
@@ -265,8 +289,9 @@ class DiscordOAuth:
         user_id = _token_user(me, client_id) if status == 200 else None
         if user_id is None:
             raise OAuthError(f"the new token's check failed ({status})")
-        self._remember(token, user_id, lifetime)
-        return token, user_id
+        session = secrets.token_urlsafe(32)
+        self._remember(session, user_id, lifetime)
+        return token, session, user_id
 
 
 def _snowflake(raw: object) -> int | None:
@@ -290,7 +315,7 @@ def _token_user(body: object, client_id: int) -> int | None:
 
 __all__ = [
     "DISCORD_API",
-    "INVALID_ANSWERS_LIMIT",
+    "REJECTIONS_LIMIT",
     "MAX_CONCURRENT_CALLS",
     "REFUSAL_CACHE_SECONDS",
     "SESSION_IDLE_SECONDS",
@@ -298,4 +323,5 @@ __all__ = [
     "OAuthError",
     "RateLimited",
     "Refused",
+    "Shielded",
 ]

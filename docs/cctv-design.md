@@ -555,11 +555,11 @@ sequenceDiagram
     S->>O: exchange (client id + Red Web Dashboard's client secret)
     O-->>S: access token
     S->>O: GET /oauth2/@me: whose, and issued to this application?
-    S->>S: remember the sign-in
-    S-->>A: {access_token}
+    S->>S: remember the sign-in under a new random session id
+    S-->>A: {access_token, session}
     A->>D: authenticate(access_token)
-    A->>S: POST api/ticket (Bearer token) {office}
-    S->>S: a sign-in of this listener? office open? private: member? mint ticket
+    A->>S: POST api/ticket (Bearer session) {office}
+    S->>S: a session this listener issued? office open? private: member? mint ticket
     S-->>A: {ticket, ws}
     A->>S: WebSocket ws/office/<id> or ws/editor, then {"type":"authorize"}
 ```
@@ -573,10 +573,13 @@ sequenceDiagram
   only selects: it is never trusted for access.
 - **Who.** Only `api/token` calls Discord: it exchanges the code, then
   checks the new token with `GET /oauth2/@me` (its user, and that it was
-  issued to the bot's own application), and remembers the sign-in, keyed by
-  the token's SHA-256, remembered in memory while the Activity keeps using it (two hours idle at most, and never past the token's own expiry). `api/ticket` accepts only a token this
-  listener signed in that way and never calls Discord, so any other bearer
-  answers 401 at no cost; the page then asks the user to reopen the
+  issued to the bot's own application), and remembers the sign-in under a
+  random session id it issues (`secrets.token_urlsafe(32)`, kept as its
+  SHA-256), in memory while the Activity keeps using it (two hours idle at
+  most, never past the token's own expiry). The access token goes back to
+  the page only for the SDK's `authenticate()`. `api/ticket` accepts only
+  such a session id, looked up locally, and never calls Discord, so any
+  other bearer (the Discord token included) answers 401 at no cost; the page then asks the user to reopen the
   Activity, as it does once a sign-in has ended (after a bot restart too).
 - **Access.** The same as the browser's, checked bot-side: a ticket is
   minted only for an open office the user may watch (`_mint_office_ticket`,
@@ -605,11 +608,15 @@ sequenceDiagram
   count); at most 8 calls to Discord run at once, the rest waiting their
   turn; a Discord 429 backs that route off for its `Retry-After`; a token
   endpoint refusing the client id or secret (401/403) stops sign-ins for a
-  minute; and once Discord has answered 401, 403 or 429 200 times in ten
-  minutes, no further call is made until that eases, far under the level
-  at which Discord restricts the bot's address. A refused code answers 400,
-  an unknown bearer 401, Discord unreachable or misconfigured 503, and 429
-  while backing off. A sign-in Discord has revoked keeps opening tickets
+  minute; and once Discord has answered 300 calls with any 4xx in ten
+  minutes, no further call is made until the oldest ages out: sign-ins,
+  real ones included, get 503 with `Retry-After`. Discord restricts an
+  address after about 10,000 answers of 401, 403 or 429 in ten minutes,
+  which would cut off the bot's own gateway and REST traffic from the host;
+  keeping the bot reachable comes before Activity sign-ins during a flood.
+  A refused code answers 400, an unknown bearer 401, Discord unreachable
+  or misconfigured 503, and 429 (with `Retry-After`) while Discord has
+  asked to back off. A sign-in Discord has revoked keeps opening tickets
   while it is remembered; membership and the edit gate are still checked
   on every ticket and write.
 - **Launch.** The App Launcher's Entry Point command (`DISCORD_LAUNCH_ACTIVITY`
@@ -637,8 +644,8 @@ sequenceDiagram
 | `/third-party/cctv/static/<path>` | Dashboard GET/HEAD | Shared webview asset |
 | `/cctv/activity/` | GET | The Discord Activity's page (pixelagents' `activity.html`); 503 until it's built. Every `/cctv/activity` route answers 404 while the Activity is off |
 | `/cctv/activity/activity-config.js` | GET | The page's settings (the bot's application id, the token route, the `identify` scope) and its office picker and socket shim |
-| `/cctv/activity/api/token` | POST | `{code}` from the SDK's `authorize()` -> `{access_token}`, exchanged with Red Web Dashboard's client secret; 400 for a refused or malformed code, 503 without the secret, 429 while Discord has asked to back off, 503 if Discord can't be reached (see the Activity's limits) |
-| `/cctv/activity/api/ticket` | POST (`Authorization: Bearer`) | `{"office": "guild", "guild": "<id>"}` or `{"office": "editor"}` -> `{ticket, ws}` for the Discord-verified user; 401 for a token Discord doesn't vouch for, the same 404 for every office the user may not watch |
+| `/cctv/activity/api/token` | POST | `{code}` from the SDK's `authorize()` -> `{access_token, session}` (the session id is the listener's own, for `api/ticket`), exchanged with Red Web Dashboard's client secret; 400 for a refused or malformed code, 503 without the secret, 429 while Discord has asked to back off, 503 if Discord can't be reached (see the Activity's limits) |
+| `/cctv/activity/api/ticket` | POST (`Authorization: Bearer <session>`) | `{"office": "guild", "guild": "<id>"}` or `{"office": "editor"}` -> `{ticket, ws}` for the signed-in user, without calling Discord; 401 for any bearer that isn't a live session id this listener issued, the same 404 for every office the user may not watch |
 | `/cctv/activity/ws/office/<guild id>` | WebSocket | A guild office's socket from the Activity: as `/cctv/office/<guild id>/ws`, without the Dashboard `Origin` check |
 | `/cctv/activity/ws/editor` | WebSocket | The editor office's socket from the Activity: as `/cctv/editor/ws` |
 | `/cctv/activity/<path>` | GET/HEAD | Webview asset, resolved inside the built bundle as `static` is |

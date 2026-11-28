@@ -106,7 +106,8 @@ back, plus `activity/bootstrap.js`, which runs the
 and OAuth sign-in and then starts the webview. The page first loads the
 consumer's own `activity-config.js` (served next to it), which names the
 application, the route that trades the OAuth code for a token, and an
-optional `start` hook; see
+optional `start` hook, which gets the SDK, the access token and the token
+route's whole answer (`signIn`); see
 `infrastructure/webview_build_scripts/activity/bootstrap.ts`. The
 bootstrap is bundled from that file with esbuild, from the exact versions
 in its `package-lock.json` (`npm ci --ignore-scripts`), and their licenses

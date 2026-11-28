@@ -100,6 +100,18 @@ class TestActivityMarkers(unittest.TestCase):
             self.assertFalse(webview_build.activity_is_up_to_date(dist))
 
 
+class TestActivitySourcesInvalidate(unittest.TestCase):
+    def test_a_changed_bootstrap_makes_the_build_stale(self) -> None:
+        with TemporaryDirectory() as tmp:
+            cog_data_dir = Path(tmp)
+            dist = _built_webview(cog_data_dir)
+            with patch.object(webview_build, "_run", side_effect=_fake_esbuild):
+                webview_build.ensure_activity_built(cog_data_dir, logger=_LOG)
+            self.assertTrue(webview_build.activity_is_up_to_date(dist))
+            with patch.object(webview_build, "_activity_sources_digest", return_value="0" * 16):
+                self.assertFalse(webview_build.activity_is_up_to_date(dist))
+
+
 class TestEnsureActivityBuilt(unittest.TestCase):
     def test_needs_a_built_webview(self) -> None:
         with TemporaryDirectory() as tmp:

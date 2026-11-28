@@ -668,9 +668,21 @@ def cancel_activity(cog_data_dir: Path) -> bool:
     return True
 
 
+def _activity_sources_digest() -> str:
+    """Changes whenever the bootstrap or its pinned packages do, so an
+    updated cog rebuilds the Activity even on an unchanged webview."""
+
+    digest = hashlib.sha256()
+    for name in _ACTIVITY_SOURCES:
+        digest.update((_ACTIVITY_SOURCE_DIR / name).read_bytes())
+    return digest.hexdigest()[:16]
+
+
 def _activity_marker(webview_dist: Path) -> str | None:
     commit = built_commit(webview_dist)
-    return f"{ACTIVITY_BUILD_VERSION}:{commit}" if commit is not None else None
+    if commit is None:
+        return None
+    return f"{ACTIVITY_BUILD_VERSION}:{commit}:{_activity_sources_digest()}"
 
 
 def activity_is_up_to_date(webview_dist: Path) -> bool:

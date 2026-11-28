@@ -16,6 +16,9 @@ type Scope = 'identify' | 'guilds' | 'guilds.members.read';
 export interface ActivityContext {
   sdk: DiscordSDK;
   accessToken: string;
+  // The token route's whole JSON answer (`access_token` plus whatever else
+  // the consumer's server returns, e.g. its own session id).
+  signIn: Record<string, unknown>;
   userId: string;
   guildId: string | null;
   channelId: string | null;
@@ -24,7 +27,7 @@ export interface ActivityContext {
 
 export interface ActivityConfig {
   clientId: string;
-  // Exchanges `{code}` for `{access_token}` on the consuming cog's server.
+  // Exchanges `{code}` for `{access_token, ...}` on the consuming cog's server.
   tokenUrl: string;
   scope?: Scope[];
   // Return false to keep the webview from starting (the hook showed why).
@@ -98,17 +101,17 @@ function openLinksThroughDiscord(sdk: DiscordSDK): void {
   );
 }
 
-async function exchange(tokenUrl: string, code: string): Promise<string> {
+async function exchange(tokenUrl: string, code: string): Promise<Record<string, unknown>> {
   const response = await fetch(new URL(tokenUrl, location.href).href, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
     body: JSON.stringify({ code }),
   });
-  const data = (response.ok ? await response.json() : null) as { access_token?: unknown } | null;
+  const data = (response.ok ? await response.json() : null) as Record<string, unknown> | null;
   if (data === null || typeof data.access_token !== 'string' || !data.access_token) {
     throw new Error(`token exchange failed (${response.status})`);
   }
-  return data.access_token;
+  return data;
 }
 
 async function main(): Promise<void> {
@@ -133,12 +136,14 @@ async function main(): Promise<void> {
     prompt: 'none',
     scope: config.scope ?? ['identify'],
   });
-  const accessToken = await exchange(config.tokenUrl, code);
+  const signIn = await exchange(config.tokenUrl, code);
+  const accessToken = signIn.access_token as string;
   const auth = await sdk.commands.authenticate({ access_token: accessToken });
   openLinksThroughDiscord(sdk);
   const context: ActivityContext = {
     sdk,
     accessToken,
+    signIn,
     userId: auth.user.id,
     guildId: sdk.guildId,
     channelId: sdk.channelId,

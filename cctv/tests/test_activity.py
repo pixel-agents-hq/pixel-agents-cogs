@@ -127,6 +127,7 @@ class _ActivityFixture(unittest.IsolatedAsyncioTestCase):
         await self.discord.start()
         self.addAsyncCleanup(self.discord.stop)
         self.now = 1000.0
+        self.sessions: dict[str, str] = {}
         self.oauth = DiscordOAuth(api_base=self.discord.base, clock=lambda: self.now)
         self.addAsyncCleanup(self.oauth.close)
 
@@ -190,14 +191,27 @@ class _ActivityFixture(unittest.IsolatedAsyncioTestCase):
         return "https://dash.example.com"
 
     async def _sign_in(self, code: str, headers: dict[str, str] | None = None) -> int:
+        """Sign in; the session id the listener issues is kept under the
+        Discord access token it came with, for `_bearer`."""
+
         async with self.http.post(
             f"{self.base}/api/token", json={"code": code}, headers=headers or {}
         ) as r:
+            if r.status == 200:
+                body = await r.json()
+                self.sessions[body["access_token"]] = body["session"]
             return r.status
+
+    def _bearer(self, token: str) -> str:
+        """The session id a sign-in with `token` was issued, else `token`."""
+
+        return self.sessions.get(token, token)
 
     async def _ticket(self, token: str, body: dict[str, object]) -> tuple[int, dict[str, Any]]:
         async with self.http.post(
-            f"{self.base}/api/ticket", json=body, headers={"Authorization": f"Bearer {token}"}
+            f"{self.base}/api/ticket",
+            json=body,
+            headers={"Authorization": f"Bearer {self._bearer(token)}"},
         ) as response:
             return response.status, await response.json()
 
@@ -268,7 +282,11 @@ class TestTokenExchange(_ActivityFixture):
     async def test_a_code_is_exchanged_with_the_dashboard_secret(self) -> None:
         async with self.http.post(f"{self.base}/api/token", json={"code": "good-code"}) as r:
             self.assertEqual(r.status, 200)
-            self.assertEqual(await r.json(), {"access_token": "token-member"})
+            body = await r.json()
+            self.assertEqual(body["access_token"], "token-member")
+            # A session id the listener issued, unrelated to the token.
+            self.assertGreaterEqual(len(body["session"]), 40)
+            self.assertNotIn("token-member", body["session"])
             self.assertEqual(r.headers["Cache-Control"], "no-store")
         exchange = self.discord.exchanges[0]
         self.assertEqual(exchange["client_id"], str(CLIENT_ID))
@@ -427,7 +445,7 @@ class TestJunkNeverBlocksARealSignIn(_ActivityFixture):
         async with self.http.post(
             f"{self.base}/api/ticket",
             json={"office": "editor"},
-            headers={**self.SHARED, "Authorization": f"Bearer {token}"},
+            headers={**self.SHARED, "Authorization": f"Bearer {self._bearer(token)}"},
         ) as r:
             return r.status
 
@@ -475,17 +493,48 @@ class TestJunkNeverBlocksARealSignIn(_ActivityFixture):
         self.assertEqual(await self._sign_in("good-code"), 429)
         self.assertEqual(self.discord.token_calls, 1)
 
-    async def test_refusals_from_discord_have_a_hard_ceiling(self) -> None:
-        self.oauth._invalid_limit = 2  # noqa: SLF001
+    async def test_a_flood_of_junk_codes_stops_calling_discord_at_the_cap(self) -> None:
+        self.oauth._rejections_limit = 5  # noqa: SLF001
+        for n in range(5):
+            self.assertEqual(await self._sign_in(f"junk-{n}", self.SHARED), 400)
+        # Past the cap: refused here, with how long to wait, without a call.
+        for n in range(5, 20):
+            async with self.http.post(
+                f"{self.base}/api/token", json={"code": f"junk-{n}"}, headers=self.SHARED
+            ) as r:
+                self.assertEqual(r.status, 503)
+                self.assertEqual(r.headers["Retry-After"], "600")
+        self.assertEqual(self.discord.token_calls, 5)
+        # That holds for real sign-ins too: the bot's address comes first.
+        self.assertEqual(await self._sign_in("good-code"), 503)
+        self.now += 601
+        self.assertEqual(await self._sign_in("good-code"), 200)
+
+    async def test_a_valid_sign_in_works_below_the_cap(self) -> None:
+        self.oauth._rejections_limit = 5  # noqa: SLF001
+        for n in range(4):
+            self.assertEqual(await self._sign_in(f"junk-{n}", self.SHARED), 400)
+        self.assertEqual(await self._sign_in("good-code", self.SHARED), 200)
+        self.assertEqual(await self._shared_ticket("token-member"), 200)
+
+    async def test_discords_429s_count_toward_the_cap(self) -> None:
+        self.oauth._rejections_limit = 2  # noqa: SLF001
         for _ in range(2):
             self.discord.retry_after = "1"
             self.assertEqual(await self._sign_in("good-code"), 429)
             self.now += 2
-        # Two refusals in ten minutes: no further call until they age out.
-        self.assertEqual(await self._sign_in("good-code"), 429)
+        self.assertEqual(await self._sign_in("good-code"), 503)
         self.assertEqual(self.discord.token_calls, 2)
-        self.now += 601
+
+    async def test_the_discord_access_token_is_no_ticket_bearer(self) -> None:
         self.assertEqual(await self._sign_in("good-code"), 200)
+        async with self.http.post(
+            f"{self.base}/api/ticket",
+            json={"office": "editor"},
+            headers={"Authorization": "Bearer token-member"},
+        ) as r:
+            self.assertEqual(r.status, 401)
+        self.assertEqual(self.discord.lookups, 1)
 
 
 class _Cog(CctvBase):

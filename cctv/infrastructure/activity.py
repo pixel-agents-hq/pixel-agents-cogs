@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import string
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -29,7 +30,7 @@ from typing import Protocol
 
 from aiohttp import web
 
-from .discord_oauth import DiscordOAuth, OAuthError, RateLimited, Refused
+from .discord_oauth import DiscordOAuth, OAuthError, RateLimited, Refused, Shielded
 
 ACTIVITY_PREFIX = "/cctv/activity"
 ACTIVITY_OFFICE_WS_ROUTE = f"{ACTIVITY_PREFIX}/ws/office/{{guild_id}}"
@@ -181,7 +182,9 @@ _CONFIG_SCRIPT = """(function () {
     tokenUrl: 'api/token',
     scope: __SCOPES__,
     start: function (context) {
-      token = context.accessToken;
+      token = context.signIn && typeof context.signIn.session === 'string'
+        ? context.signIn.session : null;
+      if (!token) { notice(SIGNED_OUT); return false; }
       var guild = context.guildId && SNOWFLAKE.test(context.guildId) ? context.guildId : null;
       var editor = !guild || location.hash === '#editor';
       office = { request: editor ? { office: 'editor' } : { office: 'guild', guild: guild } };
@@ -210,8 +213,11 @@ def activity_config_script(client_id: int) -> str:
     )
 
 
-def _error(status: int, error: str) -> web.Response:
-    return web.json_response({"error": error}, status=status, headers=_NO_STORE)
+def _error(status: int, error: str, *, retry_after: float | None = None) -> web.Response:
+    headers = dict(_NO_STORE)
+    if retry_after is not None:
+        headers["Retry-After"] = str(max(1, math.ceil(retry_after)))
+    return web.json_response({"error": error}, status=status, headers=headers)
 
 
 async def _json_body(request: web.Request) -> dict[str, object] | None:
@@ -367,7 +373,7 @@ class ActivityEndpoints:
         )
 
     async def handle_token(self, request: web.Request) -> web.Response:
-        """`{code}` from the SDK's `authorize()` -> `{access_token}`, exchanged
+        """`{code}` from the SDK's `authorize()` -> `{access_token, session}`, exchanged
         with the client secret Red Web Dashboard holds for this application."""
 
         if not await self._available():
@@ -381,15 +387,19 @@ class ActivityEndpoints:
         if client_id is None or secret is None:
             return _error(503, "unavailable")
         try:
-            token, _ = await self._oauth.sign_in(client_id, secret, code)
-        except RateLimited:
-            return _error(429, "busy")
+            token, session, _ = await self._oauth.sign_in(client_id, secret, code)
+        except Shielded as exc:
+            return _error(503, "unavailable", retry_after=exc.retry_after)
+        except RateLimited as exc:
+            return _error(429, "busy", retry_after=exc.retry_after)
         except Refused:
             return _error(400, "sign-in failed")
         except OAuthError as exc:
             self._log.info("cctv/activity: %s", exc)
             return _error(503, "unavailable")
-        return web.json_response({"access_token": token}, headers=_NO_STORE)
+        # The access token is only for the SDK's `authenticate()`; tickets
+        # take the session id this listener issued.
+        return web.json_response({"access_token": token, "session": session}, headers=_NO_STORE)
 
     async def _secret(self) -> str | None:
         try:
@@ -401,7 +411,7 @@ class ActivityEndpoints:
 
     async def handle_ticket(self, request: web.Request) -> web.Response:
         """A ticket for one office's socket, for the user the bearer token
-        signs in. Only a token this listener signed in (`api/token`) is
+        signs in. Only a session id this listener issued (`api/token`) is
         accepted, looked up without calling Discord; any other bearer is 401.
         Every office the user may not watch -- none open, a private one they
         aren't a member of -- answers the same 404."""
